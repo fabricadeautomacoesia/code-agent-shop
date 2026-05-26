@@ -140,6 +140,55 @@ app.get('/autocomplete', asyncHandler(async (req, res) => {
   res.json({ suggestions: unique });
 }));
 
+// GET /search/top-sellers - mais vendidos POR CATEGORIA (V8 - MLB style)
+// Retorna agrupado: { [category_slug]: [products...] }
+app.get('/top-sellers', asyncHandler(async (req, res) => {
+  const perCategory = Math.min(parseInt(req.query.per_category || '4', 10), 12);
+  const r = await query(
+    `WITH ranked AS (
+       SELECT p.*, c.slug AS cat_slug, c.name AS cat_name,
+              ROW_NUMBER() OVER (PARTITION BY p.category_id ORDER BY p.sales_count DESC) AS rn
+         FROM products p
+         JOIN categories c ON c.id = p.category_id
+        WHERE p.status = 'approved' AND p.deleted_at IS NULL AND c.parent_id IS NULL
+     )
+     SELECT id, slug, title, subtitle, short_description, kind, cover_image_url,
+            price_cents, currency, is_free, tech_stack, avg_rating, review_count,
+            sales_count, is_platform_owned, cat_slug, cat_name, rn,
+            CASE WHEN rn = 1 THEN TRUE ELSE FALSE END AS is_top_seller
+       FROM ranked
+      WHERE rn <= $1
+      ORDER BY cat_name, rn`, [perCategory]
+  );
+  // Agrupar por categoria (JS plain object)
+  const grouped = {};
+  for (const p of r.rows) {
+    if (!grouped[p.cat_slug]) grouped[p.cat_slug] = { name: p.cat_name, products: [] };
+    grouped[p.cat_slug].products.push(p);
+  }
+  res.json({ categories: grouped });
+}));
+
+// GET /search/top-sellers/:category - mais vendidos de UMA categoria
+app.get('/top-sellers/:category', asyncHandler(async (req, res) => {
+  const lim = Math.min(parseInt(req.query.limit || '12', 10), 50);
+  const r = await query(
+    `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
+            p.cover_image_url, p.price_cents, p.currency, p.is_free,
+            p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
+            p.is_platform_owned, p.published_at,
+            (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug,
+            (SELECT store_name FROM sellers WHERE id = p.seller_id) AS store_name,
+            (SELECT reputation_tier FROM sellers WHERE id = p.seller_id) AS reputation_tier,
+            ROW_NUMBER() OVER (ORDER BY p.sales_count DESC) AS sales_rank
+       FROM products p
+       JOIN categories c ON c.id = p.category_id
+      WHERE p.status = 'approved' AND p.deleted_at IS NULL AND c.slug = $1
+      ORDER BY p.sales_count DESC LIMIT $2`, [req.params.category, lim]
+  );
+  res.json({ products: r.rows, category: req.params.category });
+}));
+
 // GET /search/trending - top buscas dos ultimos 7 dias
 app.get('/trending', asyncHandler(async (_req, res) => {
   const r = await query(

@@ -33,6 +33,11 @@ export function ProductCard({ product }: { product: any }) {
               <Award className="w-3 h-3" /> Oficial
             </div>
           )}
+          {product.is_top_seller && (
+            <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-gradient-to-r from-yellow-400 to-orange-500 text-black text-[10px] font-bold flex items-center gap-1 shadow-lg">
+              MAIS VENDIDO
+            </div>
+          )}
         </div>
         <div className="p-5 flex flex-col flex-1">
           <div className="flex items-start justify-between gap-2 mb-2">
