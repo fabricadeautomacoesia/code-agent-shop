@@ -45,6 +45,7 @@ export async function api<T = any>(
 }
 
 export const Api = {
+  api: api,
   search: (params: Record<string, any>) => {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([_, v]) => v != null && v !== '').map(([k, v]) => [k, String(v)])
