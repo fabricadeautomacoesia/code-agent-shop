@@ -1,50 +1,41 @@
-# progress.md - V1 + MLB-1 + MLB-2 + SEO META 11 PAGES
+# progress.md - V1 + MIGRATION 010 + 4 FEATURES MLB
 
-## STATUS: AUTOMACAO PARALELA + SEO COMPLETO
+## STATUS: AUTOMACAO ATIVA + 4 MLB FEATURES + DB EXPANDIDO
 
-## SEO Metadata (W9 worker - rodada 1) - VALIDADO
-11 paginas com metadata layouts:
-- /sellers - "Vendedores"
-- /products - "Catalogo Completo"
-- /login, /register - publicas
-- /esqueci-senha, /redefinir-senha - noindex
-- /conta - noindex
-- /cart, /checkout - noindex (privado)
-- /status - publica
-- /categoria/[slug] - DINAMICO (Mais vendidos: <cat>)
+## Migration 010 aplicada (W14)
+- product_qna_votes (consolidada)
+- products: flash_promo_active/discount_pct/ends_at, last_sale_at
+- Indices: idx_products_flash_promo, idx_products_cat_sales, idx_wishlist_product
+- coupons.tier_breakpoints (JSONB)
+- user_loyalty + loyalty_transactions
+- product_compare_sessions
 
-Todas com:
-- title custom
-- description SEO-friendly pt-BR
-- openGraph (publicas)
-- robots noindex (privadas)
-
-## MLB Features (3 de 11)
+## MLB Features (4 de 11)
 
 ### MLB-1: Mais Vendidos por Categoria
-- /api/search/top-sellers + /categoria/[slug] + ProductCard badge MAIS VENDIDO
+- /api/search/top-sellers + /categoria/[slug] + badge MAIS VENDIDO
 
 ### MLB-2: Q&A com Upvote
-- product_qna_votes + POST /qna/:id/upvote toggle + QnaUpvote component
-- VALIDADO E2E: 0->1->0 toggle
+- product_qna_votes + POST /qna/:id/upvote toggle + QnaUpvote component E2E
+
+### MLB-3+8: Quantidade vendida em destaque (NOVO)
+- Badge verde "+N vendidos" no PDP (Mercado Livre social proof)
+- Arredondamento para baixo em 10 (ex: 523 vendas -> "+520 vendidos")
+- Aparece apenas se sales_count > 50
 
 ### MLB-9: Selo OFICIAL MAIS VENDIDO (via MLB-1)
-- Badge gradient yellow-orange no card top seller
 
-## FROTA 20 WORKERS ATIVOS (crons paralelos)
-W1-W18 + MLB Crawler + Continue meta
+## Bug critico corrigido (W3 worker)
+- PDP retornava 404 server error: QnaUpvote is not defined (import faltando)
+- Fix: import { QnaUpvote } adicionado, PDP voltou a renderizar
+
+## FROTA 20 WORKERS ATIVOS
 
 ## Storefront (27 pages + 11 layouts SEO + 3 UX)
-27 paginas publicas + UX defensiva + metadata
-
-## Components globais (13)
-+ QnaUpvote + WishlistButton + NotificationBell + HeroAnimated
-
-## Backend 16 services Swarm + Postgres 48 tabelas (+votes)
-
-## Auth + Comercio + Reviews + Q&A + Reports + Wishlist E2E
-
-## SSL Lets Encrypt R13 + Backup pg_dump cron 6h
+## Components (13) + QnaUpvote
+## Admin (9) + Seller (8)
+## Backend 16 services + Postgres 51 tabelas (3 novas em 010)
+## SSL + Backup
 
 ## PENDENCIA UNICA: DNS A
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
