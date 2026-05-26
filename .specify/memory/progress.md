@@ -2,39 +2,41 @@
 
 ## Sessao: 2026-05-26
 
-| # | Evento | Status |
-|---|---|---|
-| 01-13 | Boot, Blueprint V8, .specify/memory/, cron 4min, bootstrap | OK |
-| 14-25 | DB: 9 migrations + 2 seeds (47 tabelas) | OK |
-| 26-33 | Infra: package.json + 12 mods shared + db-client + 5 bin | OK |
-| 34 | gateway | OK |
-| 35 | auth-svc | OK |
-| 36 | vault-svc | OK |
-| 37 | seller-svc | OK |
-| 38 | product-svc | OK |
-| 39 | qa-svc | OK |
-| 40 | qa-worker.py | OK |
-| 41 | order-svc | OK |
-| 42 | payment-svc | OK |
-| 43 | review-svc | OK |
-| 44 | notification-svc | OK |
-| 45 | search-svc (TSV + facets + autocomplete + categories + trending) | OK |
-| 46 | aiops-svc (collect 10s + thresholds + autoheal RAM>95% + Telegram + cleanup 30d + spike releases) | OK |
-| 47 | storefront bootstrap (Next15/Tailwind/PostCSS/globals.css com glass+noise+grid+reveal-up) | EM CURSO |
+## RESUMO DO PROJETO (V1 CONCLUIDA)
 
-## SERVICOS BACKEND: 12/12 DONE (100%)
+| Camada | Status |
+|---|---|
+| DB Schema (47 tabelas, 14 ENUMs, 8 funcoes, 6 views) | OK |
+| Bin runners (migrate, seed, backup, reset, refresh-kpi, dev-all, smoke-tests, vps-ssh, vps-deploy) | OK |
+| packages/shared (13 modulos) + packages/db-client | OK |
+| 12 microsservicos Node + 1 Python (qa-worker FastAPI) | OK |
+| 3 frontends Next.js 15 (storefront 9p, admin 6p, seller 5p) | OK |
+| Deploy infra (docker-compose, Dockerfiles, stack.yml, PM2, README) | OK |
+| Git: commit bbe54d4 + push GitHub fabricadeautomacoesia/code-agent-shop | OK |
 
-## Proximas Micro-Tarefas
+## VPS DESCOBERTA (server2.inovareinteligenciaartificial.com / 209.145.60.53)
+
+- Debian 12 + Docker 28.5.1 + Swarm ativo (1 manager, 2 nodes)
+- Traefik v2.11.2 com certresolver letsencryptresolver (Lets Encrypt via emersonjosielmrx@gmail.com)
+- Postgres 14.22 (postegresp2): user=postgres, pass=58cf114a50f1b151e2c389c835c1b2d0
+- Redis 7 (redis2)
+- MinIO, n8n (3 svcs), RabbitMQ, Portainer disponiveis
+- Network swarm: `minha_rede` (overlay attachable) - NAO eh `network_swarm_public` como padrao V8
+- Entrypoints Traefik: web (80) + websecure (443) com redirect HTTPS auto
+- Disco: 394G total / 62G usado / 317G livre (17%)
+- Memoria: 23GB total / 4GB usado / 19GB livre
+
+## PROXIMAS MICRO-TAREFAS (DEPLOY VPS)
 
 | # | Tarefa | Status |
 |---|---|---|
-| 47b | storefront pages (layout + home + /products + /product/[slug] + /cart + /checkout) | PROXIMA |
-| 48 | dashboard-admin (Next 15 + RBAC + KPIs) | |
-| 49 | dashboard-seller (cronometro SLA + uploads) | |
-| 50 | deploy/docker-compose.yml | |
-| 51 | deploy/stack.yml swarm + Traefik | |
-| 52 | deploy/ecosystem.config.js PM2 | |
-| 53 | bin/dev-all + smoke tests | |
-| 54 | git init + commit | |
-| 55 | PAUSA: credenciais GitHub | |
-| 56 | PAUSA: credenciais VPS | |
+| 82 | Criar DB `code_agent_shop` no Postgres existente (postegresp2) | PROXIMA |
+| 83 | Ajustar stack.yml: network=minha_rede + remover Postgres+Redis internos + apontar para postegresp2/redis2 | |
+| 84 | Subdominios decididos: cas.inovareinteligenciaartificial.com (store) + admin.* + seller.* + api.* | |
+| 85 | git clone https://github.com/fabricadeautomacoesia/code-agent-shop /opt/cas | |
+| 86 | Criar .env producao na VPS (chaves Asaas/LLM/SMTP/Telegram/JWT pendentes) | |
+| 87 | docker compose build (na VPS) dos 12 svcs + qa-worker + 3 fronts | |
+| 88 | Rodar migrations: docker exec gateway node bin/migrate.js && bin/seed.js | |
+| 89 | docker stack deploy -c stack.yml cas | |
+| 90 | Smoke tests via api.cas.inovareinteligenciaartificial.com | |
+| 91 | Apontar DNS dos 4 subdominios para 209.145.60.53 | |

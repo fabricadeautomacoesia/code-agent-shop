@@ -1,0 +1,175 @@
+version: '3.7'
+
+# ============================================================
+# Code & Agent Shop - DEPLOY VPS Inovare (server2.inovareinteligenciaartificial.com)
+# Diferencas do stack.yml padrao V8:
+#   - Network: 'minha_rede' (existente da VPS, nao network_swarm_public)
+#   - Postgres: REUTILIZA postegresp2 existente (DB code_agent_shop dentro dele)
+#   - Redis: REUTILIZA redis2 existente
+#   - Sem volumes externos node_datad/php82_datad/python_datad (criar inline)
+#   - Subdominios: *.inovareinteligenciaartificial.com
+# Deploy: docker stack deploy -c stack.inovare.yml --with-registry-auth cas
+# ============================================================
+
+x-deploy-defaults: &deploy
+  restart_policy:
+    condition: on-failure
+    max_attempts: 5
+  update_config:
+    parallelism: 1
+    order: start-first
+    failure_action: rollback
+
+services:
+  # ---------- GATEWAY (entry point Traefik) ----------
+  gateway:
+    image: localhost/cas-gateway:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy:
+      <<: *deploy
+      replicas: 2
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.cas-api.rule=Host(`api.cas.inovareinteligenciaartificial.com`)
+        - traefik.http.routers.cas-api.entrypoints=websecure
+        - traefik.http.routers.cas-api.tls.certresolver=letsencryptresolver
+        - traefik.http.services.cas-api.loadbalancer.server.port=3002
+        - traefik.docker.network=minha_rede
+
+  # ---------- MICROSSERVICOS NODE ----------
+  auth-svc:
+    image: localhost/cas-auth-svc:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 2, resources: { limits: { memory: 512M } } }
+
+  vault-svc:
+    image: localhost/cas-vault-svc:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 256M } } }
+
+  seller-svc:
+    image: localhost/cas-seller-svc:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 384M } } }
+
+  product-svc:
+    image: localhost/cas-product-svc:latest
+    env_file: ../.env
+    volumes:
+      - cas_uploads:/app/uploads:rw
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 512M } } }
+
+  qa-svc:
+    image: localhost/cas-qa-svc:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 384M } } }
+
+  qa-worker:
+    image: localhost/cas-qa-worker:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 768M } } }
+
+  order-svc:
+    image: localhost/cas-order-svc:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 384M } } }
+
+  payment-svc:
+    image: localhost/cas-payment-svc:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 384M } } }
+
+  review-svc:
+    image: localhost/cas-review-svc:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 384M } } }
+
+  notification-svc:
+    image: localhost/cas-notification-svc:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 384M } } }
+
+  search-svc:
+    image: localhost/cas-search-svc:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 384M } } }
+
+  aiops-svc:
+    image: localhost/cas-aiops-svc:latest
+    env_file: ../.env
+    networks: [ minha_rede ]
+    deploy:
+      <<: *deploy
+      replicas: 1
+      placement:
+        constraints: [ node.role == manager ]
+      resources: { limits: { memory: 256M } }
+
+  # ---------- FRONTENDS ----------
+  storefront:
+    image: localhost/cas-storefront:latest
+    environment:
+      GATEWAY_URL: http://gateway:3002
+    networks: [ minha_rede ]
+    deploy:
+      <<: *deploy
+      replicas: 2
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.cas-store.rule=Host(`cas.inovareinteligenciaartificial.com`)
+        - traefik.http.routers.cas-store.entrypoints=websecure
+        - traefik.http.routers.cas-store.tls.certresolver=letsencryptresolver
+        - traefik.http.services.cas-store.loadbalancer.server.port=3000
+        - traefik.docker.network=minha_rede
+
+  dashboard-admin:
+    image: localhost/cas-admin:latest
+    environment:
+      GATEWAY_URL: http://gateway:3002
+    networks: [ minha_rede ]
+    deploy:
+      <<: *deploy
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.cas-admin.rule=Host(`admin.cas.inovareinteligenciaartificial.com`)
+        - traefik.http.routers.cas-admin.entrypoints=websecure
+        - traefik.http.routers.cas-admin.tls.certresolver=letsencryptresolver
+        - traefik.http.services.cas-admin.loadbalancer.server.port=3001
+        - traefik.docker.network=minha_rede
+
+  dashboard-seller:
+    image: localhost/cas-seller:latest
+    environment:
+      GATEWAY_URL: http://gateway:3002
+    networks: [ minha_rede ]
+    deploy:
+      <<: *deploy
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.cas-seller.rule=Host(`seller.cas.inovareinteligenciaartificial.com`)
+        - traefik.http.routers.cas-seller.entrypoints=websecure
+        - traefik.http.routers.cas-seller.tls.certresolver=letsencryptresolver
+        - traefik.http.services.cas-seller.loadbalancer.server.port=3003
+        - traefik.docker.network=minha_rede
+
+networks:
+  minha_rede:
+    external: true
+
+volumes:
+  cas_uploads:
+    driver: local
