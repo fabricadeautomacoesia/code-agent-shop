@@ -1,47 +1,41 @@
-# progress.md - V1 OPERACIONAL + UI PREMIUM
+# progress.md - V1 PUBLICA + UI PREMIUM + SELLER PAGES
 
 ## STATUS: PRODUCAO READY - AGUARDANDO DNS
 
-### Auth com refresh silencioso (V8 21.6)
-- 401 token_expired -> auto fetch /api/auth/refresh com cookie
-- Salva novo access em zustand store
-- Retry da request original com novo token
-- Cross-subdomain (.cas.) funciona
+### Frontends Storefront (14 pages publicas validadas)
+1. / com HeroAnimated 3D + Mais vendidos + Trending
+2. /products (lista filtravel)
+3. /product/[slug] PDP com QnaForm integrado
+4. /seller/[slug] (loja publica do vendedor com banner+tier+stats+produtos)
+5. /login, /register
+6. /cart, /checkout (PIX QR + Boleto + Cartao)
+7. /conta, /conta/pedidos, /conta/pedidos/[id], /conta/downloads/[token]
+8. /conta/seguranca 2FA TOTP
 
-### UI Premium (V8 §2, §15, §16)
-- HeroAnimated: 4 cards 3D flutuantes com GSAP rotate continuo
-- Mouse parallax na hero (V8 15.4 flashlight inspirado)
-- Animate-glow-pulse orb central (V8 23.2)
-- Reveal-up com ScrollTrigger
-- Lenis smooth scroll
-- Glassmorphism em todas as cards
-- Noise overlay fixo
+### Componentes globais
+- Nav scroll-aware com SearchAutocomplete modal (debounce 200ms + trending)
+- QnaForm (POST /api/qna com auto-login redirect)
+- ProductCard com tier badges
+- HeroAnimated 3D (4 cards + parallax mouse + glow orb)
 
-### Fluxos E2E em producao
-| Fluxo | Validado |
-|---|---|
-| Register/login/refresh/logout | OK |
-| Cart + checkout PIX | OK CAS-2026-000001 |
-| Order detail + downloads | OK |
-| Q&A no PDP | OK a8521fd1 |
-| Report criacao + admin list | OK 63372209 |
-| Admin orders recent + stats | OK |
-| 2FA TOTP UI | OK |
+### Auth (V8 21.6)
+- JWT 15min + refresh 7d (cookie HttpOnly Secure SameSite=Lax)
+- Domain=.cas.inovareinteligenciaartificial.com (cross-subdomain)
+- Refresh rotation com blacklist do antigo
+- Auto-refresh silencioso em 401 + retry
 
-### Backup pg_dump (V8 6.2)
-- /opt/cas/deploy/cron-backup.sh ativo
+### Backend (16 services Swarm)
+- 12 svcs Node + qa-worker Python + 3 fronts
+- Gateway com pathRewrite por svc
+- DB Postgres 47 tabelas + 10 produtos + Q&A + reports + 1 order
+
+### Backup automatizado
+- /opt/cas/deploy/cron-backup.sh
 - Cron 0 */6 * * *
-- Retencao 7 dias
-- 47KB por dump
+- Retencao 7d
+- pg_dump 47KB gzipped por dump
 
-### SSL
-- Lets Encrypt R13 auto-renew
-- 4 subdominios cobertos
-
-### Storefront pages (13)
-- /, /products, /product/[slug] (com QnaForm + HeroAnimated na home)
-- /login, /register, /cart, /checkout
-- /conta, /conta/pedidos, /conta/pedidos/[id], /conta/downloads/[token], /conta/seguranca
+### SSL Lets Encrypt R13 auto-renew
 
 ### PENDENCIA UNICA: DNS A
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
