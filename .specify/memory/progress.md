@@ -1,42 +1,50 @@
-# progress.md - V1 + MLB-1 + MLB-2 + 20 WORKERS
+# progress.md - V1 + MLB-1 + MLB-2 + SEO META 11 PAGES
 
-## STATUS: AUTOMACAO ATIVA + FEATURES MLB IMPLEMENTADAS
+## STATUS: AUTOMACAO PARALELA + SEO COMPLETO
 
-## MLB Features implementadas (2 de 11)
+## SEO Metadata (W9 worker - rodada 1) - VALIDADO
+11 paginas com metadata layouts:
+- /sellers - "Vendedores"
+- /products - "Catalogo Completo"
+- /login, /register - publicas
+- /esqueci-senha, /redefinir-senha - noindex
+- /conta - noindex
+- /cart, /checkout - noindex (privado)
+- /status - publica
+- /categoria/[slug] - DINAMICO (Mais vendidos: <cat>)
+
+Todas com:
+- title custom
+- description SEO-friendly pt-BR
+- openGraph (publicas)
+- robots noindex (privadas)
+
+## MLB Features (3 de 11)
 
 ### MLB-1: Mais Vendidos por Categoria
-- /api/search/top-sellers (agrupado) + /:category (lista)
-- /categoria/[slug] page com badges 1o/2o/3o
-- ProductCard com badge MAIS VENDIDO
-- Home com chips de top por categoria
-- VALIDADO: HTTP 200
+- /api/search/top-sellers + /categoria/[slug] + ProductCard badge MAIS VENDIDO
 
-### MLB-2: Q&A com Upvote (NOVO)
-- Tabela product_qna_votes (qna_id, user_id)
-- POST /api/qna/:id/upvote (toggle on/off)
-- GET /api/qna/:id/voted (check)
-- QnaUpvote component com ChevronUp + count
-- Integrado no PDP ao lado de cada pergunta
-- VALIDADO E2E: 0 -> 1 -> 0 toggle
+### MLB-2: Q&A com Upvote
+- product_qna_votes + POST /qna/:id/upvote toggle + QnaUpvote component
+- VALIDADO E2E: 0->1->0 toggle
 
-## MLB Features pendentes (9 de 11)
-- Mercado Pontos / loyalty
-- Mercado Credito (parcelamento)
-- Recomendacoes personalizadas (product_views existe)
-- Comparador de produtos
-- Quantidade vendida em destaque PDP
-- Promocoes relampago com timer
-- Cupom de desconto progressivo
-- + 2 outras
+### MLB-9: Selo OFICIAL MAIS VENDIDO (via MLB-1)
+- Badge gradient yellow-orange no card top seller
 
-## FROTA 20 WORKERS ATIVA
-- W1-W18 + MLB Crawler + Continue
-- Workers corrigindo bugs e implementando features em paralelo
+## FROTA 20 WORKERS ATIVOS (crons paralelos)
+W1-W18 + MLB Crawler + Continue meta
 
-## Storefront (27 pages publicas) + 12 components globais
-## Admin (9) + Seller (8)
+## Storefront (27 pages + 11 layouts SEO + 3 UX)
+27 paginas publicas + UX defensiva + metadata
+
+## Components globais (13)
++ QnaUpvote + WishlistButton + NotificationBell + HeroAnimated
+
 ## Backend 16 services Swarm + Postgres 48 tabelas (+votes)
-## SSL Lets Encrypt R13 + Backup cron 6h
 
-## PENDENCIA UNICA: DNS A pelo usuario
+## Auth + Comercio + Reviews + Q&A + Reports + Wishlist E2E
+
+## SSL Lets Encrypt R13 + Backup pg_dump cron 6h
+
+## PENDENCIA UNICA: DNS A
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
