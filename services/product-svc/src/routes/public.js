@@ -7,6 +7,72 @@ const { asyncHandler, validate, errorHandler } = require('@cas/shared');
 
 const router = express.Router();
 
+// GET /products/recommendations - para voce (MLB-6)
+// Combina: 1) categorias mais vistas pelo user, 2) similar a top-rated, 3) populares globais
+router.get('/recommendations/for-me',
+  require('@cas/shared').jwt.requireAuth(),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `WITH user_categories AS (
+         SELECT p.category_id, COUNT(*) AS view_count
+           FROM product_views v
+           JOIN products p ON p.id = v.product_id
+          WHERE v.user_id = $1
+            AND v.created_at > NOW() - INTERVAL '30 days'
+          GROUP BY p.category_id
+          ORDER BY view_count DESC
+          LIMIT 3
+       ),
+       viewed AS (
+         SELECT product_id FROM product_views WHERE user_id = $1
+       ),
+       in_cart_or_owned AS (
+         SELECT ci.product_id FROM cart_items ci
+            JOIN carts c ON c.id = ci.cart_id WHERE c.user_id = $1
+         UNION
+         SELECT oi.product_id FROM order_items oi
+            JOIN orders o ON o.id = oi.order_id WHERE o.buyer_user_id = $1
+       )
+       SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
+              p.cover_image_url, p.price_cents, p.currency, p.is_free,
+              p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
+              p.is_platform_owned, p.flash_promo_active,
+              (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug,
+              (SELECT store_name FROM sellers WHERE id = p.seller_id) AS store_name,
+              (SELECT reputation_tier FROM sellers WHERE id = p.seller_id) AS reputation_tier,
+              CASE WHEN p.category_id IN (SELECT category_id FROM user_categories) THEN 2 ELSE 1 END AS reco_score
+         FROM products p
+        WHERE p.status = 'approved' AND p.deleted_at IS NULL
+          AND p.id NOT IN (SELECT product_id FROM in_cart_or_owned)
+          AND (
+            p.category_id IN (SELECT category_id FROM user_categories)
+            OR p.sales_count > 100
+          )
+        ORDER BY reco_score DESC, p.avg_rating DESC NULLS LAST, p.sales_count DESC
+        LIMIT 12`,
+      [req.user.sub]
+    );
+    res.json({ products: r.rows });
+  })
+);
+
+// GET /products/:slug/related - produtos relacionados (mesma categoria, exclui o atual)
+router.get('/:slug/related', asyncHandler(async (req, res) => {
+  const r = await query(
+    `SELECT p2.id, p2.slug, p2.title, p2.subtitle, p2.short_description, p2.kind,
+            p2.cover_image_url, p2.price_cents, p2.currency, p2.is_free,
+            p2.tech_stack, p2.avg_rating, p2.review_count, p2.sales_count,
+            p2.is_platform_owned, p2.flash_promo_active,
+            (SELECT store_slug FROM sellers WHERE id = p2.seller_id) AS store_slug,
+            (SELECT reputation_tier FROM sellers WHERE id = p2.seller_id) AS reputation_tier
+       FROM products p1
+       JOIN products p2 ON p2.category_id = p1.category_id AND p2.id <> p1.id
+      WHERE p1.slug = $1 AND p2.status = 'approved' AND p2.deleted_at IS NULL
+      ORDER BY p2.sales_count DESC LIMIT 6`, [req.params.slug]
+  );
+  res.json({ products: r.rows });
+}));
+
 // GET /products/compare?ids=uuid,uuid,uuid - comparar ate 4 produtos (MLB-7)
 router.get('/compare', asyncHandler(async (req, res) => {
   const idsRaw = (req.query.ids || '').toString();

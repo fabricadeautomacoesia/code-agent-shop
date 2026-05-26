@@ -9,17 +9,28 @@ import { QnaUpvote } from '@/components/qna-upvote';
 
 export const revalidate = 30;
 
+async function fetchRelated(slug: string) {
+  try {
+    const base = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';
+    const r = await fetch(`${base}/api/products/${slug}/related`, { cache: 'no-store' });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return d.products || [];
+  } catch { return []; }
+}
+
 export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  let product: any, reviews: any[] = [], qna: any[] = [];
+  let product: any, reviews: any[] = [], qna: any[] = [], related: any[] = [];
   try {
     const p = await Api.product(slug);
     product = p.product;
-    const [r, q] = await Promise.all([
+    const [r, q, rel] = await Promise.all([
       Api.reviews(slug).catch(() => ({ reviews: [] })),
       Api.qna(slug).catch(() => ({ qna: [] })),
+      fetchRelated(slug),
     ]);
-    reviews = r.reviews; qna = q.qna;
+    reviews = r.reviews; qna = q.qna; related = rel;
   } catch {
     notFound();
   }
@@ -170,6 +181,33 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
           </div>
         </aside>
       </div>
+
+      {/* MLB-6: Produtos relacionados */}
+      {related.length > 0 && (
+        <section className="mt-16">
+          <h2 className="font-display font-bold text-2xl mb-6">Voce tambem pode gostar</h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {related.map((p: any) => (
+              <Link key={p.id} href={`/product/${p.slug}`} className="glass p-4 hover:scale-105 transition-transform group">
+                <div className="flex gap-3">
+                  {p.cover_image_url && (
+                    <img src={p.cover_image_url} alt={p.title} className="w-16 h-16 object-cover rounded" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-display font-semibold text-sm line-clamp-2 group-hover:text-magenta">{p.title}</div>
+                    <div className="flex items-center gap-1 mt-1 text-xs">
+                      <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
+                      <span>{p.avg_rating ? Number(p.avg_rating).toFixed(1) : '-'}</span>
+                      <span className="text-white/40">- {p.sales_count} vendas</span>
+                    </div>
+                    <div className="font-display font-bold text-magenta-glow mt-1">{p.is_free ? 'Gratis' : Api.formatBRL(p.price_cents)}</div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
