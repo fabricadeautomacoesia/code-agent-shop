@@ -35,6 +35,25 @@ export async function api<T = any>(
     next: init.revalidate ? { revalidate: init.revalidate } : undefined,
   });
 
+  // Auto-refresh: se 401 token_expired e tem auth, tentar refresh silencioso
+  if (r.status === 401 && init.auth && !init._retry && !isServer) {
+    try {
+      const refreshUrl = `/api/auth/refresh`;
+      const rr = await fetch(refreshUrl, { method: 'POST', credentials: 'include' });
+      if (rr.ok) {
+        const data = await rr.json();
+        // notifica zustand store
+        try {
+          const { useAuth } = await import('./store');
+          const { user } = useAuth.getState();
+          useAuth.getState().setAuth(data.access_token, user);
+        } catch {}
+        // retry com novo token
+        return api<T>(path, { ...init, auth: data.access_token, _retry: true } as any);
+      }
+    } catch { /* ignore */ }
+  }
+
   if (!r.ok) {
     let data: any = null;
     try { data = await r.json(); } catch {}

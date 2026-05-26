@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ArrowRight, Bot, Workflow, Code2, Sparkles, Shield, Zap, TrendingUp } from 'lucide-react';
 import { api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
+import { HeroAnimated } from '@/components/hero-animated';
 
 export const revalidate = 60;
 export const dynamic = 'force-dynamic';
@@ -54,31 +55,7 @@ export default async function HomePage() {
             </div>
           </div>
           <div className="relative">
-            <div className="glass p-8 relative animate-float">
-              <div className="absolute -top-3 -right-3 px-3 py-1 rounded-full bg-gradient-vibe text-xs font-bold">VITRINE</div>
-              <pre className="font-mono text-xs text-white/80 leading-relaxed overflow-hidden">
-{`{
-  "tipo": "agente_ia",
-  "nome": "Atendente B2B",
-  "stack": ["openai", "langchain", "rag"],
-  "preco_brl": 297.00,
-  "vendas": 1247,
-  "qa_confidence": 0.94,
-  "selo": "OFICIAL CAS"
-}`}
-              </pre>
-              <div className="absolute -bottom-6 -left-6 glass-strong p-4 rounded-xl shadow-2xl">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-vibe flex items-center justify-center">
-                    <Shield className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-xs text-white/60">QA Automatizado</div>
-                    <div className="text-sm font-semibold">Confidence 94%</div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <HeroAnimated />
           </div>
         </div>
       </section>
