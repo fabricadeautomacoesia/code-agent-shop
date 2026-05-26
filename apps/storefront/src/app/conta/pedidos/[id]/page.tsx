@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { CheckCircle, Clock, Download, AlertCircle, Copy } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
+import { ReviewForm } from '@/components/review-form';
 
 const STATUS_BADGE: Record<string, { label: string; cls: string; Icon: any }> = {
   cart:            { label: 'Carrinho',         cls: 'bg-gray-500/20 text-gray-300',     Icon: Clock },
@@ -152,6 +153,21 @@ export default function PedidoPage() {
           </div>
         </div>
       </div>
+
+      {/* FORM DE REVIEW POR ITEM (so se pago) */}
+      {(order.status === 'paid' || order.status === 'fulfilled') && items.length > 0 && (
+        <div className="mt-6 space-y-4">
+          <h2 className="font-display font-bold text-2xl">Avalie os produtos</h2>
+          {items.map((it) => (
+            <ReviewForm
+              key={it.id}
+              productId={it.product_id}
+              orderId={order.id}
+              productTitle={it.snapshot?.title || 'Produto'}
+            />
+          ))}
+        </div>
+      )}
 
       <div className="mt-6 text-center">
         <Link href={`/product/${items[0]?.snapshot?.slug || ''}`} className="text-sm text-white/60 hover:text-white">
