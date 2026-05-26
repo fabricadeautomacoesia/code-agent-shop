@@ -31,11 +31,14 @@ services:
       replicas: 2
       labels:
         - traefik.enable=true
+        - traefik.docker.network=minha_rede
         - traefik.http.routers.cas-api.rule=Host(`api.cas.inovareinteligenciaartificial.com`)
         - traefik.http.routers.cas-api.entrypoints=websecure
+        - traefik.http.routers.cas-api.tls=true
         - traefik.http.routers.cas-api.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.cas-api.service=cas-api
         - traefik.http.services.cas-api.loadbalancer.server.port=3002
-        - traefik.docker.network=minha_rede
+        - traefik.http.services.cas-api.loadbalancer.passHostHeader=true
 
   # ---------- MICROSSERVICOS NODE ----------
   auth-svc:
@@ -128,11 +131,14 @@ services:
       replicas: 2
       labels:
         - traefik.enable=true
+        - traefik.docker.network=minha_rede
         - traefik.http.routers.cas-store.rule=Host(`cas.inovareinteligenciaartificial.com`)
         - traefik.http.routers.cas-store.entrypoints=websecure
+        - traefik.http.routers.cas-store.tls=true
         - traefik.http.routers.cas-store.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.cas-store.service=cas-store
         - traefik.http.services.cas-store.loadbalancer.server.port=3000
-        - traefik.docker.network=minha_rede
+        - traefik.http.services.cas-store.loadbalancer.passHostHeader=true
 
   dashboard-admin:
     image: localhost/cas-admin:latest
@@ -144,11 +150,14 @@ services:
       replicas: 1
       labels:
         - traefik.enable=true
+        - traefik.docker.network=minha_rede
         - traefik.http.routers.cas-admin.rule=Host(`admin.cas.inovareinteligenciaartificial.com`)
         - traefik.http.routers.cas-admin.entrypoints=websecure
+        - traefik.http.routers.cas-admin.tls=true
         - traefik.http.routers.cas-admin.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.cas-admin.service=cas-admin
         - traefik.http.services.cas-admin.loadbalancer.server.port=3001
-        - traefik.docker.network=minha_rede
+        - traefik.http.services.cas-admin.loadbalancer.passHostHeader=true
 
   dashboard-seller:
     image: localhost/cas-seller:latest
@@ -160,11 +169,14 @@ services:
       replicas: 1
       labels:
         - traefik.enable=true
+        - traefik.docker.network=minha_rede
         - traefik.http.routers.cas-seller.rule=Host(`seller.cas.inovareinteligenciaartificial.com`)
         - traefik.http.routers.cas-seller.entrypoints=websecure
+        - traefik.http.routers.cas-seller.tls=true
         - traefik.http.routers.cas-seller.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.cas-seller.service=cas-seller
         - traefik.http.services.cas-seller.loadbalancer.server.port=3003
-        - traefik.docker.network=minha_rede
+        - traefik.http.services.cas-seller.loadbalancer.passHostHeader=true
 
 networks:
   minha_rede:
