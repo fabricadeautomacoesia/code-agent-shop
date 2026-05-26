@@ -96,6 +96,8 @@ app.get('/api/status', asyncHandler(async (_req, res) => {
 }));
 
 // --- Helper para gerar proxy ---
+// IMPORTANTE: por padrao reescreve para preservar o prefixo /api/<svc>/* original
+// Ex: gateway recebe POST /api/auth/login -> auth-svc recebe POST /auth/login
 function proxy(target, opts = {}) {
   return createProxyMiddleware({
     target,
@@ -103,6 +105,7 @@ function proxy(target, opts = {}) {
     xfwd: true,
     proxyTimeout: 30000,
     timeout: 30000,
+    pathRewrite: opts.pathRewrite,
     on: {
       error: (err, req, res) => {
         log.error({ err: err.message, path: req.originalUrl, target }, '[proxy.error]');
@@ -134,18 +137,20 @@ const UPSTREAMS = {
   aiops:        process.env.UPSTREAM_AIOPS        || `http://tasks.cas_aiops-svc:${process.env.PORT_AIOPS || 3006}`,
 };
 
-app.use('/api/auth', fail2ban.middleware(), proxy(UPSTREAMS.auth));
-app.use('/api/sellers',       proxy(UPSTREAMS.seller));
-app.use('/api/products',      proxy(UPSTREAMS.product));
-app.use('/api/qa',            proxy(UPSTREAMS.qa));
-app.use('/api/orders',        proxy(UPSTREAMS.order));
-app.use('/api/payments',      proxy(UPSTREAMS.payment));
-app.use('/api/reviews',       proxy(UPSTREAMS.review));
-app.use('/api/qna',           proxy(UPSTREAMS.review));
-app.use('/api/notifications', proxy(UPSTREAMS.notification));
-app.use('/api/search',        proxy(UPSTREAMS.search));
-app.use('/api/vault',         proxy(UPSTREAMS.vault));
-app.use('/api/aiops',         proxy(UPSTREAMS.aiops));
+// Reescrita: gateway recebe /api/<svc>/X -> upstream recebe /<svc>/X
+// (svcs montam routers em /auth, /sellers, /products, etc)
+app.use('/api/auth',          fail2ban.middleware(), proxy(UPSTREAMS.auth,         { pathRewrite: { '^/api': '' } }));
+app.use('/api/sellers',       proxy(UPSTREAMS.seller,       { pathRewrite: { '^/api': '' } }));
+app.use('/api/products',      proxy(UPSTREAMS.product,      { pathRewrite: { '^/api': '' } }));
+app.use('/api/qa',            proxy(UPSTREAMS.qa,           { pathRewrite: { '^/api/qa': '/qa' } }));
+app.use('/api/orders',        proxy(UPSTREAMS.order,        { pathRewrite: { '^/api': '' } }));
+app.use('/api/payments',      proxy(UPSTREAMS.payment,      { pathRewrite: { '^/api/payments': '/payments' } }));
+app.use('/api/reviews',       proxy(UPSTREAMS.review,       { pathRewrite: { '^/api/reviews': '' } }));
+app.use('/api/qna',           proxy(UPSTREAMS.review,       { pathRewrite: { '^/api': '' } }));
+app.use('/api/notifications', proxy(UPSTREAMS.notification, { pathRewrite: { '^/api/notifications': '' } }));
+app.use('/api/search',        proxy(UPSTREAMS.search,       { pathRewrite: { '^/api/search': '' } }));
+app.use('/api/vault',         proxy(UPSTREAMS.vault,        { pathRewrite: { '^/api': '' } }));
+app.use('/api/aiops',         proxy(UPSTREAMS.aiops,        { pathRewrite: { '^/api/aiops': '' } }));
 
 app.get('/', (_req, res) => res.json({ name: 'Code & Agent Shop Gateway', version: '0.1.0' }));
 app.use((req, res) => res.status(404).json({ error: 'route_not_found', path: req.originalUrl }));
