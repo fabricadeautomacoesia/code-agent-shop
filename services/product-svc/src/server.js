@@ -16,10 +16,11 @@ app.use(sanitize.middleware());
 
 app.get('/health', async (_req, res) => res.json({ ok: true, db: await healthcheck() }));
 
-app.use('/products',          require('./routes/public'));
+// ORDEM IMPORTA: rotas especificas ANTES de /products generico (que captura :slug)
 app.use('/products/me',       require('./routes/seller-mgmt'));
 app.use('/products/admin',    require('./routes/admin'));
 app.use('/products/upload',   require('./routes/upload'));
+app.use('/products',          require('./routes/public'));
 
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
