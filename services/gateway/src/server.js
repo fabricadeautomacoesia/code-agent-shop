@@ -140,6 +140,9 @@ const UPSTREAMS = {
 // Express strip do app.use(prefix) faz proxy receber apenas o resto.
 // Ex: GET /api/auth/login -> proxy.req.url = /login
 // Prepend o prefixo correto que cada svc espera no proprio router:
+// /uploads/* -> product-svc (sem prefix, serve static)
+app.use('/uploads',           proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/uploads' + p }));
+
 app.use('/api/auth',          fail2ban.middleware(), proxy(UPSTREAMS.auth,         { pathRewrite: (p) => '/auth' + p }));
 app.use('/api/sellers',       proxy(UPSTREAMS.seller,       { pathRewrite: (p) => '/sellers' + p }));
 app.use('/api/products',      proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/products' + p }));
