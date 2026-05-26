@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS spike_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_spike_tenant ON spike_events(tenant_type, tenant_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_spike_block_active ON spike_events(block_expires_at) WHERE block_expires_at > NOW();
+CREATE INDEX IF NOT EXISTS idx_spike_block_active ON spike_events(block_expires_at) WHERE block_expires_at IS NOT NULL;
 
 -- ------------------------------------------------------------
 -- SEARCH_LOG: log de buscas (analytics + sugestoes)
