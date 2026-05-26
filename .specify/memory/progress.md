@@ -1,40 +1,56 @@
-# progress.md - V1 COMERCIAL + SEO + ADMIN COMPLETO
+# progress.md - V1 OPERACIONAL FULL-STACK
 
-## STATUS: SISTEMA OPERACIONAL COM SEO - AGUARDANDO DNS
+## STATUS: PRODUCAO COMPLETA - AGUARDANDO DNS
 
-### Funcionalidades validadas em producao
-- Auth: register/login/refresh com rotation + 2FA TOTP + auto-refresh silencioso
-- Cart: Add/Remove/Coupon + CartDrawer lateral global
-- Checkout: PIX QR + Boleto + Cartao + pedido CAS-2026-000001
-- Q&A: POST publica + listagem no PDP
-- Admin: orders/recent com stats live, reports/list+resolve, qa-queue, payouts, vault, alerts
-- Seller: cronometro SLA + KYC + payouts
-- Status page publica: CPU/RAM/Disk + services + alerts
+### Capacidades comerciais validadas
+- Compra com 3 metodos pagamento (PIX/Boleto/Cartao) via Asaas
+- Carrinho persistente + cupons + remove + CartDrawer lateral
+- Checkout 1-click com retry no payment
+- Download de produto pago com license_key + expiracao 365d
+- Pedidos com snapshot do produto + items_preview
 
-### SEO (Google-ready)
-- /robots.txt com allow/disallow + Sitemap + Host
-- /sitemap.xml dinamico: 6 estaticas + 10 produtos + N sellers
-- Open Graph metadata pt-BR no layout
-- Auto-revalidate de sitemap
+### Capacidades de relacionamento
+- Q&A publica no PDP (compradores perguntam)
+- Seller responde pelo dashboard /qna (notifica quem perguntou)
+- Reviews verificadas (com order_id) + replies do seller
+- Reports/denuncias por compradores (admin modera)
+- Disputes/disputas formais (mediacao via dispute_messages)
 
-### Storefront (16 paginas publicas)
-- Componentes globais: Nav, Footer, Providers (Lenis+GSAP), ProductCard, QnaForm, HeroAnimated, SearchAutocomplete, CartDrawer, AddToCart
+### Capacidades para vendedor
+- Cronometro SLA Classe B (warnings 7d/3d/1d + revogacao auto)
+- Upload de produto com QA automatizado LLM
+- Versionamento de produto (changelog)
+- Painel financeiro com receita liquida 82%
+- Solicitar payout via Asaas
 
-### Admin (9 paginas) - todas com endpoints reais
-- /, /sellers, /qa-queue, /products, /orders (com /admin/recent + stats), /payouts, /reports, /alerts, /vault
+### Capacidades admin (master console)
+- KPIs live polling 10s (CPU/RAM/Disk + alerts)
+- Sellers: KYC + suspend + promote Classe B
+- QA queue + force-approve + Clausula Master (platform-take)
+- Orders + stats (count_paid, count_pending, total_revenue)
+- Payouts approve/reject + processar Asaas transfer
+- Reports moderation
+- Vault de API keys AES-256-GCM (provisionar + revogar)
 
-### Seller (6 paginas)
-- /, /products, /upload, /qna, /financeiro, /loja
+### SEO completo (Google ready)
+- /robots.txt com allow/disallow + sitemap reference
+- /sitemap.xml dinamico (produtos + sellers + estaticas)
+- Metadata OG pt-BR
+- URLs canonicas + slug semantico
 
-### Backend (16 services Swarm UP)
-- Gateway pathRewrite por svc
-- 12 svcs Node + qa-worker Python + 3 fronts
-- DB Postgres 47 tabelas + 10 produtos + admin + sellers + Q&A + reports
+### Seguranca (V8)
+- JWT duplo (15min access + 7d refresh HTTP-only)
+- Cookie cross-subdomain .cas.inovareinteligenciaartificial.com
+- Refresh rotation + blacklist + auto-refresh silencioso em 401
+- 2FA TOTP com QR + recovery codes + senha+token para disable
+- Fail2Ban in-memory (5 falhas = ban 15min)
+- Vault AES-256-GCM + spike detector + helmet CSP
 
 ### Infra
-- Docker Swarm + Traefik + SSL Lets Encrypt R13 auto-renew
-- Backup pg_dump cron 6h + retencao 7d
-- Cookie cross-subdomain .cas. (auth compartilhado entre cas e api.cas)
+- 16 services Swarm UP (12 Node + qa-worker Python + 3 fronts)
+- Traefik + SSL Lets Encrypt R13 auto-renew
+- Postgres 14 (reusado) + Redis 7
+- Backup cron 6h + retencao 7d (47KB/dump)
 
-### PENDENCIA UNICA: DNS A
+### PENDENCIA UNICA: DNS A pelo usuario
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
