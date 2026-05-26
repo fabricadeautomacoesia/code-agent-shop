@@ -185,13 +185,58 @@ router.post('/forgot-password',
   asyncHandler(async (req, res) => {
     const tok = crypto.randomBytes(32).toString('hex');
     const hash = crypto.createHash('sha256').update(tok).digest('hex');
-    await query(
-      `INSERT INTO password_resets (user_id, token_hash, requested_ip, expires_at)
-       SELECT id, $1, $2, NOW() + INTERVAL '15 minutes' FROM users WHERE email = $3`,
-      [hash, req.ip, req.body.email]
-    );
-    // notification-svc enviara email assincrono
+    const u = await query('SELECT id, full_name FROM users WHERE email = $1', [req.body.email]);
+    if (u.rows.length) {
+      const userId = u.rows[0].id;
+      const fullName = u.rows[0].full_name;
+      await query(
+        `INSERT INTO password_resets (user_id, token_hash, requested_ip, expires_at)
+         VALUES ($1, $2, $3, NOW() + INTERVAL '15 minutes')`,
+        [userId, hash, req.ip]
+      );
+      // dispara notification (notification-svc envia email)
+      const resetUrl = `${process.env.APP_URL || 'https://cas.inovareinteligenciaartificial.com'}/redefinir-senha?token=${tok}`;
+      await query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, body_html, payload, priority)
+         VALUES ($1, 'email', 'password_reset', $2, $3, $4, $5::JSONB, 1)`,
+        [
+          userId,
+          'Redefinicao de senha - Code & Agent Shop',
+          `Ola ${fullName},\n\nClique no link para redefinir sua senha:\n${resetUrl}\n\nLink expira em 15 minutos.\nSe nao foi voce, ignore este email.`,
+          `<p>Ola <b>${fullName}</b>,</p><p>Clique no link abaixo para redefinir sua senha:</p><p><a href="${resetUrl}" style="display:inline-block;padding:10px 20px;background:linear-gradient(135deg,#EC4899,#7C3AED);color:#fff;text-decoration:none;border-radius:8px;">Redefinir senha</a></p><p>Link expira em 15 minutos. Se nao foi voce, ignore.</p>`,
+          JSON.stringify({ url: resetUrl, name: fullName }),
+        ]
+      );
+    }
     res.json({ ok: true, message: 'Se o email existir, enviaremos instrucoes.' });
+  })
+);
+
+// POST /auth/reset-password
+router.post('/reset-password',
+  validate({ body: z.object({
+    token: z.string().min(32),
+    password: z.string().min(8).max(128)
+      .refine((s) => /[A-Z]/.test(s) && /[0-9]/.test(s), 'Senha precisa de maiuscula e numero'),
+  })}),
+  asyncHandler(async (req, res, next) => {
+    const bcrypt = require('bcrypt');
+    const hash = crypto.createHash('sha256').update(req.body.token).digest('hex');
+    const r = await query(
+      `SELECT id, user_id FROM password_resets
+        WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()`, [hash]
+    );
+    if (!r.rows.length) return next(require('@cas/shared').errorHandler.badRequest('invalid_or_expired_token'));
+    const pwHash = await bcrypt.hash(req.body.password, 12);
+    await tx(async (c) => {
+      await c.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+        [pwHash, r.rows[0].user_id]);
+      await c.query('UPDATE password_resets SET used_at = NOW() WHERE id = $1', [r.rows[0].id]);
+      // revoga todas sessoes ativas (forca re-login)
+      await c.query(`UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(), revoked_reason = 'password_reset'
+                       WHERE user_id = $1 AND is_revoked = FALSE`, [r.rows[0].user_id]);
+    });
+    res.json({ ok: true });
   })
 );
 

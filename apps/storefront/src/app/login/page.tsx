@@ -64,9 +64,14 @@ export default function LoginPage() {
           {loading ? 'Entrando...' : (needs2fa ? 'Validar 2FA' : 'Entrar')}
         </button>
 
-        <div className="text-center text-sm text-white/50">
-          Nao tem conta?{' '}
-          <Link href="/register" className="text-magenta hover:underline">Cadastre-se</Link>
+        <div className="text-center text-sm text-white/50 space-y-1">
+          <div>
+            Nao tem conta?{' '}
+            <Link href="/register" className="text-magenta hover:underline">Cadastre-se</Link>
+          </div>
+          <div>
+            <Link href="/esqueci-senha" className="text-white/40 hover:text-white">Esqueci minha senha</Link>
+          </div>
         </div>
       </form>
     </div>
