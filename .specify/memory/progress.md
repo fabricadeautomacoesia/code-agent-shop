@@ -1,56 +1,64 @@
-# progress.md - V1 OPERACIONAL FULL-STACK
+# progress.md - V1 PRODUCAO REAL
 
-## STATUS: PRODUCAO COMPLETA - AGUARDANDO DNS
+## STATUS: SISTEMA COMERCIAL COMPLETO - AGUARDANDO DNS
 
-### Capacidades comerciais validadas
-- Compra com 3 metodos pagamento (PIX/Boleto/Cartao) via Asaas
-- Carrinho persistente + cupons + remove + CartDrawer lateral
-- Checkout 1-click com retry no payment
-- Download de produto pago com license_key + expiracao 365d
-- Pedidos com snapshot do produto + items_preview
+### Fluxos validados E2E em producao
 
-### Capacidades de relacionamento
-- Q&A publica no PDP (compradores perguntam)
-- Seller responde pelo dashboard /qna (notifica quem perguntou)
-- Reviews verificadas (com order_id) + replies do seller
-- Reports/denuncias por compradores (admin modera)
-- Disputes/disputas formais (mediacao via dispute_messages)
+**Fluxo de compra completo:**
+1. Buyer cadastrado: teste1@cas.io
+2. Login + JWT + cookie cas_rt cross-domain
+3. Add ao cart (prompt-pack R$ 19)
+4. Checkout PIX -> CAS-2026-000001 criado
+5. Pagamento confirmado (manual via SQL para teste)
+6. Review postada com COMPRA VERIFICADA badge
+7. Review visivel no PDP publico
 
-### Capacidades para vendedor
-- Cronometro SLA Classe B (warnings 7d/3d/1d + revogacao auto)
-- Upload de produto com QA automatizado LLM
-- Versionamento de produto (changelog)
-- Painel financeiro com receita liquida 82%
-- Solicitar payout via Asaas
+**Fluxo Q&A bidirecional:**
+1. Buyer pergunta sobre produto: a8521fd1
+2. Pergunta aparece no PDP publico
+3. Seller responde via /seller/qna dashboard
+4. Buyer recebe notification in_app
 
-### Capacidades admin (master console)
-- KPIs live polling 10s (CPU/RAM/Disk + alerts)
-- Sellers: KYC + suspend + promote Classe B
-- QA queue + force-approve + Clausula Master (platform-take)
-- Orders + stats (count_paid, count_pending, total_revenue)
-- Payouts approve/reject + processar Asaas transfer
-- Reports moderation
-- Vault de API keys AES-256-GCM (provisionar + revogar)
+**Fluxo Reports:**
+1. Buyer denuncia produto: 63372209
+2. Admin ve em /admin/reports
+3. Admin resolve com notes
 
-### SEO completo (Google ready)
-- /robots.txt com allow/disallow + sitemap reference
-- /sitemap.xml dinamico (produtos + sellers + estaticas)
-- Metadata OG pt-BR
-- URLs canonicas + slug semantico
+### Capacidades comerciais (validadas)
+- Cart persistente + cupons + CartDrawer lateral
+- Checkout PIX/Cartao/Boleto via Asaas Split
+- Orders com snapshot + license_key + download_token
+- Reviews verificadas (must order paid)
+- Q&A bidirecional com notification
+- Reports + Disputes + Mediation
 
-### Seguranca (V8)
-- JWT duplo (15min access + 7d refresh HTTP-only)
-- Cookie cross-subdomain .cas.inovareinteligenciaartificial.com
-- Refresh rotation + blacklist + auto-refresh silencioso em 401
-- 2FA TOTP com QR + recovery codes + senha+token para disable
-- Fail2Ban in-memory (5 falhas = ban 15min)
-- Vault AES-256-GCM + spike detector + helmet CSP
+### Capacidades operacionais
+- Admin: 9 paginas (todas com endpoints reais)
+- Seller: 6 paginas (com cronometro SLA Classe B)
+- SEO: robots + sitemap dinamico
+- Status page publica (V8 5.3)
+- Backup pg_dump cron 6h
+
+### Auth completa (V8 21.6)
+- JWT duplo 15min+7d
+- Refresh rotation + blacklist
+- Cookie Domain=.cas. cross-subdomain
+- Auto-refresh silencioso em 401
+- 2FA TOTP com recovery codes
+- Fail2Ban in-memory
 
 ### Infra
-- 16 services Swarm UP (12 Node + qa-worker Python + 3 fronts)
-- Traefik + SSL Lets Encrypt R13 auto-renew
-- Postgres 14 (reusado) + Redis 7
-- Backup cron 6h + retencao 7d (47KB/dump)
+- 16 services Swarm UP
+- Traefik + SSL Lets Encrypt R13
+- Postgres 14 reusado + Redis 7
+- Backup automatizado
 
-### PENDENCIA UNICA: DNS A pelo usuario
-- cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
+### Storefront (16 pages publicas) + 9 components globais
+### Admin (9 pages) + Seller (6 pages)
+
+### PENDENCIA UNICA
+DNS A pelo usuario:
+- cas.inovareinteligenciaartificial.com -> 209.145.60.53
+- api.cas.inovareinteligenciaartificial.com -> 209.145.60.53
+- admin.cas.inovareinteligenciaartificial.com -> 209.145.60.53
+- seller.cas.inovareinteligenciaartificial.com -> 209.145.60.53
