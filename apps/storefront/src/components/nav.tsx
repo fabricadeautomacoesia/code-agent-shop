@@ -4,11 +4,12 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Search, ShoppingCart, User, Menu, Code2 } from 'lucide-react';
 import { useAuth, useUI } from '@/lib/store';
+import { SearchAutocomplete } from './search-autocomplete';
 
 export function Nav() {
   const [scrolled, setScrolled] = useState(false);
   const { user } = useAuth();
-  const { setCartOpen, setSearchOpen } = useUI();
+  const { setCartOpen, searchOpen, setSearchOpen } = useUI();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
@@ -17,6 +18,8 @@ export function Nav() {
   }, []);
 
   return (
+    <>
+    {searchOpen && <SearchAutocomplete onClose={() => setSearchOpen(false)} />}
     <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
       scrolled ? 'glass-strong py-3' : 'py-5 bg-transparent'
     }`}>
@@ -54,5 +57,6 @@ export function Nav() {
         </div>
       </div>
     </nav>
+    </>
   );
 }
