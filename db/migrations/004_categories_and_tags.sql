@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS categories (
     icon                VARCHAR(80),                     -- nome do icone lucide/heroicons
     cover_image_url     TEXT,
     depth               SMALLINT NOT NULL DEFAULT 0,
-    path                LTREE,                           -- opcional, requer extensao ltree
+    -- path                LTREE,  -- removido: extensao ltree nao disponivel no Postgres existente
     sort_order          INT NOT NULL DEFAULT 0,
     is_active           BOOLEAN NOT NULL DEFAULT TRUE,
     is_featured         BOOLEAN NOT NULL DEFAULT FALSE,
