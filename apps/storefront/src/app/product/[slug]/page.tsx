@@ -4,6 +4,7 @@ import { Star, Award, Download, Shield, Clock, Tag } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { QnaForm } from '@/components/qna-form';
 import { AddToCart } from '@/components/add-to-cart';
+import { WishlistButton } from '@/components/wishlist-button';
 
 export const revalidate = 60;
 
@@ -123,7 +124,12 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             <div className="text-4xl font-display font-bold text-magenta-glow mb-6">
               {product.is_free ? 'Gratis' : Api.formatBRL(product.price_cents)}
             </div>
-            <AddToCart productId={product.id} isFree={product.is_free} />
+            <div className="flex gap-2 mb-3">
+              <div className="flex-1">
+                <AddToCart productId={product.id} isFree={product.is_free} />
+              </div>
+              <WishlistButton productId={product.id} />
+            </div>
 
             {product.tech_stack?.length > 0 && (
               <div className="mt-6 pt-6 border-t border-white/10">
