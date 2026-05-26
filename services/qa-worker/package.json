@@ -1,0 +1,11 @@
+{
+  "name": "@cas/qa-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Python FastAPI worker for QA pipeline (LLM scoring).",
+  "scripts": {
+    "dev": "python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 3014",
+    "start": "python -m uvicorn app.main:app --host 0.0.0.0 --port 3014",
+    "install:py": "python -m pip install -r requirements.txt"
+  }
+}

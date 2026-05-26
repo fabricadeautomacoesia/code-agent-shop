@@ -1,0 +1,167 @@
+version: '3.8'
+
+# ============================================================
+# Code & Agent Shop - DEV LOCAL (docker compose up)
+# Para producao Swarm, ver stack.yml
+# ============================================================
+
+services:
+  # ---------- INFRA ----------
+  postgres:
+    image: postgres:16-alpine
+    container_name: cas-postgres
+    environment:
+      POSTGRES_USER: ${PG_USER:-codeshop}
+      POSTGRES_PASSWORD: ${PG_PASS:-changeme_strong_password_2026}
+      POSTGRES_DB: ${PG_DB:-code_agent_shop}
+    ports:
+      - "5432:5432"
+    volumes:
+      - cas_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-codeshop}"]
+      interval: 10s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: cas-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - cas_redisdata:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+    restart: unless-stopped
+
+  # ---------- MICROSERVICOS NODE ----------
+  gateway:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: gateway } }
+    container_name: cas-gateway
+    env_file: ../.env
+    ports: [ "3002:3002" ]
+    depends_on: [ postgres, redis ]
+    restart: unless-stopped
+
+  auth-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: auth-svc } }
+    container_name: cas-auth-svc
+    env_file: ../.env
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  vault-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: vault-svc } }
+    container_name: cas-vault-svc
+    env_file: ../.env
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  seller-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: seller-svc } }
+    container_name: cas-seller-svc
+    env_file: ../.env
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  product-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: product-svc } }
+    container_name: cas-product-svc
+    env_file: ../.env
+    volumes:
+      - cas_uploads:/app/uploads
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  qa-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: qa-svc } }
+    container_name: cas-qa-svc
+    env_file: ../.env
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  qa-worker:
+    build: { context: ../services/qa-worker, dockerfile: Dockerfile }
+    container_name: cas-qa-worker
+    env_file: ../.env
+    ports: [ "3014:3014" ]
+    restart: unless-stopped
+
+  order-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: order-svc } }
+    container_name: cas-order-svc
+    env_file: ../.env
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  payment-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: payment-svc } }
+    container_name: cas-payment-svc
+    env_file: ../.env
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  review-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: review-svc } }
+    container_name: cas-review-svc
+    env_file: ../.env
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  notification-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: notification-svc } }
+    container_name: cas-notification-svc
+    env_file: ../.env
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  search-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: search-svc } }
+    container_name: cas-search-svc
+    env_file: ../.env
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  aiops-svc:
+    build: { context: .., dockerfile: deploy/Dockerfile.node, args: { SVC: aiops-svc } }
+    container_name: cas-aiops-svc
+    env_file: ../.env
+    privileged: true   # necessario para autoheal de RAM (drop_caches)
+    depends_on: [ postgres ]
+    restart: unless-stopped
+
+  # ---------- FRONTENDS ----------
+  storefront:
+    build: { context: ../apps/storefront, dockerfile: ../../deploy/Dockerfile.next }
+    container_name: cas-storefront
+    environment:
+      GATEWAY_URL: http://gateway:3002
+    ports: [ "3000:3000" ]
+    depends_on: [ gateway ]
+    restart: unless-stopped
+
+  dashboard-admin:
+    build: { context: ../apps/dashboard-admin, dockerfile: ../../deploy/Dockerfile.next }
+    container_name: cas-admin
+    environment:
+      GATEWAY_URL: http://gateway:3002
+    ports: [ "3001:3001" ]
+    depends_on: [ gateway ]
+    restart: unless-stopped
+
+  dashboard-seller:
+    build: { context: ../apps/dashboard-seller, dockerfile: ../../deploy/Dockerfile.next }
+    container_name: cas-seller-dash
+    environment:
+      GATEWAY_URL: http://gateway:3002
+    ports: [ "3003:3003" ]
+    depends_on: [ gateway ]
+    restart: unless-stopped
+
+volumes:
+  cas_pgdata:
+  cas_redisdata:
+  cas_uploads:

@@ -1,0 +1,213 @@
+version: '3.7'
+
+# ============================================================
+# Code & Agent Shop - PRODUCAO Docker Swarm + Traefik (V8 §1)
+# Deploy: docker stack deploy -c stack.yml cas
+# Pre-requisitos:
+#   - Swarm initialized (docker swarm init)
+#   - Network 'network_swarm_public' criada (docker network create -d overlay --attachable network_swarm_public)
+#   - Volumes externos: node_datad, php82_datad, python_datad (FileZilla path)
+#   - Traefik + Portainer ja rodando, com letsencryptresolver configurado
+# ============================================================
+
+x-deploy-defaults: &deploy
+  restart_policy:
+    condition: on-failure
+    max_attempts: 5
+  update_config:
+    parallelism: 1
+    order: start-first
+    failure_action: rollback
+  rollback_config:
+    parallelism: 1
+
+services:
+  # ---------- INFRA ----------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER:     ${PG_USER:-codeshop}
+      POSTGRES_PASSWORD: ${PG_PASS}
+      POSTGRES_DB:       ${PG_DB:-code_agent_shop}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - cas_pgdata:/var/lib/postgresql/data
+    networks: [ network_swarm_public ]
+    deploy:
+      <<: *deploy
+      placement:
+        constraints: [ node.role == manager ]
+      resources:
+        limits: { memory: 2G }
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server","--appendonly","yes","--maxmemory","512mb","--maxmemory-policy","allkeys-lru"]
+    volumes:
+      - cas_redisdata:/data
+    networks: [ network_swarm_public ]
+    deploy:
+      <<: *deploy
+      resources:
+        limits: { memory: 768M }
+
+  # ---------- GATEWAY (entry point publico Traefik) ----------
+  gateway:
+    image: ${REGISTRY:-localhost}/cas-gateway:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy:
+      <<: *deploy
+      replicas: 2
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.cas-api.rule=Host(`api.code-agent-shop.com.br`)
+        - traefik.http.routers.cas-api.entrypoints=websecure
+        - traefik.http.routers.cas-api.tls.certresolver=letsencryptresolver
+        - traefik.http.services.cas-api.loadbalancer.server.port=3002
+        - traefik.docker.network=network_swarm_public
+
+  # ---------- MICROSERVICOS NODE (sem expor portas - so via gateway) ----------
+  auth-svc:
+    image: ${REGISTRY:-localhost}/cas-auth-svc:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 2, resources: { limits: { memory: 512M } } }
+
+  vault-svc:
+    image: ${REGISTRY:-localhost}/cas-vault-svc:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 256M } } }
+
+  seller-svc:
+    image: ${REGISTRY:-localhost}/cas-seller-svc:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 2, resources: { limits: { memory: 512M } } }
+
+  product-svc:
+    image: ${REGISTRY:-localhost}/cas-product-svc:${TAG:-latest}
+    env_file: ../.env
+    volumes:
+      - node_datad:/app/uploads:rw
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 2, resources: { limits: { memory: 768M } } }
+
+  qa-svc:
+    image: ${REGISTRY:-localhost}/cas-qa-svc:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 512M } } }
+
+  qa-worker:
+    image: ${REGISTRY:-localhost}/cas-qa-worker:${TAG:-latest}
+    env_file: ../.env
+    volumes:
+      - python_datad:/data:rw
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 2, resources: { limits: { memory: 1G } } }
+
+  order-svc:
+    image: ${REGISTRY:-localhost}/cas-order-svc:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 2, resources: { limits: { memory: 512M } } }
+
+  payment-svc:
+    image: ${REGISTRY:-localhost}/cas-payment-svc:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 2, resources: { limits: { memory: 512M } } }
+
+  review-svc:
+    image: ${REGISTRY:-localhost}/cas-review-svc:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 512M } } }
+
+  notification-svc:
+    image: ${REGISTRY:-localhost}/cas-notification-svc:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 1, resources: { limits: { memory: 512M } } }
+
+  search-svc:
+    image: ${REGISTRY:-localhost}/cas-search-svc:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy: { <<: *deploy, replicas: 2, resources: { limits: { memory: 512M } } }
+
+  aiops-svc:
+    image: ${REGISTRY:-localhost}/cas-aiops-svc:${TAG:-latest}
+    env_file: ../.env
+    networks: [ network_swarm_public ]
+    deploy:
+      <<: *deploy
+      replicas: 1
+      placement:
+        constraints: [ node.role == manager ]
+      resources: { limits: { memory: 256M } }
+
+  # ---------- FRONTENDS (Traefik exposed) ----------
+  storefront:
+    image: ${REGISTRY:-localhost}/cas-storefront:${TAG:-latest}
+    environment:
+      GATEWAY_URL: http://gateway:3002
+    networks: [ network_swarm_public ]
+    deploy:
+      <<: *deploy
+      replicas: 2
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.cas-store.rule=Host(`code-agent-shop.com.br`) || Host(`www.code-agent-shop.com.br`)
+        - traefik.http.routers.cas-store.entrypoints=websecure
+        - traefik.http.routers.cas-store.tls.certresolver=letsencryptresolver
+        - traefik.http.services.cas-store.loadbalancer.server.port=3000
+        - traefik.docker.network=network_swarm_public
+
+  dashboard-admin:
+    image: ${REGISTRY:-localhost}/cas-admin:${TAG:-latest}
+    environment:
+      GATEWAY_URL: http://gateway:3002
+    networks: [ network_swarm_public ]
+    deploy:
+      <<: *deploy
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.cas-admin.rule=Host(`admin.code-agent-shop.com.br`)
+        - traefik.http.routers.cas-admin.entrypoints=websecure
+        - traefik.http.routers.cas-admin.tls.certresolver=letsencryptresolver
+        - traefik.http.services.cas-admin.loadbalancer.server.port=3001
+        - traefik.docker.network=network_swarm_public
+
+  dashboard-seller:
+    image: ${REGISTRY:-localhost}/cas-seller:${TAG:-latest}
+    environment:
+      GATEWAY_URL: http://gateway:3002
+    networks: [ network_swarm_public ]
+    deploy:
+      <<: *deploy
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.cas-seller.rule=Host(`seller.code-agent-shop.com.br`)
+        - traefik.http.routers.cas-seller.entrypoints=websecure
+        - traefik.http.routers.cas-seller.tls.certresolver=letsencryptresolver
+        - traefik.http.services.cas-seller.loadbalancer.server.port=3003
+        - traefik.docker.network=network_swarm_public
+
+networks:
+  network_swarm_public:
+    external: true
+
+volumes:
+  cas_pgdata:
+    driver: local
+  cas_redisdata:
+    driver: local
+  node_datad:
+    external: true
+  python_datad:
+    external: true

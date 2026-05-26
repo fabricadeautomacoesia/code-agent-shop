@@ -1,0 +1,54 @@
+{
+  "name": "code-agent-shop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Marketplace B2B/B2C de automacoes, scripts, workflows e agentes IA. Blueprint V8 Inovare.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "db:migrate": "node bin/migrate.js",
+    "db:seed": "node bin/seed.js",
+    "db:reset": "node bin/reset.js",
+    "db:refresh-kpi": "node bin/refresh-kpi.js",
+    "db:backup": "node bin/backup.js",
+    "dev": "node bin/dev-all.js",
+    "dev:gateway": "npm --workspace=services/gateway run dev",
+    "dev:auth": "npm --workspace=services/auth-svc run dev",
+    "dev:seller": "npm --workspace=services/seller-svc run dev",
+    "dev:product": "npm --workspace=services/product-svc run dev",
+    "dev:qa": "npm --workspace=services/qa-svc run dev",
+    "dev:order": "npm --workspace=services/order-svc run dev",
+    "dev:payment": "npm --workspace=services/payment-svc run dev",
+    "dev:review": "npm --workspace=services/review-svc run dev",
+    "dev:notification": "npm --workspace=services/notification-svc run dev",
+    "dev:search": "npm --workspace=services/search-svc run dev",
+    "dev:vault": "npm --workspace=services/vault-svc run dev",
+    "dev:aiops": "npm --workspace=services/aiops-svc run dev",
+    "dev:storefront": "npm --workspace=apps/storefront run dev",
+    "dev:admin": "npm --workspace=apps/dashboard-admin run dev",
+    "dev:seller-ui": "npm --workspace=apps/dashboard-seller run dev",
+    "start:pm2": "pm2 start deploy/ecosystem.config.js",
+    "stop:pm2": "pm2 delete deploy/ecosystem.config.js",
+    "logs:pm2": "pm2 logs",
+    "smoke": "node bin/smoke-tests.js",
+    "lint": "eslint . --ext .js,.mjs,.ts,.tsx",
+    "format": "prettier --write \"**/*.{js,ts,tsx,json,md,sql}\""
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1",
+    "eslint": "^9.13.0",
+    "pm2": "^5.4.2",
+    "prettier": "^3.3.3"
+  }
+}

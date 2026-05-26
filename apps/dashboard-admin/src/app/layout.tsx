@@ -1,0 +1,54 @@
+import './globals.css';
+import Link from 'next/link';
+import { LayoutDashboard, Users, Package, ShoppingCart, AlertTriangle, DollarSign, Activity, KeyRound, Shield } from 'lucide-react';
+
+export const metadata = { title: 'Admin - Code & Agent Shop' };
+
+const NAV = [
+  { href: '/',            Icon: LayoutDashboard, label: 'Visao Geral' },
+  { href: '/sellers',     Icon: Users,           label: 'Sellers' },
+  { href: '/products',    Icon: Package,         label: 'Produtos' },
+  { href: '/qa-queue',    Icon: Shield,          label: 'QA Queue' },
+  { href: '/orders',      Icon: ShoppingCart,    label: 'Pedidos' },
+  { href: '/payouts',     Icon: DollarSign,      label: 'Saques' },
+  { href: '/reports',     Icon: AlertTriangle,   label: 'Denuncias' },
+  { href: '/alerts',      Icon: Activity,        label: 'Alertas AIOps' },
+  { href: '/vault',       Icon: KeyRound,        label: 'Vault (API keys)' },
+];
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="pt-BR" className="dark">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+      </head>
+      <body>
+        <div className="flex min-h-screen">
+          <aside className="w-64 glass border-r border-white/5 rounded-none flex flex-col">
+            <div className="p-5 border-b border-white/5">
+              <div className="font-display font-bold text-xl">
+                CAS <span className="text-magenta">Admin</span>
+              </div>
+              <div className="text-xs text-white/40 mt-1">Master Console</div>
+            </div>
+            <nav className="flex-1 p-3 space-y-1">
+              {NAV.map((n) => (
+                <Link key={n.href} href={n.href}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/5 transition-colors text-sm">
+                  <n.Icon className="w-4 h-4" />
+                  {n.label}
+                </Link>
+              ))}
+            </nav>
+            <div className="p-4 border-t border-white/5 text-xs text-white/40">
+              v0.1.0 - Inovare V8
+            </div>
+          </aside>
+          <main className="flex-1 p-8 overflow-x-hidden">{children}</main>
+        </div>
+      </body>
+    </html>
+  );
+}

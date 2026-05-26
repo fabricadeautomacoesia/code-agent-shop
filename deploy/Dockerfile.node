@@ -1,0 +1,25 @@
+FROM node:20-alpine AS base
+WORKDIR /app
+
+# Aceita o servico-alvo como build arg (ex: gateway, auth-svc, ...)
+ARG SVC=gateway
+ENV SVC=${SVC}
+
+# Copia somente o que precisa para instalar deps (cache otimo)
+COPY package.json package-lock.json* ./
+COPY packages ./packages
+COPY services/${SVC}/package.json ./services/${SVC}/package.json
+
+# Instala deps do workspace inteiro (mantem links @cas/*)
+RUN npm install --omit=dev --workspaces --include-workspace-root=false || npm install --omit=dev
+
+# Copia o codigo do servico-alvo + shared
+COPY services/${SVC} ./services/${SVC}
+COPY bin ./bin
+
+# Saude basica
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:$PORT/health || exit 1
+
+WORKDIR /app/services/${SVC}
+CMD ["node", "src/server.js"]

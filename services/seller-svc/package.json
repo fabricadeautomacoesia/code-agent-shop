@@ -1,0 +1,14 @@
+{
+  "name": "@cas/seller-svc",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": { "start": "node src/server.js", "dev": "node --watch src/server.js" },
+  "dependencies": {
+    "@cas/db-client": "0.1.0",
+    "@cas/shared": "0.1.0",
+    "express": "^5.0.1",
+    "node-cron": "^3.0.3",
+    "zod": "^3.23.8"
+  }
+}

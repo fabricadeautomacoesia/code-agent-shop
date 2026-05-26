@@ -1,0 +1,112 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { Api } from '@/lib/api';
+import { useAuth } from '@/lib/store';
+
+type PaymentMethod = 'pix' | 'credit_card' | 'boleto';
+
+export default function CheckoutPage() {
+  const router = useRouter();
+  const { token } = useAuth();
+  const [cart, setCart] = useState<any>(null);
+  const [method, setMethod] = useState<PaymentMethod>('pix');
+  const [paymentResult, setPaymentResult] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (!token) { router.push('/login'); return; }
+    Api.cart(token).then((r) => setCart(r.cart)).catch(() => {});
+  }, [token]);
+
+  async function pay() {
+    setLoading(true); setErr('');
+    try {
+      const order: any = await Api.checkout(token!, method);
+      // chama payment-svc via gateway (assincrono pelo backend, mas confirmamos com /orders/:id)
+      const polled: any = await Api.api(`/orders/${order.order.id}`, { auth: token!, cache: 'no-store' });
+      setPaymentResult({ order: order.order, asaas: polled.order });
+    } catch (e: any) {
+      setErr(e.data?.message || e.message);
+    } finally { setLoading(false); }
+  }
+
+  if (paymentResult) {
+    const o = paymentResult.asaas || paymentResult.order;
+    return (
+      <div className="container mx-auto px-6 py-16 max-w-2xl">
+        <div className="glass p-8">
+          <h1 className="font-display font-bold text-3xl mb-2">Pedido {o.order_number} criado!</h1>
+          <p className="text-white/60 mb-6">Conclua o pagamento abaixo:</p>
+
+          {method === 'pix' && o.asaas_pix_qrcode && (
+            <div className="space-y-4">
+              <img src={`data:image/png;base64,${o.asaas_pix_qrcode}`} alt="PIX QR Code" className="w-64 h-64 mx-auto bg-white p-2 rounded-lg" />
+              <div>
+                <label className="text-sm text-white/70 block mb-1">Codigo PIX Copia e Cola</label>
+                <textarea readOnly value={o.asaas_pix_copy_paste || ''}
+                  className="w-full p-3 rounded-lg bg-white/5 border border-white/10 text-xs font-mono" rows={4} />
+              </div>
+            </div>
+          )}
+          {method === 'boleto' && o.asaas_boleto_url && (
+            <a href={o.asaas_boleto_url} target="_blank" className="btn-primary block text-center">Abrir boleto</a>
+          )}
+          {method === 'credit_card' && o.asaas_invoice_url && (
+            <a href={o.asaas_invoice_url} target="_blank" className="btn-primary block text-center">Pagar com cartao</a>
+          )}
+
+          <div className="mt-8 pt-6 border-t border-white/10 text-sm text-white/60">
+            Apos confirmacao do pagamento (via webhook Asaas), seus produtos ficarao disponiveis em{' '}
+            <Link href="/conta/pedidos" className="text-magenta hover:underline">Meus pedidos</Link>.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto px-6 py-8 max-w-3xl">
+      <h1 className="font-display font-bold text-4xl mb-8">Checkout</h1>
+
+      {cart && (
+        <div className="glass p-6 mb-6">
+          <h3 className="font-display font-bold text-lg mb-4">Resumo do pedido</h3>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between"><span className="text-white/60">{cart.items_count} item(s)</span><span>{Api.formatBRL(cart.subtotal_cents)}</span></div>
+            {cart.discount_cents > 0 && <div className="flex justify-between text-green-400"><span>Desconto</span><span>- {Api.formatBRL(cart.discount_cents)}</span></div>}
+            <div className="flex justify-between text-xl font-display font-bold pt-2 border-t border-white/10 mt-2">
+              <span>Total</span>
+              <span className="text-magenta-glow">{Api.formatBRL(cart.total_cents)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="glass p-6 mb-6">
+        <h3 className="font-display font-bold text-lg mb-4">Forma de pagamento</h3>
+        <div className="grid grid-cols-3 gap-3">
+          {(['pix','credit_card','boleto'] as PaymentMethod[]).map((m) => (
+            <button key={m} onClick={() => setMethod(m)}
+              className={`p-4 rounded-lg border-2 transition-all ${method === m ? 'border-magenta bg-magenta/10' : 'border-white/10 bg-white/5 hover:border-white/30'}`}>
+              <div className="font-display font-semibold capitalize">{m.replace('_', ' ')}</div>
+              <div className="text-xs text-white/50 mt-1">
+                {m==='pix' && 'Aprovacao instantanea'}
+                {m==='credit_card' && 'Parcelamento ate 12x'}
+                {m==='boleto' && 'Vencimento 24h'}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button onClick={pay} disabled={loading || !cart?.items_count} className="btn-primary w-full text-base disabled:opacity-50">
+        {loading ? 'Processando...' : 'Confirmar e pagar'}
+      </button>
+      {err && <div className="text-sm text-red-400 mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">{err}</div>}
+    </div>
+  );
+}

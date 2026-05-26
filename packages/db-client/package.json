@@ -1,0 +1,11 @@
+{
+  "name": "@cas/db-client",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.js",
+  "type": "commonjs",
+  "dependencies": {
+    "@cas/shared": "0.1.0",
+    "pg": "^8.13.0"
+  }
+}
