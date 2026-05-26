@@ -23,9 +23,18 @@ function deep(value) {
 
 function middleware() {
   return (req, _res, next) => {
-    if (req.body)   req.body   = deep(req.body);
-    if (req.query)  req.query  = deep(req.query);
-    if (req.params) req.params = deep(req.params);
+    // Express 5: req.query e req.params sao getter-only, sanitizar in-place
+    if (req.body) req.body = deep(req.body);
+    if (req.query) {
+      try {
+        for (const k of Object.keys(req.query)) req.query[k] = deep(req.query[k]);
+      } catch { /* ignora se imutavel */ }
+    }
+    if (req.params) {
+      try {
+        for (const k of Object.keys(req.params)) req.params[k] = deep(req.params[k]);
+      } catch { /* ignora se imutavel */ }
+    }
     next();
   };
 }
