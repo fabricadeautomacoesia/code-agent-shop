@@ -136,6 +136,39 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
   })
 );
 
+// POST /qna/:id/upvote - votar em uma pergunta (MLB-2)
+app.post('/qna/:id/upvote', jwt.requireAuth(),
+  asyncHandler(async (req, res) => {
+    // tenta inserir voto; se ja existe, remove (toggle)
+    const exists = await query(
+      `SELECT 1 FROM product_qna_votes WHERE qna_id = $1 AND user_id = $2`,
+      [req.params.id, req.user.sub]
+    );
+    if (exists.rows.length) {
+      await query(`DELETE FROM product_qna_votes WHERE qna_id = $1 AND user_id = $2`,
+        [req.params.id, req.user.sub]);
+    } else {
+      await query(`INSERT INTO product_qna_votes (qna_id, user_id) VALUES ($1, $2)
+                   ON CONFLICT DO NOTHING`, [req.params.id, req.user.sub]);
+    }
+    // recalcula contador
+    const c = await query(`SELECT COUNT(*)::INT AS n FROM product_qna_votes WHERE qna_id = $1`, [req.params.id]);
+    await query(`UPDATE product_qna SET upvote_count = $1 WHERE id = $2`, [c.rows[0].n, req.params.id]);
+    res.json({ ok: true, upvote_count: c.rows[0].n, voted: !exists.rows.length });
+  })
+);
+
+// GET /qna/:id/voted - checa se user votou
+app.get('/qna/:id/voted', jwt.requireAuth(),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `SELECT 1 FROM product_qna_votes WHERE qna_id = $1 AND user_id = $2`,
+      [req.params.id, req.user.sub]
+    );
+    res.json({ voted: r.rows.length > 0 });
+  })
+);
+
 // GET /qna/seller/pending - perguntas pendentes do seller logado
 app.get('/qna/seller/pending', jwt.requireAuth({ roles: ['seller','admin'] }),
   asyncHandler(async (req, res) => {

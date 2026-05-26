@@ -72,10 +72,15 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
               <div className="space-y-4 mb-6">
                 {qna.slice(0, 8).map((q) => (
                   <div key={q.id} className="border-b border-white/5 pb-4 last:border-0">
-                    <div className="font-semibold text-sm mb-1">Q: {q.question}</div>
-                    {q.answer
-                      ? <div className="text-sm text-white/70 pl-4 border-l-2 border-magenta mt-1">R: {q.answer}</div>
-                      : <div className="text-xs text-white/40 italic mt-1">Aguardando resposta do vendedor...</div>}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <div className="font-semibold text-sm mb-1">Q: {q.question}</div>
+                        {q.answer
+                          ? <div className="text-sm text-white/70 pl-4 border-l-2 border-magenta mt-1">R: {q.answer}</div>
+                          : <div className="text-xs text-white/40 italic mt-1">Aguardando resposta do vendedor...</div>}
+                      </div>
+                      <QnaUpvote qnaId={q.id} initialCount={q.upvote_count || 0} />
+                    </div>
                   </div>
                 ))}
               </div>
