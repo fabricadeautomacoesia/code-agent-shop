@@ -1,8 +1,8 @@
-# progress.md - V1 + 9 MLB FEATURES + 20 WORKERS
+# progress.md - V1 + 10 MLB FEATURES + 20 WORKERS
 
-## STATUS: AUTOMACAO ATIVA + 9 FEATURES MLB (apenas 2 pendentes)
+## STATUS: AUTOMACAO ATIVA + 10 FEATURES MLB (apenas 1 pendente)
 
-## MLB Features (9 de 11 implementadas)
+## MLB Features (10 de 11 implementadas)
 
 ### MLB-1: Mais Vendidos por Categoria
 - /api/search/top-sellers + /categoria/[slug] + badge MAIS VENDIDO
@@ -13,23 +13,20 @@
 ### MLB-3+8: Quantidade vendida em destaque
 - Badge "+N vendidos" no PDP
 
-### MLB-4: Mercado Pontos / Loyalty (NOVO - E2E VALIDADO)
+### MLB-4: Mercado Pontos / Loyalty (E2E VALIDADO)
 - /api/loyalty/me + /api/loyalty/earn (gateway -> seller-svc)
 - /conta/pontos com tier card gradient, progress bar, 3 benefits, historico
-- Card "CAS Pontos" no /conta dashboard mostrando saldo + tier
-- Card "Favoritos" no /conta dashboard
+- Cards "CAS Pontos" + "Favoritos" no /conta dashboard
 - Welcome bonus 100 pts na primeira visita /loyalty/me
 - Earn hook em payment-svc webhook PAYMENT_RECEIVED/CONFIRMED:
   - 1 ponto por R$ 1 do total_cents do pedido
   - multiplicador automatico: Gold +20%, Platinum +50%
-  - recalculo de tier (starter < 500 < gold < 3000 < platinum)
-- VALIDADO via curl --resolve: points_balance=100, tier=starter, welcome_bonus tx
+  - recalculo de tier automatico
 
 ### MLB-6: Recomendacoes Personalizadas
 - /api/products/recommendations/for-me (baseado em product_views ultimos 30d)
 - /api/products/:slug/related (mesma categoria)
 - Secao "Voce tambem pode gostar" no PDP com 6 cards
-- VALIDADO HTTP 200 com Chatbot RAG e Multi-Agent retornados
 
 ### MLB-7: Comparador de Produtos
 - /api/products/compare?ids=X,Y,Z + /comparar page tabular
@@ -39,9 +36,18 @@
 ### MLB-10: Promocao Relampago com Timer
 - /api/products/flash-promo/active + FlashPromoTimer + /promocoes
 
-## MLB Pendentes (2 de 11)
-- MLB-5 Mercado Credito (parcelamento)
-- MLB-11 Cupom progressivo (tier_breakpoints criado)
+### MLB-11: Cupom Progressivo (NOVO - E2E VALIDADO)
+- coupons.tier_breakpoints JSONB: [{"min_cents":N,"discount_value":N}, ...]
+- order-svc.recalcCart escolhe maior tier alcancado pelo subtotal
+- GET /orders/cart/coupon/:code/preview?subtotal_cents=N
+  retorna tiers ordenados + active_tier_index + next_tier + discount_cents
+- /cart page exibe card "CUPOM PROGRESSIVO" com lista de tiers,
+  tier ativo destacado, e CTA "adicione mais R$X para -Y%"
+- Cupom seed PROGRESSIVO15: 5%/10%/15% nos breakpoints R$100/R$300/R$800
+- VALIDADO 4 subtotais via curl: R$50/R$150/R$500/R$1000 -> tiers -1/0/1/2 corretos
+
+## MLB Pendentes (1 de 11)
+- MLB-5 Mercado Credito (parcelamento) - infraestrutura Asaas ja disponivel
 
 ## Migration 010 aplicada com colunas/tabelas para futuras MLB
 
