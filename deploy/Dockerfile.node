@@ -12,11 +12,11 @@ COPY services ./services
 COPY bin ./bin
 COPY db ./db
 
-# Instala TODAS as deps do workspace + raiz (inclui dotenv da raiz)
+# Instala TODAS as deps do workspace + raiz
 RUN npm install --no-audit --no-fund --include-workspace-root
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:$PORT/health 2>/dev/null || exit 1
+# Sem HEALTHCHECK (Swarm usa replicas/restart_policy)
+# Apps individuais podem ter /health (Node) ou /api/status (gateway)
 
 WORKDIR /app/services/${SVC}
 CMD ["node", "src/server.js"]
