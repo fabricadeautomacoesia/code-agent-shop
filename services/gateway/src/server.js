@@ -91,19 +91,7 @@ app.get('/api/status', asyncHandler(async (_req, res) => {
     uptime_s: process.uptime(),
     ts: new Date().toISOString(),
     env: process.env.NODE_ENV,
-    upstreams: {
-      auth:         `http://127.0.0.1:${process.env.PORT_AUTH || 3010}`,
-      seller:       `http://127.0.0.1:${process.env.PORT_SELLER || 3011}`,
-      product:      `http://127.0.0.1:${process.env.PORT_PRODUCT || 3012}`,
-      qa:           `http://127.0.0.1:${process.env.PORT_QA || 3013}`,
-      order:        `http://127.0.0.1:${process.env.PORT_ORDER || 3015}`,
-      payment:      `http://127.0.0.1:${process.env.PORT_PAYMENT || 3016}`,
-      review:       `http://127.0.0.1:${process.env.PORT_REVIEW || 3017}`,
-      notification: `http://127.0.0.1:${process.env.PORT_NOTIFICATION || 3018}`,
-      search:       `http://127.0.0.1:${process.env.PORT_SEARCH || 3019}`,
-      vault:        `http://127.0.0.1:${process.env.PORT_VAULT || 3020}`,
-      aiops:        `http://127.0.0.1:${process.env.PORT_AIOPS || 3006}`,
-    },
+    upstreams: UPSTREAMS,
   });
 }));
 
@@ -131,22 +119,33 @@ function proxy(target, opts = {}) {
   });
 }
 
-// --- Rotas (V8 23.6) ---
-// auth com fail2ban antes do proxy
-app.use('/api/auth', fail2ban.middleware(),
-  proxy(`http://127.0.0.1:${process.env.PORT_AUTH || 3010}`)
-);
-app.use('/api/sellers',       proxy(`http://127.0.0.1:${process.env.PORT_SELLER || 3011}`));
-app.use('/api/products',      proxy(`http://127.0.0.1:${process.env.PORT_PRODUCT || 3012}`));
-app.use('/api/qa',            proxy(`http://127.0.0.1:${process.env.PORT_QA || 3013}`));
-app.use('/api/orders',        proxy(`http://127.0.0.1:${process.env.PORT_ORDER || 3015}`));
-app.use('/api/payments',      proxy(`http://127.0.0.1:${process.env.PORT_PAYMENT || 3016}`));
-app.use('/api/reviews',       proxy(`http://127.0.0.1:${process.env.PORT_REVIEW || 3017}`));
-app.use('/api/qna',           proxy(`http://127.0.0.1:${process.env.PORT_REVIEW || 3017}`));
-app.use('/api/notifications', proxy(`http://127.0.0.1:${process.env.PORT_NOTIFICATION || 3018}`));
-app.use('/api/search',        proxy(`http://127.0.0.1:${process.env.PORT_SEARCH || 3019}`));
-app.use('/api/vault',         proxy(`http://127.0.0.1:${process.env.PORT_VAULT || 3020}`));
-app.use('/api/aiops',         proxy(`http://127.0.0.1:${process.env.PORT_AIOPS || 3006}`));
+// --- Upstreams (Swarm DNS por padrao, dev usa 127.0.0.1) ---
+const UPSTREAMS = {
+  auth:         process.env.UPSTREAM_AUTH         || `http://tasks.cas_auth-svc:${process.env.PORT_AUTH || 3010}`,
+  seller:       process.env.UPSTREAM_SELLER       || `http://tasks.cas_seller-svc:${process.env.PORT_SELLER || 3011}`,
+  product:      process.env.UPSTREAM_PRODUCT      || `http://tasks.cas_product-svc:${process.env.PORT_PRODUCT || 3012}`,
+  qa:           process.env.UPSTREAM_QA           || `http://tasks.cas_qa-svc:${process.env.PORT_QA || 3013}`,
+  order:        process.env.UPSTREAM_ORDER        || `http://tasks.cas_order-svc:${process.env.PORT_ORDER || 3015}`,
+  payment:      process.env.UPSTREAM_PAYMENT      || `http://tasks.cas_payment-svc:${process.env.PORT_PAYMENT || 3016}`,
+  review:       process.env.UPSTREAM_REVIEW       || `http://tasks.cas_review-svc:${process.env.PORT_REVIEW || 3017}`,
+  notification: process.env.UPSTREAM_NOTIFICATION || `http://tasks.cas_notification-svc:${process.env.PORT_NOTIFICATION || 3018}`,
+  search:       process.env.UPSTREAM_SEARCH       || `http://tasks.cas_search-svc:${process.env.PORT_SEARCH || 3019}`,
+  vault:        process.env.UPSTREAM_VAULT        || `http://tasks.cas_vault-svc:${process.env.PORT_VAULT || 3020}`,
+  aiops:        process.env.UPSTREAM_AIOPS        || `http://tasks.cas_aiops-svc:${process.env.PORT_AIOPS || 3006}`,
+};
+
+app.use('/api/auth', fail2ban.middleware(), proxy(UPSTREAMS.auth));
+app.use('/api/sellers',       proxy(UPSTREAMS.seller));
+app.use('/api/products',      proxy(UPSTREAMS.product));
+app.use('/api/qa',            proxy(UPSTREAMS.qa));
+app.use('/api/orders',        proxy(UPSTREAMS.order));
+app.use('/api/payments',      proxy(UPSTREAMS.payment));
+app.use('/api/reviews',       proxy(UPSTREAMS.review));
+app.use('/api/qna',           proxy(UPSTREAMS.review));
+app.use('/api/notifications', proxy(UPSTREAMS.notification));
+app.use('/api/search',        proxy(UPSTREAMS.search));
+app.use('/api/vault',         proxy(UPSTREAMS.vault));
+app.use('/api/aiops',         proxy(UPSTREAMS.aiops));
 
 app.get('/', (_req, res) => res.json({ name: 'Code & Agent Shop Gateway', version: '0.1.0' }));
 app.use((req, res) => res.status(404).json({ error: 'route_not_found', path: req.originalUrl }));
