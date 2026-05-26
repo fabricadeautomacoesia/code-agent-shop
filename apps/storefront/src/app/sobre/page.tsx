@@ -24,7 +24,7 @@ export default function SobrePage() {
           <Shield className="w-10 h-10 text-magenta mb-3" />
           <h3 className="font-display font-bold text-xl mb-2">QA automatizado</h3>
           <p className="text-sm text-white/60">
-            Todo produto passa por pipeline LLM (OpenAI -> Gemini -> Groq) antes de ser aprovado.
+            Todo produto passa por pipeline LLM (OpenAI, Gemini e Groq) antes de ser aprovado.
             Confidence score minimo 80%.
           </p>
         </div>
