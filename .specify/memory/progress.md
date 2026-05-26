@@ -1,39 +1,52 @@
-# progress.md - V1 PUBLICA + E2E VALIDADO
+# progress.md - V1 PUBLICA E2E VALIDADA
 
-## STATUS FINAL: PRODUCAO PUBLICA - AGUARDANDO APENAS DNS
+## STATUS: PRODUCAO PUBLICA - AGUARDANDO DNS DO USUARIO
 
-### VALIDADO HTTPS (via --resolve Host header, IP 209.145.60.53)
+### Fluxos E2E validados via HTTPS (Traefik + SSL Lets Encrypt R13)
 
-**Storefront** https://cas.inovareinteligenciaartificial.com
-- Home / mostra: "Mais vendidos" + 10 produtos + "Mais buscados na semana" + Categorias + CTA seller
-- /products lista 10 produtos com filtros+sort
-- /product/[slug] PDP completo com tabs (Visao/Pre-requisitos/Changelog/Reviews/Q&A), sticky sidebar com preco, botoes Comprar + Adicionar carrinho
-- /login + /register com 2FA flow
-- /cart + /checkout (3 metodos PIX/Cartao/Boleto)
-- /conta + /conta/seguranca (UI 2FA TOTP completa)
+**Fluxo BUYER:**
+1. POST /api/auth/register {role: buyer} -> user criado
+2. POST /api/auth/login -> JWT 15min
+3. GET /api/auth/me -> user payload com seller_profile=null
+4. POST /api/orders/cart/items {product_id, quantity} -> {ok:true}
+5. GET /api/orders/cart -> carrinho com items_count, totais
+6. POST /api/orders/checkout {payment_method:pix} -> CAS-2026-000001 criado
+7. GET /api/orders -> lista pedidos com items_preview
 
-**Admin** https://admin.cas.inovareinteligenciaartificial.com  
-- Sidebar com 10 secoes: Visao Geral (KPIs live 10s), Sellers (KYC), Produtos, QA Queue, Pedidos, Saques, Denuncias, Alertas, Vault
+**Fluxo SELLER:**
+1. POST /api/auth/register {role: seller} -> user + auto-create seller class_a pending_kyc
+2. POST /api/auth/login -> JWT
+3. GET /api/sellers/me -> seller_profile completo
+4. GET /api/products/me -> [] (correto)
 
-**Seller** https://seller.cas.inovareinteligenciaartificial.com
-- Sidebar 6 secoes: Visao Geral (cronometro SLA), Meus produtos, Novo produto (upload multer), Q&A, Financeiro (payouts), Minha loja (KYC)
+**Endpoints publicos:**
+- GET /api/products?limit=N -> 10 produtos demo
+- GET /api/products/[slug] -> PDP completo
+- GET /api/search?q=whatsapp -> TSVECTOR match
+- GET /api/search/categories -> 7 raiz + 18 subcats
+- GET /api/aiops/status -> metrics live
 
-**API** https://api.cas.inovareinteligenciaartificial.com
-- /api/status -> upstreams
-- /api/auth/login -> JWT 15min validado
-- /api/products, /api/search, /api/search/categories, /api/aiops/status
+**Frontends publicos:**
+- https://cas.inovareinteligenciaartificial.com/ -> Mais vendidos + 10 produtos + trending
+- https://cas.inovareinteligenciaartificial.com/products -> Lista filtravel
+- https://cas.inovareinteligenciaartificial.com/product/[slug] -> PDP
+- https://admin.cas.inovareinteligenciaartificial.com -> Sidebar com 10 secoes
+- https://seller.cas.inovareinteligenciaartificial.com -> Sidebar com 6 secoes
+
+### Bugs fixed neste sprint
+- /products/me retornava 404 (Express route capturava :slug). Reordenado.
+- Mesmo bug em /sellers/me e /orders/download. Reordenado.
+- Home SSR cached. Forcado dynamic + fetch no-store.
 
 ### SSL
-- Issuer: Lets Encrypt R13
-- Valid: May 26 -> Aug 24 2026 (auto-renew Traefik)
+- Lets Encrypt R13
+- Validade: 2026-05-26 -> 2026-08-24 (auto-renew)
 
-### Demo data
-- Admin: fabricadeautomacoes0@gmail.com / ChangeMe!2026Inovare
-- 10 produtos platform_owned com vendas/ratings simulados
+### Login admin
+- fabricadeautomacoes0@gmail.com / ChangeMe!2026Inovare
 
-### UNICA PENDENCIA
-Configurar DNS A records -> 209.145.60.53:
-- cas.inovareinteligenciaartificial.com
-- api.cas.inovareinteligenciaartificial.com
-- admin.cas.inovareinteligenciaartificial.com
-- seller.cas.inovareinteligenciaartificial.com
+### PENDENCIA: DNS A pelo usuario
+- cas.inovareinteligenciaartificial.com -> 209.145.60.53
+- api.cas.inovareinteligenciaartificial.com -> 209.145.60.53
+- admin.cas.inovareinteligenciaartificial.com -> 209.145.60.53
+- seller.cas.inovareinteligenciaartificial.com -> 209.145.60.53
