@@ -30,13 +30,16 @@ const REFRESH_COOKIE = 'cas_rt';
 const REFRESH_TTL_MS = (parseInt(process.env.JWT_REFRESH_TTL || '604800', 10)) * 1000;
 
 function setRefreshCookie(res, refreshToken) {
-  res.cookie(REFRESH_COOKIE, refreshToken, {
+  const opts = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     maxAge: REFRESH_TTL_MS,
-    path: '/',  // /api/auth/refresh sera reescrito para /auth/refresh pelo gateway; cookie precisa estar no root pra ir junto
-  });
+    path: '/',
+  };
+  // Cross-subdomain: storefront em cas.* e API em api.cas.* compartilham cookie
+  if (process.env.COOKIE_DOMAIN) opts.domain = process.env.COOKIE_DOMAIN;
+  res.cookie(REFRESH_COOKIE, refreshToken, opts);
 }
 
 // POST /auth/register
