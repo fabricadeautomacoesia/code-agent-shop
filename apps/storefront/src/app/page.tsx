@@ -1,19 +1,25 @@
 import Link from 'next/link';
 import { ArrowRight, Bot, Workflow, Code2, Sparkles, Shield, Zap, TrendingUp } from 'lucide-react';
-import { Api } from '@/lib/api';
+import { api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
 
-export const revalidate = 120;
+export const revalidate = 60;
+export const dynamic = 'force-dynamic';
+
+async function fetchSafe<T>(path: string): Promise<T | null> {
+  try {
+    const base = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';
+    const r = await fetch(`${base}${path}`, { cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+}
 
 export default async function HomePage() {
-  let featured: any[] = [];
-  let trending: any[] = [];
-  try {
-    const search = await Api.search({ sort: 'sales', limit: 8 });
-    featured = search.results;
-    const t = await Api.trending();
-    trending = t.trending.slice(0, 6);
-  } catch { /* SSR resiliente */ }
+  const search: any = await fetchSafe('/api/search?sort=sales&limit=8');
+  const t: any = await fetchSafe('/api/search/trending');
+  const featured: any[] = search?.results || [];
+  const trending: any[] = (t?.trending || []).slice(0, 6);
 
   return (
     <div className="space-y-32 pb-32">
