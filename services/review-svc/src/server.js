@@ -125,7 +125,6 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
        VALUES ($1,$2,$3,$4) RETURNING *`,
       [req.body.product_id, p.rows[0].seller_id || null, req.user.sub, req.body.question]
     );
-    // notification ao seller
     if (p.rows[0].seller_id) {
       await query(
         `INSERT INTO notifications (user_id, channel, template_code, title, body)
@@ -134,6 +133,49 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
       );
     }
     res.status(201).json({ qna: r.rows[0] });
+  })
+);
+
+// GET /qna/seller/pending - perguntas pendentes do seller logado
+app.get('/qna/seller/pending', jwt.requireAuth({ roles: ['seller','admin'] }),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `SELECT q.id, q.question, q.asked_at, q.upvote_count,
+              p.id AS product_id, p.slug AS product_slug, p.title AS product_title, p.cover_image_url,
+              u.display_name AS asker_name, u.email AS asker_email
+         FROM product_qna q
+         JOIN products p ON p.id = q.product_id
+         JOIN sellers s ON s.id = q.seller_id
+         LEFT JOIN users u ON u.id = q.asked_by_user_id
+        WHERE s.user_id = $1 AND q.answer IS NULL AND q.is_hidden = FALSE
+        ORDER BY q.asked_at ASC LIMIT 100`, [req.user.sub]
+    );
+    res.json({ qna: r.rows });
+  })
+);
+
+// POST /qna/:id/answer (seller responde)
+app.post('/qna/:id/answer', jwt.requireAuth({ roles: ['seller','admin'] }),
+  validate({ body: z.object({ answer: z.string().min(1).max(5000) }) }),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `UPDATE product_qna q
+          SET answer = $1, answered_at = NOW(), answered_by_user_id = $2, updated_at = NOW()
+         FROM sellers s
+        WHERE q.id = $3 AND q.seller_id = s.id AND s.user_id = $2
+        RETURNING q.id, q.product_id, q.asked_by_user_id`,
+      [req.body.answer, req.user.sub, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'not_found_or_not_owner' });
+    // notifica quem perguntou
+    if (r.rows[0].asked_by_user_id) {
+      await query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body)
+         VALUES ($1, 'in_app', 'qna_answered', 'Sua pergunta foi respondida', 'Acesse o produto para ver a resposta')`,
+        [r.rows[0].asked_by_user_id]
+      );
+    }
+    res.json({ ok: true });
   })
 );
 
