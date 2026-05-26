@@ -35,7 +35,7 @@ function setRefreshCookie(res, refreshToken) {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     maxAge: REFRESH_TTL_MS,
-    path: '/auth',
+    path: '/',  // /api/auth/refresh sera reescrito para /auth/refresh pelo gateway; cookie precisa estar no root pra ir junto
   });
 }
 
@@ -172,7 +172,7 @@ router.post('/logout', asyncHandler(async (req, res) => {
     await query('UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(), revoked_reason = $1 WHERE refresh_token_hash = $2',
       ['logout', jwt.hashToken(rt)]);
   }
-  res.clearCookie(REFRESH_COOKIE, { path: '/auth' });
+  res.clearCookie(REFRESH_COOKIE, { path: '/' });
   res.json({ ok: true });
 }));
 
