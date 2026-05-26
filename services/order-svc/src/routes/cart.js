@@ -75,6 +75,39 @@ router.delete('/items/:id', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// MLB-11: preview do cupom progressivo - retorna tiers ordenados e tier atual baseado em subtotal informado
+router.get('/coupon/:code/preview', asyncHandler(async (req, res, next) => {
+  const subtotal = parseInt(req.query.subtotal_cents || '0', 10);
+  const c = await query(
+    `SELECT code, discount_type, discount_value, tier_breakpoints, expires_at
+       FROM coupons
+      WHERE code = $1 AND is_active
+        AND (starts_at IS NULL OR starts_at <= NOW())
+        AND (expires_at IS NULL OR expires_at > NOW())
+        AND (max_uses IS NULL OR used_count < max_uses)`,
+    [req.params.code]
+  );
+  if (!c.rows.length) return next(errorHandler.notFound('coupon_invalid'));
+  const cp = c.rows[0];
+  const tiers = Array.isArray(cp.tier_breakpoints) ? [...cp.tier_breakpoints].sort((a,b)=>Number(a.min_cents)-Number(b.min_cents)) : [];
+  let activeTierIdx = -1;
+  for (let i = 0; i < tiers.length; i++) if (subtotal >= Number(tiers[i].min_cents)) activeTierIdx = i;
+  const effectiveValue = activeTierIdx >= 0
+    ? parseFloat(tiers[activeTierIdx].discount_value)
+    : parseFloat(cp.discount_value);
+  const discount = cp.discount_type === 'percentage'
+    ? Math.floor(subtotal * (effectiveValue / 100))
+    : Math.floor(effectiveValue * 100);
+  res.json({
+    coupon: { code: cp.code, discount_type: cp.discount_type, expires_at: cp.expires_at },
+    tiers,
+    active_tier_index: activeTierIdx,
+    effective_value: effectiveValue,
+    discount_cents: discount,
+    next_tier: tiers[activeTierIdx + 1] || null,
+  });
+}));
+
 router.post('/coupon',
   validate({ body: z.object({ code: z.string() }) }),
   asyncHandler(async (req, res, next) => {
@@ -110,14 +143,24 @@ async function recalcCart(client, cart_id) {
   let discount = 0;
   if (cart.rows[0]?.coupon_code) {
     const co = await client.query(
-      `SELECT discount_type, discount_value FROM coupons WHERE code = $1 AND is_active`,
+      `SELECT discount_type, discount_value, tier_breakpoints FROM coupons WHERE code = $1 AND is_active`,
       [cart.rows[0].coupon_code]
     );
     if (co.rows.length) {
-      const dv = parseFloat(co.rows[0].discount_value);
+      // MLB-11: cupom progressivo - tier_breakpoints JSONB
+      // formato: [{"min_cents":10000,"discount_value":5},{"min_cents":50000,"discount_value":10}]
+      const tiers = co.rows[0].tier_breakpoints;
+      let effectiveValue = parseFloat(co.rows[0].discount_value);
+      if (Array.isArray(tiers) && tiers.length) {
+        // ordena por min_cents asc e pega o maior tier que o subtotal alcanca
+        const sorted = [...tiers].sort((a, b) => Number(a.min_cents) - Number(b.min_cents));
+        for (const t of sorted) {
+          if (subtotal >= Number(t.min_cents)) effectiveValue = parseFloat(t.discount_value);
+        }
+      }
       discount = co.rows[0].discount_type === 'percentage'
-        ? Math.floor(subtotal * (dv / 100))
-        : Math.floor(dv * 100);
+        ? Math.floor(subtotal * (effectiveValue / 100))
+        : Math.floor(effectiveValue * 100);
     }
   }
   const total = Math.max(0, subtotal - discount);

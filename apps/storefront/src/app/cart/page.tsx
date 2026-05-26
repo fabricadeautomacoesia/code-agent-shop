@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, Tag } from 'lucide-react';
+import { Trash2, Tag, TrendingUp } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
@@ -16,6 +16,7 @@ export default function CartPage() {
   const [coupon, setCoupon] = useState('');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
+  const [couponPreview, setCouponPreview] = useState<any>(null);
 
   async function load() {
     if (!token) return;
@@ -26,6 +27,14 @@ export default function CartPage() {
   }
 
   useEffect(() => { load(); }, [token]);
+
+  // MLB-11: fetch progressive tiers preview quando ha cupom aplicado
+  useEffect(() => {
+    if (!cart?.coupon_code || !token) { setCouponPreview(null); return; }
+    Api.api<any>(`/orders/cart/coupon/${cart.coupon_code}/preview?subtotal_cents=${cart.subtotal_cents}`, { auth: token, cache: 'no-store' })
+      .then((r) => setCouponPreview(r))
+      .catch(() => setCouponPreview(null));
+  }, [cart?.coupon_code, cart?.subtotal_cents, token]);
 
   async function remove(id: string) {
     await Api.cartDel(token!, id);
@@ -104,6 +113,38 @@ export default function CartPage() {
                 <div className="flex justify-between text-green-400"><span>Desconto {cart.coupon_code && `(${cart.coupon_code})`}</span><span>- {Api.formatBRL(cart.discount_cents)}</span></div>
               )}
             </div>
+
+            {/* MLB-11: Cupom progressivo - tiers visuais */}
+            {couponPreview?.tiers?.length > 0 && (
+              <div className="rounded-lg border border-magenta/30 bg-magenta/5 p-3 mb-4">
+                <div className="flex items-center gap-2 text-xs font-bold text-magenta mb-2">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  CUPOM PROGRESSIVO {cart.coupon_code}
+                </div>
+                <div className="space-y-1.5">
+                  {couponPreview.tiers.map((t: any, idx: number) => {
+                    const reached = (cart.subtotal_cents || 0) >= Number(t.min_cents);
+                    const isActive = idx === couponPreview.active_tier_index;
+                    return (
+                      <div key={idx} className={`flex justify-between text-xs ${isActive ? 'text-white font-bold' : reached ? 'text-white/70' : 'text-white/40'}`}>
+                        <span>
+                          {reached ? '+' : 'o'} A partir de {Api.formatBRL(Number(t.min_cents))}
+                        </span>
+                        <span className={isActive ? 'text-magenta-glow' : ''}>
+                          -{t.discount_value}{couponPreview.coupon?.discount_type === 'percentage' ? '%' : ' R$'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {couponPreview.next_tier && (
+                  <div className="text-[11px] text-white/50 mt-2 pt-2 border-t border-white/10">
+                    Adicione mais <strong className="text-white">{Api.formatBRL(Number(couponPreview.next_tier.min_cents) - (cart.subtotal_cents || 0))}</strong> para -{couponPreview.next_tier.discount_value}{couponPreview.coupon?.discount_type === 'percentage' ? '%' : ' R$'} de desconto
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex justify-between text-xl font-display font-bold mb-6">
               <span>Total</span>
               <span className="text-magenta-glow">{Api.formatBRL(cart?.total_cents || 0)}</span>
