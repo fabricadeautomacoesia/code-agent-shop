@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Search, ShoppingCart, User, Menu, Code2 } from 'lucide-react';
 import { useAuth, useUI } from '@/lib/store';
 import { SearchAutocomplete } from './search-autocomplete';
+import { NotificationBell } from './notification-bell';
 
 export function Nav() {
   const [scrolled, setScrolled] = useState(false);
@@ -48,6 +49,7 @@ export function Nav() {
           <button onClick={() => setCartOpen(true)} className="p-2 rounded-lg hover:bg-white/5 transition-colors relative">
             <ShoppingCart className="w-5 h-5" />
           </button>
+          <NotificationBell />
           {user ? (
             <Link href="/conta" className="btn-ghost text-sm flex items-center gap-2">
               <User className="w-4 h-4" /> {user.display_name || user.full_name?.split(' ')[0]}
