@@ -210,6 +210,26 @@ app.post('/reports', jwt.requireAuth(),
 );
 
 // Gateway proxia /api/reviews/* sem prefix - rotas chegam direto na raiz
+// GET /seller/received - reviews recebidas pelo seller logado
+app.get('/seller/received', jwt.requireAuth({ roles: ['seller','admin'] }),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase,
+              r.helpful_count, r.unhelpful_count, r.reply_from_seller, r.reply_at,
+              r.created_at,
+              p.id AS product_id, p.slug AS product_slug, p.title AS product_title, p.cover_image_url,
+              u.display_name AS buyer_name, u.email AS buyer_email
+         FROM product_reviews r
+         JOIN products p ON p.id = r.product_id
+         JOIN sellers s ON s.id = r.seller_id
+         LEFT JOIN users u ON u.id = r.buyer_user_id
+        WHERE s.user_id = $1 AND r.is_hidden = FALSE
+        ORDER BY r.created_at DESC LIMIT 100`, [req.user.sub]
+    );
+    res.json({ reviews: r.rows });
+  })
+);
+
 // GET /admin/reports?status=open (acessada via /api/reviews/admin/reports)
 app.get('/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
   asyncHandler(async (req, res) => {

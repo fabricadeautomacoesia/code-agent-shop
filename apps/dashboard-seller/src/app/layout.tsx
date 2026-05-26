@@ -1,6 +1,6 @@
 import './globals.css';
 import Link from 'next/link';
-import { LayoutDashboard, Package, MessageCircle, DollarSign, Settings, Upload } from 'lucide-react';
+import { LayoutDashboard, Package, MessageCircle, DollarSign, Settings, Upload, Star } from 'lucide-react';
 
 export const metadata = { title: 'Painel do Vendedor - Code & Agent Shop' };
 
@@ -9,6 +9,7 @@ const NAV = [
   { href: '/products',   Icon: Package,         label: 'Meus produtos' },
   { href: '/upload',     Icon: Upload,          label: 'Novo produto' },
   { href: '/qna',        Icon: MessageCircle,   label: 'Q&A pendente' },
+  { href: '/reviews',    Icon: Star,            label: 'Avaliacoes' },
   { href: '/financeiro', Icon: DollarSign,      label: 'Financeiro' },
   { href: '/loja',       Icon: Settings,        label: 'Minha loja' },
 ];
