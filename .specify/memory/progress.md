@@ -1,53 +1,26 @@
-# progress.md - V1 PUBLICA + AUTH ROTATION FUNCIONANDO
+# progress.md - V1 PUBLICA + AUTH CROSS-DOMAIN + Q&A
 
-## STATUS: PRODUCAO PUBLICA E2E - AGUARDANDO APENAS DNS
+## STATUS: PRODUCAO PUBLICA E2E COMPLETO - AGUARDANDO DNS
 
-### Auth flow completo validado (HTTPS publico)
-1. POST /api/auth/register {role} -> user criado
-2. POST /api/auth/login -> JWT access + cookie cas_rt path=/
-3. POST /api/auth/refresh -> new JWT + cookie rotacionado, antigo na blacklist
-4. POST /api/auth/logout -> session revogada, cookie clear path=/
-5. GET /api/auth/me com Bearer -> user payload
+### Auth flow validado (cross-subdomain)
+- Cookie cas_rt com Domain=.cas.inovareinteligenciaartificial.com
+- Compartilhado entre cas.* e api.cas.*
+- Refresh rotation com blacklist do antigo (V8 21.6)
 
-### Fluxo Buyer (executado em producao)
-- Register teste1@cas.io -> user e240c6c4
-- Login -> JWT 337 chars
-- /cart/items {prompt-pack} -> ok
-- /orders/checkout {pix} -> CAS-2026-000001 (R$ 19, pending_payment)
-- /orders -> lista
+### Fluxos validados em producao
+- Buyer: register -> login -> cart -> checkout PIX -> orders list
+- Seller: register -> auto-create seller_profile -> /sellers/me OK
+- Q&A: POST pergunta -> persiste no DB -> aparece no PDP publico
 
-### Fluxo Seller (executado em producao)
-- Register vendedor1@cas.io -> user dc088c4a + seller class_a pending_kyc
-- /sellers/me -> seller_profile completo
-- /products/me -> [] (correto)
+### Storefront (13 paginas)
+- /, /products, /product/[slug] com QnaForm
+- /login, /register, /cart, /checkout
+- /conta, /conta/pedidos, /conta/pedidos/[id], /conta/downloads/[token], /conta/seguranca
 
-### Endpoints publicos validados
-- /api/products, /api/products/[slug], /api/search, /api/search/categories
-- /api/search/trending, /api/aiops/status, /api/aiops/metrics/latest
-
-### Storefront pages criadas/atualizadas
-- /conta/pedidos/[id] (PIX QR + license keys + download buttons)
-- /conta/downloads/[token] (download seguro + license display)
-- /conta/seguranca (2FA TOTP completo)
-- Home / com fetchSafe + force-dynamic (10 produtos demo aparecem)
-
-### Bugs resolvidos hoje
-1. ltree, NOW() index, DNS Swarm, Next public, Suspense
-2. Dockerfile monorepo + HEALTHCHECK
-3. Express 5 sanitize, gateway upstreams, pathRewrite funcao
-4. auth-svc u2.secret_iv
-5. Routes order: /me, /admin, /download captured by :slug (3 svcs)
-6. Cookie path=/auth -> path=/ para refresh via gateway
+### Admin (9 paginas) + Seller (6 paginas)
 
 ### SSL
-- Lets Encrypt R13
-- 2026-05-26 -> 2026-08-24 (auto-renew Traefik)
+- Lets Encrypt R13 auto-renew
 
-### Login admin
-- fabricadeautomacoes0@gmail.com / ChangeMe!2026Inovare
-
-### PENDENCIA UNICA: DNS A records (usuario)
-- cas.inovareinteligenciaartificial.com -> 209.145.60.53
-- api.cas.inovareinteligenciaartificial.com -> 209.145.60.53
-- admin.cas.inovareinteligenciaartificial.com -> 209.145.60.53
-- seller.cas.inovareinteligenciaartificial.com -> 209.145.60.53
+### PENDENCIA UNICA: DNS A pelo usuario
+- cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
