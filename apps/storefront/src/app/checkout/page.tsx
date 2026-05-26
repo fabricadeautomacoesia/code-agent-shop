@@ -18,16 +18,26 @@ export default function CheckoutPage() {
   const [paymentResult, setPaymentResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
+  const [installments, setInstallments] = useState<any[]>([]);
+  const [installmentCount, setInstallmentCount] = useState<number>(1);
 
   useEffect(() => {
     if (!token) { router.push('/login'); return; }
     Api.cart(token).then((r) => setCart(r.cart)).catch(() => {});
   }, [token]);
 
+  // MLB-5: ao mudar para credit_card, busca preview de parcelas
+  useEffect(() => {
+    if (method !== 'credit_card' || !cart?.total_cents) { setInstallments([]); return; }
+    Api.api<any>(`/payments/installments/preview?amount_cents=${cart.total_cents}`, { cache: 'no-store' })
+      .then((r: any) => { setInstallments(r.installments || []); setInstallmentCount(1); })
+      .catch(() => setInstallments([]));
+  }, [method, cart?.total_cents]);
+
   async function pay() {
     setLoading(true); setErr('');
     try {
-      const order: any = await Api.checkout(token!, method);
+      const order: any = await Api.checkout(token!, method, method === 'credit_card' ? installmentCount : undefined);
       // chama payment-svc via gateway (assincrono pelo backend, mas confirmamos com /orders/:id)
       const polled: any = await Api.api(`/orders/${order.order.id}`, { auth: token!, cache: 'no-store' });
       setPaymentResult({ order: order.order, asaas: polled.order });
@@ -104,6 +114,29 @@ export default function CheckoutPage() {
           ))}
         </div>
       </div>
+
+      {/* MLB-5: Mercado Credito - seletor de parcelas */}
+      {method === 'credit_card' && installments.length > 0 && (
+        <div className="glass p-6 mb-6">
+          <h3 className="font-display font-bold text-lg mb-1">Parcelar em quantas vezes?</h3>
+          <p className="text-xs text-white/50 mb-4">Ate 3x sem juros - 4x a 12x com juros de 2,99% a.m.</p>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-72 overflow-y-auto pr-1">
+            {installments.map((p) => (
+              <button key={p.count} onClick={() => setInstallmentCount(p.count)}
+                className={`p-3 rounded-lg border-2 text-left transition-all ${installmentCount === p.count ? 'border-magenta bg-magenta/10' : 'border-white/10 bg-white/5 hover:border-white/30'}`}>
+                <div className="font-display font-semibold text-sm">{p.count}x</div>
+                <div className="text-xs text-white/70">{Api.formatBRL(p.per_cents)}/mes</div>
+                <div className={`text-[10px] mt-1 ${p.interest_pct > 0 ? 'text-orange-300' : 'text-green-400'}`}>
+                  {p.interest_pct > 0 ? `+${p.interest_pct.toFixed(1)}% juros` : 'sem juros'}
+                </div>
+                {p.interest_pct > 0 && (
+                  <div className="text-[10px] text-white/40 mt-0.5">Total {Api.formatBRL(p.total_cents)}</div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <button onClick={pay} disabled={loading || !cart?.items_count} className="btn-primary w-full text-base disabled:opacity-50">
         {loading ? 'Processando...' : 'Confirmar e pagar'}

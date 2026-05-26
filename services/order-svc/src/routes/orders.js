@@ -14,7 +14,10 @@ const TAKE_RATE = parseFloat(process.env.PLATFORM_TAKE_RATE || '0.18');
 
 // POST /orders/checkout - cria pedido a partir do cart
 router.post('/checkout',
-  validate({ body: z.object({ payment_method: z.enum(['pix','credit_card','boleto']) })}),
+  validate({ body: z.object({
+    payment_method: z.enum(['pix','credit_card','boleto']),
+    installment_count: z.number().int().min(1).max(12).optional(),
+  })}),
   asyncHandler(async (req, res, next) => {
     const result = await tx(async (c) => {
       const cart = await c.query(
@@ -87,10 +90,16 @@ router.post('/checkout',
     // Dispara payment-svc para criar cobranca Asaas (assincrono)
     setImmediate(async () => {
       try {
-        await fetch(`http://127.0.0.1:${process.env.PORT_PAYMENT || 3016}/payments/asaas/create`, {
+        const paymentUrl = process.env.UPSTREAM_PAYMENT || `http://tasks.cas_payment-svc:${process.env.PORT_PAYMENT || 3016}`;
+        const body = { order_id: result.id };
+        // MLB-5: passa parcelas (somente cartao)
+        if (req.body.installment_count && req.body.payment_method === 'credit_card') {
+          body.installment_count = req.body.installment_count;
+        }
+        await fetch(`${paymentUrl}/payments/asaas/create`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order_id: result.id }),
+          body: JSON.stringify(body),
         });
       } catch (e) {
         log.error({ err: e.message, order_id: result.id }, '[payment.dispatch_failed]');

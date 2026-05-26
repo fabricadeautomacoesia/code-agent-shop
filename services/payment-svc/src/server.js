@@ -25,9 +25,57 @@ app.get('/health', (_req, res) => res.json({
   asaas: { configured: !!process.env.ASAAS_API_KEY, url: process.env.ASAAS_API_URL }
 }));
 
+// MLB-5 Mercado Credito - preview de parcelas no cartao
+// GET /payments/installments/preview?amount_cents=N&max=12
+// Politica:
+//   1x  -> sem juros
+//   2-3x-> sem juros (parcela minima R$5)
+//   4-12x -> juros 2.99% a.m. (composto), parcela minima R$10
+app.get('/payments/installments/preview', asyncHandler(async (req, res) => {
+  const amount = parseInt(req.query.amount_cents || '0', 10);
+  const max = Math.min(12, parseInt(req.query.max || '12', 10));
+  if (amount < 100) return res.json({ amount_cents: amount, installments: [] });
+  const monthlyRate = 0.0299;
+  const minNoFee = 500;   // R$5 - minimo por parcela sem juros
+  const minWithFee = 1000; // R$10 - minimo por parcela com juros
+  const out = [];
+  for (let n = 1; n <= max; n++) {
+    let perCents;
+    let totalCents;
+    let interestPct = 0;
+    if (n <= 3) {
+      // sem juros
+      perCents = Math.floor(amount / n);
+      totalCents = perCents * n;
+      // ajusta diferenca de arredondamento na 1a parcela
+      const diff = amount - totalCents;
+      const firstCents = perCents + diff;
+      if (n > 1 && perCents < minNoFee) continue;
+      out.push({ count: n, per_cents: perCents, first_cents: firstCents, total_cents: amount, interest_pct: 0, label: `${n}x de R$ ${(perCents/100).toFixed(2).replace('.', ',')}${n>1?' sem juros':''}` });
+    } else {
+      // com juros compostos
+      const r = monthlyRate;
+      const totalCalc = Math.round(amount * Math.pow(1 + r, n - 1));
+      perCents = Math.floor(totalCalc / n);
+      if (perCents < minWithFee) continue;
+      totalCents = perCents * n;
+      interestPct = ((totalCents - amount) / amount) * 100;
+      out.push({
+        count: n, per_cents: perCents, first_cents: perCents + (totalCalc - totalCents),
+        total_cents: totalCalc, interest_pct: parseFloat(interestPct.toFixed(2)),
+        label: `${n}x de R$ ${(perCents/100).toFixed(2).replace('.', ',')} (juros ${interestPct.toFixed(1)}%)`
+      });
+    }
+  }
+  res.json({ amount_cents: amount, monthly_rate: monthlyRate, installments: out });
+}));
+
 // POST /payments/asaas/create - chamado pelo order-svc apos checkout
 app.post('/payments/asaas/create',
-  validate({ body: z.object({ order_id: z.string().uuid() }) }),
+  validate({ body: z.object({
+    order_id: z.string().uuid(),
+    installment_count: z.number().int().min(1).max(12).optional(),
+  }) }),
   asyncHandler(async (req, res, next) => {
     const o = await query(
       `SELECT o.*, u.email, u.full_name, u.cpf_cnpj, u.phone_e164
@@ -70,6 +118,15 @@ app.post('/payments/asaas/create',
     const billingMap = { pix: 'PIX', credit_card: 'CREDIT_CARD', boleto: 'BOLETO' };
     const dueDate = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
 
+    // MLB-5: parcelamento (somente cartao) - calcula valor da parcela com a mesma politica do preview
+    const inst = req.body.installment_count && order.payment_method === 'credit_card' ? req.body.installment_count : 1;
+    let installmentValue;
+    if (inst > 1) {
+      const monthlyRate = 0.0299;
+      const totalCentsForCalc = inst <= 3 ? order.total_cents : Math.round(order.total_cents * Math.pow(1 + monthlyRate, inst - 1));
+      installmentValue = Math.floor(totalCentsForCalc / inst) / 100;
+    }
+
     const payment = await asaas.createPayment({
       customer: customerId,
       billingType: billingMap[order.payment_method],
@@ -78,6 +135,8 @@ app.post('/payments/asaas/create',
       description: `Pedido ${order.order_number} - Code & Agent Shop`,
       externalReference: order.id,
       split,
+      installmentCount: inst > 1 ? inst : undefined,
+      installmentValue,
     });
 
     // 4. campos extras (PIX QR Code, boleto URL)

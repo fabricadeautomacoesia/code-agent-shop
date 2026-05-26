@@ -35,11 +35,19 @@ async function createCustomer({ name, cpfCnpj, email, phone, externalReference }
 
 async function getCustomer(id) { return api('GET', `/customers/${id}`); }
 
-async function createPayment({ customer, billingType, value, dueDate, description, externalReference, split }) {
-  return api('POST', '/payments', {
-    customer, billingType, value, dueDate, description, externalReference,
+async function createPayment({ customer, billingType, value, dueDate, description, externalReference, split, installmentCount, installmentValue }) {
+  const payload = {
+    customer, billingType, dueDate, description, externalReference,
     split: split && split.length ? split : undefined,
-  });
+  };
+  // MLB-5: Mercado Credito - parcelamento em cartao
+  if (billingType === 'CREDIT_CARD' && installmentCount && installmentCount > 1) {
+    payload.installmentCount = installmentCount;
+    payload.installmentValue = installmentValue || Math.round((value / installmentCount) * 100) / 100;
+  } else {
+    payload.value = value;
+  }
+  return api('POST', '/payments', payload);
 }
 
 async function getPayment(id) { return api('GET', `/payments/${id}`); }

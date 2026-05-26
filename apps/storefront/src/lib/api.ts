@@ -84,8 +84,8 @@ export const Api = {
     api(`/orders/cart/items/${item_id}`, { method: 'DELETE', auth: token }),
   cartCoupon:  (token: string, code: string) =>
     api('/orders/cart/coupon', { method: 'POST', auth: token, body: JSON.stringify({ code }) }),
-  checkout:    (token: string, payment_method: 'pix'|'credit_card'|'boleto') =>
-    api('/orders/checkout', { method: 'POST', auth: token, body: JSON.stringify({ payment_method }) }),
+  checkout:    (token: string, payment_method: 'pix'|'credit_card'|'boleto', installment_count?: number) =>
+    api('/orders/checkout', { method: 'POST', auth: token, body: JSON.stringify({ payment_method, installment_count }) }),
   status:      () => api<any>('/aiops/status'),
   login:       (email: string, password: string, totp?: string) =>
     api<{ access_token: string; user: any; requires_2fa?: boolean }>('/auth/login', {
