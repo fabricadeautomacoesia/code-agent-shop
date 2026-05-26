@@ -113,6 +113,29 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ orders: r.rows });
 }));
 
+// GET /orders/admin/recent (todos pedidos, role admin)
+router.get('/admin/recent',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `SELECT o.id, o.order_number, o.status, o.payment_status, o.total_cents, o.currency,
+              o.payment_method, o.buyer_user_id, o.created_at, o.paid_at,
+              u.email AS buyer_email, u.full_name AS buyer_name
+         FROM orders o
+         JOIN users u ON u.id = o.buyer_user_id
+        ORDER BY o.created_at DESC LIMIT 100`
+    );
+    const stats = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status IN ('paid','fulfilled')) AS count_paid,
+         COUNT(*) FILTER (WHERE status = 'pending_payment') AS count_pending,
+         COALESCE(SUM(total_cents) FILTER (WHERE status IN ('paid','fulfilled')), 0) AS total_revenue
+         FROM orders`
+    );
+    res.json({ orders: r.rows, stats: stats.rows[0] });
+  })
+);
+
 router.get('/:id', asyncHandler(async (req, res, next) => {
   const r = await query(
     `SELECT o.*,

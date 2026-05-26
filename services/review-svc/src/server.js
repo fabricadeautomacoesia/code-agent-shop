@@ -167,6 +167,34 @@ app.post('/reports', jwt.requireAuth(),
   })
 );
 
+// GET /reports/admin (lista para o admin com filtro de status)
+app.get('/reports/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
+  asyncHandler(async (req, res) => {
+    const status = req.query.status || 'open';
+    const r = await query(
+      `SELECT r.*, u.email AS reporter_email, u.full_name AS reporter_name
+         FROM reports r
+         LEFT JOIN users u ON u.id = r.reporter_user_id
+        WHERE r.status = $1
+        ORDER BY r.created_at DESC LIMIT 200`, [status]
+    );
+    res.json({ reports: r.rows });
+  })
+);
+
+// POST /reports/:id/resolve
+app.post('/reports/reports/:id/resolve', jwt.requireAuth({ roles: ['admin','staff'] }),
+  validate({ body: z.object({ status: z.enum(['resolved','dismissed','under_review']), notes: z.string().max(2000) }) }),
+  asyncHandler(async (req, res) => {
+    await query(
+      `UPDATE reports SET status = $1, resolution_notes = $2, resolved_by = $3, resolved_at = NOW()
+        WHERE id = $4`,
+      [req.body.status, req.body.notes, req.user.sub, req.params.id]
+    );
+    res.json({ ok: true });
+  })
+);
+
 // ============================================================
 // REPUTATION CRON DIARIO (V8 - refresh nightly)
 // ============================================================

@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Star, Award, Download, Shield, Clock, Tag } from 'lucide-react';
 import { Api } from '@/lib/api';
+import { QnaForm } from '@/components/qna-form';
 
 export const revalidate = 60;
 
@@ -63,19 +64,24 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             </div>
           </div>
 
-          {qna.length > 0 && (
-            <div className="glass p-6">
-              <h3 className="font-display font-bold text-xl mb-4">Perguntas & Respostas</h3>
-              <div className="space-y-4">
-                {qna.slice(0, 5).map((q) => (
+          <div className="glass p-6">
+            <h3 className="font-display font-bold text-xl mb-4">Perguntas & Respostas</h3>
+            {qna.length > 0 ? (
+              <div className="space-y-4 mb-6">
+                {qna.slice(0, 8).map((q) => (
                   <div key={q.id} className="border-b border-white/5 pb-4 last:border-0">
                     <div className="font-semibold text-sm mb-1">Q: {q.question}</div>
-                    {q.answer && <div className="text-sm text-white/70 pl-4 border-l-2 border-magenta">R: {q.answer}</div>}
+                    {q.answer
+                      ? <div className="text-sm text-white/70 pl-4 border-l-2 border-magenta mt-1">R: {q.answer}</div>
+                      : <div className="text-xs text-white/40 italic mt-1">Aguardando resposta do vendedor...</div>}
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="text-sm text-white/60 mb-6">Seja o primeiro a perguntar sobre este produto.</p>
+            )}
+            <QnaForm productId={product.id} />
+          </div>
 
           {reviews.length > 0 && (
             <div className="glass p-6">
