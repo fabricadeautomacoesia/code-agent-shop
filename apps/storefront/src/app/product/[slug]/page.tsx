@@ -117,6 +117,12 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                 <Award className="w-3 h-3" /> Produto Oficial CAS
               </div>
             )}
+            {/* MLB-3/8: destaque de vendas (Mercado Livre style) */}
+            {product.sales_count > 50 && (
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-green-500/20 text-green-300 text-xs font-semibold mb-4 ml-2">
+                +{Math.floor(Number(product.sales_count) / 10) * 10} vendidos
+              </div>
+            )}
             <h1 className="font-display font-bold text-3xl mb-2">{product.title}</h1>
             {product.subtitle && <p className="text-white/60 mb-4">{product.subtitle}</p>}
             <div className="flex items-center gap-3 mb-6 text-sm">
