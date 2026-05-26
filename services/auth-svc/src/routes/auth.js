@@ -73,7 +73,7 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
   const { email, password, totp } = req.body;
   const r = await query(
     `SELECT u.id, u.email, u.password_hash, u.full_name, u.role, u.is_active, u.is_banned,
-            u2.is_enabled AS twofa_enabled, u2.secret_encrypted, u2.iv AS twofa_iv
+            u2.is_enabled AS twofa_enabled, u2.secret_encrypted, u2.secret_iv AS twofa_iv
        FROM users u
        LEFT JOIN user_two_factor u2 ON u2.user_id = u.id
        WHERE u.email = $1 AND u.deleted_at IS NULL`, [email]
