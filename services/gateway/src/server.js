@@ -137,20 +137,21 @@ const UPSTREAMS = {
   aiops:        process.env.UPSTREAM_AIOPS        || `http://tasks.cas_aiops-svc:${process.env.PORT_AIOPS || 3006}`,
 };
 
-// Reescrita: gateway recebe /api/<svc>/X -> upstream recebe /<svc>/X
-// (svcs montam routers em /auth, /sellers, /products, etc)
-app.use('/api/auth',          fail2ban.middleware(), proxy(UPSTREAMS.auth,         { pathRewrite: { '^/api': '' } }));
-app.use('/api/sellers',       proxy(UPSTREAMS.seller,       { pathRewrite: { '^/api': '' } }));
-app.use('/api/products',      proxy(UPSTREAMS.product,      { pathRewrite: { '^/api': '' } }));
-app.use('/api/qa',            proxy(UPSTREAMS.qa,           { pathRewrite: { '^/api/qa': '/qa' } }));
-app.use('/api/orders',        proxy(UPSTREAMS.order,        { pathRewrite: { '^/api': '' } }));
-app.use('/api/payments',      proxy(UPSTREAMS.payment,      { pathRewrite: { '^/api/payments': '/payments' } }));
-app.use('/api/reviews',       proxy(UPSTREAMS.review,       { pathRewrite: { '^/api/reviews': '' } }));
-app.use('/api/qna',           proxy(UPSTREAMS.review,       { pathRewrite: { '^/api': '' } }));
-app.use('/api/notifications', proxy(UPSTREAMS.notification, { pathRewrite: { '^/api/notifications': '' } }));
-app.use('/api/search',        proxy(UPSTREAMS.search,       { pathRewrite: { '^/api/search': '' } }));
-app.use('/api/vault',         proxy(UPSTREAMS.vault,        { pathRewrite: { '^/api': '' } }));
-app.use('/api/aiops',         proxy(UPSTREAMS.aiops,        { pathRewrite: { '^/api/aiops': '' } }));
+// Express strip do app.use(prefix) faz proxy receber apenas o resto.
+// Ex: GET /api/auth/login -> proxy.req.url = /login
+// Prepend o prefixo correto que cada svc espera no proprio router:
+app.use('/api/auth',          fail2ban.middleware(), proxy(UPSTREAMS.auth,         { pathRewrite: (p) => '/auth' + p }));
+app.use('/api/sellers',       proxy(UPSTREAMS.seller,       { pathRewrite: (p) => '/sellers' + p }));
+app.use('/api/products',      proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/products' + p }));
+app.use('/api/qa',            proxy(UPSTREAMS.qa,           { pathRewrite: (p) => '/qa' + p }));
+app.use('/api/orders',        proxy(UPSTREAMS.order,        { pathRewrite: (p) => '/orders' + p }));
+app.use('/api/payments',      proxy(UPSTREAMS.payment,      { pathRewrite: (p) => '/payments' + p }));
+app.use('/api/reviews',       proxy(UPSTREAMS.review,       { pathRewrite: (p) => p })); // review-svc usa / direto
+app.use('/api/qna',           proxy(UPSTREAMS.review,       { pathRewrite: (p) => '/qna' + p }));
+app.use('/api/notifications', proxy(UPSTREAMS.notification, { pathRewrite: (p) => p })); // notif root
+app.use('/api/search',        proxy(UPSTREAMS.search,       { pathRewrite: (p) => p })); // search root
+app.use('/api/vault',         proxy(UPSTREAMS.vault,        { pathRewrite: (p) => p })); // vault root
+app.use('/api/aiops',         proxy(UPSTREAMS.aiops,        { pathRewrite: (p) => p })); // aiops root
 
 app.get('/', (_req, res) => res.json({ name: 'Code & Agent Shop Gateway', version: '0.1.0' }));
 app.use((req, res) => res.status(404).json({ error: 'route_not_found', path: req.originalUrl }));
