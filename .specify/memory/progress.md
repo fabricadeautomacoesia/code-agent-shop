@@ -1,47 +1,42 @@
-# progress.md - V1 + 20 WORKERS + MLB-1
+# progress.md - V1 + MLB-1 + MLB-2 + 20 WORKERS
 
-## STATUS: AUTOMACAO PARALELA ATIVA + 20 CRONS CORRIGINDO BUGS
+## STATUS: AUTOMACAO ATIVA + FEATURES MLB IMPLEMENTADAS
 
-### MLB-1 IMPLEMENTADO: Mais Vendidos por Categoria
-- /api/search/top-sellers (agrupado por cat) + /:category (lista)
-- /categoria/[slug] page com badges 1o/2o/3o lugar
+## MLB Features implementadas (2 de 11)
+
+### MLB-1: Mais Vendidos por Categoria
+- /api/search/top-sellers (agrupado) + /:category (lista)
+- /categoria/[slug] page com badges 1o/2o/3o
 - ProductCard com badge MAIS VENDIDO
 - Home com chips de top por categoria
-- VALIDADO: HTTP 200 + "Mais vendidos" + produtos top
+- VALIDADO: HTTP 200
 
-### FROTA 20 WORKERS (crons) corrigindo bugs em paralelo
+### MLB-2: Q&A com Upvote (NOVO)
+- Tabela product_qna_votes (qna_id, user_id)
+- POST /api/qna/:id/upvote (toggle on/off)
+- GET /api/qna/:id/voted (check)
+- QnaUpvote component com ChevronUp + count
+- Integrado no PDP ao lado de cada pergunta
+- VALIDADO E2E: 0 -> 1 -> 0 toggle
 
-Workers de auditoria UI (5min offsets):
-- W1 AUTH pages, W2 CHECKOUT, W3 PDP, W4 ADMIN, W5 SELLER
+## MLB Features pendentes (9 de 11)
+- Mercado Pontos / loyalty
+- Mercado Credito (parcelamento)
+- Recomendacoes personalizadas (product_views existe)
+- Comparador de produtos
+- Quantidade vendida em destaque PDP
+- Promocoes relampago com timer
+- Cupom de desconto progressivo
+- + 2 outras
 
-Workers backend (10min offsets):
-- W6 GATEWAY/AUTH, W7 PRODUCT, W10 SEARCH/AIOPS
-- W11 PAYMENT, W12 QA, W13 NOTIFICATION, W17 VAULT
+## FROTA 20 WORKERS ATIVA
+- W1-W18 + MLB Crawler + Continue
+- Workers corrigindo bugs e implementando features em paralelo
 
-Workers cross-cutting (5-10min):
-- W8 VISUAL/UX, W9 SEO/META, W14 DB SCHEMA
-- W15 MOBILE, W18 PERFORMANCE
+## Storefront (27 pages publicas) + 12 components globais
+## Admin (9) + Seller (8)
+## Backend 16 services Swarm + Postgres 48 tabelas (+votes)
+## SSL Lets Encrypt R13 + Backup cron 6h
 
-Workers feature builders (12min):
-- W16 MLB FEATURES (alterna features ML nao feitas)
-- 47bc7572 MLB Crawler
-
-Worker meta:
-- 0f7dfeb9 Continue (4min)
-
-### Storefront (27 pages)
-22 + 3 UX + favoritos + categoria
-
-### Components (12)
-+ WishlistButton + NotificationBell + ProductCard com badge top seller
-
-### Backend (16 services Swarm UP)
-Gateway com pathRewrite + /uploads + 47 tabelas
-
-### Auth + Comercio + Reviews + Q&A + Reports + Wishlist
-Tudo E2E validado em producao
-
-### SSL Lets Encrypt R13 + Backup pg_dump cron 6h
-
-### PENDENCIA UNICA: DNS A pelo usuario
+## PENDENCIA UNICA: DNS A pelo usuario
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
