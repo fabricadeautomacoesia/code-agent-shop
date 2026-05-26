@@ -7,6 +7,30 @@ const { asyncHandler, validate, errorHandler } = require('@cas/shared');
 
 const router = express.Router();
 
+// GET /products/compare?ids=uuid,uuid,uuid - comparar ate 4 produtos (MLB-7)
+router.get('/compare', asyncHandler(async (req, res) => {
+  const idsRaw = (req.query.ids || '').toString();
+  const ids = idsRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 4);
+  if (ids.length < 2) {
+    return res.status(400).json({ error: 'min_2_products', message: 'Selecione pelo menos 2 produtos para comparar' });
+  }
+  const r = await query(
+    `SELECT p.id, p.slug, p.title, p.subtitle, p.kind, p.cover_image_url,
+            p.price_cents, p.currency, p.is_free, p.license_kind,
+            p.tech_stack, p.api_keys_required, p.estimated_install_min,
+            p.requirements, p.avg_rating, p.review_count, p.sales_count,
+            p.is_platform_owned, p.flash_promo_active, p.flash_promo_discount_pct,
+            (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug,
+            (SELECT store_name FROM sellers WHERE id = p.seller_id) AS store_name,
+            (SELECT reputation_tier FROM sellers WHERE id = p.seller_id) AS reputation_tier,
+            (SELECT name FROM categories WHERE id = p.category_id) AS category_name
+       FROM products p
+      WHERE p.id = ANY($1::UUID[]) AND p.status = 'approved' AND p.deleted_at IS NULL`,
+    [ids]
+  );
+  res.json({ products: r.rows, count: r.rows.length });
+}));
+
 // GET /products/flash-promo - produtos em promocao relampago ativa (MLB-10)
 router.get('/flash-promo/active', asyncHandler(async (req, res) => {
   const r = await query(
