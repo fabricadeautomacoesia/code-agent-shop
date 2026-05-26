@@ -1,39 +1,47 @@
-# progress.md - V1 OPERACIONAL COMPLETA
+# progress.md - V1 OPERACIONAL + UI PREMIUM
 
-## STATUS: PRONTA PARA TRAFEGO REAL - AGUARDANDO APENAS DNS
+## STATUS: PRODUCAO READY - AGUARDANDO DNS
 
-### Auth cross-subdomain
-- Cookie cas_rt com Domain=.cas.inovareinteligenciaartificial.com
-- Refresh rotation + blacklist (V8 21.6)
+### Auth com refresh silencioso (V8 21.6)
+- 401 token_expired -> auto fetch /api/auth/refresh com cookie
+- Salva novo access em zustand store
+- Retry da request original com novo token
+- Cross-subdomain (.cas.) funciona
 
-### Fluxos E2E validados em producao
-| Fluxo | Status |
+### UI Premium (V8 §2, §15, §16)
+- HeroAnimated: 4 cards 3D flutuantes com GSAP rotate continuo
+- Mouse parallax na hero (V8 15.4 flashlight inspirado)
+- Animate-glow-pulse orb central (V8 23.2)
+- Reveal-up com ScrollTrigger
+- Lenis smooth scroll
+- Glassmorphism em todas as cards
+- Noise overlay fixo
+
+### Fluxos E2E em producao
+| Fluxo | Validado |
 |---|---|
-| Register buyer/seller | OK |
-| Login + JWT 15min | OK |
-| Refresh com rotacao | OK |
-| Add to cart + checkout PIX | OK (CAS-2026-000001) |
-| List orders + detail page | OK |
-| POST Q&A no PDP | OK (a8521fd1) |
-| Q&A aparece publico no PDP | OK |
-| Report criado pelo buyer | OK (63372209) |
-| Admin lista reports | OK |
-| Admin lista orders + stats | OK |
+| Register/login/refresh/logout | OK |
+| Cart + checkout PIX | OK CAS-2026-000001 |
+| Order detail + downloads | OK |
+| Q&A no PDP | OK a8521fd1 |
+| Report criacao + admin list | OK 63372209 |
+| Admin orders recent + stats | OK |
+| 2FA TOTP UI | OK |
 
-### Backup automatizado
-- /opt/cas/deploy/cron-backup.sh
-- cron */6h
-- retencao 7 dias
-- testado: 47KB gzipped por dump
-
-### Frontends (storefront 13 / admin 9 / seller 6)
-- PDP com QnaForm integrado
-- /conta/pedidos lista completa + /conta/pedidos/[id] detalhe
-- /conta/downloads/[token] download seguro
-- /conta/seguranca 2FA TOTP
+### Backup pg_dump (V8 6.2)
+- /opt/cas/deploy/cron-backup.sh ativo
+- Cron 0 */6 * * *
+- Retencao 7 dias
+- 47KB por dump
 
 ### SSL
 - Lets Encrypt R13 auto-renew
+- 4 subdominios cobertos
 
-### PENDENCIA UNICA: DNS A records
+### Storefront pages (13)
+- /, /products, /product/[slug] (com QnaForm + HeroAnimated na home)
+- /login, /register, /cart, /checkout
+- /conta, /conta/pedidos, /conta/pedidos/[id], /conta/downloads/[token], /conta/seguranca
+
+### PENDENCIA UNICA: DNS A
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
