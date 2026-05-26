@@ -54,3 +54,8 @@ coverage/
 # misc
 *.bak
 .cache/
+
+# ad-hoc test scripts (gerados pela automacao remota)
+loyalty-test.sh
+*-smoke.sh
+tmp-*.sh
