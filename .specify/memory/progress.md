@@ -1,42 +1,40 @@
-# progress.md - V1 COMERCIAL FUNCIONAL + CART DRAWER
+# progress.md - V1 COMERCIAL + SEO + ADMIN COMPLETO
 
-## STATUS: SISTEMA COMERCIAL OPERACIONAL - AGUARDANDO DNS
+## STATUS: SISTEMA OPERACIONAL COM SEO - AGUARDANDO DNS
 
-### Funcionalidade comercial completa
-- AddToCart funcional no PDP (Comprar agora + Adicionar carrinho + auth redirect)
-- CartDrawer lateral global abre via setCartOpen()
-- Auto-refresh JWT silencioso em 401
-- Cookie cross-subdomain .cas.
+### Funcionalidades validadas em producao
+- Auth: register/login/refresh com rotation + 2FA TOTP + auto-refresh silencioso
+- Cart: Add/Remove/Coupon + CartDrawer lateral global
+- Checkout: PIX QR + Boleto + Cartao + pedido CAS-2026-000001
+- Q&A: POST publica + listagem no PDP
+- Admin: orders/recent com stats live, reports/list+resolve, qa-queue, payouts, vault, alerts
+- Seller: cronometro SLA + KYC + payouts
+- Status page publica: CPU/RAM/Disk + services + alerts
 
-### Storefront (16 paginas + componentes globais)
-| Componente | Estado |
-|---|---|
-| Nav scroll-aware | Search modal + 5 links categorias |
-| CartDrawer | Lateral, abre via icone cart, lista + remove + total + checkout |
-| SearchAutocomplete | Modal global com debounce + trending + ESC |
-| HeroAnimated | 4 cards 3D + parallax + glow orb |
-| AddToCart | Buy now + Add cart com loading + auth check |
-| ProductCard | Com tier badges |
-| QnaForm | POST /api/qna |
-| Footer | 4 colunas |
+### SEO (Google-ready)
+- /robots.txt com allow/disallow + Sitemap + Host
+- /sitemap.xml dinamico: 6 estaticas + 10 produtos + N sellers
+- Open Graph metadata pt-BR no layout
+- Auto-revalidate de sitemap
 
-### Paginas publicas
-1. / (HeroAnimated + Mais vendidos)
-2. /products, /product/[slug] (com AddToCart + QnaForm + tabs)
-3. /sellers, /seller/[slug]
-4. /status (V8 5.3 publica)
-5. /login, /register
-6. /cart, /checkout
-7. /conta, /conta/pedidos, /conta/pedidos/[id], /conta/downloads/[token], /conta/seguranca
+### Storefront (16 paginas publicas)
+- Componentes globais: Nav, Footer, Providers (Lenis+GSAP), ProductCard, QnaForm, HeroAnimated, SearchAutocomplete, CartDrawer, AddToCart
+
+### Admin (9 paginas) - todas com endpoints reais
+- /, /sellers, /qa-queue, /products, /orders (com /admin/recent + stats), /payouts, /reports, /alerts, /vault
+
+### Seller (6 paginas)
+- /, /products, /upload, /qna, /financeiro, /loja
 
 ### Backend (16 services Swarm UP)
-- Gateway com pathRewrite por svc
-- 12 svcs Node + qa-worker Python
-- 47 tabelas + 10 produtos demo + admin
+- Gateway pathRewrite por svc
+- 12 svcs Node + qa-worker Python + 3 fronts
+- DB Postgres 47 tabelas + 10 produtos + admin + sellers + Q&A + reports
 
-### Backup pg_dump cron 6h + retencao 7d
-
-### SSL Lets Encrypt R13 auto-renew
+### Infra
+- Docker Swarm + Traefik + SSL Lets Encrypt R13 auto-renew
+- Backup pg_dump cron 6h + retencao 7d
+- Cookie cross-subdomain .cas. (auth compartilhado entre cas e api.cas)
 
 ### PENDENCIA UNICA: DNS A
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
