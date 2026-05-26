@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Package, ShoppingBag, Settings, Shield, LogOut, Store } from 'lucide-react';
+import { Package, ShoppingBag, Settings, Shield, LogOut, Store, Star, Heart } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
@@ -14,11 +14,15 @@ export default function ContaPage() {
   const { token, user, clear } = useAuth();
   const [me, setMe] = useState<any>(null);
   const [orders, setOrders] = useState<any[]>([]);
+  const [loyalty, setLoyalty] = useState<any>(null);
 
   useEffect(() => {
     if (!token) { router.push('/login'); return; }
     Api.me(token).then((r) => setMe(r.user)).catch(() => clear());
     Api.api('/orders', { auth: token }).then((r: any) => setOrders(r.orders || [])).catch(() => {});
+    Api.api<any>('/loyalty/me', { auth: token, cache: 'no-store' })
+      .then((r: any) => setLoyalty(r?.loyalty || null))
+      .catch(() => {});
   }, [token]);
 
   function logout() {
@@ -41,10 +45,15 @@ export default function ContaPage() {
         </button>
       </div>
 
-      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mb-12">
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-12">
         {[
           { href: '/conta/pedidos',  Icon: ShoppingBag, label: 'Meus pedidos',   desc: `${orders.length} pedido(s)` },
           { href: '/conta/downloads',Icon: Package,     label: 'Downloads',      desc: 'Seus produtos' },
+          { href: '/conta/pontos',   Icon: Star,        label: 'CAS Pontos',
+            desc: loyalty
+              ? `${Number(loyalty.points_balance).toLocaleString('pt-BR')} pts - tier ${loyalty.tier}`
+              : 'Ver saldo e historico' },
+          { href: '/conta/favoritos',Icon: Heart,       label: 'Favoritos',      desc: 'Produtos salvos' },
           { href: '/conta/seguranca',Icon: Shield,      label: 'Seguranca + 2FA',desc: me.twofa_enabled ? '2FA ativo' : 'Ativar 2FA' },
           ...(me.role === 'seller'
             ? [{ href: '/seller/dashboard', Icon: Store, label: 'Painel vendedor', desc: 'Gerenciar loja' }]

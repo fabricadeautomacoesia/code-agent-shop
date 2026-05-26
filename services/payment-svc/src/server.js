@@ -167,6 +167,39 @@ async function processWebhookEvent(evt) {
     if (action.paid_at) {
       // marca splits como processed
       await c.query(`UPDATE asaas_splits SET status = 'processed', processed_at = NOW() WHERE order_id = $1`, [order.id]);
+      // MLB-4: Loyalty earn - 1 ponto por R$ 1 do total pago (Gold +20%, Platinum +50%)
+      try {
+        const totRow = await c.query(`SELECT total_cents FROM orders WHERE id = $1`, [order.id]);
+        const totalCents = totRow.rows[0]?.total_cents || 0;
+        const tierRow = await c.query(`SELECT tier FROM user_loyalty WHERE user_id = $1`, [order.buyer_user_id]);
+        const curTier = tierRow.rows[0]?.tier || 'starter';
+        const mult = curTier === 'platinum' ? 1.5 : (curTier === 'gold' ? 1.2 : 1.0);
+        const basePts = Math.floor(totalCents / 100); // R$1 = 1 pt
+        const pts = Math.floor(basePts * mult);
+        if (pts > 0) {
+          await c.query(
+            `INSERT INTO user_loyalty (user_id, points_balance, points_lifetime)
+             VALUES ($1, $2, $2)
+             ON CONFLICT (user_id) DO UPDATE SET
+               points_balance = user_loyalty.points_balance + $2,
+               points_lifetime = user_loyalty.points_lifetime + $2,
+               updated_at = NOW()`,
+            [order.buyer_user_id, pts]
+          );
+          await c.query(
+            `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
+             VALUES ($1, $2, 'order_paid', 'order', $3::text)`,
+            [order.buyer_user_id, pts, order.id]
+          );
+          // recalcula tier
+          const lt = await c.query(`SELECT points_lifetime FROM user_loyalty WHERE user_id = $1`, [order.buyer_user_id]);
+          const lifetime = Number(lt.rows[0].points_lifetime);
+          const newTier = lifetime >= 3000 ? 'platinum' : (lifetime >= 500 ? 'gold' : 'starter');
+          await c.query(`UPDATE user_loyalty SET tier = $1 WHERE user_id = $2`, [newTier, order.buyer_user_id]);
+        }
+      } catch (e) {
+        log.error({ err: e.message, order_id: order.id }, '[loyalty.earn.fail]');
+      }
       // contadores de produto e seller
       await c.query(
         `UPDATE products p SET sales_count = sales_count + oi.quantity,
