@@ -16,6 +16,9 @@ app.use(sanitize.middleware());
 
 app.get('/health', async (_req, res) => res.json({ ok: true, db: await healthcheck() }));
 
+// MLB-4: loyalty (montado em /loyalty - mas gateway proxia via /api/loyalty)
+app.use('/loyalty',       require('./routes/loyalty'));
+
 // ORDEM IMPORTA: rotas especificas ANTES de /sellers (que captura :slug)
 app.use('/sellers/me',    require('./routes/me'));
 app.use('/sellers/admin', require('./routes/admin'));

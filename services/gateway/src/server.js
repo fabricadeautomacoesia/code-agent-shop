@@ -145,6 +145,7 @@ app.use('/uploads',           proxy(UPSTREAMS.product,      { pathRewrite: (p) =
 
 app.use('/api/auth',          fail2ban.middleware(), proxy(UPSTREAMS.auth,         { pathRewrite: (p) => '/auth' + p }));
 app.use('/api/sellers',       proxy(UPSTREAMS.seller,       { pathRewrite: (p) => '/sellers' + p }));
+app.use('/api/loyalty',       proxy(UPSTREAMS.seller,       { pathRewrite: (p) => '/loyalty' + p })); // MLB-4
 app.use('/api/products',      proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/products' + p }));
 app.use('/api/qa',            proxy(UPSTREAMS.qa,           { pathRewrite: (p) => '/qa' + p }));
 app.use('/api/orders',        proxy(UPSTREAMS.order,        { pathRewrite: (p) => '/orders' + p }));
