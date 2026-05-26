@@ -38,6 +38,7 @@ export function Nav() {
           <Link href="/products?kind=ai_agent" className="hover:text-magenta transition-colors">Agentes IA</Link>
           <Link href="/products?kind=n8n_workflow" className="hover:text-magenta transition-colors">Workflows n8n</Link>
           <Link href="/products?kind=automation" className="hover:text-magenta transition-colors">Automacoes</Link>
+          <Link href="/promocoes" className="hover:text-orange-400 transition-colors font-semibold">Promocoes</Link>
           <Link href="/sellers" className="hover:text-magenta transition-colors">Vendedores</Link>
           <Link href="/products" className="hover:text-magenta transition-colors">Tudo</Link>
         </div>

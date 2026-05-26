@@ -7,6 +7,23 @@ const { asyncHandler, validate, errorHandler } = require('@cas/shared');
 
 const router = express.Router();
 
+// GET /products/flash-promo - produtos em promocao relampago ativa (MLB-10)
+router.get('/flash-promo/active', asyncHandler(async (req, res) => {
+  const r = await query(
+    `SELECT id, slug, title, subtitle, short_description, kind, cover_image_url,
+            price_cents, currency, is_free, tech_stack, avg_rating, review_count,
+            sales_count, is_platform_owned, flash_promo_discount_pct, flash_promo_ends_at,
+            (price_cents * (1 - flash_promo_discount_pct/100))::BIGINT AS discounted_price_cents,
+            EXTRACT(EPOCH FROM (flash_promo_ends_at - NOW()))::BIGINT AS seconds_remaining
+       FROM products
+      WHERE status = 'approved' AND flash_promo_active = TRUE
+        AND flash_promo_ends_at > NOW()
+        AND deleted_at IS NULL
+      ORDER BY flash_promo_ends_at ASC LIMIT 20`
+  );
+  res.json({ products: r.rows });
+}));
+
 // GET /products - listagem + filtros facetados
 router.get('/', asyncHandler(async (req, res) => {
   const lim = Math.min(parseInt(req.query.limit, 10) || 24, 60);
