@@ -16,9 +16,10 @@ app.use(sanitize.middleware());
 
 app.get('/health', async (_req, res) => res.json({ ok: true, db: await healthcheck() }));
 
+// ORDEM IMPORTA: especificas antes de /orders (que captura :id)
 app.use('/orders/cart',     require('./routes/cart'));
-app.use('/orders',          require('./routes/orders'));
 app.use('/orders/download', require('./routes/download'));
+app.use('/orders',          require('./routes/orders'));
 
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
