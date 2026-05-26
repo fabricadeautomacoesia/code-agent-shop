@@ -3,6 +3,7 @@ import './globals.css';
 import { Providers } from '@/components/providers';
 import { Nav } from '@/components/nav';
 import { Footer } from '@/components/footer';
+import { CartDrawer } from '@/components/cart-drawer';
 
 export const metadata: Metadata = {
   title: 'Code & Agent Shop - O Marketplace de Automacoes e IA',
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="noise-overlay" aria-hidden />
         <Providers>
           <Nav />
+          <CartDrawer />
           <main className="relative z-10 pt-24">{children}</main>
           <Footer />
         </Providers>
