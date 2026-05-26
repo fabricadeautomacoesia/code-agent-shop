@@ -167,8 +167,9 @@ app.post('/reports', jwt.requireAuth(),
   })
 );
 
-// GET /reports/admin (lista para o admin com filtro de status)
-app.get('/reports/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
+// Gateway proxia /api/reviews/* sem prefix - rotas chegam direto na raiz
+// GET /admin/reports?status=open (acessada via /api/reviews/admin/reports)
+app.get('/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
   asyncHandler(async (req, res) => {
     const status = req.query.status || 'open';
     const r = await query(
@@ -182,8 +183,8 @@ app.get('/reports/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
   })
 );
 
-// POST /reports/:id/resolve
-app.post('/reports/reports/:id/resolve', jwt.requireAuth({ roles: ['admin','staff'] }),
+// POST /reports/:id/resolve (via /api/reviews/reports/:id/resolve)
+app.post('/reports/:id/resolve', jwt.requireAuth({ roles: ['admin','staff'] }),
   validate({ body: z.object({ status: z.enum(['resolved','dismissed','under_review']), notes: z.string().max(2000) }) }),
   asyncHandler(async (req, res) => {
     await query(
