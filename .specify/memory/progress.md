@@ -1,47 +1,47 @@
-# progress.md - V1 + WISHLIST + CRON MLB
+# progress.md - V1 + 20 WORKERS + MLB-1
 
-## STATUS: SISTEMA OPERACIONAL + AUTOMACAO DE FEATURES
+## STATUS: AUTOMACAO PARALELA ATIVA + 20 CRONS CORRIGINDO BUGS
 
-### Wishlist E2E (NOVO)
-- POST /api/products/wishlist {product_id}
-- DELETE /api/products/wishlist/:product_id
-- GET /api/products/wishlist (lista do user)
-- GET /api/products/wishlist/:id/check (esta favoritado?)
-- VALIDADO em producao
+### MLB-1 IMPLEMENTADO: Mais Vendidos por Categoria
+- /api/search/top-sellers (agrupado por cat) + /:category (lista)
+- /categoria/[slug] page com badges 1o/2o/3o lugar
+- ProductCard com badge MAIS VENDIDO
+- Home com chips de top por categoria
+- VALIDADO: HTTP 200 + "Mais vendidos" + produtos top
 
-### Componentes novos
-- WishlistButton no PDP (toggle + Heart fill animado)
-- /conta/favoritos (grid com ProductCard dos favoritados)
+### FROTA 20 WORKERS (crons) corrigindo bugs em paralelo
 
-### CRONS ATIVOS
-1. **0f7dfeb9** - a cada 4min - continuar trabalho do projeto
-2. **47bc7572** (NOVO) - a cada 12min - analisar Mercado Livre + implementar feature + deploy
+Workers de auditoria UI (5min offsets):
+- W1 AUTH pages, W2 CHECKOUT, W3 PDP, W4 ADMIN, W5 SELLER
 
-   Features-alvo identificadas (1 por cron):
-   - Q&A com upvote
-   - Mercado Pontos/loyalty
-   - Mais vendidos por categoria
-   - Recomendacoes personalizadas (product_views ja existe)
-   - Comparador de produtos
-   - Quantidade vendida em destaque
-   - Selo OFICIAL MAIS VENDIDO
-   - Promocoes relampago com timer
-   - Cupom progressivo
+Workers backend (10min offsets):
+- W6 GATEWAY/AUTH, W7 PRODUCT, W10 SEARCH/AIOPS
+- W11 PAYMENT, W12 QA, W13 NOTIFICATION, W17 VAULT
 
-### Storefront (26 pages: 22 + 3 UX + favoritos)
-- + /conta/favoritos
+Workers cross-cutting (5-10min):
+- W8 VISUAL/UX, W9 SEO/META, W14 DB SCHEMA
+- W15 MOBILE, W18 PERFORMANCE
 
-### Componentes globais (12)
-Nav, Footer, Providers, CartDrawer, AddToCart, ReviewForm, QnaForm,
-SearchAutocomplete, HeroAnimated, ProductCard, NotificationBell, **WishlistButton**
+Workers feature builders (12min):
+- W16 MLB FEATURES (alterna features ML nao feitas)
+- 47bc7572 MLB Crawler
 
-### Admin (9) + Seller (8)
+Worker meta:
+- 0f7dfeb9 Continue (4min)
+
+### Storefront (27 pages)
+22 + 3 UX + favoritos + categoria
+
+### Components (12)
++ WishlistButton + NotificationBell + ProductCard com badge top seller
 
 ### Backend (16 services Swarm UP)
-- product-svc com /uploads + /wishlist
-- 47 tabelas + Redis + volume persistente
+Gateway com pathRewrite + /uploads + 47 tabelas
 
-### Auth + Comercio + Relacionamento + SEO + Legal completos
+### Auth + Comercio + Reviews + Q&A + Reports + Wishlist
+Tudo E2E validado em producao
 
-### PENDENCIA UNICA: DNS A
+### SSL Lets Encrypt R13 + Backup pg_dump cron 6h
+
+### PENDENCIA UNICA: DNS A pelo usuario
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
