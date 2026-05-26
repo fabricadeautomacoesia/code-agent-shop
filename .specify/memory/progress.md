@@ -1,51 +1,52 @@
-# progress.md - V1 PUBLICA E2E VALIDADA
+# progress.md - V1 PUBLICA + AUTH ROTATION FUNCIONANDO
 
-## STATUS: PRODUCAO PUBLICA - AGUARDANDO DNS DO USUARIO
+## STATUS: PRODUCAO PUBLICA E2E - AGUARDANDO APENAS DNS
 
-### Fluxos E2E validados via HTTPS (Traefik + SSL Lets Encrypt R13)
+### Auth flow completo validado (HTTPS publico)
+1. POST /api/auth/register {role} -> user criado
+2. POST /api/auth/login -> JWT access + cookie cas_rt path=/
+3. POST /api/auth/refresh -> new JWT + cookie rotacionado, antigo na blacklist
+4. POST /api/auth/logout -> session revogada, cookie clear path=/
+5. GET /api/auth/me com Bearer -> user payload
 
-**Fluxo BUYER:**
-1. POST /api/auth/register {role: buyer} -> user criado
-2. POST /api/auth/login -> JWT 15min
-3. GET /api/auth/me -> user payload com seller_profile=null
-4. POST /api/orders/cart/items {product_id, quantity} -> {ok:true}
-5. GET /api/orders/cart -> carrinho com items_count, totais
-6. POST /api/orders/checkout {payment_method:pix} -> CAS-2026-000001 criado
-7. GET /api/orders -> lista pedidos com items_preview
+### Fluxo Buyer (executado em producao)
+- Register teste1@cas.io -> user e240c6c4
+- Login -> JWT 337 chars
+- /cart/items {prompt-pack} -> ok
+- /orders/checkout {pix} -> CAS-2026-000001 (R$ 19, pending_payment)
+- /orders -> lista
 
-**Fluxo SELLER:**
-1. POST /api/auth/register {role: seller} -> user + auto-create seller class_a pending_kyc
-2. POST /api/auth/login -> JWT
-3. GET /api/sellers/me -> seller_profile completo
-4. GET /api/products/me -> [] (correto)
+### Fluxo Seller (executado em producao)
+- Register vendedor1@cas.io -> user dc088c4a + seller class_a pending_kyc
+- /sellers/me -> seller_profile completo
+- /products/me -> [] (correto)
 
-**Endpoints publicos:**
-- GET /api/products?limit=N -> 10 produtos demo
-- GET /api/products/[slug] -> PDP completo
-- GET /api/search?q=whatsapp -> TSVECTOR match
-- GET /api/search/categories -> 7 raiz + 18 subcats
-- GET /api/aiops/status -> metrics live
+### Endpoints publicos validados
+- /api/products, /api/products/[slug], /api/search, /api/search/categories
+- /api/search/trending, /api/aiops/status, /api/aiops/metrics/latest
 
-**Frontends publicos:**
-- https://cas.inovareinteligenciaartificial.com/ -> Mais vendidos + 10 produtos + trending
-- https://cas.inovareinteligenciaartificial.com/products -> Lista filtravel
-- https://cas.inovareinteligenciaartificial.com/product/[slug] -> PDP
-- https://admin.cas.inovareinteligenciaartificial.com -> Sidebar com 10 secoes
-- https://seller.cas.inovareinteligenciaartificial.com -> Sidebar com 6 secoes
+### Storefront pages criadas/atualizadas
+- /conta/pedidos/[id] (PIX QR + license keys + download buttons)
+- /conta/downloads/[token] (download seguro + license display)
+- /conta/seguranca (2FA TOTP completo)
+- Home / com fetchSafe + force-dynamic (10 produtos demo aparecem)
 
-### Bugs fixed neste sprint
-- /products/me retornava 404 (Express route capturava :slug). Reordenado.
-- Mesmo bug em /sellers/me e /orders/download. Reordenado.
-- Home SSR cached. Forcado dynamic + fetch no-store.
+### Bugs resolvidos hoje
+1. ltree, NOW() index, DNS Swarm, Next public, Suspense
+2. Dockerfile monorepo + HEALTHCHECK
+3. Express 5 sanitize, gateway upstreams, pathRewrite funcao
+4. auth-svc u2.secret_iv
+5. Routes order: /me, /admin, /download captured by :slug (3 svcs)
+6. Cookie path=/auth -> path=/ para refresh via gateway
 
 ### SSL
 - Lets Encrypt R13
-- Validade: 2026-05-26 -> 2026-08-24 (auto-renew)
+- 2026-05-26 -> 2026-08-24 (auto-renew Traefik)
 
 ### Login admin
 - fabricadeautomacoes0@gmail.com / ChangeMe!2026Inovare
 
-### PENDENCIA: DNS A pelo usuario
+### PENDENCIA UNICA: DNS A records (usuario)
 - cas.inovareinteligenciaartificial.com -> 209.145.60.53
 - api.cas.inovareinteligenciaartificial.com -> 209.145.60.53
 - admin.cas.inovareinteligenciaartificial.com -> 209.145.60.53
