@@ -2,12 +2,16 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Api } from '@/lib/api';
 
 export default function RegisterPage() {
+  return <Suspense fallback={<div className="container mx-auto px-6 py-16 max-w-md">Carregando...</div>}><RegisterInner /></Suspense>;
+}
+
+function RegisterInner() {
   const router = useRouter();
   const sp = useSearchParams();
   const initialRole = (sp.get('role') as 'buyer'|'seller') || 'buyer';
