@@ -5,8 +5,9 @@ import { Api } from '@/lib/api';
 import { QnaForm } from '@/components/qna-form';
 import { AddToCart } from '@/components/add-to-cart';
 import { WishlistButton } from '@/components/wishlist-button';
+import { QnaUpvote } from '@/components/qna-upvote';
 
-export const revalidate = 60;
+export const revalidate = 30;
 
 export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
