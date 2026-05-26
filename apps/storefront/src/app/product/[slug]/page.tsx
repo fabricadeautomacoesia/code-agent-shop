@@ -9,6 +9,41 @@ import { QnaUpvote } from '@/components/qna-upvote';
 
 export const revalidate = 30;
 
+// SEO dinamico - Open Graph + Twitter card por produto
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  try {
+    const p: any = await Api.product(slug);
+    const prod = p.product;
+    if (!prod) return { title: 'Produto - Code & Agent Shop' };
+    const priceLabel = prod.is_free ? 'Gratis' : `R$ ${(prod.price_cents/100).toFixed(2).replace('.', ',')}`;
+    const title = `${prod.title} - ${priceLabel} | Code & Agent Shop`;
+    const description = (prod.short_description || prod.description || '')
+      .replace(/<[^>]+>/g, '')
+      .slice(0, 160);
+    const image = prod.cover_image_url || undefined;
+    const url = `https://cas.inovareinteligenciaartificial.com/product/${slug}`;
+    return {
+      title,
+      description,
+      alternates: { canonical: url },
+      openGraph: {
+        title, description, url, type: 'website',
+        siteName: 'Code & Agent Shop',
+        images: image ? [{ url: image, alt: prod.title }] : undefined,
+      },
+      twitter: {
+        card: image ? 'summary_large_image' : 'summary',
+        title, description,
+        images: image ? [image] : undefined,
+      },
+      robots: { index: true, follow: true },
+    };
+  } catch {
+    return { title: 'Produto - Code & Agent Shop' };
+  }
+}
+
 async function fetchRelated(slug: string) {
   try {
     const base = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';

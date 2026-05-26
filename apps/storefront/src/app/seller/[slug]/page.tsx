@@ -24,6 +24,38 @@ async function fetchSafe<T>(path: string): Promise<T | null> {
   } catch { return null; }
 }
 
+// SEO dinamico para pagina de vendedor
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const data: any = await fetchSafe(`/api/sellers/${slug}`);
+  const seller = data?.seller;
+  if (!seller) return { title: 'Vendedor - Code & Agent Shop' };
+  const title = `${seller.store_name || seller.display_name || slug} - Vendedor | Code & Agent Shop`;
+  const tierLabel = seller.reputation_tier ? `Tier ${seller.reputation_tier}` : '';
+  const stats = `${seller.total_sales || 0} vendas - ${seller.products_count || 0} produtos`;
+  const description = (seller.bio || `Loja oficial ${seller.store_name || slug}. ${stats}. ${tierLabel}.`)
+    .replace(/<[^>]+>/g, '')
+    .slice(0, 160);
+  const image = seller.logo_url || seller.banner_url || undefined;
+  const url = `https://cas.inovareinteligenciaartificial.com/seller/${slug}`;
+  return {
+    title,
+    description,
+    alternates: { canonical: url },
+    openGraph: {
+      title, description, url, type: 'profile',
+      siteName: 'Code & Agent Shop',
+      images: image ? [{ url: image, alt: seller.store_name || slug }] : undefined,
+    },
+    twitter: {
+      card: image ? 'summary_large_image' : 'summary',
+      title, description,
+      images: image ? [image] : undefined,
+    },
+    robots: { index: true, follow: true },
+  };
+}
+
 export default async function SellerPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const data: any = await fetchSafe(`/api/sellers/${slug}`);
