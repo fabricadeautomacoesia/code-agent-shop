@@ -3,12 +3,22 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, cache } = require('@cas/shared');
 
 const router = express.Router();
 
+// FIX-WORKER-18 pass 5: cache em 4 endpoints publicos de seller (zero cache antes).
+// Cada hit em /sellers ou /seller/[slug] no storefront fazia query DB ~800ms.
+// Cache 120s (sellers list/stats), 60s (detail/products - mais volatil por reviews).
+// Invalidacao via cache.del em mutations (seller-svc/me.js update profile).
+
 // GET /sellers - listagem publica (storefront)
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/',
+  cache.cacheMiddleware((req) => {
+    const q = req.query;
+    return `sellers:list:p=${q.page||1}:lim=${q.limit||24}:s=${q.sort||'rep_desc'}:t=${q.tier||''}:q=${q.search||''}`;
+  }, 120),
+  asyncHandler(async (req, res) => {
   const { page = 1, limit = 24, sort = 'rep_desc', tier, search } = req.query;
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
   const lim = Math.max(1, Math.min(parseInt(limit, 10) || 24, 100));
@@ -43,23 +53,29 @@ router.get('/', asyncHandler(async (req, res) => {
 
 // GET /sellers/:slug - perfil publico
 // FIX-WORKER-16: incluido is_verified (KYC concluido) + member_since para badges UI
+// FIX-WORKER-18 pass 5: cache via withCache 60s (perfil quase imutavel, exceto avg_rating
+// que muda em reviews mas TTL 60s eh aceitavel). Usar withCache (vs middleware) para
+// preservar errorHandler.notFound() em casos slug invalido.
 router.get('/:slug', asyncHandler(async (req, res, next) => {
-  const r = await query(
-    `SELECT s.id, s.store_slug, s.store_name, s.store_description,
-            s.store_banner_url, s.store_logo_url,
-            s.reputation_tier, s.reputation_score, s.total_sales, s.avg_rating,
-            s.total_products_active, s.created_at,
-            s.document_verified_at IS NOT NULL AS is_verified,
-            s.seller_class,
-            EXTRACT(YEAR FROM s.created_at)::INT AS member_since_year,
-            u.display_name AS owner_name
-       FROM sellers s
-       JOIN users u ON u.id = s.user_id
-      WHERE s.store_slug = $1 AND s.status = 'active' AND s.deleted_at IS NULL`,
-    [req.params.slug]
-  );
-  if (!r.rows.length) return next(errorHandler.notFound('seller_not_found'));
-  res.json({ seller: r.rows[0] });
+  const { value: seller } = await cache.withCache(`sellers:detail:${req.params.slug}`, 60, async () => {
+    const r = await query(
+      `SELECT s.id, s.store_slug, s.store_name, s.store_description,
+              s.store_banner_url, s.store_logo_url,
+              s.reputation_tier, s.reputation_score, s.total_sales, s.avg_rating,
+              s.total_products_active, s.created_at,
+              s.document_verified_at IS NOT NULL AS is_verified,
+              s.seller_class,
+              EXTRACT(YEAR FROM s.created_at)::INT AS member_since_year,
+              u.display_name AS owner_name
+         FROM sellers s
+         JOIN users u ON u.id = s.user_id
+        WHERE s.store_slug = $1 AND s.status = 'active' AND s.deleted_at IS NULL`,
+      [req.params.slug]
+    );
+    return r.rows[0] || null;
+  });
+  if (!seller) return next(errorHandler.notFound('seller_not_found'));
+  res.json({ seller });
 }));
 
 // MLB-NEW WORKER 16: GET /sellers/:slug/stats - dashboard publico de reputacao
@@ -69,7 +85,11 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
 // - response_rate: % de Q&A respondidas em ate support_response_hours
 // - refund_rate: % de orders refunded vs total
 // - avg_rating + review_count
-router.get('/:slug/stats', asyncHandler(async (req, res, next) => {
+// FIX-WORKER-18 pass 5: cache 180s (3min) - stats agregam 4 queries DB pesadas.
+// TTL maior porque metricas mudam devagar (sales/refunds dia-a-dia).
+router.get('/:slug/stats',
+  cache.cacheMiddleware((req) => `sellers:stats:${req.params.slug}`, 180),
+  asyncHandler(async (req, res, next) => {
   const seller = await query(
     `SELECT id, store_name, reputation_tier, reputation_score, total_sales, avg_rating,
             total_products_active, created_at,
@@ -144,7 +164,11 @@ router.get('/:slug/stats', asyncHandler(async (req, res, next) => {
 }));
 
 // GET /sellers/:slug/products - produtos publicos do seller
-router.get('/:slug/products', asyncHandler(async (req, res) => {
+// FIX-WORKER-18 pass 5: cache 60s (storefront seller page hit MUITO).
+// Invalidado quando seller publica novo produto (via product-svc cache.del).
+router.get('/:slug/products',
+  cache.cacheMiddleware((req) => `sellers:products:${req.params.slug}:p=${req.query.page||1}:lim=${req.query.limit||24}`, 60),
+  asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 24, 100));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
