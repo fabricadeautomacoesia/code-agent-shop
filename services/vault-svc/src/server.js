@@ -46,11 +46,16 @@ function vaultUseGuard(req, res, next) {
     }
     // FIX-WORKER-17 pass 3: incrementa contador fail2ban
     if (req.fail2ban) req.fail2ban.reportFailure();
+    // FIX-WORKER-17 pass 4 (CRITICAL DLP): NAO logar expected.length nem tok_len.
+    // Antes: atacante via 1 tentativa falha aprendia o comprimento exato do
+    // VAULT_INTERNAL_TOKEN (ex: 64 chars) -> reduzia espaco de busca drasticamente.
+    // Com fail2ban + IP rotation, exploit ainda era viavel em horas.
+    // Agora: log so registra IP/UA (audit forensics) sem oracle de tamanho.
+    // tok_len_match (bool) preserva 1 bit de info util sem revelar comprimento real.
     log.warn({
       ip: req.ip,
       ua: req.headers['user-agent'],
-      tok_len: String(internalTok).length,
-      expected_len: expected.length,
+      tok_len_match: String(internalTok).length === expected.length,
     }, '[vault.invalid_internal_token]');
   }
   return jwt.requireAuth({ roles: ['admin', 'staff', 'service'] })(req, res, next);
