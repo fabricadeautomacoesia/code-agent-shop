@@ -1612,3 +1612,68 @@ sem callers conhecidos hoje (usage tabela com poucas rows).
 
 DEPLOY: commit 4645f4e pushed, vault-svc rebuilt via Dockerfile.node
 SVC=vault-svc, service updated --force, converged OK.
+
+## WORKER 12 (QA PIPELINE) - CRITICAL: /qa/run + /qa/runs/:pid sem auth
+Auditoria publica revelou 3 bugs criticos em qa-svc:
+
+BUG 1 (CRITICAL - Denial-of-Wallet + DoS):
+POST /qa/run nao tinha auth gate (apenas Zod validation). Qualquer pessoa
+da internet podia POST com product_id valido e:
+- Trocar status do produto -> 'qa_running' (efetivamente delistar)
+- Inserir registro em product_qa_runs (poluicao audit)
+- Disparar n8n webhook OU chamada ao qa-worker Python -> LLM call real
+  (custo $$ + denial-of-wallet sustained attack)
+Confirmado em producao: HTTP 202 + run_id retornado sem auth. Produto
+agente-rag-documentos-cas-004 (top-seller) foi efetivamente delistado.
+
+BUG 2 (DLP):
+GET /qa/runs/:product_id era public -> qualquer um podia listar:
+- confidence_score (intel competitiva sobre qualidade interna)
+- raw_response (potencialmente codigo do produto avaliado!)
+- tokens_input/output, cost_usd_cents (custos LLM)
+- llm_provider/model (stack tecnica interna)
+- reasons (motivos de rejeicao - intel competitiva)
+
+BUG 3 (Validation):
+:product_id nao era pre-validado como UUID -> PG 22P02 -> 404 generico
+do global error handler.
+
+FIX services/qa-svc/src/server.js:
+- POST /qa/run: novo qaRunGuard middleware
+  * Aceita x-internal-token = QA_RUN_INTERNAL_TOKEN (service mesh)
+  * OU jwt.requireAuth({roles: ['admin','staff','service']})
+  * Buyer/seller -> 403 forbidden_role
+  * timing-safe comparison no token
+- GET /qa/runs/:product_id:
+  * jwt.requireAuth() obrigatorio
+  * UUID_RE pre-validacao -> 400 invalid_uuid
+  * Authz: admin/staff OK; senao SELECT sellers.user_id check ownership
+    -> 403 not_product_owner se nao eh dono
+  * SELECT explicit cols (removeu raw_response do retorno - sensitive)
+
+FIX services/product-svc/src/routes/seller-mgmt.js:
+- Caller legitimo POST /qa/run agora envia x-internal-token header
+- URL trocada de 127.0.0.1 para service mesh tasks.cas_qa-svc
+
+RESTAURACAO POS-EXPLOIT:
+Produto agente-rag-documentos-cas-004 (412 sales, top seller) foi
+restaurado via psql direto: UPDATE products SET status='approved',
+qa_verdict='approved'. 2 product_qa_runs poluidos deletados.
+
+VALIDACAO PUBLICA (7 cenarios):
+1) POST /qa/run sem auth -> 401 OK (era 202+side-effects)
+2) GET /qa/runs/:pid sem auth -> 401 OK (era 200+DLP)
+3) GET com buyer token (nao dono) -> 403 not_product_owner OK
+4) POST com buyer token -> 403 forbidden_role OK
+5) UUID malformado em /qa/runs -> 400 invalid_uuid OK
+6) Regression /qa/callback HMAC sem sig -> 401 OK
+7) Produto restored: status=approved, qa_verdict=approved OK
+
+DEPLOY: commit 63a6f25 pushed,
+- qa-svc rebuilt + service updated --force, converged OK
+- product-svc rebuilt + service updated --force, converged OK
+
+NOTA OPERACIONAL: QA_RUN_INTERNAL_TOKEN precisa ser configurado em .env
+Swarm para product-svc e qa-svc. Sem isso, dispatcher legitimo cairia
+no JWT path e falharia (product-svc nao tem token JWT de service hoje).
+Configurar antes do proximo deploy.
