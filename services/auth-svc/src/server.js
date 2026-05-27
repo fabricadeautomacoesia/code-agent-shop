@@ -29,7 +29,10 @@ app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
 app.use(sanitize.middleware());
 
-app.get('/health', async (_req, res) => res.json({ ok: true, db: await healthcheck() }));
+// FIX-WORKER-12 pass 3: alias /auth/health (gateway reescreve /api/auth/* -> /auth/*)
+const _healthHandler = async (_req, res) => res.json({ ok: true, db: await healthcheck() });
+app.get('/health', _healthHandler);
+app.get('/auth/health', _healthHandler);
 
 app.use('/auth', require('./routes/auth'));
 app.use('/auth/2fa', require('./routes/two-factor'));

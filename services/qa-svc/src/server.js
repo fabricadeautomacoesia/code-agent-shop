@@ -42,7 +42,11 @@ app.use('/qa/callback', express.raw({ type: '*/*', limit: '5mb' }));
 app.use(express.json({ limit: '5mb' }));
 app.use(sanitize.middleware());
 
-app.get('/health', (_req, res) => res.json({ ok: true, svc: 'qa-svc', worker_url: WORKER_URL, threshold: QA_THRESHOLD }));
+// FIX-WORKER-12 pass 3: gateway reescreve /api/qa/* -> /qa/*, entao /health
+// recebia /qa/health mas svc so tinha /health -> 404. Alias adicional.
+const healthHandler = (_req, res) => res.json({ ok: true, svc: 'qa-svc', worker_url: WORKER_URL, threshold: QA_THRESHOLD });
+app.get('/health', healthHandler);
+app.get('/qa/health', healthHandler);
 
 // HMAC sign para n8n
 function signPayload(body) {

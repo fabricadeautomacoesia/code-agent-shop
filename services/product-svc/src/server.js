@@ -15,7 +15,10 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
 app.use(sanitize.middleware());
 
-app.get('/health', async (_req, res) => res.json({ ok: true, db: await healthcheck() }));
+// FIX-WORKER-12 pass 3: alias /products/health (gateway /api/products/* -> /products/*)
+const _healthHandler = async (_req, res) => res.json({ ok: true, db: await healthcheck() });
+app.get('/health', _healthHandler);
+app.get('/products/health', _healthHandler);
 
 // SERVIR arquivos uploaded publicamente (cover_image_url + downloads)
 // Path: /uploads/<filename> -> /app/uploads/<filename>

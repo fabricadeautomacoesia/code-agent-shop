@@ -60,10 +60,13 @@ function asaasCreateGuard(req, res, next) {
   return jwt.requireAuth({ roles: ['admin','staff','service'] })(req, res, next);
 }
 
-app.get('/health', (_req, res) => res.json({
+// FIX-WORKER-12 pass 3: alias /payments/health (gateway /api/payments/* -> /payments/*)
+const _healthHandler = (_req, res) => res.json({
   ok: true, svc: 'payment-svc',
   asaas: { configured: !!process.env.ASAAS_API_KEY, url: process.env.ASAAS_API_URL }
-}));
+});
+app.get('/health', _healthHandler);
+app.get('/payments/health', _healthHandler);
 
 // MLB-5 Mercado Credito - preview de parcelas no cartao
 // GET /payments/installments/preview?amount_cents=N&max=12

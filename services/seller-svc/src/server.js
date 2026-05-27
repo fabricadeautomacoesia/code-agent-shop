@@ -14,7 +14,10 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '512kb' }));
 app.use(sanitize.middleware());
 
-app.get('/health', async (_req, res) => res.json({ ok: true, db: await healthcheck() }));
+// FIX-WORKER-12 pass 3: alias /sellers/health (gateway /api/sellers/* -> /sellers/*)
+const _healthHandler = async (_req, res) => res.json({ ok: true, db: await healthcheck() });
+app.get('/health', _healthHandler);
+app.get('/sellers/health', _healthHandler);
 
 // MLB-4: loyalty (montado em /loyalty - mas gateway proxia via /api/loyalty)
 app.use('/loyalty',       require('./routes/loyalty'));
