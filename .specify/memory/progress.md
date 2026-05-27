@@ -5641,3 +5641,62 @@ GAP PROXIMA ITER:
 - /admin/sellers (suspend, reactivate, promote-class-b)
 - /admin/orders (refund, dispute resolve)
 - Considerar helper hook useAdminAction() para reuso
+
+## WORKER 4 pass 2 (ADMIN) - useAdminAction hook + 2 pages refactor
+
+GAP DETECTADO (proxima iter do W4 pass 1):
+"Aplicar mesmo pattern em /admin/qa-queue + /admin/sellers + useAdminAction hook"
+
+CRIADO (apps/dashboard-admin/src/lib/use-admin-action.ts):
++ Hook reutilizavel encapsulando 3 states + try/catch + reload:
+  - busyKey: string|null (opaco - permite multi-action 1 page)
+  - error/success messages
+  - run(key, fn): wrapper try/catch automatico + reload callback
+  - Dedup: skip if busyKey ja setado (prevent race)
++ TypeScript interface UseAdminActionReturn explicita
++ useCallback memoization
+
+APLICADO em 2 pages (additional ao W4 pass 1 payouts):
+
+1. apps/dashboard-admin/src/app/qa-queue/page.tsx:
+- forceApprove(id) -> action.run(`approve-${id}`, async () => msg)
+- platformTake(id) -> action.run(`take-${id}`, async () => msg)
+- 2 banners (red+green) + disabled buttons + dynamic text
+
+2. apps/dashboard-admin/src/app/sellers/page.tsx:
+- suspend(id) -> action.run(`suspend-${id}`, ...)
+- promoteB(id) -> action.run(`promote-${id}`, ...)
+- loadError separado (lista) vs action.error (action falha)
+
+PADRAO REUTILIZAVEL:
+const action = useAdminAction(reloadFn);
+action.run(uniqueKey, async () => {
+  await adminFetch(...);
+  return 'mensagem de sucesso';
+});
+
+3 pages admin agora consistentes:
+- /admin/payouts (W4 pass 1 - inline try/catch)
+- /admin/qa-queue (este pass - via hook)
+- /admin/sellers (este pass - via hook)
+
+DEPLOY:
+- commit 4119792 pushed
+- dashboard-admin rebuilt (~4.2s) + converged
+
+VALIDACAO PUBLICA:
+- /qa-queue HTTP 200 OK
+- /sellers HTTP 200 OK
+- Bundle JS contem: "busyKey", "approve-", "take-", "Falha:"
+  -> codigo hook + key strings deployados
+
+IMPACTO:
+- 30 linhas eliminadas por page (DRY)
+- Padrao consistente UX feedback
+- Hook reaplicavel em /admin/orders, /admin/reports, /admin/vault
+- TypeScript safety (interface explicit)
+
+PROXIMA ITER:
+- Refactor /admin/payouts para usar hook (atualmente inline - W4 pass 1)
+- Aplicar em /admin/orders + /admin/reports
+- Considerar Toast component centralizado (vs banners inline)
