@@ -49,12 +49,22 @@ const ERROR_MESSAGES: Record<string, string> = {
 };
 
 export function friendlyAuthError(e: any): string {
-  // ApiError tem { message: code, data: { error, message, details? } }
-  const code = e?.message || e?.data?.error || '';
+  // FIX-WORKER-8 pass 3: prioridade inversa pos-W8 pass 2.
+  // W8 pass 2 mudou api.ts para preferir data.message (PT-BR humano) sobre
+  // data.error (machine code) ao construir ApiError. Isso QUEBRAVA o mapping:
+  //   ANTES: e.message='invalid_credentials' -> ERROR_MESSAGES[code] OK
+  //   DEPOIS pass 2: e.message='Email ou senha incorretos.' -> mapping FAIL
+  //                  -> caia no fallback regex (acidentalmente funcionou pq
+  //                  backend mandou PT-BR, MAS se backend mandar EN/codigo
+  //                  cru ou validation, friendly-errors nao detectava)
+  // FIX: code SEMPRE de e.data.error (machine - estavel pelo backend)
+  //      e.message como fallback humano (ja PT-BR pelo W8 pass 2)
+  const code = e?.data?.error || '';
+
+  // 1. Mapping codigo machine -> mensagem PT-BR curada (melhor UX)
   if (ERROR_MESSAGES[code]) return ERROR_MESSAGES[code];
 
   // validation_error com details[0]: extrai path + reason
-  if (code === 'validation_error' && e?.data?.details?.length) {
     const d = e.data.details[0];
     const field = Array.isArray(d.path) ? d.path[d.path.length - 1] : d.path;
     // FIX-WORKER-1 pass 2: mensagens PT-BR especificas por campo (UX > generico)
@@ -81,9 +91,19 @@ export function friendlyAuthError(e: any): string {
     return `${field}: ${d.message || 'valor invalido'}.`;
   }
 
-  // Fallback: usa message do backend se humanizada, senao mensagem generica
-  const backendMsg = e?.data?.message;
-  if (backendMsg && !/^[a-z_]+$/.test(backendMsg)) return backendMsg;
+  // FIX-WORKER-8 pass 3: Fallback chain alinhada com api.ts pos-W8 pass 2.
+  // e.message agora vem da chain (data.message || data.error_pt_br || data.error || http_N)
+  // entao se code nao bate no mapping, e.message ja eh a melhor mensagem humana disponivel.
+  // Filtros para nao mostrar codigos crus ao user:
+  //  - /^[a-z_]+$/: snake_case machine codes (ex: 'invalid_credentials')
+  //  - /^http_\d+$/: codigo HTTP fallback final api.ts
+  //  - Strings vazias / null
+  const humanMsg = e?.message || e?.data?.message || '';
+  const isMachineCode = !humanMsg ||
+    /^[a-z_]+$/.test(humanMsg) ||
+    /^http_\d+$/.test(humanMsg);
+  if (!isMachineCode) return humanMsg;
 
+  // Last resort: codigo cru detectado, mostrar generico (anti-machine-code-leak ao user)
   return 'Erro ao processar requisicao. Tente novamente.';
 }

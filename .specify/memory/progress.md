@@ -11547,3 +11547,89 @@ PROXIMA ITER:
   (chain mudou - testar se mensagens PT-BR fluem corretamente)
 - W3 pass 3: AddToCart loading state + optimistic update
 - W18 pass 6: idx parcial order_items status='paid'
+
+================================================================
+ITER W8 PASS 3 - friendly-auth-errors.ts realinhamento Regra E (2026-05-27)
+================================================================
+ESCOPO: storefront lib auth-errors (friendlyAuthError mapper)
+FILE: apps/storefront/src/lib/auth-errors.ts (linhas 51-89)
+
+CONTEXTO CRITICO: W8 pass 2 alterou api.ts chain de prioridade do
+ApiError.message (era 'error' machine, virou 'message' PT-BR humano).
+Isso BREAKAVA friendly-auth-errors silenciosamente:
+
+REGRESSAO IDENTIFICADA (introduzida W8 pass 2, fix pass 3):
+
+ANTES W8 pass 2:
+- ApiError.message = data.error || 'http_N' (machine code)
+- friendly-errors line 53: code = e.message ('invalid_credentials')
+- ERROR_MESSAGES[code] -> 'Email ou senha incorretos.' OK
+
+DEPOIS W8 pass 2:
+- ApiError.message = data.message || data.error_pt_br || data.error || 'http_N'
+- e.message = 'Email ou senha incorretos.' (ja traduzido pelo backend)
+- friendly-errors line 53: code = 'Email ou senha incorretos.' (string PT-BR!)
+- ERROR_MESSAGES[code] undefined -> fallback regex line 86 acidentalmente
+  funcionava SE backend mandou PT-BR. MAS:
+
+3 CENARIOS QUEBRADOS pos-pass 2:
+
+1. Backend retorna 'Invalid credentials' (EN)
+   - e.message = 'Invalid credentials'
+   - !/^[a-z_]+$/.test() -> true -> retorna 'Invalid credentials' AO USER
+   - USER VIA INGLES NA UI PT-BR
+
+2. Backend retorna {error:'validation_error', details:[...]} sem message
+   - api.ts pass 2 fallback chain -> e.message = 'validation_error'
+   - friendly-errors line 53: code = 'validation_error' (matches!)
+   - PORQUE? api.ts manda data.error quando data.message null
+   - Mas se backend envia message:'Dados invalidos' generico:
+     code = 'Dados invalidos' -> NAO bate validation_error
+     -> details[] path/field hints (phone_e164, cpf_cnpj) NUNCA DISPARAM
+     -> user via mensagem generica em vez de "Telefone: use +5511..."
+
+3. Backend nao retorna nem error nem message (raro mas existe)
+   - e.message = 'http_500'
+   - !/^[a-z_]+$/.test('http_500') -> true (tem digitos)
+   - !/^http_\d+$/.test() -> tem que adicionar regex
+   - PRE-PASS3: vazava 'http_500' ao user
+
+FIX APLICADO (W8 pass 3):
+
+1. code SEMPRE de e.data.error (machine - estavel cross-backends)
+   - Restaura comportamento pre-W8 pass 2 para ERROR_MESSAGES mapping
+   - PT-BR humano fica como fallback ranqueado
+
+2. Fallback chain robusta:
+   - humanMsg = e.message || e.data.message
+   - isMachineCode = !humanMsg || /^[a-z_]+$/ || /^http_\d+$/
+   - if (!isMachineCode) return humanMsg (PT-BR pass 2)
+   - else generic 'Erro ao processar'
+
+3. Anti-machine-code-leak ao user
+   - 'http_500' e 'invalid_credentials' nunca vazam direto
+   - Sempre passa por mapping OU generic
+
+PATTERN W3+W8 6-REGRAS:
+- A. revalidate alinhado TTL
+- B. r.json() DENTRO try + await
+- C. .catch defense-in-depth Promise.all
+- D. GATEWAY_URL fallback 127.0.0.1:3002
+- E. Error {status, body.message/error_pt_br/error}
+- F. Type-safe internal flags (sem 'as any')
+
+NOVA REGRA G: Mapper functions immutables - testar regressao cross-pass
+quando chain de prioridade muda em camadas inferiores.
+- Ex: api.ts (pass 2) muda chain -> auth-errors.ts (pass 3) deve realinhar
+- Lesson: nao silenciar incompatibilidades com regex fallback acidental
+
+W8 VISUAL/UX PROGRESS:
+- pass 1: Regra B cross-dashboards 5 violacoes
+- pass 2: storefront/lib/api.ts Regra B+E + 4 bugs
+- pass 3: friendly-auth-errors.ts realinhamento Regra E (esta iter)
+
+PROXIMA ITER:
+- W8 pass 4: testar fluxos end-to-end (login fail/register/2FA) com
+  diferentes shapes de error backend (com message, sem message, EN, validation)
+- W3 pass 3: AddToCart loading state + optimistic update
+- W18 pass 6: idx parcial order_items status='paid'
