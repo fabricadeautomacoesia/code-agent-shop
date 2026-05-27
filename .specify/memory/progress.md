@@ -52,7 +52,7 @@
 
 ## INFRA ESTAVEL EM PRODUCAO
 - 16 microsservicos Node.js + qa-worker Python no Docker Swarm
-- Postgres 51 tabelas + 16 indices criticos
+- Postgres 51 tabelas + 16 indices criticos + 16 novos indices migration 011 (32 total)
 - Storefront (29 pages publicas) + 12 SEO layouts + 14 componentes globais
 - Admin (9 pages) + Seller (8 pages) com endpoints reais
 - SSL Lets Encrypt R13 + Backup cron 6h
@@ -77,6 +77,30 @@
   - Disallow estendido: /login, /register, /esqueci-senha, /redefinir-senha, /seller/dashboard, /seller/upload
   - Bloqueio total de crawlers agressivos: SemrushBot, AhrefsBot, DotBot, PetalBot, MJ12bot
 - VALIDADO 37 <loc> entries publicamente em https://cas.../sitemap.xml
+
+## DB INDEX HARDENING (WORKER 14)
+Migration 011 com 16 indices novos para queries quentes:
+- idx_pviews_user (partial) + idx_pviews_user_recent (user_id, created_at DESC)
+  -> recomendacoes MLB-6 product_views
+- idx_loyalty_user_recent (user_id, created_at DESC) + idx_loyalty_tier
+  -> MLB-4 loyalty historico + ranking tier
+- idx_qna_asked_by + idx_qna_answered_by
+  -> Q&A PDP
+- idx_wishlist_user + idx_wishlist_product
+  -> favoritos
+- idx_token_blacklist_user + idx_fail2ban_user
+  -> auth/security
+- idx_asaas_webhook_order + idx_asaas_splits_order_item + idx_coupon_uses_order
+  -> payments
+- idx_disputes_mediator + idx_disputes_opener
+  -> disputas (futuro)
+- idx_search_log_clicked
+  -> AIOps analytics
+
+Migration tolerante a falhas (DO blocks com EXCEPTION undefined_table/column).
+APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
+preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
+sera escolhido automaticamente acima desse limiar).
 
 ## PENDENCIA UNICA: DNS A pelo usuario
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
