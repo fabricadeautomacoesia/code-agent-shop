@@ -142,8 +142,10 @@ app.get('/autocomplete', asyncHandler(async (req, res) => {
 
 // GET /search/top-sellers - mais vendidos POR CATEGORIA (V8 - MLB style)
 // Retorna agrupado: { [category_slug]: [products...] }
+// FIX-WORKER-10: aceita ?category=slug para filtrar uma categoria (antes era ignorado)
 app.get('/top-sellers', asyncHandler(async (req, res) => {
   const perCategory = Math.min(parseInt(req.query.per_category || '4', 10), 12);
+  const catFilter = (req.query.category || '').toString().trim();
   const r = await query(
     `WITH ranked AS (
        SELECT p.*, c.slug AS cat_slug, c.name AS cat_name,
@@ -151,6 +153,7 @@ app.get('/top-sellers', asyncHandler(async (req, res) => {
          FROM products p
          JOIN categories c ON c.id = p.category_id
         WHERE p.status = 'approved' AND p.deleted_at IS NULL AND c.parent_id IS NULL
+          AND ($2::TEXT IS NULL OR $2 = '' OR c.slug = $2)
      )
      SELECT id, slug, title, subtitle, short_description, kind, cover_image_url,
             price_cents, currency, is_free, tech_stack, avg_rating, review_count,
@@ -158,15 +161,14 @@ app.get('/top-sellers', asyncHandler(async (req, res) => {
             CASE WHEN rn = 1 THEN TRUE ELSE FALSE END AS is_top_seller
        FROM ranked
       WHERE rn <= $1
-      ORDER BY cat_name, rn`, [perCategory]
+      ORDER BY cat_name, rn`, [perCategory, catFilter || null]
   );
-  // Agrupar por categoria (JS plain object)
   const grouped = {};
   for (const p of r.rows) {
     if (!grouped[p.cat_slug]) grouped[p.cat_slug] = { name: p.cat_name, products: [] };
     grouped[p.cat_slug].products.push(p);
   }
-  res.json({ categories: grouped });
+  res.json({ categories: grouped, filter: catFilter || null });
 }));
 
 // GET /search/top-sellers/:category - mais vendidos de UMA categoria

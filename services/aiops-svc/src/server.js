@@ -221,18 +221,26 @@ app.get('/status', asyncHandler(async (_req, res) => {
   });
 }));
 
-app.get('/metrics/latest', asyncHandler(async (_req, res) => {
-  const r = await query(`SELECT * FROM metrics_history ORDER BY collected_at DESC LIMIT 60`);
+// FIX-WORKER-10: gateway proxia /api/aiops/* -> /metrics e /alerts (sem o suffix)
+// Mantemos os paths antigos como aliases para nao quebrar consumers existentes.
+const metricsHandler = asyncHandler(async (req, res) => {
+  const lim = Math.min(parseInt(req.query.limit || '60', 10), 500);
+  const r = await query(`SELECT * FROM metrics_history ORDER BY collected_at DESC LIMIT $1`, [lim]);
   res.json({ metrics: r.rows });
-}));
+});
+app.get('/metrics', metricsHandler);
+app.get('/metrics/latest', metricsHandler);
 
-app.get('/alerts/recent', asyncHandler(async (_req, res) => {
+const alertsHandler = asyncHandler(async (req, res) => {
+  const days = Math.min(parseInt(req.query.days || '7', 10), 90);
   const r = await query(
-    `SELECT * FROM alerts WHERE created_at > NOW() - INTERVAL '7 days'
-      ORDER BY created_at DESC LIMIT 100`
+    `SELECT * FROM alerts WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
+      ORDER BY created_at DESC LIMIT 100`, [String(days)]
   );
   res.json({ alerts: r.rows });
-}));
+});
+app.get('/alerts', alertsHandler);
+app.get('/alerts/recent', alertsHandler);
 
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
