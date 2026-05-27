@@ -1902,3 +1902,55 @@ VALIDACAO PUBLICA (5 cenarios):
 
 DEPLOY: commit aa15d4a pushed, order-svc rebuilt via Dockerfile.node
 SVC=order-svc, service updated --force, converged OK.
+
+## WORKER 1 (AUTH) - NotificationBell sem call-to-action navegavel
+Auditoria visual + funcional do componente NotificationBell e dos fluxos
+/login, /register, /esqueci-senha, /redefinir-senha:
+- /login, /register: friendlyAuthError mapper ja aplicado (W6)
+- /esqueci-senha, /redefinir-senha: friendlyAuthError + layouts SEO (W9)
+- NotificationBell: 60s polling OK, mark-read OK, mark-all OK
+- BUG: cta_url e cta_label retornados pela API NUNCA eram consumidos
+  pela UI -> usuario clicava no item, marcava como lido, mas NAO ia
+  para o recurso (produto aprovado, pedido novo, payout pago, etc).
+  Mercado Livre: sino sempre tem onde clicar para reduzir friccao.
+
+INVESTIGACAO: 2 notifs reais em DB (product_new_version + test_bell) sem
+cta_url. WORKER 13 (DLP fix) removeu template_code do SELECT, deixando
+UI sem qualquer pista para inferir URL fallback.
+
+FIX 1: services/notification-svc/src/server.js linha 75-84
+- Re-inclui template_code no SELECT. NAO eh DLP: e apenas string interna
+  ('product_approved'/'welcome_bonus'/'order_paid' etc) que UI precisa
+  para inferir URL fallback. Confirmado nao-sensitive em audit-W13.
+
+FIX 2: apps/storefront/src/components/notification-bell.tsx
+- Nova helper inferCtaUrl(n) que retorna:
+  * n.cta_url se presente (prioridade)
+  * fallback inteligente por template_code:
+    - product_approved/rejected -> /product/<payload.slug> ou /conta
+    - product_new_version -> /product/<payload.slug>
+    - order_paid/fulfilled -> /conta/pedidos/<payload.order_id>
+    - product_qna_new/answered -> /product/<slug>#qna
+    - product_review_new -> /product/<slug>#reviews
+    - payout_approved/paid/rejected -> seller.cas/financeiro (external)
+    - welcome_bonus, loyalty_tier_up -> /conta/pontos
+    - wishlist_back_in_stock -> /conta/favoritos
+    - test_bell -> /conta
+- Wrap notif item em <Link> (internal) ou <a target="_blank"> (external).
+- Click marca como lida automaticamente + fecha drawer se external.
+- Renderiza CTA hint visualmente: "{cta_label || 'Abrir'} <ExternalLink>".
+- Notifs sem template_code mapeavel + sem cta_url renderizam como div
+  simples (fallback gracioso, nao quebra).
+
+VALIDACAO PUBLICA (TRIPLA):
+1) Backend GET /api/notifications agora retorna template_code:
+   "product_new_version" OK
+2) Layout chunk JS contem 7 template_codes mapeados:
+   loyalty_tier_up, order_paid, payout_approved, product_approved,
+   product_new_version, welcome_bonus, wishlist_back_in_stock OK
+3) Sample notif real teste1@cas.io retorna template_code +
+   payload, UI infere URL quando slug/order_id presente.
+
+DEPLOY: commit 91ff7c7 pushed,
+- notification-svc rebuilt via Dockerfile.node SVC=notification-svc, converged OK
+- storefront rebuilt via Dockerfile.next, converged OK
