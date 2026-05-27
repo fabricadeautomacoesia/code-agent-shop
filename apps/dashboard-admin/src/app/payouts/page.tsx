@@ -8,12 +8,19 @@ import { Check, X, Send } from 'lucide-react';
 export default function PayoutsPage() {
   const [list, setList] = useState<any[]>([]);
   const [loadError, setLoadError] = useState('');
+  // FIX-WORKER-4 pass 4: filtro de status. Antes UI so via 'pending', nunca
+  // mostrava botao "Transferir Asaas" (que dependia de status='approved').
+  // Default 'all' garante que admin ve TODO o pipeline (pending+approved).
+  const [statusFilter, setStatusFilter] = useState<'pending'|'approved'|'all'>('all');
 
   async function load() {
-    try { const r = await adminFetch<{ payouts: any[] }>('/sellers/admin/payouts/pending'); setList(r.payouts); setLoadError(''); }
+    try {
+      const r = await adminFetch<{ payouts: any[] }>(`/sellers/admin/payouts/pending?status=${statusFilter}`);
+      setList(r.payouts); setLoadError('');
+    }
     catch (e: any) { setLoadError(e.message); }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [statusFilter]);
 
   // FIX-WORKER-4 pass 3: refactor para usar useAdminAction hook (W4 pass 2).
   // Antes inline try/catch + 3 states (busyId, error, success) duplicados ~30 linhas.
@@ -45,7 +52,19 @@ export default function PayoutsPage() {
   return (
     <div>
       <h1 className="font-display font-bold text-4xl mb-2">Saques</h1>
-      <p className="text-white/60 mb-8">Solicitacoes de payout aguardando aprovacao</p>
+      <p className="text-white/60 mb-6">Pipeline de payouts: pending -&gt; approved -&gt; transferido Asaas</p>
+
+      {/* FIX-WORKER-4 pass 4: filtro 3-vias permite ver approved payouts e disparar transferir */}
+      <div className="flex gap-2 mb-6">
+        {(['all','pending','approved'] as const).map((s) => (
+          <button key={s} onClick={() => setStatusFilter(s)}
+            className={`px-3 py-1.5 rounded-lg text-xs uppercase font-semibold transition-colors ${
+              statusFilter === s ? 'bg-gradient-to-r from-magenta to-violet-deep text-white' : 'glass hover:border-white/30'
+            }`}>
+            {s === 'all' ? 'Todos ativos' : s}
+          </button>
+        ))}
+      </div>
 
       {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
 
@@ -81,7 +100,14 @@ export default function PayoutsPage() {
                     <td className="py-3">{p.store_name}</td>
                     <td className="font-display font-bold text-magenta-glow">{fmtBRL(p.amount_cents)}</td>
                     <td className="text-xs text-white/50">{fmtDate(p.requested_at)}</td>
-                    <td><span className="px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-xs">{p.status}</span></td>
+                    {/* FIX-WORKER-4 pass 4: badge cor por status (era sempre amarelo pending) */}
+                    <td><span className={`px-2 py-0.5 rounded text-xs ${
+                      p.status === 'pending'  ? 'bg-yellow-500/20 text-yellow-400' :
+                      p.status === 'approved' ? 'bg-blue-500/20 text-blue-400' :
+                      p.status === 'paid'     ? 'bg-green-500/20 text-green-400' :
+                      p.status === 'rejected' ? 'bg-red-500/20 text-red-400' :
+                      'bg-white/10 text-white/40'
+                    }`}>{p.status}</span></td>
                     <td className="text-right space-x-2">
                       {p.status === 'pending' && (
                         <>

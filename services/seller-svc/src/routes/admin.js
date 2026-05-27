@@ -157,13 +157,27 @@ router.get('/pending-kyc', asyncHandler(async (req, res) => {
 }));
 
 // GET /sellers/admin/payouts/pending
+// FIX-WORKER-4 pass 4: bug "Transferir Asaas" feature MORTA.
+// Endpoint /pending so retornava status='pending'. Apos admin clicar "Aprovar",
+// status vira 'approved' -> SUMME da lista. UI tinha codigo (linha 98-103
+// dashboard-admin/payouts/page.tsx) para mostrar botao "Transferir Asaas" quando
+// p.status === 'approved', mas esses payouts nunca chegavam ao frontend.
+// Feature inteira invisivel ao admin -> transfers Asaas dependiam de cron/manual.
+// FIX: aceitar ?status=pending|approved|all (default backward-compat = pending).
+// Quando ?status=approved ou all, UI ve approved payouts e pode disparar /process.
 router.get('/payouts/pending', asyncHandler(async (req, res) => {
+  const statusParam = (req.query.status || 'pending').toString().toLowerCase();
+  const VALID = new Set(['pending','approved','all']);
+  const status = VALID.has(statusParam) ? statusParam : 'pending';
+  const where = status === 'all'
+    ? `p.status IN ('pending','approved')`
+    : `p.status = '${status}'`;
   const r = await query(
     `SELECT p.*, s.store_name FROM seller_payouts p
        JOIN sellers s ON s.id = p.seller_id
-      WHERE p.status = 'pending' ORDER BY p.requested_at ASC LIMIT 100`
+      WHERE ${where} ORDER BY p.requested_at ASC LIMIT 100`
   );
-  res.json({ payouts: r.rows });
+  res.json({ payouts: r.rows, filter: { status } });
 }));
 
 // FIX-WORKER-4: regex UUID antes de bater no DB
