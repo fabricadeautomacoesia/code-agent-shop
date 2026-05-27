@@ -8255,3 +8255,66 @@ PROXIMA ITER:
 - W3 pass 8: CompareButton.tsx audit (similar pattern - modal/toggle?)
 - W3 pass 9: PriceAlertButton.tsx audit
 - DRY: extrair friendly error mappers para lib/friendly-errors.ts
+
+## WORKER 7 PASS 6 - /products/compare 3 bugs UX + validation
+
+AUDIT /products/compare resolveu bug catalogado em W7 pass 5:
+
+BUG 1 (CRITICAL - 22P02 leak):
+  WHERE p.id = ANY($1::UUID[])
+- IDs nao-UUID (fake1,fake2) -> PG 22P02 invalid_text_representation
+- errorHandler retornava 404 "Recurso nao encontrado" generico
+- Cliente confuso: IDs ruins, produtos deletados, ou bug?
+FIX: regex UUID_RE upfront -> 400 invalid_ids com lista
+
+BUG 2 (UX todos missing 200 vazio):
+- IDs validos UUID mas produtos deletados/nao-approved
+- query retornava {products:[], count:0} HTTP 200
+- Frontend tinha que checar products.length < 2 manualmente
+- "Comparacao invalida" era ambiguo
+FIX: 3 cases distintos:
+- 0 produtos: 404 products_not_found
+- 1 produto: 400 insufficient_products + missing_ids
+- 2-4 produtos: 200 com missing_ids opcional (parcial)
+
+BUG 3 (UX truncate silencioso):
+- slice(0, 4) descartava IDs > 4 silentemente
+- User mandando 6 nao sabia que 2 sumiram
+FIX: truncated flag + warning_truncated no response
+
+CASES RESPONSE POS-FIX:
+
+# Invalid format:
+curl /api/products/compare?ids=fake1,fake2
+-> 400 {"error":"invalid_ids","invalid_count":2}
+
+# All missing:
+-> 404 {"error":"products_not_found","requested_count":2}
+
+# Partial 1/2:
+-> 400 {"error":"insufficient_products","found":1,"missing_ids":[...]}
+
+# Partial 3/4 OK:
+-> 200 {"products":[...3],"count":3,"missing_ids":[...1]}
+
+# Truncated >4:
+-> 200 {"products":[...4],"warning_truncated":"...Apenas primeiros 4..."}
+
+DEPLOY:
+- commit 57ed962 push main OK
+- 49 insertions, 4 deletions
+- product-svc rebuild via VPS cron
+- Backward-compat: success path retorna mesmo + missing_ids opcional
+
+W7 PRODUCT-SVC AUDIT (passes 1-6):
+- pass 1: /me CRUD baseline
+- pass 2: admin force-approve/platform-take guards
+- pass 3: wishlist toggle idempotency
+- pass 4: clamp negative params
+- pass 5: /:slug/reviews+/qna 404 inconsistencia
+- pass 6: /compare 3 bugs validation (esta iter)
+
+PROXIMA ITER:
+- Frontend update comparar/page.tsx para consumir errors granulares
+- W3 pass 8: CompareButton.tsx audit
+- W7 pass 7: /products/me/:id/submit guards (QA pipeline race)
