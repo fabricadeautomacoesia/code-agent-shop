@@ -17290,7 +17290,35 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ seller-svc /sla-history + /payouts (pass 70) - Regra D+E+I + DLP + filter
 - ✅ order-svc POST /:id/dispute rate-limit (pass 71) - anti-spam
 - ✅ seller-svc /kpi + sellers.js GET / (pass 72) - Regra D+I + enum + UX
-- ✅ product-svc GET / public listing (pass 73 esta iter) - 8 bugs major
+- ✅ product-svc GET / public listing (pass 73) - 8 bugs major
+- ✅ product-svc GET /:slug detail PDP (pass 74 esta iter) - 5 bugs DLP + whitelist
+
+W7 PASS 74 RESUMO:
+- product-svc/src/routes/public.js GET /:slug refactor (5 bugs):
+  * Regra I CRITICAL: SELECT p.* + delete blacklist -> positive whitelist
+    - PRE-FIX: SELECT p.* + delete r.rows[0].search_tsv (blacklist fragil)
+    - Schema atual vazava: qa_verdict, qa_confidence_score, submitted_at,
+      approved_by - todos visiveis no PDP publico
+    - POS-FIX: 25 explicit fields documentados public-safe
+  * Regra A: status IN ('approved','platform_owned')
+    - Mesmo bug do pass 73 BUG 2 (PDP rejeita platform_owned MLB products)
+  * json_agg DLP whitelist em 3 subqueries:
+    - tags: id+slug+name (era t.*)
+    - versions: id+version+changelog+is_current+created_at
+      (era pv.* - vazaria download_token/version_metadata sensitive)
+    - media: id+media_type+url+alt_text+sort_order (era pm.*)
+  * DLP referrer analytics:
+    - product_views.referrer pre-INSERT: strip query string + mask.text()
+    - Vetor: shared link com ?session=/?token= em URL persistido em DB
+    - Amplification: product_views consultada em admin dashboards
+  * is_top_seller subquery alinhada com Regra A (status IN approved+platform_owned)
+- Pattern W7 em 76 endpoints + 23 regras (A-W) - 74 micro-iters
+
+PROXIMA ITER:
+- W7 pass 75: product-svc /:slug/reviews + /:slug/qna audit
+- W7 pass 76: product-svc /compare + /flash-promo audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 73 RESUMO:
 - product-svc/src/routes/public.js GET / refactor (8 bugs):

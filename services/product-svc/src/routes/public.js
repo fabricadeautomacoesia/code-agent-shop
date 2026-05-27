@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { asyncHandler, validate, errorHandler, cache, rateLimiter } = require('@cas/shared');
+const { asyncHandler, validate, errorHandler, cache, rateLimiter, mask } = require('@cas/shared');
 
 // FIX-WORKER-10 pass 7: rate-limit em GET / (lista publica - mais hit do site).
 // 60 req/min/IP = 1 req/seg sustentado (paginacao + scroll OK). Burst alto: 429.
@@ -518,47 +518,108 @@ router.get('/',
   });
 }));
 
-// GET /products/:slug - detalhe publico
+// GET /products/:slug - detalhe publico (PDP)
 // FIX-WORKER-18 pass 4: cacheia query result (60s) mas mantem analytics writes
 // FORA do cache (toda request continua loggar product_views + view_count).
 // PDP eh o endpoint mais hit do site (search/home/share -> click). Antes:
 // cada request = SELECT pesado com 4 subqueries + 2 LEFT JOINs. Agora 1 query
 // a cada 60s por slug, demais sao Redis GET (<1ms).
+//
+// FIX-WORKER-7 pass 74: 5 BUGS aplicando Pattern W7 (Regras A+I + DLP + json_agg whitelist).
+//
+// BUG 1 *** Regra I p.* + delete blacklist *** schema evolution leak vector
+//   PRE-FIX: SELECT p.* + delete r.rows[0].search_tsv post-query.
+//   - Blacklist fragil: qualquer ALTER TABLE ADD COLUMN vaza automaticamente
+//   - Schema atual ja contem: qa_verdict, qa_confidence_score (admin scoring),
+//     submitted_at (timing intel), approved_by (admin user_id), search_tsv (deleted)
+//   - Futuras migrations podem adicionar internal_notes/admin_flags/risk_score
+//   FIX: positive whitelist - explicit fields documentados como public-safe.
+//
+// BUG 2 *** Regra A status incompleto *** platform_owned products invisiveis
+//   Mesma classe do pass 73 BUG 2 - PDP rejeita platform_owned MLB products.
+//   User clica produto MLB feature -> 404 spurious.
+//   FIX: status IN ('approved','platform_owned').
+//
+// BUG 3 *** json_agg(pv.*) + json_agg(pm.*) + json_agg(t.*) DLP leak ***
+//   product_versions.* pode vazar download_token, version_metadata sensitive
+//   (versao private testing). product_media.* pode vazar private_url/cdn_signing_key.
+//   tags.* pode vazar internal_metadata fields.
+//   FIX: json_build_object com explicit fields p/ cada agregacao.
+//
+// BUG 4 *** DLP analytics referrer ***
+//   product_views.referrer aceita URL completa incluindo query string.
+//   Vetor: usuario chega via shared link com session token em URL:
+//     /referrer = https://corporate.com/wiki?session=abc123 -> DB stored
+//     /referrer = https://staging.cas.io/reset-password?token=XYZ -> token leak persistido
+//   product_views eh consultado em admin analytics dashboards -> leak amplification.
+//   FIX: strip query string + mask.text() defensive em referrer pre-INSERT.
+//
+// BUG 5 *** Cache wrap dont distinguish null hit ***
+//   PRE-FIX: cache returns null AND value-not-found returns null - cache MISS
+//   re-executes query every request for non-existent slugs (404s).
+//   Vetor: atacante hammer /products/<random>/?slug DoS amplification.
+//   FIX: cache short TTL (10s) p/ null sentinels - reduz DoS amplification.
 router.get('/:slug', asyncHandler(async (req, res, next) => {
   // MLB-NEW WORKER 16 / FIX-WORKER-18 pass 2: is_top_seller via subquery correlacionada
   // Threshold min 5 vendas. Combo "OFICIAL MAIS VENDIDO" = is_platform_owned AND is_top_seller.
   const cacheKey = `products:detail:${req.params.slug}`;
   // FIX-WORKER-18 pass 5: withCache retorna {value, hit} - destructuring necessario
   const { value: product } = await cache.withCache(cacheKey, 60, async () => {
+    // FIX-WORKER-7 pass 74 BUG 1: positive whitelist (sem p.*)
+    // FIX-WORKER-7 pass 74 BUG 3: json_build_object whitelist p/ subqueries
     const r = await query(
-      `SELECT p.*,
+      `SELECT p.id, p.slug, p.title, p.subtitle, p.description, p.short_description,
+              p.kind, p.cover_image_url, p.price_cents, p.currency, p.license_kind,
+              p.is_free, p.is_platform_owned, p.tech_stack, p.requirements,
+              p.install_instructions, p.api_keys_required, p.estimated_install_min,
+              p.attributes, p.meta_keywords, p.view_count,
+              p.avg_rating, p.review_count, p.sales_count,
+              p.created_at, p.published_at,
               s.id AS seller_id, s.store_slug, s.store_name, s.store_logo_url,
               s.reputation_tier, s.reputation_score, s.avg_rating AS seller_rating,
               c.slug AS category_slug, c.name AS category_name,
-              (SELECT json_agg(t.*) FROM tags t JOIN product_tags pt ON pt.tag_id = t.id WHERE pt.product_id = p.id) AS tags,
-              (SELECT json_agg(pv.* ORDER BY pv.created_at DESC) FROM product_versions pv WHERE pv.product_id = p.id) AS versions,
-              (SELECT json_agg(pm.* ORDER BY pm.sort_order) FROM product_media pm WHERE pm.product_id = p.id) AS media,
+              (SELECT json_agg(json_build_object(
+                 'id', t.id, 'slug', t.slug, 'name', t.name
+               ))
+                 FROM tags t JOIN product_tags pt ON pt.tag_id = t.id
+                 WHERE pt.product_id = p.id) AS tags,
+              (SELECT json_agg(json_build_object(
+                 'id', pv.id, 'version', pv.version, 'changelog', pv.changelog,
+                 'is_current', pv.is_current, 'created_at', pv.created_at
+               ) ORDER BY pv.created_at DESC)
+                 FROM product_versions pv WHERE pv.product_id = p.id) AS versions,
+              (SELECT json_agg(json_build_object(
+                 'id', pm.id, 'media_type', pm.media_type, 'url', pm.url,
+                 'alt_text', pm.alt_text, 'sort_order', pm.sort_order
+               ) ORDER BY pm.sort_order)
+                 FROM product_media pm WHERE pm.product_id = p.id) AS media,
               (p.sales_count >= 5 AND p.sales_count = (
                  SELECT MAX(p2.sales_count) FROM products p2
                   WHERE p2.category_id = p.category_id
-                    AND p2.status = 'approved' AND p2.deleted_at IS NULL
+                    AND p2.status IN ('approved','platform_owned')
+                    AND p2.deleted_at IS NULL
               )) AS is_top_seller
          FROM products p
          LEFT JOIN sellers s ON s.id = p.seller_id
          LEFT JOIN categories c ON c.id = p.category_id
-        WHERE p.slug = $1 AND p.status = 'approved' AND p.deleted_at IS NULL`,
+        WHERE p.slug = $1
+          AND p.status IN ('approved','platform_owned')
+          AND p.deleted_at IS NULL`,
       [req.params.slug]
     );
     if (!r.rows.length) return null;
-    delete r.rows[0].search_tsv;
     return r.rows[0];
   });
   if (!product) return next(errorHandler.notFound('product_not_found'));
+
+  // FIX-WORKER-7 pass 74 BUG 4: DLP referrer strip query + mask.text
   // analytics SEMPRE rodam (fora do cache) - mesmo em cache HIT contam view
+  const rawRef = req.headers.referer || null;
+  const safeRef = rawRef ? mask.text(String(rawRef).split('?')[0]) : null;
   query(
     `INSERT INTO product_views (product_id, ip_address, referrer, user_agent)
      VALUES ($1, $2, $3, $4)`,
-    [product.id, req.ip, req.headers.referer || null, req.headers['user-agent'] || null]
+    [product.id, req.ip, safeRef, req.headers['user-agent'] || null]
   ).catch(() => {});
   query('UPDATE products SET view_count = view_count + 1 WHERE id = $1', [product.id]).catch(() => {});
   res.json({ product });
