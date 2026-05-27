@@ -14944,3 +14944,108 @@ W7+W13+W18+W4 CONSOLIDADO:
 - W13: renderMustache XSS hardening
 - W18: 8 passes perf/tooling
 - W4: 13 admin pages
+
+================================================================
+ITER W7 PASS 33 - review-svc POST /:id/vote 5 BUGS (race counter) (2026-05-27)
+================================================================
+ESCOPO: review-svc POST /:id/vote (helpful/unhelpful counter)
+FILE: services/review-svc/src/server.js (linhas 126-147)
+
+CONTEXTO: W7 pass 32 corrigiu POST / (race avg_rating). Pass 33 estende
+ao endpoint vote (mesma classe race counter mas em volume MUITO maior -
+votes sao muitos cliques/dia, reviews sao raros).
+
+BUGS CORRIGIDOS (5):
+
+1. *** RACE COUNTER helpful/unhelpful *** 3 queries soltas
+- PRE-FIX (linhas 130-144): INSERT vote + SELECT SUM + UPDATE counters
+  sem tx() ou FOR UPDATE
+- CENARIO REVIEW VIRAL:
+  50 users clicam "helpful" simultaneo (review em produto trending)
+  - 50 INSERTs review_votes ON CONFLICT (idempotent por user_id) OK
+  - 50 SELECTs SUM agregam DURANTE outros INSERTs visible:
+    * Vote 1 le SUM=1, UPDATE helpful_count=1
+    * Vote 2 le SUM=2 (durante outro INSERT), UPDATE helpful_count=2
+    * Vote 50 le SUM=47 (race lost 3 INSERTs visible apos snapshot)
+    * UPDATE helpful_count=47
+  - product_reviews.helpful_count = 47 EM VEZ DE 50 (off-by-N!)
+  - PDP mostra contador errado, user perde confianca no rating system
+- IMPACT: off-by-N counter incrementa com VOLUME (viral content - bug worse)
+- FIX: tx() + SELECT product_reviews FOR UPDATE lock antes SUM/UPDATE
+  Pattern Regra K consolidado cross-svc (passes 17-32, +1 esta iter)
+
+2. UUID validate :id (anti PG 22P02)
+- PRE-FIX: req.params.id raw -> 'abc' = 500 generico
+- FIX: VOTE_UUID_RE.test() upfront -> 404 limpo
+
+3. *** RATE-LIMIT *** vote spam toggle
+- PRE-FIX: ZERO rate-limit. User pode toggle vote 1000x:
+  - 1000 INSERT/UPDATE review_votes
+  - 1000 SELECTs SUM (caros em review hot)
+  - 1000 UPDATEs product_reviews
+- Bot abuse OR UI double-click bug
+- FIX: rateLimiter 30/15min/IP (real users <10 votes/sessao)
+
+4. *** is_hidden check *** vote em review moderado
+- PRE-FIX: review.is_hidden=TRUE (admin moderou abuso/spam) ainda aceitava vote
+  Counter incrementava MAS PDP nao lista review.
+  Workflow inconsistente: voto invisivel afetando rating.
+- FIX: SELECT review.is_hidden + 403 'review_hidden' explicit
+- Mensagem PT-BR: "Esta avaliacao foi moderada e nao aceita votos"
+
+5. *** FK fail handling *** review_id inexistente
+- PRE-FIX: ON CONFLICT (review_id, user_id) referencia FK invalida -> 23503
+  foreign_key_violation -> 500 generico errorHandler.
+- FIX: SELECT review FOR UPDATE valida existencia + 404 ANTES INSERT
+- Pattern Regra J orphan detection (W7 pass 17)
+
+OUTRAS MELHORIAS:
+- Cast explicit $1::UUID + $2::INT (Regra cast types)
+- Response shape: { ok, helpful_count, unhelpful_count }
+  (pre-fix retornava SO helpful_count - inconsistente com UI bidirectional)
+- Anti-enumeration: review_not_found mesma mensagem se UUID invalida OR
+  review nao existe (atacante nao distingue)
+
+PATTERN W7 24 ENDPOINTS + 18 REGRAS (A-R):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 2 (POST / pass 32, POST /:id/vote pass 33 esta iter)
+
+REVIEW-SVC PROGRESS:
+- ✅ POST / (pass 32)
+- ✅ POST /:id/vote (pass 33 esta iter)
+- POST /:id/reply (seller): pendente (ownership check)
+- POST /qna: pendente
+- POST /qna/:id/upvote: pendente (race counter MESMO PATTERN)
+- POST /qna/:id/answer (seller): pendente
+- POST /reports: pendente
+- POST /reports/:id/resolve (admin): pendente
+
+LESSON LEARNED ACUMULADA:
+Pattern race counter cross-tables observado em 3 endpoints diferentes:
+- POST / (avg_rating de reviews) - pass 32
+- POST /:id/vote (helpful_count) - pass 33 esta iter
+- Provavel POST /qna/:id/upvote tambem - pass 34
+- payment-svc payments processed_count (similar?) - audit futuro
+
+PATTERN RACE COUNTER (consolidado W7):
+- Sempre: tx() + SELECT target_row FOR UPDATE + agregacao + UPDATE
+- NUNCA: 3 queries lineares com agregacao volatil entre
+- Rate-limit em endpoints com agregacao (vote/like/upvote/reaction)
+
+PROXIMA ITER:
+- W7 pass 34: review-svc POST /qna/:id/upvote (mesmo pattern race counter)
+- W7 pass 35: review-svc POST /:id/reply (ownership seller check)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado em audit prod
+
+W7+W13+W18+W4 CONSOLIDADO:
+- W7: 24 endpoints + 18 regras (A-R) - 33 micro-iters
+- W13: renderMustache XSS
+- W18: 8 passes
+- W4: 13 admin pages

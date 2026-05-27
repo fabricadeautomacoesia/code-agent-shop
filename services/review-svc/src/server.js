@@ -124,25 +124,101 @@ app.post('/', reviewLimiter, jwt.requireAuth(), validate({ body: reviewSchema })
 }));
 
 // POST /api/reviews/:id/vote
-app.post('/:id/vote', jwt.requireAuth(),
+// FIX-WORKER-7 pass 33: 5 BUGS aplicando Pattern W7 (mesma classe pass 32).
+//
+// BUG 1 *** RACE CONDITION counter ***
+//   PRE-FIX: 3 queries lineares sem tx()/FOR UPDATE.
+//   50 users clicam "helpful" simultaneo:
+//   - 50 INSERTs review_votes ON CONFLICT (idempotent por user) OK
+//   - 50 SELECTs SUM agregam DURANTE outros INSERTs visible
+//     - Vote 1 le SUM=1, UPDATE helpful_count=1
+//     - Vote 50 le SUM=47 (race lost 3 INSERTs), UPDATE helpful_count=47
+//   - product_reviews.helpful_count = 47 em vez de 50 (off by 3!)
+//   - PDP mostra contador errado em produto viral
+//   FIX: tx() + SELECT product_reviews FOR UPDATE antes UPDATE.
+//   Lock pessimistico serializa - sub-query SUM le snapshot consistente.
+//
+// BUG 2 UUID validate :id (anti PG 22P02 -> 500)
+//
+// BUG 3 *** RATE-LIMIT *** vote spam toggle
+//   User pode votar/desvotar 1000x no mesmo review (toggle) sem rate.
+//   Cada toggle = 3 queries DB. Bot abuse OR UI bug double-click.
+//   FIX: rateLimiter 30 votes/15min/IP (real users <10 votes/sessao).
+//
+// BUG 4 *** is_hidden check *** vote em review moderado
+//   Review hidden (admin moderou) ainda aceitava vote -> counter incrementa
+//   MAS PDP NAO lista review. Workflow inconsistente.
+//   FIX: validar review.is_hidden = FALSE antes de INSERT.
+//
+// BUG 5 review_votes ON CONFLICT pode falhar se review_id nao existe (FK fail)
+//   PRE-FIX: erro 23503 foreign_key_violation -> 500 generico.
+//   FIX: SELECT review existe FOR UPDATE + 404 explicit antes do INSERT.
+const VOTE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const voteLimiter = rateLimiter.createLimiter({
+  windowMs: 15 * 60 * 1000, max: 30,
+  message: 'Muitos votos recentes. Aguarde alguns minutos.',
+});
+
+app.post('/:id/vote', voteLimiter, jwt.requireAuth(),
   validate({ body: z.object({ vote: z.literal(1).or(z.literal(-1)) }) }),
-  asyncHandler(async (req, res) => {
-    await query(
-      `INSERT INTO review_votes (review_id, user_id, vote) VALUES ($1,$2,$3)
-       ON CONFLICT (review_id, user_id) DO UPDATE SET vote = EXCLUDED.vote`,
-      [req.params.id, req.user.sub, req.body.vote]
-    );
-    const counts = await query(
-      `SELECT
-         SUM(CASE WHEN vote = 1 THEN 1 ELSE 0 END) AS helpful,
-         SUM(CASE WHEN vote = -1 THEN 1 ELSE 0 END) AS unhelpful
-       FROM review_votes WHERE review_id = $1`, [req.params.id]
-    );
-    await query(
-      `UPDATE product_reviews SET helpful_count = $1, unhelpful_count = $2 WHERE id = $3`,
-      [parseInt(counts.rows[0].helpful, 10), parseInt(counts.rows[0].unhelpful, 10), req.params.id]
-    );
-    res.json({ ok: true, helpful_count: counts.rows[0].helpful });
+  asyncHandler(async (req, res, next) => {
+    // FIX bug 2: UUID validate
+    if (!VOTE_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('review_not_found'));
+    }
+
+    let outcome;
+    let result;
+    await tx(async (c) => {
+      // FIX bug 1+4+5: SELECT FOR UPDATE review valido + is_hidden check
+      const rev = await c.query(
+        `SELECT id, is_hidden FROM product_reviews
+          WHERE id = $1::UUID FOR UPDATE`,
+        [req.params.id]
+      );
+      if (!rev.rows.length) { outcome = { error: 'review_not_found' }; return; }
+      if (rev.rows[0].is_hidden) {
+        outcome = { error: 'review_hidden' };
+        return;
+      }
+
+      // INSERT/UPDATE vote (idempotent por user via ON CONFLICT)
+      await c.query(
+        `INSERT INTO review_votes (review_id, user_id, vote) VALUES ($1::UUID, $2::UUID, $3::INT)
+         ON CONFLICT (review_id, user_id) DO UPDATE SET vote = EXCLUDED.vote`,
+        [req.params.id, req.user.sub, req.body.vote]
+      );
+
+      // FIX bug 1: SUM dentro do mesmo tx (snapshot consistente via FOR UPDATE acima)
+      const counts = await c.query(
+        `SELECT
+           SUM(CASE WHEN vote = 1 THEN 1 ELSE 0 END)::INT AS helpful,
+           SUM(CASE WHEN vote = -1 THEN 1 ELSE 0 END)::INT AS unhelpful
+         FROM review_votes WHERE review_id = $1::UUID`, [req.params.id]
+      );
+
+      // UPDATE counters atomicamente (mesma tx)
+      await c.query(
+        `UPDATE product_reviews SET helpful_count = $1::INT, unhelpful_count = $2::INT
+          WHERE id = $3::UUID`,
+        [counts.rows[0].helpful, counts.rows[0].unhelpful, req.params.id]
+      );
+
+      result = {
+        ok: true,
+        helpful_count: counts.rows[0].helpful,
+        unhelpful_count: counts.rows[0].unhelpful,
+      };
+    });
+
+    if (outcome?.error === 'review_not_found') return next(errorHandler.notFound('review_not_found'));
+    if (outcome?.error === 'review_hidden') {
+      return res.status(403).json({
+        error: 'review_hidden',
+        message: 'Esta avaliacao foi moderada e nao aceita votos.',
+      });
+    }
+    res.json(result);
   })
 );
 
