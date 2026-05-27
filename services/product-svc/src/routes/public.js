@@ -3,7 +3,13 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { asyncHandler, validate, errorHandler, cache } = require('@cas/shared');
+const { asyncHandler, validate, errorHandler, cache, rateLimiter } = require('@cas/shared');
+
+// FIX-WORKER-10 pass 7: rate-limit em GET / (lista publica - mais hit do site).
+// 60 req/min/IP = 1 req/seg sustentado (paginacao + scroll OK). Burst alto: 429.
+// /:slug detail e /reviews/qna NAO recebem rate-limit aqui pois ja sao cached
+// (cache.cacheMiddleware/withCache - Redis devolve em <1ms, sem load DB).
+const listLimiter = rateLimiter.createLimiter({ windowMs: 60_000, max: 60 });
 
 const router = express.Router();
 
@@ -157,7 +163,9 @@ router.get('/flash-promo/active',
 
 // GET /products - listagem + filtros facetados
 // cache 60s - lista publica de produtos. Invalidada em mutations admin/me.
+// FIX-WORKER-10 pass 7: rate-limit ANTES do cache para barrar bots ANTES de Redis lookup.
 router.get('/',
+  listLimiter,
   cache.cacheMiddleware((req) => {
     const q = req.query;
     return `products:list:cat=${q.category||''}:kind=${q.kind||''}:min=${q.min_price||''}:max=${q.max_price||''}:free=${q.free||''}:platform=${q.platform_owned||''}:seller=${q.seller||''}:sort=${q.sort||''}:lim=${q.limit||24}:page=${q.page||1}`;

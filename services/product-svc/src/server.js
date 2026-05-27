@@ -12,6 +12,9 @@ const app = express();
 const PORT = parseInt(process.env.PORT_PRODUCT || '3012', 10);
 
 app.disable('x-powered-by');
+// FIX-WORKER-10 pass 7: trust proxy 1 - req.ip pega X-Forwarded-For do gateway.
+// Necessario para rateLimiter funcionar com IP real (vs IP do load balancer interno Swarm).
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '2mb' }));
 app.use(sanitize.middleware());
 
