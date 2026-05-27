@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup, cache } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup, cache, mask } = require('@cas/shared');
 const asaas = require('./asaas');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
@@ -943,18 +943,74 @@ async function reconcileWebhooks() {
 
 // GET /payments/webhooks/dead - admin lista webhooks "dead letter" (retry_count > 5)
 // Permite admin investigar e decidir reprocessar manualmente via SQL ou ignorar
+// GET /payments/webhooks/dead - dead-letter queue webhooks Asaas
+// FIX-WORKER-7 pass 61: 5 BUGS aplicando Pattern W7 (Regras D+E+I + DLP).
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING *** ORDER BY received_at DESC nao determ
+//   2 webhooks received_at identicos (Asaas burst) -> ordem indefinida na queue.
+//   FIX: + id DESC tiebreaker.
+//
+// BUG 2 *** Regra E PAGINATION MISSING *** hardcoded LIMIT 100
+//   Em incidente Asaas (1000+ webhooks falhando) admin so ve top-100.
+//   FIX: ?limit (1-200, default 50) + ?offset.
+//
+// BUG 3 *** DLP processing_error LEAK *** stack trace pode conter secrets
+//   PRE-FIX: processing_error texto livre (ERROR sql + stack). Pode conter
+//   "connect to host=postgres user=cas password=XYZ" se PG_PASS leak.
+//   Tambem pode conter Bearer tokens (Asaas retry com header logged).
+//   FIX: aplicar mask.text DLP (sk-/Bearer/JWT/CPF auto-masked).
+//
+// BUG 4 *** CACHE MISSING *** admin dashboard refresh manual 30s
+//   Cron reconciliation roda 5min; queue admin observability nao precisa
+//   realtime - cache 30s reduz DB load.
+//   FIX: cache.cacheMiddleware 30s (vary by limit/offset filtros).
+//
+// BUG 5 *** TOTAL COUNT MISSING *** UX nao mostra "X webhooks pendentes total"
+//   FIX: SELECT COUNT(*) p/ paginacao UI.
+const deadWebhooksCacheKey = (req) => {
+  const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  return `payments:webhooks_dead:lim=${lim}:off=${off}`;
+};
+
 app.get('/payments/webhooks/dead',
   jwt.requireAuth({ roles: ['admin', 'staff'] }),
+  cache.cacheMiddleware(deadWebhooksCacheKey, 30),
   asyncHandler(async (req, res) => {
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
     const r = await query(
       `SELECT id, event_type, asaas_payment_id, processing_error, retry_count, received_at
          FROM asaas_webhook_events
         WHERE signature_valid = TRUE
           AND processed_at IS NULL
           AND retry_count > 5
-        ORDER BY received_at DESC LIMIT 100`
+        ORDER BY received_at DESC, id DESC
+        LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
-    res.json({ webhooks: r.rows, count: r.rows.length });
+
+    // FIX-WORKER-7 pass 61: DLP mask processing_error
+    // Stack traces podem conter secrets (PG_PASS, Bearer tokens, JWT, CPF)
+    const webhooks = r.rows.map((row) => ({
+      ...row,
+      processing_error: row.processing_error ? mask.text(row.processing_error) : null,
+    }));
+
+    // Total count para UX pagination
+    const totalRes = await query(
+      `SELECT COUNT(*)::INT AS total FROM asaas_webhook_events
+        WHERE signature_valid = TRUE AND processed_at IS NULL AND retry_count > 5`
+    );
+
+    res.json({
+      webhooks,
+      count: webhooks.length,
+      total: totalRes.rows[0].total,
+      limit,
+      offset,
+    });
   })
 );
 

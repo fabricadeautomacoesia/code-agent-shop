@@ -17277,7 +17277,26 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ GET /qna/seller/pending (pass 57) - admin bypass + Regra A+D+E + LGPD
 - ✅ @cas/shared.maskPII NEW (pass 58) - LGPD DRY cross-svc
 - ✅ order-svc /admin/recent + /admin/disputes (pass 59) - role-tier mask
-- ✅ seller-svc /sla-risk + /all + /pending-kyc (pass 60 esta iter) - role-tier mask
+- ✅ seller-svc /sla-risk + /all + /pending-kyc (pass 60) - role-tier mask
+- ✅ payment-svc /payments/webhooks/dead (pass 61 esta iter) - Regra D+E+I + DLP
+
+W7 PASS 61 RESUMO:
+- payment-svc/src/server.js /payments/webhooks/dead refactor:
+  * Regra D: + id DESC tiebreaker (burst Asaas mesma data)
+  * Regra E: ?limit (1-200) + ?offset pagination
+  * DLP CRITICAL: mask.text aplicado em processing_error
+    (stack traces podem conter PG_PASS, Bearer, JWT, CPF leak)
+  * Cache 30s deadWebhooksCacheKey (vary by limit/offset)
+  * Total count adicionado p/ UX pagination
+- SEMANTIC USE: mask.js (DLP secrets) usado em campo de texto livre
+  (vs maskPII.js para LGPD - separation aplicada corretamente)
+- Pattern W7 em 58 endpoints + 23 regras (A-W) - 61 micro-iters
+
+PROXIMA ITER:
+- W7 pass 62: notification-svc admin views audit (se houver)
+- W7 pass 63: aiops-svc /admin endpoints DLP mask metrics
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 60 RESUMO:
 - seller-svc/src/routes/admin.js refactor cross-endpoint:
