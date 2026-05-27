@@ -102,6 +102,38 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## PRODUCT NEW VERSION FAN-OUT - WORKER 16 MLB NEW
+Mercado Livre 'voltou para o estoque' adaptado para digital products: quando
+seller publica nova versao via POST /me/:id/versions, todos os wishlist
+subscribers + buyers (donos de license) recebem notification in_app.
+
+BACKEND product-svc/routes/seller-mgmt.js:
+- INSERT em product_versions seguido por SQL fan-out atomico.
+- UNION: product_wishlist + order_items+orders (status paid|fulfilled).
+- DISTINCT u.id evita duplicacao.
+- JOIN users WHERE deleted_at IS NULL AND is_active = TRUE.
+- Exclui o proprio seller publisher (u.id != req.user.sub).
+- payload JSONB com {product_id, slug, version, breaking_changes} para deep-link.
+- Breaking changes -> texto adicional 'BREAKING CHANGES - revise antes'.
+- try/catch isolando falha de notification (nao bloqueia version create).
+
+CAST FIX durante deploy:
+- notifications.channel eh ENUM notification_channel (nao TEXT).
+- 'in_app'::notification_channel obrigatorio.
+
+MIGRATION 018:
+- Seed notification_templates 'product_new_version' (tolerante schema variation).
+
+VALIDADO E2E via SQL direto pos-fix:
+- 1 user na wishlist do produto X
+- Executa fan-out SQL -> INSERT 0 1
+- Resultado: notification {user_id, channel: in_app, template: product_new_version}
+
+CASOS DE USO:
+- Buyer ja owns: alerta sobre atualizacao = puxa de volta para PDP
+- Wishlist subscriber: lembra que produto evoluiu = motivo para comprar
+- NotificationBell ja existente renderiza badge + lista
+
 ## WISHLIST BADGE - WORKER 16 NEW MLB FEATURE
 Mercado Livre style: Heart icon no Nav com contador real de favoritos.
 Drive return visits + lembra ao user que tem produtos salvos.
