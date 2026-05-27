@@ -15241,3 +15241,104 @@ W7+W13+W18+W4 CONSOLIDADO:
 - W13: renderMustache XSS
 - W18: 8 passes
 - W4: 13 admin pages
+
+================================================================
+ITER W7 PASS 36 - review-svc POST /qna/:id/answer 6 BUGS + mig 043 (2026-05-27)
+================================================================
+ESCOPO: review-svc POST /qna/:id/answer (seller/admin responde)
++ migration 043 schema support
+FILES:
+- services/review-svc/src/server.js (linhas 492-520 -> rewrite)
+- db/migrations/043_qna_answered_by_admin.sql (NEW)
+
+CONTEXTO: W7 pass 35 cobriu POST /qna CREATE. Pass 36 = 5o endpoint
+review-svc, mais complexo: ownership (seller dono) + admin bypass +
+idempotency terminal (Regra Q).
+
+BUGS CORRIGIDOS (6):
+
+1. *** IDEMPOTENCY Regra Q *** re-answer overwrites silently
+- PRE-FIX: UPDATE SET answer=... WHERE id=$3 (sem check answer atual)
+- Seller pode "responder" mesma qna 10x - ultima sobrescreve anteriores
+- Forense corrompido: audit_log perde history das answers
+- Pattern Regra Q W7 pass 25 (vault revoke) - terminal ops nao permitem
+  re-execucao. MLB: 1 answer permanente, edicao via endpoint dedicado.
+- FIX: WHERE (answer IS NULL OR answer = '') idempotent guard
+  + check upfront answer != NULL/empty -> 409 + existing_answer preservada
+- Audit: admin pode investigar quem respondeu antes (transparencia)
+
+2. *** ADMIN BYPASS OWNERSHIP *** role admin ignorado silenciosamente
+- PRE-FIX: roles ['seller','admin'] aceita admin MAS JOIN sellers + user_id
+  exige req.user ser SELLER DONO. Admin SEM entry sellers -> 0 rows -> 404
+- Admin NAO pode responder em nome seller mesmo com permissao
+- USE CASE LEGITIMO:
+  - Seller inativo >30d -> admin responde p/ nao perder venda
+  - Admin esclarece duvida tecnica complexa
+  - Disputa: admin responde com decisao final visivel buyer
+- FIX:
+  - jwt.requireAuth roles ['seller','admin','staff']
+  - isAdmin = role admin/staff -> path SEM ownership JOIN
+  - Flag answered_by_admin=TRUE no UPDATE (transparencia UI)
+  - Migration 043 adiciona coluna + partial idx auditoria
+
+3. *** ATOMICITY *** 3 queries lineares sem tx()
+- PRE-FIX: UPDATE qna + INSERT notif + cache.del soltas
+- Falha INSERT notif = answer existe mas buyer nao notificado
+- Buyer perde lead venda (qna respondida mas nao sabe)
+- FIX: tx() atomic - tudo all-or-nothing (cache.del fora - tolera fail)
+
+4. *** is_hidden check *** answer em qna moderada
+- PRE-FIX: aceita answer em qna.is_hidden=TRUE
+- Answer vai pro DB MAS qna nao aparece PDP - workflow inconsistente
+- FIX: SELECT is_hidden + 403 'qna_hidden' upfront
+
+5. UUID validate :id (anti PG 22P02)
+- Mesma pattern pass 32-35
+
+6. *** RATE-LIMIT *** anti-spam answer
+- PRE-FIX: zero rate-limit em endpoint seller-facing
+- Bot exploit: seller pwned -> spam 1000 fake answers vendendo
+- FIX: rateLimiter 20/15min/IP (sellers respondem mais que buyers perguntam)
+
+MIGRATION 043:
+- product_qna.answered_by_admin BOOLEAN NOT NULL DEFAULT FALSE
+- COMMENT: TRUE = admin/staff respondeu (UI mostra "Resposta da plataforma")
+- Partial idx (answered_at DESC) WHERE answered_by_admin=TRUE
+  (auditoria volume admin answers + SLA tracking futuro)
+
+DEPLOY ORDER:
+1. Migration 043 auto-pickup cron
+2. review-svc rebuild (consume nova coluna)
+3. UI futura: distinguir respostas seller vs admin (badge "Plataforma")
+
+PATTERN W7 27 ENDPOINTS + 18 REGRAS (A-R):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 5 (/, /:id/vote, /qna/:id/upvote, /qna, /qna/:id/answer pass 36)
+
+REVIEW-SVC PROGRESS (8 endpoints total - 5/8 = 62%):
+- ✅ POST / (pass 32)
+- ✅ POST /:id/vote (pass 33)
+- ✅ POST /qna/:id/upvote (pass 34)
+- ✅ POST /qna (pass 35)
+- ✅ POST /qna/:id/answer (pass 36 esta iter)
+- POST /:id/reply (seller ownership review reply - mesmo pattern)
+- POST /reports (abuse report)
+- POST /reports/:id/resolve (admin)
+
+PROXIMA ITER:
+- W7 pass 37: POST /:id/reply (seller ownership - MESMO PATTERN pass 36)
+- W7 pass 38: POST /reports (abuse rate-limit critical)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
+
+W7+W13+W18+W4 CONSOLIDADO:
+- W7: 27 endpoints + 18 regras (A-R) - 36 micro-iters
+- W13: renderMustache XSS
+- W18: 8 passes
+- W4: 13 admin pages

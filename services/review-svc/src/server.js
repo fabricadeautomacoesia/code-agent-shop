@@ -490,32 +490,133 @@ app.get('/qna/seller/pending', jwt.requireAuth({ roles: ['seller','admin'] }),
 );
 
 // POST /qna/:id/answer (seller responde)
-app.post('/qna/:id/answer', jwt.requireAuth({ roles: ['seller','admin'] }),
+// FIX-WORKER-7 pass 36: 6 BUGS aplicando Pattern W7 (Regras Q+K+J+ownership+atomicity).
+//
+// BUG 1 *** IDEMPOTENCY Regra Q *** re-answer overwrites silently
+//   PRE-FIX: UPDATE SET answer=... WHERE id=$3 - sem check answer IS NULL
+//   Seller pode "responder" mesma qna 10x - ultima sobrescreve anteriores.
+//   Forense corrompido (audit_log perde history das answers anteriores).
+//   Pattern Regra Q W7 pass 25 (vault revoke): operacoes terminais NAO
+//   permitem re-execucao. MLB: 1 answer permanente, edicao via endpoint dedicado.
+//   FIX: WHERE answer IS NULL guard. Se ja respondida -> 409 Conflict +
+//   existing answer preservada.
+//
+// BUG 2 *** ADMIN BYPASS OWNERSHIP *** role admin ignorado
+//   PRE-FIX: roles ['seller','admin'] aceita admin, MAS JOIN sellers + user_id
+//   exige req.user ser seller dono. Admin SEM entry sellers -> 0 rows -> 404.
+//   Admin NAO pode responder em nome seller mesmo com permissao.
+//   Use case: admin responde qna abandonada (seller inativo) com flag by_admin.
+//   FIX: roles check separado - admin path skip ownership + flag answered_by_admin.
+//
+// BUG 3 *** ATOMICITY *** 3 queries lineares
+//   UPDATE qna + INSERT notif + cache.del. Falha notif = answer existe
+//   mas buyer nao notificado. Buyer perde lead venda.
+//   FIX: tx() atomic (cache.del fora - tolera fail).
+//
+// BUG 4 *** is_hidden check *** answer em qna moderada
+//   Seller responde qna que admin moderou (hidden=TRUE). Answer vai pro DB
+//   mas qna nao aparece PDP. Workflow inconsistente.
+//   FIX: validar qna.is_hidden = FALSE upfront.
+//
+// BUG 5 UUID validate + rate-limit (padrao pass 32-35)
+const qnaAnswerLimiter = rateLimiter.createLimiter({
+  windowMs: 15 * 60 * 1000, max: 20,  // sellers respondem mais que buyers perguntam
+  message: 'Muitas respostas recentes. Aguarde alguns minutos.',
+});
+
+app.post('/qna/:id/answer',
+  qnaAnswerLimiter,
+  jwt.requireAuth({ roles: ['seller','admin','staff'] }),
   validate({ body: z.object({ answer: z.string().min(1).max(5000) }) }),
-  asyncHandler(async (req, res) => {
-    const r = await query(
-      `UPDATE product_qna q
-          SET answer = $1, answered_at = NOW(), answered_by_user_id = $2, updated_at = NOW()
-         FROM sellers s
-        WHERE q.id = $3 AND q.seller_id = s.id AND s.user_id = $2
-        RETURNING q.id, q.product_id, q.asked_by_user_id`,
-      [req.body.answer, req.user.sub, req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'not_found_or_not_owner' });
-    // notifica quem perguntou
-    if (r.rows[0].asked_by_user_id) {
-      await query(
-        `INSERT INTO notifications (user_id, channel, template_code, title, body)
-         VALUES ($1, 'in_app', 'qna_answered', 'Sua pergunta foi respondida', 'Acesse o produto para ver a resposta')`,
-        [r.rows[0].asked_by_user_id]
+  asyncHandler(async (req, res, next) => {
+    if (!QNA_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('qna_not_found'));
+    }
+
+    const isAdmin = ['admin','staff'].includes(req.user.role);
+    let outcome;
+    let result;
+    await tx(async (c) => {
+      // FIX bug 1+2+4: SELECT FOR UPDATE qna com checks consolidados
+      // Admin path: aceita qualquer qna. Seller path: enforce ownership via JOIN.
+      const qnaQuery = isAdmin
+        ? `SELECT q.id, q.product_id, q.seller_id, q.is_hidden, q.answer,
+                  q.asked_by_user_id
+             FROM product_qna q
+            WHERE q.id = $1::UUID FOR UPDATE OF q`
+        : `SELECT q.id, q.product_id, q.seller_id, q.is_hidden, q.answer,
+                  q.asked_by_user_id
+             FROM product_qna q
+             JOIN sellers s ON s.id = q.seller_id AND s.user_id = $2::UUID
+            WHERE q.id = $1::UUID FOR UPDATE OF q`;
+      const params = isAdmin ? [req.params.id] : [req.params.id, req.user.sub];
+      const qna = await c.query(qnaQuery, params);
+      if (!qna.rows.length) {
+        outcome = { error: isAdmin ? 'qna_not_found' : 'not_found_or_not_owner' };
+        return;
+      }
+      const q = qna.rows[0];
+
+      // Regra Q: idempotent terminal - answer ja existe
+      if (q.answer && q.answer.trim()) {
+        outcome = {
+          error: 'already_answered',
+          existing_answer: q.answer,
+          // Forense: admin pode investigar quem respondeu antes
+        };
+        return;
+      }
+      // is_hidden check (bug 4)
+      if (q.is_hidden) {
+        outcome = { error: 'qna_hidden' };
+        return;
+      }
+
+      // UPDATE answer idempotent guard (anti-race com outro seller-co-owner ou admin)
+      await c.query(
+        `UPDATE product_qna
+            SET answer = $1, answered_at = NOW(),
+                answered_by_user_id = $2::UUID,
+                answered_by_admin = $3::BOOLEAN,
+                updated_at = NOW()
+          WHERE id = $4::UUID AND (answer IS NULL OR answer = '')`,
+        [req.body.answer, req.user.sub, isAdmin, req.params.id]
       );
+
+      // INSERT notification ATOMICA (mesmo tx - bug 3)
+      if (q.asked_by_user_id) {
+        await c.query(
+          `INSERT INTO notifications (user_id, channel, template_code, title, body)
+           VALUES ($1::UUID, 'in_app', 'qna_answered', 'Sua pergunta foi respondida', 'Acesse o produto para ver a resposta')`,
+          [q.asked_by_user_id]
+        );
+      }
+
+      // Cache slug fetch dentro tx p/ ter no outcome
+      const slugRow = await c.query(`SELECT slug FROM products WHERE id = $1::UUID`, [q.product_id]);
+      result = { ok: true, slug: slugRow.rows[0]?.slug, answered_by_admin: isAdmin };
+    });
+
+    if (outcome?.error === 'qna_not_found' || outcome?.error === 'not_found_or_not_owner') {
+      return res.status(404).json({ error: outcome.error });
     }
-    // FIX-WORKER-3 pass 2: invalida cache qna do PDP (answer agora aparece)
-    const slugR = await query('SELECT slug FROM products WHERE id = $1', [r.rows[0].product_id]);
-    if (slugR.rows.length) {
-      await cache.del(`products:qna:${slugR.rows[0].slug}`).catch(() => {});
+    if (outcome?.error === 'qna_hidden') {
+      return res.status(403).json({ error: 'qna_hidden',
+        message: 'Esta pergunta foi moderada.' });
     }
-    res.json({ ok: true });
+    if (outcome?.error === 'already_answered') {
+      return res.status(409).json({
+        error: 'already_answered',
+        message: 'Esta pergunta ja foi respondida anteriormente.',
+        existing_answer: outcome.existing_answer,
+      });
+    }
+
+    // Cache invalidate FORA tx (tolera fail)
+    if (result?.slug) {
+      await cache.del(`products:qna:${result.slug}`).catch(() => {});
+    }
+    res.json({ ok: true, answered_by_admin: result.answered_by_admin });
   })
 );
 
