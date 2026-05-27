@@ -35,6 +35,12 @@ const ERROR_MESSAGES: Record<string, string> = {
   account_suspended:      'Conta suspensa. Contate o suporte.',
   rate_limited:           'Muitas tentativas. Aguarde alguns minutos.',
   validation_error:       'Dados invalidos. Verifique os campos.',
+
+  // Payment / Checkout
+  missing_cpf_cnpj:       'CPF/CNPJ obrigatorio para pagamento. Complete seu cadastro em Minha Conta antes de finalizar.',
+  payment_not_pending:    'Este pedido nao esta pendente de pagamento.',
+  order_not_found:        'Pedido nao encontrado.',
+  empty_cart:             'Seu carrinho esta vazio.',
 };
 
 export function friendlyAuthError(e: any): string {

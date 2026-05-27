@@ -148,6 +148,18 @@ app.post('/payments/asaas/create',
     const order = o.rows[0];
     if (order.payment_status !== 'pending') return next(errorHandler.badRequest('payment_not_pending'));
 
+    // FIX-WORKER-11 pass 4: bloqueia checkout se user nao tem CPF/CNPJ.
+    // Antes: enviava '00000000000' (CPF zerado) -> Asaas rejeita com 400
+    // invalid_value cpfCnpj -> Promise<reject> -> 500 errorHandler -> UX confuso
+    // ("Erro interno do servidor. Tente novamente em instantes").
+    // Agora: 400 com mensagem clara + cta para completar perfil.
+    if (!order.cpf_cnpj || order.cpf_cnpj.replace(/\D/g, '').length < 11) {
+      return next(errorHandler.badRequest(
+        'missing_cpf_cnpj',
+        'CPF/CNPJ obrigatorio para pagamento. Complete seu cadastro em /conta antes de finalizar.'
+      ));
+    }
+
     // 1. cria/usa customer Asaas (cache no users.metadata.asaas_customer_id)
     const u = await query('SELECT metadata FROM users WHERE id = $1', [order.buyer_user_id]);
     let customerId = u.rows[0]?.metadata?.asaas_customer_id;
@@ -155,7 +167,7 @@ app.post('/payments/asaas/create',
       const cust = await asaas.createCustomer({
         name: order.full_name,
         email: order.email,
-        cpfCnpj: order.cpf_cnpj || '00000000000',
+        cpfCnpj: order.cpf_cnpj.replace(/\D/g, ''), // normaliza apenas digitos (Asaas exige formato sem pontuacao)
         phone: order.phone_e164,
         externalReference: order.buyer_user_id,
       });
