@@ -102,6 +102,29 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## VISUAL+A11Y - WORKER 8 (BTN CONSISTENCY + FOCUS-VISIBLE)
+Audit em globals.css revelou 5 inconsistencias visuais:
+1. btn-primary (px-6 py-3) vs btn-ghost (px-5 py-2.5) - tamanhos diferentes
+   quando lado a lado em cart/checkout/nav, alinhamento ruim.
+2. a11y - btn-primary e btn-ghost SEM focus-visible. Keyboard navigation
+   invisivel. WCAG 2.1 fail.
+3. btn-primary sem :disabled state visual (opacity + cursor).
+4. btn-ghost so border muda no hover, sem bg feedback claro.
+5. Glass cards clicaveis sem hover state alem de scale.
+
+FIX commitado + deployed (5f093d0):
+- btn-ghost agora px-6 py-3 matching btn-primary + bg-white/02 hover bg-white/06.
+- Ambos com inline-flex items-center justify-center gap-2 (icon+text consistency).
+- :focus-visible com outline 2px magenta-glow + offset 3px em ambos btn-* + tambem
+  regra global em <button>, <a>, [role=button], <input>, <textarea>.
+- :disabled state com opacity 0.5 + cursor not-allowed.
+- Nova classe .glass-hover (variante de .glass) com border magenta on hover.
+
+VALIDADO no CSS bundle em prod:
+- .btn-ghost{display:inline-flex;align-items:center;justify-content:center;gap:.5rem...}
+- button:focus-visible{outline:2px solid rgba(236,72,153,.6)}
+- .btn-primary:focus-visible{outline:2px solid #F472B6}
+
 ## PAYMENT REFUND - WORKER 11 (CRITICAL SIDE-EFFECTS BYPASS)
 Audit em processWebhookEvent revelou bug critico financeiro:
 - PAYMENT_REFUNDED apenas setava orders.status='refunded'.
