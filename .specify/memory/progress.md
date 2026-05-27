@@ -3561,3 +3561,52 @@ IMPACTO:
 GAP DETECTADO (operacional, nao codigo):
 - ASAAS_API_KEY env do payment-svc deve ser renovada (chave atual invalida)
 - ASAAS_WEBHOOK_SECRET configuracao confirmar (W11 fix-closed implementado)
+
+## WORKER 10 pass 3 (SEARCH-SVC) - filtro SQLi/XSS no endpoint trending publico
+
+VETOR DETECTADO (audit curl /api/search/trending):
+{"trending":[
+  {"query_normalized":"agente","count":"4"},
+  {"query_normalized":"whatsapp","count":"2"},
+  {"query_normalized":"automacao","count":"2"},
+  {"query_normalized":"'; drop table products;--","count":"1"}  <- SQLi attempt PUBLICO
+]}
+
+Impacto: 2 problemas distintos:
+1. SECURITY: atacante valida que payload SQLi chegou ao sistema (recon free)
+2. UX: usuarios legitimos veem termos hostis exibidos como "trending" na home
+
+DB confirmou ataque registrado em search_log (sem damage - PG parametrized
+queries do search-svc bloquearam a tentativa real - so o termo string ficou).
+
+FIX (1 arquivo - services/search-svc/src/server.js):
+Query SQL do endpoint /search/trending agora aplica:
+1. CHAR_LENGTH(q) >= 3 (mata typos 1-2 chars de bot)
+2. q !~ '[''"<>;\\]' (regex POSIX: zero aspas/HTML/SQL chars perigosos)
+3. q NOT ILIKE '%--%' e '%/*%' (SQL line/block comments)
+4. HAVING COUNT(*) >= 2 (1 ocorrencia nao e trend, e ruido)
+
+Defesa em depth: ataques continuam logados em search_log (auditoria/SIEM)
+para investigacao posterior - so nao aparecem no endpoint publico.
+
+DEPLOY:
+- commit 32e9cb0 pushed
+- search-svc rebuilt + deployed converged
+- Redis cache 'cas:search:trending' invalidado manualmente (TTL 300s)
+  para que proxima request execute query nova imediatamente
+
+VALIDACAO PUBLICA (antes vs depois):
+ANTES: { agente:4, whatsapp:2, automacao:2, "'; drop table products;--":1 }
+DEPOIS: { agente:4, automacao:2, whatsapp:2 }
+SQLi attempt removido OK.
+
+IMPACTO:
+- Reduz recon publico de tentativas de ataque
+- UX home page volta a mostrar buscas legitimas
+- Mantem auditoria forensica (search_log intacta)
+- Baseline para outros endpoints de "trending/popular" futuros
+
+GAP DETECTADO (proxima iter):
+- Considerar adicionar Postgres trigger BEFORE INSERT no search_log para
+  rejeitar queries com chars perigosos no SOURCE (vs filter na SAIDA)
+- Considerar rate-limit por IP no endpoint /search (anti-recon)
