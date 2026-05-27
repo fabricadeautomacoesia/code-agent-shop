@@ -4737,3 +4737,55 @@ PROXIMA ITER:
 - Audit visual: /cloud-code-ilimitado vs /sobre coherence
 - Verificar /status custom styling vs glass cards do dashboard
 - Audit dark mode contraste em forms (login/register)
+
+## WORKER 18 pass 7 (ORDER-SVC) - cache /coupon/:code/preview + key learnings
+
+VETOR DETECTADO (audit cache order-svc):
+ZERO cache em order-svc. Focus em /coupon/:code/preview - endpoint hit
+MUITO durante checkout (1 hit por keystroke em coupon input, ~10/cupom).
+
+FIX (1 arquivo - services/order-svc/src/routes/cart.js):
++ import { cache } from @cas/shared destructuring
++ cache.cacheMiddleware com TTL 30s
++ Key: 'coupon:preview:<code>:s=<subtotal>:u=<userId>'
++ Sem invalidacao explicit (TTL natural sufficient)
+
+LEARNING (auto-correcao mid-deploy):
+1a tentativa: bypass cache via `if (req.headers.authorization) return null`
+- Pensei que sem auth, min_tier check nao se aplicava
+- MAS router.use(jwt.requireAuth()) e global -> Bearer SEMPRE presente
+- bypass never triggered -> cacheia sempre mesmo com tier check pessoal
+
+Self-correction (commit bb43947):
+- Removeu bypass
+- Adicionou u=<userId> na key
+- TTL 30s mascara qualquer tier upgrade mid-checkout
+- Cache mesmo com auth e seguro porque key e per-user
+
+DEPLOY:
+- commits a1f2eb4 + bb43947 (self-fix)
+- 2 rebuilds order-svc (~2.5s cada)
+- 2 services converged
+
+VALIDACAO PUBLICA (3 cenarios pos-fix):
+- 1st call PROGRESSIVO15 + subtotal=10000 -> X-Cache: MISS (cold, populates)
+- 2nd call mesmo params -> X-Cache: HIT (cache funciona)
+- 3rd call subtotal=50000 -> X-Cache: MISS (key sensivel a subtotal OK)
+- Bonus: FAKE coupon -> 404 nao cacheia (cacheMiddleware so 2xx)
+
+IMPACTO:
+- Coupon preview 30s cached por user+code+subtotal combination
+- DB load: 1 query/30s/combo vs N queries/s/keystroke
+- Hit ratio esperado >70% durante checkout active (10 chars typed = 9 hits)
+- TTL 30s previne tier-upgrade-stale > minor UX inconvenience
+
+LEARNINGS para Blueprint V8:
+- Sempre verificar ordem dos middlewares antes de assumir req.user nullable
+- router.use() global aplica antes do cacheMiddleware do .get()
+- Cache key por-user e seguro mesmo com auth (key colision impossivel)
+- 404 nao deve cachear (so 2xx) - defesa auto contra poisoning
+
+PROXIMA ITER:
+- Audit /api/orders/cart (GET) - ja autenticado, key=user
+- Considerar SSE para invalidate cache real-time quando coupon used_count muda
+- Audit qa-svc /qa/runs/:product_id (admin/seller dashboard hit)
