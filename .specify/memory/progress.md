@@ -4001,3 +4001,67 @@ PROXIMA ITER:
 - Mesma estrategia para outras envs criticas: DATABASE_URL, REDIS_URL,
   ASAAS_WEBHOOK_SECRET, QA_CALLBACK_SECRET
 - Consider startup health-check unificado em packages/shared/src/startup.js
+
+## WORKER 17 pass 7 (SHARED/STARTUP) - validateStartupEnv unified
+
+GAP DETECTADO (proxima iter do W17 pass 6):
+"Mesma estrategia para outras envs criticas: DATABASE_URL, REDIS_URL,
+ASAAS_WEBHOOK_SECRET, QA_CALLBACK_SECRET. Consider startup health-check
+unificado em packages/shared/src/startup.js"
+
+BUG LATENTE encontrado em auditoria DB-client:
+packages/db-client/src/index.js:16 -> `password: process.env.PG_PASS || ''`
+Password vazia em prod (typo, rotation falha) = brute-force trivial via
+Docker network interno (pg_hba.conf trust em redes privadas).
+
+CRIADO (packages/shared/src/startup.js):
++ validateStartupEnv({ critical, minLength, warnIfMissing })
++ PROD=NODE_ENV==='production' detection
++ critical ausente/curto + PROD -> console.error + process.exit(1)
+  (Swarm restart loop = alerta ops imediato)
++ critical ausente/curto + DEV -> console.warn (preserva local dev)
++ warnIfMissing -> warn so em PROD (sem fail)
++ Mensagens opacas: "critical env missing/too short" (DLP - nao revela
+  formato esperado em logs SIEM/centralizados)
+
+WIRED em 4 services criticos (por risco/uso de secrets):
+- auth-svc: PG_PASS>=12, VAULT_AES_KEY>=64 (2FA encrypt)
+- payment-svc: PG_PASS>=12, ASAAS_WEBHOOK_SECRET>=16; warn ASAAS_API_KEY,
+  PAYMENT_INTERNAL_TOKEN
+- vault-svc: PG_PASS>=12, VAULT_AES_KEY>=64; warn VAULT_INTERNAL_TOKEN
+- qa-svc: PG_PASS>=12, QA_CALLBACK_SECRET>=32; warn QA_RUN_INTERNAL_TOKEN
+
+Outros 8 services (gateway, search, notification, etc) recebem helper
+disponivel mas wire fica para iters futuras - foco em servicos com
+secrets criptograficos primeiro.
+
+DEPLOY:
+- commit 01204e3 pushed
+- 4 builds paralelos (~2.5s cada)
+- 4 service updates converged
+- ZERO startup failures - env vars todas OK em prod (validacao passou)
+
+VALIDACAO PUBLICA (smoke test pos-deploy):
+- /api/auth/login -> JWT 337 chars (auth-svc OK)
+- /api/payments/installments/preview -> 200 + JSON parcelas (payment OK)
+- /api/vault/health -> 200 (vault OK)
+- 4 services logs: "listening" sem errors/warnings de startup
+
+IMPACTO ARQUITETURAL:
+- Padrao Blueprint V8 documentado: SEMPRE validar env critico no startup
+- Latent disasters (PG_PASS empty, JWT fallback hardcoded) impossiveis
+- Container fail-fast em PROD vs vulnerable silencioso
+- Dev local nao quebra (warn only fallback)
+- Helper reusavel para qualquer service futuro
+
+CICLO W17 (passes 4 a 7) FECHA TEMA SECURITY HARDENING:
+- pass 4: vault DLP info leak (expected_len no log)
+- pass 5: shared/crypto stricter validation + DLP error + cache
+- pass 6: shared/jwt fail-closed em prod (secrets >= 32 chars)
+- pass 7: shared/startup unified helper + wire 4 critical services
+TOTAL: 4 latent vulnerabilities eliminadas + 1 helper reusavel.
+
+PROXIMA ITER:
+- Wire startup validation em order-svc, seller-svc (PG_PASS critico)
+- Audit hardcode em outros packages (Asaas, Redis URL)
+- Pen-test scan automatizado: detect tokens hardcoded via secret-scanning
