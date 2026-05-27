@@ -9962,3 +9962,96 @@ PROXIMA ITER:
   idx_payouts_status (mantidos 2 semanas em modo conservador)
 - W4 pass 12: /admin/audit-log UI (filter por action + paginated)
 - W18 pass 4: image optimization audit (next/image consistency cross-pages)
+
+## WORKER 4 PASS 12 - /admin/audit-log UI + GET /aiops/audit-log
+
+ENCERRA INTEGRACAO W14-9 (idx_audit_action_created) com UI/UX completo.
+
+BACKEND aiops-svc 2 endpoints novos:
+
+1. GET /audit-log (admin/staff):
+   Query params:
+   - days (1-90, default 7)
+   - limit (1-200, default 50)
+   - offset (paginacao)
+   - action (exact match) -> usa idx_audit_action_created W14-9
+   - severity (whitelist: info/warn/error/critical)
+   Returns { entries, total, limit, offset, filter }
+
+2. GET /audit-log/actions (admin/staff):
+   - Popula dropdown filter
+   - SELECT action, COUNT GROUP BY action ORDER BY count DESC LIMIT 50
+   - Janela 30d (ignora ruido velho)
+
+FRONTEND /admin/audit-log/page.tsx (175 linhas):
+
+Filtros:
+- Dropdown days (24h/7d/30d/90d)
+- Dropdown action (dinamico via /audit-log/actions)
+- Dropdown severity (4 valores)
+- Paginacao client-side (limit=50)
+- Auto-reload em mudanca filtro
+- Reset offset=0 quando filtro muda
+
+Tabela:
+- Quando (timestamp fmtDate)
+- Actor (UUID slice 8 + role)
+- Action (badge magenta font-mono)
+- Target (type + id slice 8)
+- Severidade (badge cor-coded)
+- Payload (<details> expand JSON pretty)
+
+UX:
+- Empty + loading + error states
+- Counter "N registro(s) - pagina X/Y"
+- Botoes Anterior/Proximo + ChevronLeft/Right
+- retry button no error banner
+
+Nav layout.tsx:
+- /audit-log com FileText icon
+- Posicao apos /webhooks (categoria ops/audit)
+
+ACTIONS VISIVEIS no UI (geradas por outros workers):
+- webhook.reset (W11-8)
+- vault.rotate (W17-13)
+- notification.test_email_sent (W13-6)
+- product.force_approve (W4-existing)
+- seller.suspend (W4-existing)
+- payout.approve (W4-4)
+- + outras de auditoria
+
+INTEGRACAO E2E completa W14-9 -> backend -> UI:
+- Indice composto criado (W14-9)
+- Backend endpoint usa indice + paginacao
+- UI renderiza com filtros granulares
+- Forensics admin self-service
+
+DEPLOY:
+- commit a782d86 push main OK
+- 268 insertions
+- aiops-svc + dashboard-admin rebuild via VPS cron
+- DB indice ja existe (mig 037)
+
+W4 ADMIN AUDIT (passes 1-12):
+| Pass | Page | Tema |
+|---|---|---|
+| 1-3 | hook + sellers/qa-queue | useAdminAction |
+| 4 | /admin/payouts | Transferir Asaas |
+| 5 | /admin/qa-queue | 4 bugs |
+| 6 | /admin/orders | poll + status |
+| 7 | /admin/reports | 6 fixes |
+| 8 | /admin/webhooks | dead letter UI |
+| 9 | /admin/vault | currency fix |
+| 10 | /admin/vault | Saude 7d |
+| 11 | /admin/vault | rotation UI |
+| 12 | /admin/audit-log | NEW (esta iter) |
+
+COBERTURA DASHBOARD ADMIN 10 PAGES:
+- /sellers, /qa-queue, /orders, /payouts, /reports
+- /products, /alerts, /vault, /webhooks
+- /audit-log (NEW W4-12)
+
+PROXIMA ITER:
+- W4 pass 13: /admin/products audit (validar/criar)
+- W18 pass 4: image optimization audit
+- W16: MLB feature nova (Loyalty resgate avancado, recomendacoes ML, etc)
