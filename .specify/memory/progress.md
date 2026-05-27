@@ -17198,3 +17198,84 @@ PROXIMA ITER:
 - W7 pass 57: review-svc /seller/received audit
 - W3 pass 14: Dialog wrapper e2e tests
 - W14: monitor /aiops/db/dead-indexes em prod 2+ semanas -> drops adicionais
+
+================================================================
+ITER W7 PASS 56 - review-svc /seller/received 5 BUGS (LGPD + admin + cache) (2026-05-27)
+================================================================
+ESCOPO: review-svc GET /seller/received (seller dashboard reviews recebidas)
+FILE: services/review-svc/src/server.js (linhas 905-922 -> rewrite)
+
+CONTEXTO: W7 pass 55 fechou auth-svc 2FA. Pass 56 ataca read-only endpoint
+hot - seller dashboard refresh. Audit revelou LGPD leak + admin path missing
++ perf cache opportunity.
+
+BUGS CORRIGIDOS (5):
+
+1. *** ADMIN BYPASS *** JOIN sellers + WHERE s.user_id=$1
+- Admin sem entry sellers -> 0 reviews retornadas mesmo com role admin
+- Pattern pass 36/37 ja resolveu mesma classe (qna/answer + review/reply)
+- FIX: isAdmin path query distinta SEM JOIN sellers ownership
+  + filter optional ?seller_id (admin investiga seller especifico)
+- Query template condicional: 2 SQL strings (admin vs seller)
+
+2. *** LGPD PII LEAK buyer_email plain *** Art 9°/Art 5(c) data minimization
+- PRE-FIX: SELECT u.email AS buyer_email - seller ve email completo buyer
+- Risk: LGPD violation + atacante seller compromised pode farmer emails
+- FIX: PII masking JS pos-query
+  'joao.silva@email.com' -> 'jo***@email.com' (2 prefix chars + ***@domain)
+- Admin path: NAO mascara (admin tem visibilidade full p/ investigation)
+- Seller path: SEMPRE mascarado
+
+3. *** Regra D tiebreaker *** ORDER BY r.created_at DESC sem secondary
+- 2 reviews mesmo ms = ordem PG arbitraria (cache evict re-ordem)
+- FIX: + r.id DESC (UUID sempre unique)
+
+4. *** Regra E ?limit query param missing ***
+- PRE-FIX: LIMIT 100 hardcoded sem flexibility frontend
+- FIX: ?limit=N (clamped 1-200) + response shape padronizado
+  { reviews, count, limit, is_admin_view, seller_filter? }
+
+5. *** CACHE missing *** endpoint hot (seller refresh ~1x/min)
+- PRE-FIX: 3 JOINs + 100 rows = ~50-200ms sem cache
+- FIX: cache.cacheMiddleware key per-seller + adminFilter + limit
+- TTL 60s - reviews novas aparecem ate 1min apos POST /
+- Hit rate esperado ~95% (refresh dashboards loops)
+
+NOVO PATTERN W7 PII MASKING:
+- LGPD/GDPR data minimization principle
+- Pattern: SELECT raw + JS post-process mask antes response
+- email: 'user@domain' -> 'us***@domain'
+- cpf: '12345678901' -> '12***901'
+- phone: '+5511999...' -> '+55***999' (last 4)
+- TODO consolidar @cas/shared.maskPII helper (refactor futuro)
+
+PATTERN W7 50 ENDPOINTS + 23 REGRAS (A-W) - 56 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 9 (8 anteriores + /seller/received pass 56)
+- seller-svc: 7
+- gateway: 2
+- auth-svc: 9 (todos mutation paths + 2FA)
++ refactor @cas/shared.htmlEscape (pass 52)
+
+REVIEW-SVC PROGRESS 9/N endpoints:
+- ✅ POST / (pass 32) - race avg + atomicity
+- ✅ POST /:id/vote (pass 33) - race counter
+- ✅ POST /qna/:id/upvote (pass 34) - TOCTOU toggle
+- ✅ POST /qna (pass 35) - CREATE pattern
+- ✅ POST /qna/:id/answer (pass 36) - admin bypass + Regra Q
+- ✅ POST /:id/reply (pass 37) - notif buyer + admin
+- ✅ POST /reports (pass 38) - DoS reputational
+- ✅ POST /reports/:id/resolve (pass 39) - admin terminal
+- ✅ GET /seller/received (pass 56 esta iter) - LGPD + admin + cache
+
+PROXIMA ITER:
+- W7 pass 57: read-only audit /admin/reports + outros listings
+- W7 pass 58: extract @cas/shared.maskPII (refactor cross-svc)
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas

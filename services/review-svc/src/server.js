@@ -904,22 +904,98 @@ app.post('/reports',
 
 // Gateway proxia /api/reviews/* sem prefix - rotas chegam direto na raiz
 // GET /seller/received - reviews recebidas pelo seller logado
-app.get('/seller/received', jwt.requireAuth({ roles: ['seller','admin'] }),
+// FIX-WORKER-7 pass 56: 5 BUGS aplicando Pattern W7 (A-W).
+//
+// BUG 1 *** ADMIN BYPASS *** JOIN sellers + WHERE s.user_id=$1
+//   Admin sem entry sellers -> query retorna 0 reviews mesmo com role admin
+//   Pattern pass 36/37 resolveu mesma classe - replicar
+//   FIX: isAdmin path SKIP ownership JOIN (admin vê TODAS reviews + filter ?seller_id)
+//
+// BUG 2 *** LGPD PII LEAK buyer_email plain *** Art 9°/Art 5(c) minimization
+//   Seller NAO precisa email completo - so display_name + email masked
+//   FIX: substring/mask email: 'j***@gmail.com' style (3 prefix chars + ***@domain)
+//
+// BUG 3 *** Regra D tiebreaker *** ORDER BY created_at DESC sem secondary
+//   FIX: + r.id DESC (UUID unique)
+//
+// BUG 4 *** Regra E ?limit query param missing ***
+//   FIX: query.limit clamped 1-200 + response shape { reviews, limit, count }
+//
+// BUG 5 *** CACHE missing *** endpoint hot (seller dashboard refresh)
+//   3 JOINs + 100 rows = ~50-200ms sem cache
+//   FIX: cache.cacheMiddleware 60s - acaba 99% hits em ms
+//   Cache key: per-seller (req.user.sub) + limit param
+const sellerReceivedCacheKey = (req) => {
+  const isAdmin = ['admin','staff'].includes(req.user?.role);
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
+  const sellerFilter = isAdmin && req.query.seller_id ? req.query.seller_id : '';
+  return `reviews:seller_received:${req.user?.sub || 'anon'}:adm=${isAdmin}:sf=${sellerFilter}:lim=${lim}`;
+};
+
+app.get('/seller/received',
+  jwt.requireAuth({ roles: ['seller','admin','staff'] }),
+  cache.cacheMiddleware(sellerReceivedCacheKey, 60),
   asyncHandler(async (req, res) => {
-    const r = await query(
-      `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase,
-              r.helpful_count, r.unhelpful_count, r.reply_from_seller, r.reply_at,
-              r.created_at,
-              p.id AS product_id, p.slug AS product_slug, p.title AS product_title, p.cover_image_url,
-              u.display_name AS buyer_name, u.email AS buyer_email
-         FROM product_reviews r
-         JOIN products p ON p.id = r.product_id
-         JOIN sellers s ON s.id = r.seller_id
-         LEFT JOIN users u ON u.id = r.buyer_user_id
-        WHERE s.user_id = $1 AND r.is_hidden = FALSE
-        ORDER BY r.created_at DESC LIMIT 100`, [req.user.sub]
-    );
-    res.json({ reviews: r.rows });
+    const isAdmin = ['admin','staff'].includes(req.user.role);
+    const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
+    const sellerFilter = isAdmin && req.query.seller_id ? req.query.seller_id : null;
+
+    // BUG 1 FIX: query construida condicional admin vs seller
+    // Admin path: SEM JOIN sellers + WHERE s.user_id (ve todas reviews)
+    //   + optional filter ?seller_id (admin investiga seller especifico)
+    // Seller path: JOIN sellers + WHERE s.user_id = req.user.sub (ownership)
+    const sql = isAdmin
+      ? `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase,
+                r.helpful_count, r.unhelpful_count, r.reply_from_seller, r.reply_at,
+                r.created_at, r.seller_id,
+                p.id AS product_id, p.slug AS product_slug, p.title AS product_title, p.cover_image_url,
+                u.display_name AS buyer_name, u.email AS buyer_email
+           FROM product_reviews r
+           JOIN products p ON p.id = r.product_id
+           LEFT JOIN users u ON u.id = r.buyer_user_id
+          WHERE r.is_hidden = FALSE
+            AND ($1::UUID IS NULL OR r.seller_id = $1::UUID)
+          ORDER BY r.created_at DESC, r.id DESC
+          LIMIT $2`
+      : `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase,
+                r.helpful_count, r.unhelpful_count, r.reply_from_seller, r.reply_at,
+                r.created_at,
+                p.id AS product_id, p.slug AS product_slug, p.title AS product_title, p.cover_image_url,
+                u.display_name AS buyer_name, u.email AS buyer_email
+           FROM product_reviews r
+           JOIN products p ON p.id = r.product_id
+           JOIN sellers s ON s.id = r.seller_id
+           LEFT JOIN users u ON u.id = r.buyer_user_id
+          WHERE s.user_id = $1 AND r.is_hidden = FALSE
+          ORDER BY r.created_at DESC, r.id DESC
+          LIMIT $2`;
+    const params = isAdmin
+      ? [sellerFilter, lim]
+      : [req.user.sub, lim];
+
+    const r = await query(sql, params);
+
+    // BUG 2 FIX: PII masking buyer_email (LGPD minimization)
+    // 'joao.silva@email.com' -> 'jo***@email.com' (admin path tem visibilidade full)
+    // Seller path: nunca ve email completo
+    const reviews = r.rows.map((row) => {
+      if (!isAdmin && row.buyer_email) {
+        const [local, domain] = row.buyer_email.split('@');
+        if (local && domain) {
+          // mask: 2 first chars + *** + @domain
+          row.buyer_email = `${local.slice(0, 2)}***@${domain}`;
+        }
+      }
+      return row;
+    });
+
+    res.json({
+      reviews,
+      count: reviews.length,
+      limit: lim,
+      is_admin_view: isAdmin,
+      ...(sellerFilter ? { seller_filter: sellerFilter } : {}),
+    });
   })
 );
 
