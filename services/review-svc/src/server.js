@@ -939,14 +939,130 @@ app.get('/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
 );
 
 // POST /reports/:id/resolve (via /api/reviews/reports/:id/resolve)
+// FIX-WORKER-7 pass 39: 5 BUGS aplicando Pattern W7 (admin terminal endpoint).
+// Pattern consolidado pass 25 (vault revoke), pass 31 (dispute resolve),
+// pass 36 (qna answer), pass 37 (review reply).
+//
+// BUG 1 *** Regra Q IDEMPOTENT TERMINAL *** re-resolve corruption forense
+//   PRE-FIX: UPDATE WHERE id=$4 (sem status atual check)
+//   Admin A resolve report status=resolved notes="confirmado plagio" 10:00
+//   Audit externo registra incident 10:00
+//   Admin B resolve MESMO report status=dismissed notes="falsa denuncia" 14:00
+//   -> sobrescreve resolved_at + resolution_notes -> timeline corrompido
+//   Pattern Regra Q (pass 25 vault) - terminal operations preserve original
+//   FIX: WHERE status NOT IN ('resolved','dismissed') idempotent guard
+//
+// BUG 2 *** SILENT 404 *** UPDATE rowcount=0 + res.json({ok:true})
+//   PRE-FIX: report id inexistente -> 0 rows -> 200 OK silencioso
+//   Admin pensa "resolvi" mas DB nao mudou. UX broken.
+//   FIX: SELECT FOR UPDATE upfront + check rowcount -> 404 explicit
+//
+// BUG 3 *** AUDIT LOG MISSING *** sec event critical sem trail no DB
+//   Pattern W7 pass 23/25/31/36/37 estabeleceu: high-impact endpoints
+//   (mod actions, payments, security) DEVEM ter audit_log INSERT atomic.
+//   /reports/:id/resolve afeta reputation seller -> audit critical.
+//   FIX: INSERT audit_log dentro do MESMO tx (atomic with UPDATE)
+//
+// BUG 4 *** Regra K *** SELECT FOR UPDATE race entre 2 admins
+//   2 admins resolvem same report simultaneo - UPDATE concorrente.
+//   FIX: SELECT FOR UPDATE serializa
+//
+// BUG 5 *** NOTIFICATION REPORTER MISSING *** UX inconsistencia
+//   Reporter abre report, NUNCA sabe o resultado (resolved/dismissed).
+//   Pattern pass 36/37 estabeleceu notificacao downstream.
+//   FIX: INSERT notification ao reporter (atomic mesmo tx)
+//   - status=resolved -> "Sua denuncia foi acolhida + acao tomada"
+//   - status=dismissed -> "Sua denuncia foi analisada"
+//   - status=under_review -> sem notif (intermediario)
+const RESOLVE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 app.post('/reports/:id/resolve', jwt.requireAuth({ roles: ['admin','staff'] }),
-  validate({ body: z.object({ status: z.enum(['resolved','dismissed','under_review']), notes: z.string().max(2000) }) }),
-  asyncHandler(async (req, res) => {
-    await query(
-      `UPDATE reports SET status = $1, resolution_notes = $2, resolved_by = $3, resolved_at = NOW()
-        WHERE id = $4`,
-      [req.body.status, req.body.notes, req.user.sub, req.params.id]
-    );
+  validate({ body: z.object({
+    status: z.enum(['resolved','dismissed','under_review']),
+    notes: z.string().min(10).max(2000),  // min 10 chars (justificativa real)
+  }) }),
+  asyncHandler(async (req, res, next) => {
+    if (!RESOLVE_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('report_not_found'));
+    }
+
+    let outcome;
+    await tx(async (c) => {
+      // BUG 4: SELECT FOR UPDATE (Regra K race entre 2 admins)
+      const cur = await c.query(
+        `SELECT id, status, reporter_user_id, target_type, target_id, reason_code
+           FROM reports WHERE id = $1::UUID FOR UPDATE`,
+        [req.params.id]
+      );
+      if (!cur.rows.length) { outcome = { error: 'not_found' }; return; }
+      const r = cur.rows[0];
+
+      // BUG 1: Regra Q idempotent terminal
+      // resolved + dismissed sao TERMINAIS - admin nao deve re-decidir
+      // under_review eh intermediario - admin pode escalar para resolved/dismissed
+      const TERMINAL_STATUSES = ['resolved', 'dismissed'];
+      if (TERMINAL_STATUSES.includes(r.status)) {
+        outcome = {
+          error: 'already_resolved',
+          current_status: r.status,
+        };
+        return;
+      }
+
+      // UPDATE idempotent guard (anti race-residual)
+      await c.query(
+        `UPDATE reports
+            SET status = $1, resolution_notes = $2,
+                resolved_by = $3::UUID, resolved_at = NOW()
+          WHERE id = $4::UUID
+            AND status NOT IN ('resolved','dismissed')`,
+        [req.body.status, req.body.notes, req.user.sub, req.params.id]
+      );
+
+      // BUG 3: audit_log INSERT atomic (forense pattern pass 23)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'report.resolve', 'report', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({
+           new_status: req.body.status,
+           previous_status: r.status,
+           target_type: r.target_type,
+           target_id: r.target_id,
+           reason_code: r.reason_code,
+           notes_length: req.body.notes.length,
+           ip: req.ip,
+         })]
+      );
+
+      // BUG 5: notification ao reporter (mesma tx - atomico)
+      // SKIP se under_review (intermediario - reporter aguarda)
+      if (r.reporter_user_id && req.body.status !== 'under_review') {
+        const title = req.body.status === 'resolved'
+          ? 'Sua denuncia foi acolhida'
+          : 'Sua denuncia foi analisada';
+        const body = req.body.status === 'resolved'
+          ? 'Apos analise, sua denuncia foi acolhida e medidas foram tomadas.'
+          : 'Apos analise, sua denuncia foi avaliada. Obrigado por reportar.';
+        await c.query(
+          `INSERT INTO notifications (user_id, channel, template_code, title, body)
+           VALUES ($1::UUID, 'in_app', 'report_resolved', $2, $3)`,
+          [r.reporter_user_id, title, body]
+        );
+      }
+    });
+
+    if (outcome?.error === 'not_found') {
+      return next(errorHandler.notFound('report_not_found'));
+    }
+    if (outcome?.error === 'already_resolved') {
+      // Regra Q: 409 + current_status preservado (forense intact)
+      return res.status(409).json({
+        error: 'already_resolved',
+        message: 'Esta denuncia ja foi resolvida anteriormente.',
+        current_status: outcome.current_status,
+      });
+    }
     res.json({ ok: true });
   })
 );

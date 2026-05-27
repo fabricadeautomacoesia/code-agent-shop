@@ -15539,3 +15539,36 @@ W7+W13+W18+W4 CONSOLIDADO:
 - W13: renderMustache XSS
 - W18: 8 passes
 - W4: 13 admin pages
+
+================================================================
+ITER W7 PASS 39 - review-svc /reports/:id/resolve 5 BUGS (FINAL) (2026-05-27)
+================================================================
+ESCOPO: review-svc POST /reports/:id/resolve (admin terminal - ULTIMO endpoint)
+FILE: services/review-svc/src/server.js (linhas 941-952 -> rewrite)
+
+5 BUGS pattern admin-terminal (consolidado passes 25/31/36/37):
+1. Regra Q idempotent terminal - re-resolve corruption forense
+2. SILENT 404 - rowcount=0 + ok:true
+3. AUDIT_LOG missing - sec event critical
+4. Regra K FOR UPDATE - race 2 admins
+5. NOTIFICATION reporter missing - UX inconsistencia (sabe status)
+
+REVIEW-SVC PROGRESS 100% CONCLUIDO (8/8 endpoints):
+- ✅ POST / (pass 32) - race avg + atomicity + Regra A + rate
+- ✅ POST /:id/vote (pass 33) - race counter helpful
+- ✅ POST /qna/:id/upvote (pass 34) - TOCTOU toggle race
+- ✅ POST /qna (pass 35) - CREATE pattern
+- ✅ POST /qna/:id/answer (pass 36) - Regra Q + admin bypass + mig 043
+- ✅ POST /:id/reply (pass 37) - notif buyer + admin + mig 044
+- ✅ POST /reports (pass 38) - DoS reputational rate-limit
+- ✅ POST /reports/:id/resolve (pass 39 esta iter) - admin terminal
+
+W7 PROGRESS GERAL: 30 endpoints + 18 regras (A-R) - 39 micro-iters
+- product-svc: 4 ✅
+- search-svc: 5 ✅
+- order-svc: 11 ✅
+- payment-svc: 3 ✅
+- vault-svc: 2 ✅
+- notification-svc: 3 ✅
+- qa-svc: 2 ✅
+- review-svc: 8 ✅ (100% - esta iter ultimo)
