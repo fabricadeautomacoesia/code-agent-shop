@@ -37,6 +37,48 @@ export const useUI = create<UIState>((set) => ({
 }));
 
 /**
+ * MLB-NEW WORKER 16: wishlist global state - evita N+1 quando renderizando
+ * grids de produtos. Fetch once apos login, depois reads locais sincronos.
+ * Mercado Livre: heart icon overlay em cada card -> precisa de O(1) lookup.
+ */
+type WishlistState = {
+  ids: Set<string>;
+  loaded: boolean;
+  loadedToken: string | null;
+  load: (token: string) => Promise<void>;
+  add: (id: string) => void;
+  remove: (id: string) => void;
+  has: (id: string) => boolean;
+  clear: () => void;
+};
+export const useWishlist = create<WishlistState>((set, get) => ({
+  ids: new Set(),
+  loaded: false,
+  loadedToken: null,
+  has: (id) => get().ids.has(id),
+  add: (id) => set((s) => ({ ids: new Set([...s.ids, id]) })),
+  remove: (id) => set((s) => {
+    const next = new Set(s.ids);
+    next.delete(id);
+    return { ids: next };
+  }),
+  clear: () => set({ ids: new Set(), loaded: false, loadedToken: null }),
+  load: async (token: string) => {
+    // Evita re-fetch se ja carregou para esse token
+    if (get().loaded && get().loadedToken === token) return;
+    try {
+      // import dinamico para evitar circular dep (api.ts importa nada do store)
+      const { Api } = await import('./api');
+      const r = await Api.api<{ products: Array<{ id: string }> }>('/products/wishlist', { auth: token, cache: 'no-store' });
+      const ids = new Set<string>((r.products || []).map((p) => p.id));
+      set({ ids, loaded: true, loadedToken: token });
+    } catch {
+      set({ loaded: true, loadedToken: token }); // gracioso, evita retry infinito
+    }
+  },
+}));
+
+/**
  * MLB-NEW WORKER 16: comparator drawer state.
  * Mercado Livre: usuario clica "Comparar" em ate 4 cards, drawer flutuante mostra
  * selecao e CTA "Comparar agora" -> /comparar?ids=uuid1,uuid2,uuid3.

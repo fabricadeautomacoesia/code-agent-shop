@@ -5,6 +5,7 @@ import { Api } from '@/lib/api';
 import { Installments } from './installments';
 import { CompareButton } from './compare-button';
 import { OfficialBadge } from './official-badge';
+import { WishlistButton } from './wishlist-button';
 
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
   iniciante:      { label: 'Iniciante', color: 'bg-gray-500/20 text-gray-300' },
@@ -36,6 +37,8 @@ export function ProductCard({ product }: { product: any }) {
           )}
           {/* MLB-NEW WORKER 16: combo selo Oficial+TopSeller (gold/magenta gradient quando ambos) */}
           <OfficialBadge isPlatformOwned={product.is_platform_owned} isTopSeller={product.is_top_seller} variant="card" />
+          {/* MLB-NEW WORKER 16: Heart icon overlay para favoritar direto do card */}
+          <WishlistButton productId={product.id} variant="card" />
           {/* Mais vendido standalone (apenas se NAO combo) - posicao top-left */}
           {product.is_top_seller && !product.is_platform_owned && (
             <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-gradient-to-r from-yellow-400 to-orange-500 text-black text-[10px] font-bold flex items-center gap-1 shadow-lg">

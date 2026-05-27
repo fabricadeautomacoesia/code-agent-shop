@@ -45,7 +45,9 @@ export function OfficialBadge({
   if (isPlatformOwned) {
     if (variant === 'card') {
       return (
-        <div className="absolute top-3 right-3 px-2 py-1 rounded-md bg-magenta/90 text-white text-xs font-semibold flex items-center gap-1">
+        // FIX-WORKER-16: posicao trocada de top-right -> top-left para liberar
+        // top-right para Heart icon (Wishlist overlay padrao Mercado Livre).
+        <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-magenta/90 text-white text-xs font-semibold flex items-center gap-1">
           <Award className="w-3 h-3" /> Oficial
         </div>
       );
