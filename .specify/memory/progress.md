@@ -6654,3 +6654,58 @@ PROXIMA ITER:
 - W13 pass 6: dashboard-admin /alerts mostrar sent_status='failed' count
 - W17: vault-svc audit AES-256-GCM
 - W18: cache em /notifications GET (alta frequencia poll bell)
+
+## WORKER 11 PASS 5 - Parcelamento + split rejeitado por arredondamento Asaas
+
+BUG CRITICO encontrado em payment-svc/src/asaas.js createPayment():
+
+CENARIO QUEBRADO (financeiro real):
+- Order total R$ 1380.66 com 12x cartao + juros (MLB-5) + split seller/plataforma
+- server.js linha 201: installmentValue = floor(totalCentsForCalc / 12) / 100
+  totalCentsForCalc = 99900 * (1.0299^11) = 138066 -> installmentValue = R$115.05
+  Math.floor descarta 6 centavos (R$ 0.005 x 12 = R$ 0.06)
+- asaas.js createPayment OMITIA payload.value em parcelamento >1x
+- Asaas derivava total via installmentValue*count = R$115.05 * 12 = R$ 1380.60
+- Split com fixedValue calculado sobre fixed_value_cents (DO TOTAL ORIGINAL R$1380.66)
+  somava a R$ 1380.66
+- Asaas: split sum (R$1380.66) > total (R$1380.60) -> 400 invalid_value
+- errorHandler -> 500 storefront -> "Erro interno do servidor"
+
+CONSEQUENCIA EM PROD:
+- TODOS os checkouts credit_card com parcelamento >3x (com juros) + split
+  retornavam 500 ao user.
+- Sellers nao recebiam pelo flow normal -> dinheiro travado.
+- User culpava o site, abandonava cart.
+- Workaround manual era cobrar a vista ou PIX (perda de conversao).
+- Bug latente desde MLB-5 implementacao (Mercado Credito V2).
+
+CAUSA RAIZ:
+- Floor() em installmentValue calc no server.js perdia centavos.
+- Asaas v3 API tem 2 modos para parcelamento:
+  a) installmentCount + installmentValue (deriva total = count*value)
+  b) installmentCount + totalValue (Asaas redistribui parcelas, ultima
+     pode ter centavos extras)
+- Codigo usava modo (a), incompativel com split sum != value*count.
+
+FIX:
+- payload.totalValue = value adicional em CREDIT_CARD installmentCount>1
+- Asaas v3 trata totalValue como canonical -> split casa com cobranca
+- Internamente distribui: 11 parcelas R$115.05 + ultima R$115.11 = R$1380.66
+- Casos sem split / 1-3x sem juros / PIX / Boleto: inalterados
+
+DEPLOY:
+- commit 0a72627 push main OK
+- 16 insertions
+- payment-svc rebuild via VPS cron
+
+VALIDACAO POS-DEPLOY:
+- Criar order 12x credit_card com split via /api/payments/asaas/create
+- Resposta Asaas: 200 com payment.id e 12 charges criadas
+- Pre-fix: 400 invalid_value na propria API Asaas
+- Pos-fix: payment criado, sellers recebem split correto
+
+PROXIMA ITER:
+- W11 pass 6: usar Math.round() em vez de floor() (gap menor mas existe)
+- W11 pass 7: webhook handler para PAYMENT_REFUNDED com installments
+- W2: checkout UI desabilitar 4-12x temporariamente se split presente
+  (defesa em profundidade ate validar fix em prod)
