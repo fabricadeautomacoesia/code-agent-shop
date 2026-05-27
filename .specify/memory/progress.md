@@ -2914,3 +2914,48 @@ OBSERVACAO sobre exposicao:
   (text), nao n.body_html. Email envio via nodemailer (vetor real).
 - A11y: a fix tambem protege contra HTML injection futuro se UI passar a
   renderizar body_html via dangerouslySetInnerHTML.
+
+## WORKER 17 pass 4 (SECURITY) - Account-level lockout (per-user)
+Re-auditoria security: descoberto bug critico apos W17 pass 3 (fail2ban IP).
+
+VETOR REAL:
+- Fail2ban per-IP existente em /api/auth bloqueia 5+ falhas do mesmo IP
+- Atacante com botnet/proxies/VPN rotativa BYPASSA isso facilmente:
+  - 4 falhas do IP A, switch para IP B, 4 falhas... ad infinitum
+- Coluna users.failed_login_count incrementa em cada falha (linha 96 auth.js)
+  MAS NUNCA e usada para travar conta
+- Confirmado: admin user tinha failed_login_count=6 sem efeito
+
+FIX migration 025 + services/auth-svc/src/routes/auth.js:
+- Nova coluna users.locked_until TIMESTAMPTZ
+- Nova logica em /login:
+  1) Check locked_until > NOW() ANTES de bcrypt -> 403 account_locked com tempo restante
+  2) Apos bcrypt fail: incrementa counter; se >= LOGIN_MAX_FAILURES (default 10):
+     SET locked_until = NOW() + LOGIN_LOCK_MINUTES (default 15) min
+     Retorna 403 com mensagem "Conta bloqueada por X minutos"
+- Configurable via env LOGIN_MAX_FAILURES + LOGIN_LOCK_MINUTES
+- Reset locked_until + failed_login_count em sucesso (linha 161)
+
+ARQUITETURA DEFENSE-IN-DEPTH:
+- Layer 1: fail2ban PER-IP (existing) - bloqueia rapido attacks do mesmo IP
+- Layer 2: account lockout PER-USER (new) - bloqueia botnet/distributed
+- Layer 3: 2FA TOTP (existing) - mesmo com senha vazada, atacante precisa do TOTP
+
+VALIDACAO PUBLICA (5 cenarios):
+- 9 tentativas com senha errada -> invalid_credentials OK
+- 10a tentativa -> account_locked (locked_until = NOW + 15min)
+- 11a tentativa -> ip_banned (fail2ban IP TAMBEM ativou - layers em sync)
+- Login com senha CORRETA durante lock -> bloqueado (layer 1 mata primeiro
+  com ip_banned, mas se fosse novo IP cairia em account_locked)
+- DB state confirmou locked_until populated + failed_login_count = 10
+
+DEPLOY: commit 3c574bb pushed
+- migration 025 aplicada
+- auth-svc rebuilt via Dockerfile.node SVC=auth-svc, converged OK
+- Admin failed_login_count reset (do audit anterior)
+
+NOTA OPERACIONAL:
+- Configurable via env vars permite ajuste sem rebuild:
+  LOGIN_MAX_FAILURES=10 (default), LOGIN_LOCK_MINUTES=15
+- Em prod com bots ativos: aumentar para 5/30
+- Em staging com tests automated: aumentar para 20/5
