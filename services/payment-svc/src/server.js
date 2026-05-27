@@ -578,6 +578,91 @@ app.post('/payments/payouts/:id/process',
   })
 );
 
+// ============================================================
+// FIX-WORKER-11 pass 7: cron reconciliation de webhooks stuck/failed
+// ============================================================
+// Contexto: W11 pass 6 introduziu tracking de processed_at + processing_error
+// + retry_count em asaas_webhook_events. Webhooks que falharam apos signature
+// valida (DB lock, network transitorio, etc) ficavam sem reprocessar.
+//
+// W14 pass 7 criou idx_asaas_evt_retry (retry_count DESC, received_at ASC)
+// WHERE retry_count > 0 AND signature_valid = TRUE.
+//
+// Este cron usa o indice para encontrar webhooks com retry_count entre 1 e 5
+// e reprocessar. retry_count > 5 sao "dead letter" - admin precisa investigar
+// manualmente via GET /payments/webhooks/dead (endpoint abaixo).
+//
+// Interval: 5 minutos (suficiente para recuperar de blips transitorios sem
+// hammer o DB com SELECT muito frequente).
+async function reconcileWebhooks() {
+  try {
+    const r = await query(
+      `SELECT id, payload, retry_count
+         FROM asaas_webhook_events
+        WHERE signature_valid = TRUE
+          AND processed_at IS NULL
+          AND retry_count BETWEEN 1 AND 5
+          AND received_at > NOW() - INTERVAL '24 hours'
+        ORDER BY retry_count ASC, received_at ASC
+        LIMIT 20`
+    );
+    if (!r.rows.length) return;
+    log.info({ count: r.rows.length }, '[reconcile.start]');
+    for (const row of r.rows) {
+      try {
+        const evt = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
+        await processWebhookEvent(evt);
+        // Sucesso: marca processed e linka order_id
+        const orderLink = evt.payment?.id
+          ? await query('SELECT id FROM orders WHERE asaas_payment_id = $1', [evt.payment.id]).catch(() => ({ rows: [] }))
+          : { rows: [] };
+        await query(
+          `UPDATE asaas_webhook_events
+              SET processed_at = NOW(),
+                  order_id = COALESCE(order_id, $1::UUID),
+                  processing_error = NULL
+            WHERE id = $2`,
+          [orderLink.rows[0]?.id || null, row.id]
+        );
+        log.info({ webhook_id: row.id, attempt: row.retry_count + 1 }, '[reconcile.ok]');
+      } catch (e) {
+        await query(
+          `UPDATE asaas_webhook_events
+              SET processing_error = $1,
+                  retry_count = retry_count + 1
+            WHERE id = $2`,
+          [String(e.message).slice(0, 500), row.id]
+        ).catch(() => {});
+        log.warn({ webhook_id: row.id, err: e.message }, '[reconcile.fail]');
+      }
+    }
+  } catch (e) {
+    log.error({ err: e.message }, '[reconcile.batch.fail]');
+  }
+}
+
+// GET /payments/webhooks/dead - admin lista webhooks "dead letter" (retry_count > 5)
+// Permite admin investigar e decidir reprocessar manualmente via SQL ou ignorar
+app.get('/payments/webhooks/dead',
+  jwt.requireAuth({ roles: ['admin', 'staff'] }),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `SELECT id, event_type, asaas_payment_id, processing_error, retry_count, received_at
+         FROM asaas_webhook_events
+        WHERE signature_valid = TRUE
+          AND processed_at IS NULL
+          AND retry_count > 5
+        ORDER BY received_at DESC LIMIT 100`
+    );
+    res.json({ webhooks: r.rows, count: r.rows.length });
+  })
+);
+
+// Cron interval: 5min. setImmediate para 1a execucao apos 30s (let svc warm up)
+setTimeout(() => reconcileWebhooks().catch(() => {}), 30000);
+setInterval(() => reconcileWebhooks().catch((e) => log.error({ err: e.message }, '[reconcile.cron.fail]')), 5 * 60 * 1000);
+log.info('[reconcile.cron] webhook reconciliation cron started (5min interval)');
+
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
 
