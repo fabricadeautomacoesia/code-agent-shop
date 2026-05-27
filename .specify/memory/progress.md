@@ -102,6 +102,34 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## VISUAL CONSISTENCY PASS 3 - WORKER 8 (HOVER:SCALE PADRONIZACAO)
+Audit revelou 4 valores diferentes de hover:scale entre cards:
+- hover:scale-[1.02] (ProductCard)
+- hover:scale-[1.03] (RecentlyViewed)
+- hover:scale-105 (4 usages diversos)
+- hover:scale-110 (5 usages em imagens dentro de cards)
+
+E 4 valores de duration: 300/500/700/1000.
+
+Cards adjacentes na mesma pagina pulavam entre 1.02 e 1.05 = visual quebrado.
+
+FIX commitado + deployed (5ab02e3):
+- globals.css: 2 utility classes semanticas:
+  * .card-hover -> transform:scale(1.03) com cubic-bezier 300ms.
+    Para cards inteiros clicaveis.
+  * .card-image-zoom -> scale(1.08) 500ms acoplado a .group hover.
+    Para imagens dentro de cards.
+- ProductCard: refactor hover:scale-[1.02] + img scale-110 duration-700 -> classes
+- RecentlyViewed: refactor hover:scale-[1.03] + img scale-110 duration-500 -> classes
+
+VALIDADO no CSS bundle producao:
+- .card-hover{transition:transform .3s cubic-bezier(.16,1,.3,1)}
+- .card-hover:hover{transform:scale(1.03)}
+- .card-image-zoom{transition:transform .5s cubic-bezier(.16,1,.3,1)}
+- .group:hover .card-image-zoom{transform:scale(1.08)}
+
+Cards adjacentes agora animam identicamente em qualquer pagina.
+
 ## VENDEDOR VERIFICADO + STATS DASHBOARD - WORKER 16 MLB NEW
 Mercado Livre exibe badges 'MercadoLider Platinum' + 'Vendedor Verificado' em
 todo PDP e perfil. Equivalente CAS adaptado usando KYC + reputation_tier.
