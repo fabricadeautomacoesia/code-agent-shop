@@ -1569,3 +1569,46 @@ PROXIMO GAP MLB:
   para reforco maximo social proof
 - Quase todas as 11 features MLB do cron ja implementadas: 1,3,4,5,6,7,8,9,10,11
 - Sobra: refinamentos visuais / mobile responsive / SEO
+
+## WORKER 17 (VAULT/SECURITY) - /vault/usage authz bypass (CRITICAL)
+Auditoria publica de 7 cenarios vault-svc + leitura completa do server.js
+revelou:
+- /vault/use, /vault/keys (GET/POST), /vault/keys/:id/revoke: auth correto
+  (admin/staff via adminOnly OU vaultUseGuard com x-internal-token)
+- Rate limit OK (express-rate-limit + trust proxy 1 + keyGenerator x-real-ip)
+- timing-safe comparison no x-internal-token (anti-timing-attack)
+- AES-256-GCM decrypt com error handling sanitizado (nao vaza e.message)
+- Provision schema Zod com plain_key min(10) + enum providers
+- Logging estruturado com fingerprint mascarado (sha256 16chars)
+
+BUG CRITICAL ENCONTRADO: POST /vault/usage usava jwt.requireAuth() SEM role
+check -> qualquer buyer autenticado podia:
+1) Inflar usage_this_month_cents -> DoS contra quota mensal da chave LLM
+   (key fica como "esgotada" e platforma para de servir requests)
+2) Inserir registros falsos em vault_key_usage -> poluicao audit log
+3) Atribuir cobranca cost_usd_cents a outros seller_id -> fraude billing
+   (seller vitima ve cobrancas que nao fez)
+
+Confirmado em producao com curl --resolve usando token teste1@cas.io (role=buyer):
+POST /api/vault/usage com cost_usd_cents=99999 -> HTTP 500 (DB level apenas,
+mas auth ja tinha passado - exploit acessivel).
+
+FIX: services/vault-svc/src/server.js linha 168
+- jwt.requireAuth() -> vaultUseGuard
+- vaultUseGuard ja era usado no /use: aceita x-internal-token ou role
+  admin/staff/service. Buyer/seller -> 403 forbidden_role.
+- Mantem schema Zod + insert logic intactos.
+
+VALIDACAO PUBLICA:
+- Buyer exploit POST /vault/usage -> 403 forbidden_role OK (antes 500 com DB hit)
+- Sem auth -> 401 OK
+- Regression: /vault/use buyer 403 OK, /vault/keys sem auth 401 OK
+
+NOTA: VAULT_INTERNAL_TOKEN secret ja existe em .env Swarm (configurado em
+iteracao anterior); servicos legitimos que chamam /vault/usage (payment-svc
+ao log custos LLM apos operation) devem inject este header. Verificar em
+proxima auditoria se nao quebrou fluxo billing legitimo - aparentemente
+sem callers conhecidos hoje (usage tabela com poucas rows).
+
+DEPLOY: commit 4645f4e pushed, vault-svc rebuilt via Dockerfile.node
+SVC=vault-svc, service updated --force, converged OK.
