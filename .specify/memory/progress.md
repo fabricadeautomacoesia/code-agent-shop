@@ -102,6 +102,31 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## TRUST SIGNALS PDP - WORKER 16 MLB NEW
+Mercado Livre exibe 'Devolucao gratuita 30 dias' + 'Mercado Pago seguro' em
+todo PDP. Equivalente CAS para digital products via 4 trust signals com defaults.
+
+MIGRATION 019 (4 colunas em products):
+- warranty_days INT DEFAULT 30 (refund window, padrao MLB)
+- support_response_hours INT DEFAULT 48 (SLA seller a Q&A/email)
+- includes_updates BOOLEAN DEFAULT TRUE (atualizacoes gratuitas)
+- includes_install_support BOOLEAN DEFAULT FALSE (opt-in seller)
+
+PDP /product/[slug] - novo card 'Trust Signals' apos AddToCart/Wishlist:
+- RefreshCw verde + 'Garantia de N dias - Reembolso integral'
+- Headphones azul + 'Suporte em ate Nh - Via Q&A ou email'
+- CheckCircle2 magenta + 'Atualizacoes gratuitas'
+- MessageCircle amarelo + 'Suporte na instalacao' (so se includes_install_support)
+- Cada badge condicional ao valor da coluna
+
+VALIDADO E2E publicamente:
+- API /products/{slug} retorna warranty_days, support_response_hours, includes_updates
+- HTML SSR do PDP contem: 'Garantia', 'Reembolso', 'Atualizacoes gratuitas',
+  'lucide-refresh-cw', 'warranty' (66kb HTML, todos os badges renderizando)
+- DB: 3 produtos sample com defaults aplicados (30d, 48h, true, false)
+
+Impact: trust signals = +convers em ecommerce. ML/Amazon usam exaustivamente.
+
 ## PRODUCT NEW VERSION FAN-OUT - WORKER 16 MLB NEW
 Mercado Livre 'voltou para o estoque' adaptado para digital products: quando
 seller publica nova versao via POST /me/:id/versions, todos os wishlist
