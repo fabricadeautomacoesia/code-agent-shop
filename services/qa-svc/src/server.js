@@ -87,7 +87,7 @@ app.post('/qa/run',
     product_version_id: z.string().uuid().optional(),
     triggered_by: z.string().uuid().optional(),
   })}),
-  asyncHandler(async (req, res) => {
+  asyncHandler(async (req, res, next) => {
     const { product_id, product_version_id, triggered_by } = req.body;
 
     const p = await query(
@@ -97,6 +97,35 @@ app.post('/qa/run',
     );
     if (!p.rows.length) return res.status(404).json({ error: 'product_not_found' });
     const product = p.rows[0];
+
+    // FIX-WORKER-12 pass 6: anti-duplicate run check.
+    // Antes: dispatch network timeout (15s n8n / 5min worker) deixava
+    // setImmediate processando mas products.status ja era 'qa_running'.
+    // Outro service podia chamar /qa/run novamente -> 2 runs paralelas
+    // para mesmo product_id -> double-process LLM + custos duplicados +
+    // race condition em UPDATE products no callback.
+    //
+    // Agora: se ja existe run com verdict='running' iniciado ha < 10min,
+    // retorna 409 conflict (idempotente, evita waste).
+    // 10min e generoso: worker timeout 5min + n8n max 15s + buffer.
+    // Apos 10min sem callback = considerado stuck, libera novo run.
+    const inflight = await query(
+      `SELECT id, started_at FROM product_qa_runs
+        WHERE product_id = $1
+          AND verdict = 'running'
+          AND started_at > NOW() - INTERVAL '10 minutes'
+        ORDER BY started_at DESC LIMIT 1`,
+      [product_id]
+    );
+    if (inflight.rows.length) {
+      log.warn({ product_id, existing_run_id: inflight.rows[0].id }, '[qa.run.duplicate_blocked]');
+      return res.status(409).json({
+        error: 'qa_run_already_in_progress',
+        message: 'QA ja em execucao para este produto. Aguarde resultado ou >10min para retry.',
+        existing_run_id: inflight.rows[0].id,
+        started_at: inflight.rows[0].started_at,
+      });
+    }
 
     const run = await query(
       `INSERT INTO product_qa_runs (product_id, product_version_id, triggered_by_user_id, verdict, started_at)
@@ -161,6 +190,32 @@ app.post('/qa/run',
           [`dispatch_failed: ${e.message}`, run_id]
         );
         await query(`UPDATE products SET status = 'qa_pending', qa_verdict = 'pending' WHERE id = $1`, [product_id]);
+        // FIX-WORKER-12 pass 6: notifica seller (dispatch silenciava falhas).
+        // Antes: seller via "status = qa_pending" eternamente, sem entender porque
+        // QA nao saiu de pending. Agora: notificacao explicita + sugestao retry.
+        if (product.seller_id) {
+          try {
+            const sellerUser = await query(
+              `SELECT user_id FROM sellers WHERE id = $1 AND status = 'active'`,
+              [product.seller_id]
+            );
+            if (sellerUser.rows.length) {
+              await query(
+                `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+                 VALUES ($1, 'in_app', 'qa_dispatch_failed',
+                         'QA pipeline indisponivel temporariamente',
+                         $2, 2, $3::JSONB)`,
+                [
+                  sellerUser.rows[0].user_id,
+                  `Nao foi possivel iniciar a analise QA do produto "${product.title}". Tente reenviar para QA em alguns minutos.`,
+                  JSON.stringify({ product_id, run_id, error: String(e.message).slice(0, 200) })
+                ]
+              );
+            }
+          } catch (notifErr) {
+            log.warn({ err: notifErr.message }, '[qa.dispatch.notif.fail]');
+          }
+        }
       }
     });
   })
