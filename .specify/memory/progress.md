@@ -7810,3 +7810,78 @@ PROXIMA ITER:
 - W4 pass 7: /admin/reports KPI dashboard
 - W4 pass 8: /admin/vault audit (encrypt/decrypt keys UI)
 - W4 pass 9: /admin/alerts page (consume /aiops/alerts admin-only - W10 pass 5)
+
+## WORKER 12 PASS 5 - Migration 033 reset total_products_active historico
+
+CONTEXTO (W12 pass 4):
+qa-svc callback /qa/callback executava UPDATE total_products_active += 1
+a CADA approved INDEPENDENTE de transicao. Counter inflava monotonicamente.
+
+W12 pass 4 corrigiu logica FORWARD (transicao real + decrement em
+approved->rejected). Counters HISTORICOS continuavam errados.
+
+MIGRATION 033:
+
+  DO $$
+  DECLARE affected_count INTEGER;
+  BEGIN
+    UPDATE sellers s SET
+      total_products_active = COALESCE((
+        SELECT COUNT(*) FROM products p
+         WHERE p.seller_id = s.id
+           AND p.status = 'approved'
+           AND p.deleted_at IS NULL
+      ), 0),
+      updated_at = NOW()
+    WHERE s.total_products_active <> COALESCE((...), 0);
+    GET DIAGNOSTICS affected_count = ROW_COUNT;
+    RAISE NOTICE 'W12-5: % sellers corrigidos', affected_count;
+  END $$;
+
+CARACTERISTICAS:
+- Idempotente: WHERE condition pula rows ja corretas
+- COALESCE evita NULL em sellers sem produtos
+- updated_at refresh para auditoria
+- NOTICE no log psql informa count afetado
+- Bloco DO $$ unico para GET DIAGNOSTICS funcionar (statement
+  imediatamente anterior dentro do mesmo bloco)
+
+DECISAO (NAO criar trigger):
+- Trigger UPDATE products = overhead em TODAS writes
+- qa-svc callback ja sabe quando counter muda (pass 4 forward fix)
+- archived/deleted manual fica para pass 6
+- Migration vira "rede de seguranca" anual/quarterly
+
+VALIDACAO POS-APPLY:
+  SELECT s.total_products_active, COUNT(p.id) FILTER (...) AS real
+    FROM sellers s LEFT JOIN products p ON p.seller_id = s.id
+    GROUP BY s.id HAVING s.total_products_active <> COUNT(p.id);
+  -- Esperado: 0 rows (todos sincronizados)
+
+IMPACTO:
+- "Top Sellers" leaderboard preciso (era tendencioso para iterators)
+- KPIs admin sellers usados para tier promotion confiaveis
+- Auditoria interna: SELECT counter == SELECT COUNT(*)
+
+DEPLOY:
+- commit 358b545 push main OK
+- 64 insertions
+- VPS init script aplica automaticamente
+- Sem rebuild svc
+
+W12 QA PIPELINE AUDIT TOTAL (passes 1-5):
+- pass 1: callback handler basico
+- pass 2: HMAC SHA-256 + QA_CALLBACK_SECRET
+- pass 3: timing-safe compare + raw body validation
+- pass 4: counter inflation forward fix (qa-svc)
+- pass 5: migration 033 reset historico (esta iter)
+
+CICLO QA COMPLETO:
+- Callback security: HMAC + timing-safe + raw body
+- Counter integrity: forward fix + reset historico
+- Estados validos respeitados
+
+PROXIMA ITER:
+- W12 pass 6: archived branch (manual via admin) tambem decrementa counter
+- W14 pass 6: indices product_views user_id + created_at DESC
+- W4 pass 7: /admin/reports KPI dashboard
