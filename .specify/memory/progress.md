@@ -8633,3 +8633,86 @@ PROXIMA ITER:
 - Toast component centralizado (banners ok mas toast e melhor UX)
 - W4 pass 7: /admin/reports KPI dashboard
 - W14 pass 7: partition vault_key_usage mensal
+
+## WORKER 3 PASS 10 (DRY) + ASAAS PRODUCTION TOKEN INTEGRATION
+
+DUAS entregas paralelas nesta iter:
+
+### A) W3 pass 10 DRY refactor
+
+Criado lib/friendly-errors.ts (97 linhas) consolidando 3 mappers que estavam
+inline em components/ (cart, qna, review). 3 imports substituem ~68 linhas.
+
+ARQUIVOS:
+- NOVO: apps/storefront/src/lib/friendly-errors.ts
+  - friendlyCartError + CART_ERROR_MESSAGES
+  - friendlyQnaError + QNA_ERROR_MESSAGES
+  - friendlyReviewError + REVIEW_ERROR_MESSAGES
+- MODIFIED: 3 components (add-to-cart, qna-form, review-form)
+  - Inline removido (-22/-22/-24 lines)
+  - Import unico (+1 line cada)
+
+NAO TOCADOS:
+- lib/auth-errors.ts (escopo diferente - tokens, 2FA)
+
+DEPLOY: commit 7fdcb26 push main OK
+
+### B) Asaas Production Token Setup
+
+User forneceu token Asaas production live. Validado via curl /v3/myAccount:
+- HTTP 200
+- Conta CPF 01532667248
+- Email Emersonjosiel649@gmail.com
+- Capitao Poco/PA
+
+ENTREGUES (sem token no git):
+
+1. deploy/asaas-token-update.sh
+   - Idempotente (multiplas execucoes OK)
+   - Backup .env.bak.<timestamp> antes
+   - Upsert ASAAS_API_KEY
+   - Garante ASAAS_API_URL producao (nao sandbox)
+   - docker service update --force payment-svc
+
+2. deploy/ASAAS-SETUP.md
+   - Procedimento SSH na VPS
+   - Validacao via curl publico
+   - Rollback
+   - Proxima etapa: webhook ASAAS_WEBHOOK_SECRET
+   - Seguranca: rotacao 90d, logs DLP
+
+PROXIMOS PASSOS POS-MERGE (a executar na VPS):
+1. ssh root@server2.inovareinteligenciaartificial.com
+2. cd /opt/cas && git pull
+3. export ASAAS_API_KEY='<token_fornecido_no_chat>'
+4. bash deploy/asaas-token-update.sh
+5. curl https://.../api/payments/health -> {asaas:{configured:true}}
+6. Configurar webhook no painel Asaas + ASAAS_WEBHOOK_SECRET
+7. Smoke test E2E com teste1@cas.io
+
+VALIDACAO TOKEN PRE-DEPLOY:
+  curl https://api.asaas.com/v3/myAccount -H "access_token: $TOKEN"
+  -> HTTP 200 {object:account,cpfCnpj:01532667248,...}
+  Token confirmado funcional contra Asaas Production.
+
+DEPLOY: commit 097a9d9 push main OK
+
+W3 PDP AUDIT COMPLETO (passes 1-10):
+- pass 1: AddToCart funcional + friendly errors
+- pass 2: breadcrumb slash orfao
+- pass 3: QnaForm 6 bugs UX
+- pass 4: ReviewForm 8 bugs UX + a11y
+- pass 5: ProductTabs WAI-ARIA
+- pass 6: WishlistButton 5 bugs a11y/UX/state
+- pass 7: AskQuickButton modal WCAG 2.1
+- pass 8: comparar consume errors granulares (W7-6)
+- pass 9: PriceAlertButton 5 bugs (toggle pattern)
+- pass 10: DRY refactor friendly-errors.ts (esta iter)
+
+CICLO TOTAL PDP: 10 components com a11y + UX + DRY consolidado.
+
+PROXIMA ITER:
+- VPS deploy do token Asaas + validacao curl prod
+- Configurar ASAAS_WEBHOOK_SECRET no painel
+- W4 pass 7: /admin/reports KPI dashboard
+- packages/shared-ui: mover useSellerAction + useAdminAction (cross-app DRY)
