@@ -85,10 +85,20 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
       <JsonLd data={productLd(product, reviews)} />
       <JsonLd data={breadcrumbLd(product)} />
 
-      <div className="text-sm text-white/40 mb-4">
-        <Link href="/products" className="hover:text-white">Catalogo</Link> /{' '}
-        {product.category_slug && <Link href={`/products?category=${product.category_slug}`} className="hover:text-white">{product.category_name}</Link>}
-      </div>
+      {/* FIX-WORKER-3 pass 2: breadcrumb com slash orfao quando produto nao tem category.
+          Antes: "Catalogo / " (slash solto) quando category_slug=null.
+          Agora: separador so renderiza se ha proxima entry; aria-label semantico. */}
+      <nav aria-label="breadcrumb" className="text-sm text-white/40 mb-4">
+        <Link href="/products" className="hover:text-white">Catalogo</Link>
+        {product.category_slug && (
+          <>
+            <span className="mx-1.5 text-white/30" aria-hidden="true">/</span>
+            <Link href={`/products?category=${product.category_slug}`} className="hover:text-white">{product.category_name}</Link>
+          </>
+        )}
+        <span className="mx-1.5 text-white/30" aria-hidden="true">/</span>
+        <span className="text-white/60">{product.title}</span>
+      </nav>
 
       <div className="grid lg:grid-cols-3 gap-8 mb-12">
         <div className="lg:col-span-2 space-y-6">
