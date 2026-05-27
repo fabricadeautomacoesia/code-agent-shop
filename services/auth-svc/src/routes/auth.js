@@ -3,11 +3,41 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const crypto = require('node:crypto');
+const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
 const { jwt, validate, asyncHandler, fail2ban, errorHandler, logger } = require('@cas/shared');
 
 const router = express.Router();
+
+// FIX-WORKER-17 pass 10: rate-limiters por endpoint sensitivo.
+// Antes: /register, /forgot-password, /reset-password sem qualquer limite.
+// Vetores reais:
+// - /register: spam mass-creation (fraude, contas zombie para reviews falsos)
+// - /forgot-password: email bombing (atacante dispara 1000 mails para victim
+//   @gmail.com), email enumeration (timing attack response presence/absence)
+// - /reset-password: brute-force do token 32-byte (impractical mas defensavel)
+//
+// Limits dimensionados para uso humano legitimo (user nao registra/recupera
+// senha mais que 1-2 vezes por hora) e bloquear bots automaticamente.
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 5, // 5 registers por IP/15min = anti-spam
+  message: { error: 'rate_limit_exceeded', message: 'Muitos registros recentes. Aguarde 15 minutos.' },
+  standardHeaders: true, legacyHeaders: false,
+});
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1h
+  max: 3, // 3 forgot por IP/hora - protege victim de email bombing
+  message: { error: 'rate_limit_exceeded', message: 'Muitas solicitacoes de recuperacao. Aguarde 1 hora.' },
+  standardHeaders: true, legacyHeaders: false,
+});
+const resetPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min (window do token)
+  max: 10, // 10 tentativas com token errado = atacante brute-force detected
+  message: { error: 'rate_limit_exceeded', message: 'Muitas tentativas. Solicite novo link.' },
+  standardHeaders: true, legacyHeaders: false,
+});
 const log = logger.child({ svc: 'auth-svc', mod: 'auth' });
 
 // FIX-WORKER-6 pass 1: cpf_cnpj string vazia rejeitado por min(11).optional().
@@ -49,7 +79,7 @@ function setRefreshCookie(res, refreshToken) {
 }
 
 // POST /auth/register
-router.post('/register', validate({ body: registerSchema }), asyncHandler(async (req, res) => {
+router.post('/register', registerLimiter, validate({ body: registerSchema }), asyncHandler(async (req, res) => {
   const { email, password, full_name, role, cpf_cnpj, phone_e164 } = req.body;
   const hash = await bcrypt.hash(password, 12);
   try {
@@ -227,6 +257,7 @@ router.post('/logout', asyncHandler(async (req, res) => {
 
 // POST /auth/forgot-password
 router.post('/forgot-password',
+  forgotPasswordLimiter,
   validate({ body: z.object({ email: z.string().email() }) }),
   asyncHandler(async (req, res) => {
     const tok = crypto.randomBytes(32).toString('hex');
@@ -260,6 +291,7 @@ router.post('/forgot-password',
 
 // POST /auth/reset-password
 router.post('/reset-password',
+  resetPasswordLimiter,
   validate({ body: z.object({
     token: z.string().min(32),
     password: z.string().min(8).max(128)
