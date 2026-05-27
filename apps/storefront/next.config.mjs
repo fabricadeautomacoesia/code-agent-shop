@@ -14,7 +14,12 @@ const nextConfig = {
     minimumCacheTTL: 60 * 60 * 24, // 24h cache CDN para mesma URL
   },
   async rewrites() {
-    const gw = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';
+    // FIX-WORKER-7 pass 1: rewrite congelou no fallback 127.0.0.1 (ECONNREFUSED em Swarm).
+    // Next.js avalia rewrites no boot do servidor; se GATEWAY_URL nao chega via env injection,
+    // cai no fallback que e localhost (sem gateway dentro do container).
+    // Defesa: fallback agora aponta para Docker Swarm DNS service alias (gateway:3002),
+    // que existe na mesma rede 'minha_rede'. /api/* via cas.* dominio agora funciona.
+    const gw = process.env.GATEWAY_URL || 'http://gateway:3002';
     return [
       { source: '/api/:path*', destination: `${gw}/api/:path*` },
     ];
