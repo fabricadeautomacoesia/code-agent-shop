@@ -162,7 +162,14 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
 }));
 
 // GET /search/autocomplete?q=...
-app.get('/autocomplete', autocompleteLimiter, asyncHandler(async (req, res) => {
+// FIX-WORKER-18 pass 1: cache 60s - autocomplete e o endpoint mais chamado
+// (1 req por keystroke do SearchBar). Mesmas queries repetem MUITO entre users.
+// TTL curto (60s) garante que produtos novos aparecem rapido nas sugestoes.
+// Key normaliza q lowercase + trim p/ maximizar hit rate.
+app.get('/autocomplete',
+  autocompleteLimiter,
+  cache.cacheMiddleware((req) => `search:ac:${(req.query.q || '').toString().trim().toLowerCase()}`, 60),
+  asyncHandler(async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (q.length < 2) return res.json({ suggestions: [] });
   const r = await query(
@@ -222,7 +229,12 @@ app.get('/top-sellers',
 // GET /search/top-sellers/:category - mais vendidos de UMA categoria
 // FIX-WORKER-10: valida slug + retorna 404 quando inexistente + enriquece com metadata
 // Antes: slug invalido retornava {products:[]} igual a categoria vazia -> UX impossivel de diferenciar.
-app.get('/top-sellers/:category', asyncHandler(async (req, res) => {
+// FIX-WORKER-18 pass 1: cache 180s. Categoria page e SSR (revalidate=30 mas chamadas
+// via render-on-demand somam). top-sellers/:category roda 3 subqueries por linha
+// (sellers x3) - cache poupa CPU + DB pool. Key inclui params + limit.
+app.get('/top-sellers/:category',
+  cache.cacheMiddleware((req) => `search:top-sellers:cat=${req.params.category}:lim=${req.query.limit || 12}`, 180),
+  asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
   const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 50));
   // 1) Resolve categoria e valida existencia
