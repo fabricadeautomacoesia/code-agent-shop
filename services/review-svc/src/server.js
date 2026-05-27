@@ -268,24 +268,119 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
 );
 
 // POST /qna/:id/upvote - votar em uma pergunta (MLB-2)
-app.post('/qna/:id/upvote', jwt.requireAuth(),
-  asyncHandler(async (req, res) => {
-    // tenta inserir voto; se ja existe, remove (toggle)
-    const exists = await query(
-      `SELECT 1 FROM product_qna_votes WHERE qna_id = $1 AND user_id = $2`,
-      [req.params.id, req.user.sub]
-    );
-    if (exists.rows.length) {
-      await query(`DELETE FROM product_qna_votes WHERE qna_id = $1 AND user_id = $2`,
-        [req.params.id, req.user.sub]);
-    } else {
-      await query(`INSERT INTO product_qna_votes (qna_id, user_id) VALUES ($1, $2)
-                   ON CONFLICT DO NOTHING`, [req.params.id, req.user.sub]);
+// FIX-WORKER-7 pass 34: 8 BUGS aplicando Pattern W7 (3o endpoint race counter).
+//
+// BUG 1 *** TOCTOU race toggle *** SELECT exists + DELETE|INSERT sem lock
+//   Mais grave que pass 33 - toggle vs idempotent INSERT.
+//   User clica 2x rapido (UI double-click):
+//   T0: Req A SELECT exists=empty (nao votou)
+//   T1: Req B SELECT exists=empty (paralelo - sem lock)
+//   T2: Req A INSERT vote -> OK (toggle to voted)
+//   T3: Req B INSERT vote -> ON CONFLICT DO NOTHING (idempotent OK mas...)
+//   T4: Response A "voted: true" + Response B "voted: true"
+//   User espera toggle (1o click=vote, 2o click=unvote) mas ambos viram vote.
+//   FIX: tx() + SELECT FOR UPDATE qna parent + decision atomic
+//
+// BUG 2 *** RACE COUNTER *** SELECT COUNT + UPDATE upvote_count
+//   Mesmo bug pass 33 #1 (50 users upvote simultaneo = off-by-N).
+//   FIX: SELECT FOR UPDATE product_qna + COUNT + UPDATE all dentro tx
+//
+// BUG 3 *** ATOMICITY *** 4 queries lineares sem tx()
+//   SELECT exists + DELETE|INSERT + COUNT + UPDATE - falha entre = inconsistente
+//   FIX: tudo no mesmo tx()
+//
+// BUG 4 UUID validate :id (anti PG 22P02 -> 500 generico)
+//
+// BUG 5 *** RATE-LIMIT *** toggle spam (mesmo pattern pass 33)
+//   Bot toggle 1000x = 4000 queries DB. FIX: rateLimiter 30/15min/IP
+//
+// BUG 6 *** is_hidden check *** upvote em pergunta moderada
+//   Pre-fix: aceita upvote em qna.is_hidden=TRUE (admin moderou) - counter
+//   incrementa MAS qna nao aparece no PDP. FIX: validar is_hidden=FALSE
+//
+// BUG 7 *** Regra J orphan detection *** qna_id inexistente
+//   FK fail INSERT product_qna_votes (qna_id FK product_qna)
+//   = 23503 -> 500 generico. FIX: SELECT product_qna FOR UPDATE 404 antes
+//
+// BUG 8 voted: !exists.rows.length usa snapshot STALE
+//   Race entre SELECT exists (pre-tx) e UPDATE final pode dar voted errado.
+//   FIX: voted determinado APOS UPDATE atomico (counter > previous count)
+const QNA_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const qnaVoteLimiter = rateLimiter.createLimiter({
+  windowMs: 15 * 60 * 1000, max: 30,
+  message: 'Muitos votos recentes. Aguarde alguns minutos.',
+});
+
+app.post('/qna/:id/upvote', qnaVoteLimiter, jwt.requireAuth(),
+  asyncHandler(async (req, res, next) => {
+    // FIX bug 4: UUID validate upfront
+    if (!QNA_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('qna_not_found'));
     }
-    // recalcula contador
-    const c = await query(`SELECT COUNT(*)::INT AS n FROM product_qna_votes WHERE qna_id = $1`, [req.params.id]);
-    await query(`UPDATE product_qna SET upvote_count = $1 WHERE id = $2`, [c.rows[0].n, req.params.id]);
-    res.json({ ok: true, upvote_count: c.rows[0].n, voted: !exists.rows.length });
+
+    let outcome;
+    let result;
+    await tx(async (c) => {
+      // FIX bug 1+6+7 (Regras K+is_hidden+J): SELECT FOR UPDATE qna + checks
+      const qna = await c.query(
+        `SELECT id, is_hidden FROM product_qna
+          WHERE id = $1::UUID FOR UPDATE`,
+        [req.params.id]
+      );
+      if (!qna.rows.length) { outcome = { error: 'qna_not_found' }; return; }
+      if (qna.rows[0].is_hidden) {
+        outcome = { error: 'qna_hidden' };
+        return;
+      }
+
+      // FIX bug 1+8: toggle atomico DENTRO do tx (lock serializa T0-T3)
+      // Req A le exists=empty -> INSERT. Req B aguarda lock release ->
+      // le exists=TRUE (apos Req A commit) -> DELETE (toggle correto).
+      const exists = await c.query(
+        `SELECT 1 FROM product_qna_votes WHERE qna_id = $1::UUID AND user_id = $2::UUID`,
+        [req.params.id, req.user.sub]
+      );
+      const wasVoted = exists.rows.length > 0;
+      if (wasVoted) {
+        await c.query(
+          `DELETE FROM product_qna_votes WHERE qna_id = $1::UUID AND user_id = $2::UUID`,
+          [req.params.id, req.user.sub]
+        );
+      } else {
+        await c.query(
+          `INSERT INTO product_qna_votes (qna_id, user_id) VALUES ($1::UUID, $2::UUID)
+           ON CONFLICT DO NOTHING`,
+          [req.params.id, req.user.sub]
+        );
+      }
+
+      // FIX bug 2+3: COUNT + UPDATE atomic dentro do mesmo tx
+      const countRow = await c.query(
+        `SELECT COUNT(*)::INT AS n FROM product_qna_votes WHERE qna_id = $1::UUID`,
+        [req.params.id]
+      );
+      const newCount = countRow.rows[0].n;
+      await c.query(
+        `UPDATE product_qna SET upvote_count = $1::INT WHERE id = $2::UUID`,
+        [newCount, req.params.id]
+      );
+
+      result = {
+        ok: true,
+        upvote_count: newCount,
+        // FIX bug 8: voted = !wasVoted (deterministic apos toggle no mesmo tx)
+        voted: !wasVoted,
+      };
+    });
+
+    if (outcome?.error === 'qna_not_found') return next(errorHandler.notFound('qna_not_found'));
+    if (outcome?.error === 'qna_hidden') {
+      return res.status(403).json({
+        error: 'qna_hidden',
+        message: 'Esta pergunta foi moderada e nao aceita votos.',
+      });
+    }
+    res.json(result);
   })
 );
 

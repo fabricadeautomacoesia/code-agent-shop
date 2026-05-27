@@ -15049,3 +15049,106 @@ W7+W13+W18+W4 CONSOLIDADO:
 - W13: renderMustache XSS
 - W18: 8 passes
 - W4: 13 admin pages
+
+================================================================
+ITER W7 PASS 34 - review-svc POST /qna/:id/upvote 8 BUGS (TOCTOU+race) (2026-05-27)
+================================================================
+ESCOPO: review-svc POST /qna/:id/upvote (MLB-2 toggle upvote pergunta)
+FILE: services/review-svc/src/server.js (linhas 270-290)
+
+CONTEXTO: W7 pass 32 (POST /) + pass 33 (POST /:id/vote) corrigiram race
+counter em 2 endpoints. Pass 34 = 3o endpoint do MESMO PATTERN MAS com
+COMPLICACAO ADICIONAL: TOGGLE pattern (SELECT exists + DELETE|INSERT)
+- mais frageis que idempotent INSERT pass 33.
+
+BUGS CORRIGIDOS (8 - MAIS BUGS por endpoint na serie):
+
+1. *** TOCTOU race toggle *** SELECT exists + DELETE|INSERT sem lock
+- Mais grave que pass 33 - toggle vs idempotent INSERT.
+- CENARIO double-click:
+  T0: Req A SELECT exists=empty (nao votou)
+  T1: Req B SELECT exists=empty (paralelo - sem lock)
+  T2: Req A INSERT vote -> OK (estado=voted)
+  T3: Req B INSERT vote -> ON CONFLICT DO NOTHING (idempotent OK mas...)
+  T4: Response A "voted:true" + Response B "voted:true"
+- User espera: 1o click=vote, 2o click=unvote (toggle)
+- User recebe: ambos viraram vote (estado errado)
+- FIX: tx() + SELECT FOR UPDATE qna PARENT -> serializa T0-T3 atomicamente
+
+2. *** RACE COUNTER *** (mesmo pass 33 #1)
+- SELECT COUNT + UPDATE upvote_count sem FOR UPDATE
+- 50 users upvote simultaneo = off-by-N
+- FIX: SELECT product_qna FOR UPDATE antes COUNT+UPDATE (lock pessimistico)
+
+3. *** ATOMICITY *** 4 queries lineares
+- SELECT exists + DELETE|INSERT + COUNT + UPDATE soltas
+- Falha entre = estado inconsistente (counter stale, vote ja gravado)
+- FIX: tudo no MESMO tx() all-or-nothing
+
+4. UUID validate :id (anti PG 22P02)
+- 'abc' raw no SQL -> 500 generico. FIX: QNA_UUID_RE.test() upfront
+
+5. *** RATE-LIMIT *** zero anti-spam (mesmo pass 33)
+- Bot toggle 1000x = 4000 queries DB
+- FIX: rateLimiter 30/15min/IP
+
+6. *** is_hidden check *** upvote em pergunta moderada
+- Admin moderou (spam/ofensiva) -> qna.is_hidden=TRUE
+- Pre-fix aceitava upvote -> counter incrementa mas qna nao aparece PDP
+- FIX: SELECT is_hidden + 403 'qna_hidden' explicit
+- Mensagem PT-BR: "Esta pergunta foi moderada e nao aceita votos"
+
+7. *** Regra J orphan detection *** qna_id inexistente
+- INSERT product_qna_votes FK referencia product_qna - 23503 -> 500
+- FIX: SELECT product_qna FOR UPDATE valida + 404 ANTES
+
+8. voted: !exists.rows.length snapshot STALE
+- Race entre SELECT exists e UPDATE final = voted incorreto
+- FIX: voted = !wasVoted (deterministic apos toggle no MESMO tx
+  com FOR UPDATE - garantido consistente)
+
+PATTERN W7 RACE COUNTER COMPLETO (3 endpoints):
+- POST / (avg_rating reviews) - pass 32 - 2 queries linear
+- POST /:id/vote (helpful_count) - pass 33 - 3 queries linear
+- POST /qna/:id/upvote (upvote_count) - pass 34 - 4 queries linear + TOGGLE
+- Trend: mais queries lineares + toggle pattern = mais bugs por endpoint
+
+LESSON LEARNED toggle pattern:
+- Idempotent INSERT (ON CONFLICT DO NOTHING) eh CONFUSO porque acalma
+  "race resolvida" mas APENAS resolve duplicate insert. Toggle precisa
+  state machine antes do INSERT/DELETE.
+- Sempre lock parent row (FOR UPDATE) para serializar SELECT exists +
+  DELETE|INSERT atomicamente.
+
+PATTERN W7 25 ENDPOINTS + 18 REGRAS (A-R):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 3 (POST / pass 32, POST /:id/vote pass 33, /qna/:id/upvote pass 34)
+
+REVIEW-SVC PROGRESS (8 endpoints total):
+- ✅ POST / (pass 32 - race avg + atomicity + Regra A + rate)
+- ✅ POST /:id/vote (pass 33 - race counter + rate + is_hidden + FK + UUID)
+- ✅ POST /qna/:id/upvote (pass 34 esta iter - TOCTOU toggle + race + atomicity + etc)
+- POST /qna (pendente)
+- POST /qna/:id/answer (seller ownership pendente)
+- POST /:id/reply (seller ownership pendente)
+- POST /reports (pendente)
+- POST /reports/:id/resolve (admin pendente)
+
+PROXIMA ITER:
+- W7 pass 35: review-svc POST /qna (create question)
+- W7 pass 36: POST /qna/:id/answer (seller ownership)
+- W7 pass 37: POST /:id/reply (seller ownership review reply)
+- W18 pass 9: drop dead idx baseado em audit prod (W4 pass 13 UI)
+- W3 pass 14: Dialog wrapper e2e tests Playwright
+
+W7+W13+W18+W4 CONSOLIDADO:
+- W7: 25 endpoints + 18 regras (A-R) - 34 micro-iters
+- W13: renderMustache XSS
+- W18: 8 passes
+- W4: 13 admin pages
