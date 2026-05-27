@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Star, Award, Download, Shield, Clock, Tag, RefreshCw, MessageCircle, CheckCircle2, Headphones } from 'lucide-react';
+import { Star, Award, Download, Shield, Clock, Tag, RefreshCw, MessageCircle, CheckCircle2, Headphones, Heart } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { AddToCart } from '@/components/add-to-cart';
 import { WishlistButton } from '@/components/wishlist-button';
@@ -114,6 +114,13 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             {product.sales_count > 50 && (
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-green-500/20 text-green-300 text-xs font-semibold mb-4 ml-2">
                 +{Math.floor(Number(product.sales_count) / 10) * 10} vendidos
+              </div>
+            )}
+            {/* MLB-NEW WORKER 14: wishlist_count badge (social proof "X pessoas favoritaram") */}
+            {Number(product.wishlist_count) >= 10 && (
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-pink-500/15 text-pink-300 text-xs font-semibold mb-4 ml-2 border border-pink-500/20">
+                <Heart className="w-3 h-3 fill-pink-400 text-pink-400" />
+                {Math.floor(Number(product.wishlist_count) / 10) * 10}+ favoritaram
               </div>
             )}
             <h1 className="font-display font-bold text-3xl mb-2">{product.title}</h1>
