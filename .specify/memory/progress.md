@@ -12335,3 +12335,92 @@ PROXIMA ITER:
 - W7 pass 13: /search/autocomplete UX edge cases
 - W18 pass 7: idx parcial product_views > 90d (cron-based)
 - W3 pass 10: refatorar CartDrawer usar <Dialog> (pass 9 wrapper)
+
+================================================================
+ITER W7 PASS 12 - /search principal audit + 4 bugs (2026-05-27)
+================================================================
+ESCOPO: search-svc GET / (search principal MLB-style)
+FILE: services/search-svc/src/server.js (linhas 33-162)
+
+CONTEXTO: W7 pass 11 consolidou 6 regras em /top-sellers. Aplicacao
+das mesmas regras a /search principal revelou 4 bugs (3 corrigidos).
+
+BUGS CORRIGIDOS (4):
+
+1. REGRA A violada (linha 60) - status='approved' so
+- Pattern W7 6 endpoints (passes 7-11) confirmou status IN ('approved','platform_owned')
+- /search ignorava platform_owned -> produtos Clausula Master Revenda Direta
+  (is_platform_owned=TRUE copy) INVISIVEIS em search principal
+- IMPACTO REAL: clientes buscando por keyword nao achavam produtos oficial
+  da plataforma. UX quebrada em scope >> /top-sellers (search eh entry point)
+- FIX: status IN ('approved','platform_owned') em where[]
+
+2. SUBQUERY is_top_seller (linhas 116-120) MESMA OMISSAO
+- Dentro do mesmo endpoint, calculo de "MAIS VENDIDO" badge:
+  SELECT MAX(p2.sales_count) WHERE p2.status = 'approved'
+- Mesmo bug duas vezes na MESMA query
+- Se top-seller da categoria for is_platform_owned, MAX nao incluia ele
+  -> outro produto recebia badge "MAIS VENDIDO" incorretamente
+- FIX: p2.status IN ('approved','platform_owned')
+
+3. REGRA D parcial - tiebreakers faltando 5 dos 7 SORT_OPTIONS
+- Pre-fix:
+  * relevance (sem q): so sales_count DESC + avg_rating
+  * sales: so sales_count DESC
+  * price_asc/desc: so price
+  * newest: so published_at
+  * rating: avg_rating + review_count
+- Empate arbitrario PG planner entre rows com mesmo valor principal
+- Cache 30s+ amortiza, mas evict + rebuild = ordem diferente
+- UX: layout "salta" entre cache misses (frustrante user com paginacao)
+- FIX: tiebreakers determinsiticos 3-tier em TODOS sorts
+  * Principal + secundario + p.id (ultima tiebreaker = PK = sempre unique)
+  * Garante ordem estavel deterministic 100% queries
+
+4. REGEX UNICODE BUG (linha 148) query_normalized search_log
+- Pre-fix: /[̀-ͯ]/g - range tinha chars invisiveis colapsados em alguns
+  editores. Match instable cross-platform (binary editor encoding issues).
+  Algumas edicoes do file faziam match, outras nao.
+- IMPACTO REAL: query_normalized podia manter acentos -> trigger sanitize
+  mig 027 nao matcheava buscas relacionadas
+  ("atencao" search nao achava "atencao" stored)
+- FIX: /\p{M}/gu (Unicode property escape Mark category, flag u required)
+  - Imune a copy/paste, git diff, editor encoding
+  - Pattern canonico ES2018+ explicit semantica
+  - Cobre todo Mark block (Combining Diacritical Marks + extras Devanagari)
+
+BUGS NAO CORRIGIDOS (deliberado):
+
+5. PERF total count duplica WHERE clause (linha 138)
+- totalSql repete EXISTS subquery tags + SELECT id FROM categories
+- Filtros complex = count tao caro quanto results
+- Solucao: COUNT(*) OVER() window function em vez de query separada
+- DEFERIDO: refactor estrutural - merece iter dedicada
+
+6. RESPONSE SHAPE sem query+filters echo (linha 154-161)
+- Cliente paginar perde contexto query original
+- Solucao: incluir { query: q, filters: {...} } no response
+- DEFERIDO: pequeno impacto, low priority
+
+PATTERN W7 CTE/JOIN/STATUS CONSOLIDADO EM 6 ENDPOINTS:
+- product-svc: /recently-viewed (pass 7), /for-me (pass 8), /related (pass 9),
+               /also-bought (pass 10)
+- search-svc: /top-sellers + /top-sellers/:category (pass 11), /search (pass 12)
+
+REGRAS A-F APLICADAS EM TODOS 6:
+A. status IN ('approved','platform_owned')
+B. deleted_at IS NULL
+C. JOIN sellers (nao subqueries)
+D. Tiebreakers deterministicos (p.id como ultima)
+E. Response include 'limit'/shape
+F. Parent existence 404 distinguivel
+
+W7 PROGRESS:
+- product-svc: passes 1-10
+- search-svc: pass 11 (top-sellers), pass 12 (/search) (esta iter)
+
+PROXIMA ITER:
+- W7 pass 13: /search/autocomplete UX edge cases
+- W7 pass 14: /facets categories filter audit
+- W18 pass 7: idx parcial product_views > 90d (cron-based)
+- W3 pass 10: refatorar CartDrawer usar <Dialog>

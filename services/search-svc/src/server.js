@@ -57,7 +57,11 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
 
   const params = [];
   let i = 1;
-  const where = [`p.status = 'approved'`, `p.deleted_at IS NULL`];
+  // FIX-WORKER-7 pass 12 (Regra A): status IN ('approved','platform_owned').
+  // Antes: produtos Clausula Master Revenda Direta (is_platform_owned=TRUE)
+  // INVISIVEIS em /search principal - quebrava UX (clientes nao encontravam).
+  // Pattern W7 pass 9/10/11 consolidado em 6 endpoints.
+  const where = [`p.status IN ('approved','platform_owned')`, `p.deleted_at IS NULL`];
 
   let rank_expr = '0::REAL';
   if (q) {
@@ -87,15 +91,21 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
 
   // FIX-WORKER-10 pass 2: fallback gracioso para sort invalido (era 500 database_error
   // quando ORDER BY undefined caia no SQL). Whitelist explicito + default.
+  // FIX-WORKER-7 pass 12 (Regra D): tiebreakers deterministicos em TODOS sorts.
+  // Antes: 'sales' so DESC sales_count, 'relevance' so rank+sales -> empate
+  // arbitrario entre produtos com mesmo valor (UX layout "salta" entre cache evicts).
+  // Pattern W7 pass 11 (/top-sellers) - 3-tier: principal + avg_rating + published_at.
   const SORT_OPTIONS = {
-    relevance:    q ? `rank DESC, p.sales_count DESC` : `p.sales_count DESC, p.avg_rating DESC NULLS LAST`,
-    newest:       `p.published_at DESC NULLS LAST`,
-    price_asc:    `p.price_cents ASC`,
-    price_desc:   `p.price_cents DESC`,
-    rating:       `p.avg_rating DESC NULLS LAST, p.review_count DESC`,
-    sales:        `p.sales_count DESC`,
+    relevance:    q
+      ? `rank DESC, p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id`
+      : `p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id`,
+    newest:       `p.published_at DESC NULLS LAST, p.id`,
+    price_asc:    `p.price_cents ASC, p.sales_count DESC, p.id`,
+    price_desc:   `p.price_cents DESC, p.sales_count DESC, p.id`,
+    rating:       `p.avg_rating DESC NULLS LAST, p.review_count DESC, p.id`,
+    sales:        `p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id`,
     // MLB-NEW WORKER 16: sort por venda mais recente (combina com idx_products_last_sale)
-    recent_sales: `p.last_sale_at DESC NULLS LAST, p.sales_count DESC`,
+    recent_sales: `p.last_sale_at DESC NULLS LAST, p.sales_count DESC, p.id`,
   };
   const sortKey = String(req.query.sort || 'relevance');
   const order = SORT_OPTIONS[sortKey] || SORT_OPTIONS.relevance;
@@ -113,10 +123,15 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
            p.last_sale_at,
            s.store_slug, s.store_name, s.reputation_tier,
            c.slug AS category_slug, c.name AS category_name,
+           -- FIX-WORKER-7 pass 12 (Regra A): subquery is_top_seller tinha
+           -- mesma omissao de platform_owned. Inconsistente com WHERE principal
+           -- (linha 60 corrigido nesta iter). Agora alinhado: ambos consideram
+           -- approved + platform_owned p/ calculo do badge "MAIS VENDIDO".
            (p.sales_count >= 5 AND p.sales_count = (
               SELECT MAX(p2.sales_count) FROM products p2
                WHERE p2.category_id = p.category_id
-                 AND p2.status = 'approved' AND p2.deleted_at IS NULL
+                 AND p2.status IN ('approved','platform_owned')
+                 AND p2.deleted_at IS NULL
            )) AS is_top_seller,
            ${rank_expr} AS rank,
            fn_product_search_rank(
@@ -145,7 +160,14 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
     query(
       `INSERT INTO search_log (user_id, query, query_normalized, filters, result_count, duration_ms, ip_address)
        VALUES ($1,$2,$3,$4::JSONB,$5,$6,$7)`,
-      [null, q || '', q.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''),
+      // FIX-WORKER-7 pass 12: bug unicode range. Original /[̀-ͯ]/ tinha chars
+      // invisiveis colapsados em alguns editores que NAO matcham combining
+      // diacritics consistentemente. Substituido por escape Unicode explicito
+      // ̀-ͯ (Combining Diacritical Marks block) - imune a copy/paste,
+      // git diff, editor encoding issues.
+      // Pre-fix: query_normalized podia manter acentos dependendo do binary
+      // do arquivo -> trigger sanitize mig 027 nao matcheava buscas.
+      [null, q || '', q.toLowerCase().normalize('NFD').replace(/\p{M}/gu, ''),
        JSON.stringify({ category, kind, min_price, max_price, free, tier, tag, sort: req.query.sort }),
        t.rows[0].total, dur, req.ip]
     ).catch(() => {});
