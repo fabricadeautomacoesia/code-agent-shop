@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { Copy, Check } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
@@ -24,6 +25,20 @@ export default function CheckoutPage() {
   // Sem CPF: payment-svc W11 pass 4 retorna 400 missing_cpf_cnpj. Em vez de
   // user clicar pay e levar erro, mostramos banner upfront direcionando para /conta.
   const [hasCpf, setHasCpf] = useState<boolean | null>(null); // null = loading
+  // FIX-WORKER-2 pass 6: feedback visual de copia do PIX
+  const [pixCopied, setPixCopied] = useState(false);
+
+  async function copyPix(code: string) {
+    try {
+      await navigator.clipboard.writeText(code);
+      setPixCopied(true);
+      setTimeout(() => setPixCopied(false), 2500);
+    } catch {
+      // Fallback iOS antigo / contexto inseguro - seleciona textarea
+      const ta = document.querySelector<HTMLTextAreaElement>('textarea[data-pix-code]');
+      if (ta) { ta.select(); ta.setSelectionRange(0, 99999); }
+    }
+  }
 
   useEffect(() => {
     if (!token) { router.push('/login'); return; }
@@ -92,19 +107,38 @@ export default function CheckoutPage() {
 
           {method === 'pix' && o.asaas_pix_qrcode && (
             <div className="space-y-4">
-              <img src={`data:image/png;base64,${o.asaas_pix_qrcode}`} alt="PIX QR Code" className="w-64 h-64 mx-auto bg-white p-2 rounded-lg" />
+              <img src={`data:image/png;base64,${o.asaas_pix_qrcode}`} alt="QR Code para pagamento PIX"
+                className="w-56 sm:w-64 h-56 sm:h-64 mx-auto bg-white p-2 rounded-lg" />
+              {/* FIX-WORKER-2 pass 6: botao Copiar PIX explicito.
+                  Antes: user precisava selecionar manualmente 200+ chars no textarea
+                  (impossivel em mobile sem 3 tentativas). Agora: 1 click copia via
+                  navigator.clipboard + feedback visual 2.5s. Fallback textarea select. */}
               <div>
-                <label className="text-sm text-white/70 block mb-1">Codigo PIX Copia e Cola</label>
-                <textarea readOnly value={o.asaas_pix_copy_paste || ''}
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm text-white/70">Codigo PIX Copia e Cola</label>
+                  <button type="button"
+                    onClick={() => copyPix(o.asaas_pix_copy_paste || '')}
+                    disabled={!o.asaas_pix_copy_paste}
+                    className="text-xs flex items-center gap-1.5 px-2.5 py-1 rounded-md glass hover:border-magenta transition-colors disabled:opacity-40">
+                    {pixCopied ? <><Check className="w-3.5 h-3.5 text-green-400" /> Copiado!</> : <><Copy className="w-3.5 h-3.5" /> Copiar</>}
+                  </button>
+                </div>
+                <textarea readOnly data-pix-code value={o.asaas_pix_copy_paste || ''}
+                  onFocus={(e) => e.target.select()}
                   className="w-full p-3 rounded-lg bg-white/5 border border-white/10 text-xs font-mono" rows={4} />
+                <p className="text-[11px] text-white/40 mt-1">Abra o app do seu banco, escolha PIX Copia e Cola, e cole este codigo.</p>
               </div>
             </div>
           )}
+          {/* FIX-WORKER-2 pass 6: rel="noopener noreferrer" em external links
+              (defense-in-depth contra tabnabbing window.opener). */}
           {method === 'boleto' && o.asaas_boleto_url && (
-            <a href={o.asaas_boleto_url} target="_blank" className="btn-primary block text-center">Abrir boleto</a>
+            <a href={o.asaas_boleto_url} target="_blank" rel="noopener noreferrer"
+              className="btn-primary block text-center">Abrir boleto</a>
           )}
           {method === 'credit_card' && o.asaas_invoice_url && (
-            <a href={o.asaas_invoice_url} target="_blank" className="btn-primary block text-center">Pagar com cartao</a>
+            <a href={o.asaas_invoice_url} target="_blank" rel="noopener noreferrer"
+              className="btn-primary block text-center">Pagar com cartao</a>
           )}
 
           <div className="mt-8 pt-6 border-t border-white/10 text-sm text-white/60">
