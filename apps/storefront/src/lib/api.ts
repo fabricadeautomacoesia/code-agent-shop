@@ -84,6 +84,11 @@ export const Api = {
     api(`/orders/cart/items/${item_id}`, { method: 'DELETE', auth: token }),
   cartSetQty:  (token: string, item_id: string, quantity: number) =>
     api(`/orders/cart/items/${item_id}`, { method: 'PATCH', auth: token, body: JSON.stringify({ quantity }) }),
+  cartLoyaltyRedeem: (token: string, points: number) =>
+    api<{ ok: boolean; applied_points: number; discount_cents: number; cap_cents: number; balance: number }>(
+      '/orders/cart/loyalty/redeem', { method: 'POST', auth: token, body: JSON.stringify({ points }) }),
+  cartLoyaltyClear:  (token: string) =>
+    api('/orders/cart/loyalty/redeem', { method: 'DELETE', auth: token }),
   cartCoupon:  (token: string, code: string) =>
     api('/orders/cart/coupon', { method: 'POST', auth: token, body: JSON.stringify({ code }) }),
   checkout:    (token: string, payment_method: 'pix'|'credit_card'|'boleto', installment_count?: number) =>

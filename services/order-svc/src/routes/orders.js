@@ -34,17 +34,41 @@ router.post('/checkout',
           WHERE ci.cart_id = $1`, [cart.rows[0].id]
       );
 
+      // MLB-4 redeem: se cart tem pontos resgatados, debita IMEDIATAMENTE do balance
+      // (pessimistic - se ja foi 'reservado' no cart, debita ao confirmar pedido).
+      const loyaltyPts = parseInt(cart.rows[0].loyalty_points_redeemed || 0, 10);
+      const loyaltyCents = parseInt(cart.rows[0].loyalty_discount_cents || 0, 10);
+      if (loyaltyPts > 0) {
+        const bal = await c.query(`SELECT points_balance FROM user_loyalty WHERE user_id = $1::UUID FOR UPDATE`, [req.user.sub]);
+        const balance = parseInt(bal.rows[0]?.points_balance || 0, 10);
+        if (loyaltyPts > balance) {
+          throw errorHandler.badRequest('insufficient_points_at_checkout', `Saldo ${balance} < resgate ${loyaltyPts}`);
+        }
+        await c.query(
+          `UPDATE user_loyalty SET points_balance = points_balance - $1::INT, updated_at = NOW() WHERE user_id = $2::UUID`,
+          [loyaltyPts, req.user.sub]
+        );
+        // log na tabela de transacoes (delta negativo)
+        await c.query(
+          `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type)
+           VALUES ($1::UUID, $2::INT, 'order_redeem', 'order')`,
+          [req.user.sub, -loyaltyPts]
+        );
+      }
+
       const orderNo = await c.query(`SELECT fn_generate_order_number() AS n`);
       const order = await c.query(
         `INSERT INTO orders (order_number, buyer_user_id, status, subtotal_cents, discount_cents,
                              coupon_code, total_cents, currency, payment_method, payment_status,
+                             loyalty_points_redeemed, loyalty_discount_cents,
                              buyer_ip, buyer_user_agent, expires_at)
-         VALUES ($1,$2,'pending_payment',$3,$4,$5,$6,$7,$8,'pending',$9,$10, NOW() + INTERVAL '24 hours')
+         VALUES ($1,$2,'pending_payment',$3,$4,$5,$6,$7,$8,'pending',$9,$10,$11,$12, NOW() + INTERVAL '24 hours')
          RETURNING *`,
         [orderNo.rows[0].n, req.user.sub,
          cart.rows[0].subtotal_cents, cart.rows[0].discount_cents,
          cart.rows[0].coupon_code, cart.rows[0].total_cents, cart.rows[0].currency,
-         req.body.payment_method, req.ip, req.headers['user-agent'] || null]
+         req.body.payment_method, loyaltyPts, loyaltyCents,
+         req.ip, req.headers['user-agent'] || null]
       );
 
       // Cria order_items + calcula splits

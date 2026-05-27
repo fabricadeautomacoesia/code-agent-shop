@@ -159,6 +159,60 @@ router.post('/coupon',
   })
 );
 
+// MLB-4 redeem: POST /cart/loyalty/redeem - aplica pontos como desconto.
+// Politica: 1 ponto = 1 cent (100pts = R$1). Min 500pts. Cap 30% subtotal. Atomico via tx.
+router.post('/loyalty/redeem',
+  validate({ body: z.object({ points: z.number().int().min(500).max(1000000) }) }),
+  asyncHandler(async (req, res, next) => {
+    let result;
+    await tx(async (c) => {
+      // saldo atual de pontos
+      const bal = await c.query(`SELECT points_balance FROM user_loyalty WHERE user_id = $1::UUID`, [req.user.sub]);
+      const balance = parseInt(bal.rows[0]?.points_balance || 0, 10);
+      if (req.body.points > balance) {
+        result = { error: 'insufficient_points', balance };
+        return;
+      }
+      // subtotal atual do cart
+      const cart = await c.query(`SELECT id, subtotal_cents FROM carts WHERE user_id = $1::UUID`, [req.user.sub]);
+      if (!cart.rows.length) { result = { error: 'cart_not_found' }; return; }
+      const subtotal = parseInt(cart.rows[0].subtotal_cents || 0, 10);
+      if (subtotal < 500) { result = { error: 'cart_too_small', min_subtotal_cents: 500 }; return; }
+      // cap 30% do subtotal
+      const cap = Math.floor(subtotal * 0.30);
+      const effectivePoints = Math.min(req.body.points, cap);
+      // grava pendencia no cart (pontos NAO sao debitados ainda - apenas no checkout)
+      await c.query(
+        `UPDATE carts SET loyalty_points_redeemed = $1, loyalty_discount_cents = $1
+          WHERE id = $2::UUID`,
+        [effectivePoints, cart.rows[0].id]
+      );
+      await recalcCart(c, cart.rows[0].id);
+      result = { ok: true, applied_points: effectivePoints, discount_cents: effectivePoints, cap_cents: cap, balance };
+    });
+    if (result.error) {
+      if (result.error === 'insufficient_points') return res.status(400).json(result);
+      if (result.error === 'cart_not_found') return next(errorHandler.notFound('cart_not_found'));
+      if (result.error === 'cart_too_small') return res.status(400).json(result);
+    }
+    res.json(result);
+  })
+);
+
+// DELETE /cart/loyalty/redeem - remove resgate (libera pontos)
+router.delete('/loyalty/redeem', asyncHandler(async (req, res) => {
+  await tx(async (c) => {
+    const cart = await c.query(`SELECT id FROM carts WHERE user_id = $1::UUID`, [req.user.sub]);
+    if (!cart.rows.length) return;
+    await c.query(
+      `UPDATE carts SET loyalty_points_redeemed = 0, loyalty_discount_cents = 0 WHERE id = $1::UUID`,
+      [cart.rows[0].id]
+    );
+    await recalcCart(c, cart.rows[0].id);
+  });
+  res.json({ ok: true });
+}));
+
 async function recalcCart(client, cart_id) {
   const items = await client.query(
     `SELECT SUM(line_total_cents) AS subtotal, COUNT(*) AS cnt FROM cart_items WHERE cart_id = $1`,
@@ -166,8 +220,16 @@ async function recalcCart(client, cart_id) {
   );
   const subtotal = parseInt(items.rows[0].subtotal || 0, 10);
   const cnt = parseInt(items.rows[0].cnt, 10);
-  const cart = await client.query(`SELECT coupon_code FROM carts WHERE id = $1`, [cart_id]);
+  const cart = await client.query(`SELECT coupon_code, loyalty_points_redeemed, loyalty_discount_cents FROM carts WHERE id = $1`, [cart_id]);
   let discount = 0;
+  // MLB-4 redeem: loyalty discount sempre re-validado (cap 30% subtotal)
+  let loyaltyPts = parseInt(cart.rows[0]?.loyalty_points_redeemed || 0, 10);
+  let loyaltyCents = parseInt(cart.rows[0]?.loyalty_discount_cents || 0, 10);
+  const loyaltyCap = Math.floor(subtotal * 0.30);
+  if (loyaltyCents > loyaltyCap) {
+    loyaltyCents = loyaltyCap;
+    loyaltyPts = loyaltyCents; // 100pts = R$1 = 100 cents -> 1pt = 1 cent
+  }
   if (cart.rows[0]?.coupon_code) {
     const co = await client.query(
       `SELECT discount_type, discount_value, tier_breakpoints FROM coupons WHERE code = $1 AND is_active`,
@@ -190,11 +252,13 @@ async function recalcCart(client, cart_id) {
         : Math.floor(effectiveValue * 100);
     }
   }
-  const total = Math.max(0, subtotal - discount);
+  const total = Math.max(0, subtotal - discount - loyaltyCents);
   await client.query(
-    `UPDATE carts SET items_count = $1, subtotal_cents = $2, discount_cents = $3, total_cents = $4, updated_at = NOW()
-     WHERE id = $5`,
-    [cnt, subtotal, discount, total, cart_id]
+    `UPDATE carts SET items_count = $1, subtotal_cents = $2, discount_cents = $3,
+                       loyalty_points_redeemed = $4, loyalty_discount_cents = $5,
+                       total_cents = $6, updated_at = NOW()
+     WHERE id = $7`,
+    [cnt, subtotal, discount, loyaltyPts, loyaltyCents, total, cart_id]
   );
 }
 

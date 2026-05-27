@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, Tag, TrendingUp, Plus, Minus } from 'lucide-react';
+import { Trash2, Tag, TrendingUp, Plus, Minus, Star } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
@@ -17,6 +17,7 @@ export default function CartPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [couponPreview, setCouponPreview] = useState<any>(null);
+  const [loyalty, setLoyalty] = useState<any>(null);
 
   async function load() {
     if (!token) return;
@@ -27,6 +28,29 @@ export default function CartPage() {
   }
 
   useEffect(() => { load(); }, [token]);
+
+  // MLB-4 redeem: fetch saldo de pontos
+  useEffect(() => {
+    if (!token) return;
+    Api.api<any>('/loyalty/me', { auth: token, cache: 'no-store' })
+      .then((r) => setLoyalty(r?.loyalty || null))
+      .catch(() => {});
+  }, [token, cart?.total_cents]);
+
+  async function applyRedeem(points: number) {
+    if (!token) return;
+    setErr('');
+    try {
+      await Api.cartLoyaltyRedeem(token, points);
+      load();
+    } catch (e: any) {
+      setErr(e.data?.message || e.message || 'Erro ao resgatar pontos');
+    }
+  }
+  async function clearRedeem() {
+    if (!token) return;
+    try { await Api.cartLoyaltyClear(token); load(); } catch {}
+  }
 
   // MLB-11: fetch progressive tiers preview quando ha cupom aplicado
   useEffect(() => {
@@ -145,7 +169,51 @@ export default function CartPage() {
               {cart?.discount_cents > 0 && (
                 <div className="flex justify-between text-green-400"><span>Desconto {cart.coupon_code && `(${cart.coupon_code})`}</span><span>- {Api.formatBRL(cart.discount_cents)}</span></div>
               )}
+              {cart?.loyalty_discount_cents > 0 && (
+                <div className="flex justify-between text-magenta-glow">
+                  <span className="flex items-center gap-1"><Star className="w-3 h-3" /> {cart.loyalty_points_redeemed} pts</span>
+                  <span>- {Api.formatBRL(cart.loyalty_discount_cents)}</span>
+                </div>
+              )}
             </div>
+
+            {/* MLB-4 Loyalty Redeem card */}
+            {loyalty && Number(loyalty.points_balance) >= 500 && (
+              <div className="rounded-lg border border-magenta/30 bg-magenta/5 p-3 mb-4">
+                <div className="flex items-center gap-2 text-xs font-bold text-magenta mb-2">
+                  <Star className="w-3.5 h-3.5" /> CAS PONTOS
+                </div>
+                <div className="text-[11px] text-white/60 mb-2">
+                  Saldo: <strong className="text-white">{Number(loyalty.points_balance).toLocaleString('pt-BR')}</strong> pts
+                  - 100pts = R$1 - max 30% do subtotal
+                </div>
+                {cart?.loyalty_points_redeemed > 0 ? (
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-magenta-glow">
+                      {cart.loyalty_points_redeemed} pts aplicados
+                    </div>
+                    <button onClick={clearRedeem} className="text-[11px] text-white/60 hover:text-white underline">
+                      Remover
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-1.5">
+                    {[500, 1000, 5000].filter((p) => p <= Number(loyalty.points_balance)).map((p) => (
+                      <button key={p} onClick={() => applyRedeem(p)}
+                        className="flex-1 px-2 py-1.5 rounded text-[11px] bg-white/5 hover:bg-magenta/20 border border-white/10 hover:border-magenta/50 transition-colors">
+                        {p}pts<br /><span className="text-magenta-glow">-{Api.formatBRL(p)}</span>
+                      </button>
+                    ))}
+                    {Number(loyalty.points_balance) > 5000 && (
+                      <button onClick={() => applyRedeem(Number(loyalty.points_balance))}
+                        className="flex-1 px-2 py-1.5 rounded text-[11px] bg-white/5 hover:bg-magenta/20 border border-white/10 hover:border-magenta/50 transition-colors">
+                        Max<br /><span className="text-magenta-glow">{Number(loyalty.points_balance)}pts</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* MLB-11: Cupom progressivo - tiers visuais */}
             {couponPreview?.tiers?.length > 0 && (
