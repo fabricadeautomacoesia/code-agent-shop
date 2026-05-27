@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Search, ShoppingCart, User, Menu, Code2, X, Zap, Bot, Workflow, Cpu, Users, Layers } from 'lucide-react';
+import { Search, ShoppingCart, User, Menu, Code2, X, Zap, Bot, Workflow, Cpu, Users, Layers, Heart, Bell } from 'lucide-react';
 import { useAuth, useUI } from '@/lib/store';
 import { SearchAutocomplete } from './search-autocomplete';
 import { NotificationBell } from './notification-bell';
@@ -66,9 +66,14 @@ export function Nav() {
           <button onClick={() => setCartOpen(true)} aria-label="Carrinho" className="p-2 rounded-lg hover:bg-white/5 transition-colors relative">
             <ShoppingCart className="w-5 h-5" />
           </button>
-          {/* MLB style: Heart icon com badge contador real de favoritos */}
-          <WishlistBadge />
-          <NotificationBell />
+          {/* FIX-WORKER-15 pass 3: ocultar Wishlist + Bell em <sm (< 640px).
+              Mobile drawer expoe links /conta/favoritos + /conta (notifs).
+              Antes: 4 icons (search+cart+wishlist+bell) + hamburger competiam
+              por espaco em 375px, apertado e poluido. Padrao Mercado Livre mobile. */}
+          <div className="hidden sm:flex items-center gap-1 sm:gap-3">
+            <WishlistBadge />
+            <NotificationBell />
+          </div>
           {user ? (
             <Link href="/conta" className="btn-ghost text-sm flex items-center gap-2 hidden sm:flex">
               <User className="w-4 h-4" /> {user.display_name || user.full_name?.split(' ')[0]}
@@ -106,11 +111,25 @@ export function Nav() {
             ))}
             <div className="my-3 border-t border-white/10" />
             {user ? (
-              <Link href="/conta" onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-3 px-4 py-3.5 rounded-lg text-sm hover:bg-white/5 transition-colors">
-                <User className="w-4 h-4 opacity-70" />
-                Minha conta ({user.display_name || user.full_name?.split(' ')[0]})
-              </Link>
+              <>
+                <Link href="/conta" onClick={() => setMobileOpen(false)}
+                  className="flex items-center gap-3 px-4 py-3.5 rounded-lg text-sm hover:bg-white/5 transition-colors">
+                  <User className="w-4 h-4 opacity-70" />
+                  Minha conta ({user.display_name || user.full_name?.split(' ')[0]})
+                </Link>
+                {/* FIX-WORKER-15 pass 3: shortcuts mobile para Favoritos + Notificacoes
+                    (icons ocultos no nav header em < sm) */}
+                <Link href="/conta/favoritos" onClick={() => setMobileOpen(false)}
+                  className="flex items-center gap-3 px-4 py-3.5 rounded-lg text-sm hover:bg-white/5 transition-colors">
+                  <Heart className="w-4 h-4 opacity-70" />
+                  Favoritos
+                </Link>
+                <Link href="/conta" onClick={() => setMobileOpen(false)}
+                  className="flex items-center gap-3 px-4 py-3.5 rounded-lg text-sm hover:bg-white/5 transition-colors">
+                  <Bell className="w-4 h-4 opacity-70" />
+                  Notificacoes
+                </Link>
+              </>
             ) : (
               <>
                 <Link href="/login" onClick={() => setMobileOpen(false)}
