@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Star, Award, Download, Shield, Clock, Tag } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { AddToCart } from '@/components/add-to-cart';
@@ -85,7 +86,11 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
         <div className="lg:col-span-2 space-y-6">
           <div className="glass overflow-hidden">
             {product.cover_image_url ? (
-              <img src={product.cover_image_url} alt={product.title} className="w-full aspect-video object-cover" />
+              <div className="relative w-full aspect-video">
+                <Image src={product.cover_image_url} alt={product.title}
+                  fill priority sizes="(max-width: 768px) 100vw, 800px"
+                  className="object-cover" />
+              </div>
             ) : (
               <div className="w-full aspect-video bg-gradient-vibe/10 flex items-center justify-center">
                 <div className="font-display font-bold text-7xl opacity-20">CAS</div>
@@ -166,7 +171,9 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
               <Link key={p.id} href={`/product/${p.slug}`} className="glass p-4 hover:scale-105 transition-transform group">
                 <div className="flex gap-3">
                   {p.cover_image_url && (
-                    <img src={p.cover_image_url} alt={p.title} className="w-16 h-16 object-cover rounded" />
+                    <Image src={p.cover_image_url} alt={p.title}
+                      width={64} height={64} sizes="64px"
+                      className="w-16 h-16 object-cover rounded flex-shrink-0" />
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="font-display font-semibold text-sm line-clamp-2 group-hover:text-magenta">{p.title}</div>

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { Star, ShoppingCart, Award } from 'lucide-react';
 import { Api } from '@/lib/api';
 
@@ -18,9 +19,11 @@ export function ProductCard({ product }: { product: any }) {
       <article className="glass group overflow-hidden hover:scale-[1.02] hover:border-white/15 transition-all duration-300 reveal-up cursor-pointer h-full flex flex-col">
         <div className="aspect-video relative overflow-hidden bg-gradient-vibe/10">
           {product.cover_image_url ? (
-            <img
+            <Image
               src={product.cover_image_url} alt={product.title}
-              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+              fill
+              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+              className="object-cover group-hover:scale-110 transition-transform duration-700"
               loading="lazy"
             />
           ) : (
