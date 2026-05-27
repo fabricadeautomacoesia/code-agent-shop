@@ -102,6 +102,25 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## PERFORMANCE PASS 2 - CACHE EM PRODUCT-SVC + INVALIDATION (WORKER 18)
+Aplicado cacheMiddleware em product-svc/routes/public.js:
+- GET /products (list): 60s, key composta com 9 filtros (cat/kind/price/etc)
+- GET /products/:slug/related: 300s
+- GET /products/flash-promo/active: 60s
+
+Invalidation hooks adicionados:
+- admin.js force-approve/platform-take/archive invalida 5 patterns
+  (products:list/related/flash-promo + search:top-sellers/facets)
+- seller-mgmt.js draft/patch/submit invalida 3 patterns
+
+VALIDADO E2E:
+- /products?limit=10: MISS 192ms -> HIT 39ms (speedup 5x)
+- /products?kind=ai_agent: MISS 36ms -> HIT 28ms
+- /products/:slug/related: MISS 33ms -> HIT 29ms
+- /products/flash-promo/active: MISS 34ms -> HIT 31ms
+
+Try/catch em invalidations para nao bloquear requests se Redis cair.
+
 ## PERFORMANCE - REDIS CACHE LAYER (WORKER 18)
 Add cache helper em @cas/shared usando ioredis (dep adicionada package.json):
 - Singleton lazy client, fallback graceful no-op se REDIS_URL ausente.
