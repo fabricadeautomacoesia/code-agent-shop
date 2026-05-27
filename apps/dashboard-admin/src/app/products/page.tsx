@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { adminFetch, fmtBRL, fmtDate } from '@/lib/admin-api';
+import { useAdminAction } from '@/lib/use-admin-action';
 import { Archive, Award, ExternalLink, Eye } from 'lucide-react';
 import Link from 'next/link';
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [filter, setFilter] = useState('approved');
-  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   async function load() {
     try {
@@ -16,21 +17,29 @@ export default function AdminProductsPage() {
         `/search?limit=100${filter ? `&status=${filter}` : ''}`
       );
       setProducts(r.results || r.products || []);
-    } catch (e: any) { setError(e.message); }
+      setLoadError('');
+    } catch (e: any) { setLoadError(e.message); }
   }
   useEffect(() => { load(); }, [filter]);
 
+  // FIX-WORKER-4 pass 3: useAdminAction hook (W4 pass 2 pattern)
+  const action = useAdminAction(load);
+
   async function archive(id: string) {
     if (!confirm('Arquivar este produto?')) return;
-    await adminFetch(`/products/admin/${id}/archive`, { method: 'POST' });
-    load();
+    action.run(`archive-${id}`, async () => {
+      await adminFetch(`/products/admin/${id}/archive`, { method: 'POST' });
+      return `Produto ${id.slice(0, 8)}... arquivado`;
+    });
   }
   async function platformTake(id: string) {
     if (!confirm('Acionar Clausula Master? Vai criar copia 100% plataforma.')) return;
     const reason = prompt('Justificativa:');
     if (!reason) return;
-    await adminFetch(`/products/admin/${id}/platform-take`, { method: 'POST', body: JSON.stringify({ reason }) });
-    load();
+    action.run(`take-${id}`, async () => {
+      await adminFetch(`/products/admin/${id}/platform-take`, { method: 'POST', body: JSON.stringify({ reason }) });
+      return `Platform-take ${id.slice(0, 8)}... criado`;
+    });
   }
 
   return (
@@ -42,7 +51,21 @@ export default function AdminProductsPage() {
         </div>
       </div>
 
-      {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">{error}</div>}
+      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+
+      {/* FIX-WORKER-4 pass 3: banners action via useAdminAction */}
+      {action.error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.error}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.success}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
 
       <div className="glass p-6 overflow-x-auto">
         <table className="w-full text-sm">
