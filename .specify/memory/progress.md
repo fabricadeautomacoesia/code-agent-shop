@@ -11080,3 +11080,58 @@ PROXIMA ITER:
 - W1 pass 5: /login pwScore meter ou autoComplete audit
 - W3 PDP audit continuado
 - W7 pass 9: /products/:slug/related CTE filter
+
+================================================================
+ITER W1 PASS 5 - /login a11y/UX + 2FA trap fix (2026-05-27)
+================================================================
+ESCOPO: /login (entry point critico) com modo 2FA condicional
+FILE: apps/storefront/src/app/login/page.tsx
+
+BUGS CORRIGIDOS (7):
+1. <label> sem htmlFor (email/password/totp) WCAG 1.3.1
+FIX: htmlFor="login-{email,password,totp}" + id matching
+
+2. inputs sem autoComplete (browser nao autofill)
+FIX: autoComplete="email" + "current-password" + "one-time-code"
+(one-time-code = iOS SMS auto-fill nativo 2FA)
+
+3. Error persistente onChange (pattern repetido pass 3/4)
+FIX: clearErr() helper
+
+4. Error sem role="alert" + dismiss
+FIX: role="alert" + botao fechar
+
+5. Input 2FA sem inputMode numeric (teclado mobile mostrava QWERTY)
+FIX: inputMode="numeric" + pattern="[0-9]{6}" + sanitize
+.replace(/\D/g,'') (so digitos)
+
+6. UX TRAP: modo 2FA sem volta (se user errou senha + 2FA pediu,
+nao havia como voltar para corrigir senha sem reload da pagina)
+FIX: botao "Voltar ao login" reseta needs2fa + totp + error
+
+7. Banners de sucesso sem role=status + icones sem aria-hidden
+FIX: role="status" nos banners + aria-hidden nos icones decorativos
+
+BONUS:
+- Mail/Lock/KeyRound icons absolutos (visual coerencia c/ register)
+- placeholder="seu@email.com" + "000000" (form-filling hints)
+- aria-describedby="totp-hint" linkando input 2FA a instrucao
+- Hint instrucional 2FA (Google Authenticator, Authy, 1Password)
+
+WCAG 2.1 RESULTADO:
+- 1.3.1 Info & Relationships: PASS
+- 3.3.2 Labels or Instructions: PASS
+- 4.1.2 Name Role Value: PASS
+- 4.1.3 Status Messages: PASS
+
+W1 AUTH AUDIT PROGRESS:
+- pass 1: NotificationBell load conditional
+- pass 2: /register CPF/phone empty validation
+- pass 3: /redefinir-senha 5 bugs
+- pass 4: /esqueci-senha 4 bugs
+- pass 5: /login 7 bugs (esta iter) - critico (entry point)
+
+PROXIMA ITER:
+- W1 pass 6: /register revisao final (autoComplete tel/cpf + clearErr cascade)
+- W3 PDP audit (AddToCart loading state? WishlistButton optimistic?)
+- W7 pass 9: /products/:slug/related CTE filter (pattern reusable)
