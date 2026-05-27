@@ -76,7 +76,8 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
   const { email, password, totp } = req.body;
   const r = await query(
     `SELECT u.id, u.email, u.password_hash, u.full_name, u.role, u.is_active, u.is_banned,
-            u2.is_enabled AS twofa_enabled, u2.secret_encrypted, u2.secret_iv AS twofa_iv
+            u2.is_enabled AS twofa_enabled, u2.secret_encrypted,
+            u2.secret_iv AS twofa_iv, u2.secret_tag AS twofa_tag
        FROM users u
        LEFT JOIN user_two_factor u2 ON u2.user_id = u.id
        WHERE u.email = $1 AND u.deleted_at IS NULL`, [email]
@@ -96,12 +97,23 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
     return next(errorHandler.unauthorized('invalid_credentials', 'Email ou senha invalidos'));
   }
 
-  // 2FA obrigatorio se habilitado
+  // 2FA obrigatorio se habilitado - FIX SEG-2FA: passa tag GCM real (sem ele decrypt falha)
   if (user.twofa_enabled) {
     if (!totp) return res.status(206).json({ requires_2fa: true });
+    if (!user.twofa_tag) {
+      // Estado inconsistente: 2FA ativo sem tag (rows legados da migration 012)
+      log.error({ userId: user.id }, '[2fa.missing_tag]');
+      return next(errorHandler.unauthorized('twofa_corrupt', 'Reconfigure 2FA - configuracao corrompida'));
+    }
     const { decrypt } = require('@cas/shared').crypto;
     const { authenticator } = require('otplib');
-    const secret = decrypt({ encrypted: user.secret_encrypted, iv: user.twofa_iv, tag: Buffer.alloc(0) });
+    let secret;
+    try {
+      secret = decrypt({ encrypted: user.secret_encrypted, iv: user.twofa_iv, tag: user.twofa_tag });
+    } catch (e) {
+      log.error({ userId: user.id, err: e.message }, '[2fa.decrypt_fail]');
+      return next(errorHandler.unauthorized('twofa_corrupt', 'Reconfigure 2FA'));
+    }
     if (!authenticator.check(totp, secret)) {
       req.fail2ban?.reportFailure();
       return next(errorHandler.unauthorized('invalid_totp', 'Codigo 2FA invalido'));
