@@ -170,12 +170,17 @@ app.post('/use',
       key_id: k.id, provider: k.provider, fingerprint: k.key_fingerprint, plain_key: plain,
       is_platform_pool: k.is_platform_pool, alias: k.key_alias,
     });
-    // log granular assincrono
-    query(
-      `INSERT INTO vault_key_usage (vault_key_id, seller_id, operation, ip_address)
-       VALUES ($1,$2,$3,$4)`,
-      [k.id, seller_id || null, operation || null, req.ip]
-    ).catch((e) => log.warn({ err: e.message }, '[vault.usage_log_failed]'));
+    // FIX-WORKER-17 pass 9: INSERT vault_key_usage REMOVIDO daqui.
+    // Bug: criava registro "fantasma" com cost_usd_cents=0 + success=TRUE
+    // mesmo antes da chamada LLM ter ocorrido.
+    // CONSEQUENCIA:
+    // - COUNT(*) FROM vault_key_usage = 2x calls reais (1 do /use + 1 do /usage)
+    // - Calls que falhavam apos /use mas nao chegavam a chamar /usage ficavam
+    //   gravadas como success=TRUE (default), poluindo dashboards de health
+    // - Auditoria forensics confusa (2 timestamps por call)
+    // SOLUCAO: log autoritativo unico via POST /usage que tem o set completo
+    // (cost, tokens, duration, success real, error_message).
+    // O UPDATE last_used_at acima ja provem signal "key acessada".
   })
 );
 
