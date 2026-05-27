@@ -13982,3 +13982,98 @@ W7 PROGRESS TOTAL:
 - notification-svc: pass 26 (outbox)
 - qa-svc: passes 27-28 (callback FRAUD + run COST)
 - 17 regras consolidadas A-Q
+
+================================================================
+ITER W7 PASS 29 - order-svc /dispute 6 BUGS CRITICOS (SECURITY+integridade) (2026-05-27)
+================================================================
+ESCOPO: order-svc POST /orders/:id/dispute (abre disputa contra seller)
+FILE: services/order-svc/src/routes/orders.js (linhas 316-339)
+
+CONTEXTO: W7 pass 28 fechou qa-svc. Pass 29 audita /dispute - endpoint
+com alto IMPACTO REPUTACIONAL no seller (queue admin + suspensao
+investigativa). Endpoint pequeno mas com 6 bugs criticos.
+
+BUGS CORRIGIDOS (6):
+
+1. *** SECURITY CRITICO (Regra M ownership) ***
+- PRE-FIX: SELECT order_items WHERE oi.id = $2 - sem ownership check
+- ATAQUE DoS REPUTATIONAL:
+  a. Atacante autentica (qualquer conta)
+  b. POST /orders/<victim_order>/dispute body={order_item_id:<victim_item>}
+  c. INSERT dispute: opened_by_user_id=atacante, against_seller=victim_seller
+  d. Atacante abre 100 disputes "plagiarism" em sellers competidores
+  e. Admin queue lotada + sellers SUSPENSOS enquanto investiga
+  f. Atacante = seller competidor querendo eliminar concorrencia
+- IMPACTO REAL:
+  - Reputation attack legitimo (dispute existe DB)
+  - Admin overhead enorme (triage manual N disputes)
+  - Sellers afetados perdem vendas durante investigacao
+- FIX: order WHERE buyer_user_id = req.user.sub (so dono abre)
+
+2. *** CROSS-TABLE VALIDATION ***
+- PRE-FIX: order_item_id FK valida MAS sem check que oi.order_id = req.params.id
+- URL /orders/<any>/dispute body={order_item_id:<other_order>}
+- INSERT dispute com order_id != order_item.order_id (DB integrity break)
+- Forense vira impossivel (dispute referencia 2 orders diferentes)
+- FIX: AND oi.order_id = $1 no SELECT (garante 1:1 relationship)
+
+3. *** Regra Q IDEMPOTENCY *** sem unique guard
+- User pode abrir 10 disputes mesmo order_item (spam queue)
+- Admin recebe N notificacoes -> false-positive volume distorce metrics
+- FIX: SELECT existing dispute (order_item_id, opened_by, status active)
+  Se existe: 409 Conflict + dispute_id atual + status + opened_at
+  User informado da disputa pending vs criar nova
+
+4. *** Regra A *** order status check missing
+- PRE-FIX: dispute pode ser aberta em 'pending_payment' (sem pagamento ainda)
+- Disputa SO faz sentido em produto ENTREGUE (paid/fulfilled)
+- Dispute em pending_payment = noise admin queue (cancelar order resolve)
+- FIX: AND o.status IN ('paid', 'fulfilled')
+- Mensagem PT-BR clara: "Disputas so abertas para pedidos pagos/entregues"
+
+5. *** Regra I RETURNING * ***
+- disputes table tem: internal_notes, admin_resolution_notes, resolved_at,
+  resolved_by_user_id, risk_score (futuro col), priority (interno)
+- RETURNING * vaza ao buyer (atacante pode usar p/ reverse-engineer)
+- FIX: RETURNING explicit 8 campos UI consume:
+  id, order_id, order_item_id, against_seller_id, reason_code,
+  requested_resolution, status, opened_at
+
+6. UUID validate + audit log
+- UUID_RE.test() upfront p/ evitar PG 22P02 -> 404 limpo
+- audit_log INSERT atomic (forense - dispute = evento CRITICAL):
+  payload_after JSON: order_id, item_id, seller_id, reason_code, ip
+- Aplica Regra W7 (audit em high-impact endpoints, pass 23 estabeleceu)
+
+PATTERN W7 SECURITY HARDENING ENDPOINTS COMPLETO:
+- Pass 21 payment create: ownership + race + idempotent
+- Pass 22 webhook payment: state machine + idempotency
+- Pass 23 payout process: multi-phase + audit + state machine
+- Pass 25 vault revoke: idempotent terminal + forense
+- Pass 27 qa callback: idempotency + state machine + race + FRAUD VECTOR
+- Pass 28 qa run: status + ownership + race + atomicity
+- Pass 29 dispute: ownership + cross-table + idempotency + status + audit (esta iter)
+
+ANTI-ENUMERATION PATTERN (mensagem generica defensive):
+- Pre-fix: dispute revelava se order existe (mesmo fora do user)
+- Pos-fix: validRow query unica (order+item+ownership), error generico
+  "order_or_item_not_found" - atacante nao distingue qual falhou
+- Pattern reusable: qualquer endpoint multi-validation deve consolidar
+  mensagens p/ nao vazar enumeration via 404 messages distintos
+
+PATTERN W7 19 ENDPOINTS + 17 REGRAS (A-Q):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 9 (cart x3, orders x4, download x1, dispute x1 esta iter)
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 1
+- qa-svc: 2
+
+W7 PROGRESS TOTAL: 29 micro-iters consolidando 17 regras (A-Q).
+
+PROXIMA ITER:
+- W7 pass 30: notification-svc /test endpoint admin audit
+- W18 pass 7: idx parcial product_views > 90d (cron-based)
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W4: dashboard-admin /admin/disputes listar (consumes endpoint corrigido)

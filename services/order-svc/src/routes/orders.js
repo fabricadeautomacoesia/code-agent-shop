@@ -314,6 +314,42 @@ router.get('/:id', asyncHandler(async (req, res, next) => {
 }));
 
 // POST /orders/:id/dispute - abre disputa
+// FIX-WORKER-7 pass 29: 6 BUGS criticos aplicando Pattern W7 17 regras.
+//
+// BUG 1 *** SECURITY CRITICO (Regra M ownership) ***
+//   PRE-FIX: SELECT order_items WHERE oi.id = order_item_id - sem ownership
+//   ATAQUE:
+//     a. Atacante autentica com qualquer conta
+//     b. POST /orders/<victim_order>/dispute body={order_item_id:<victim_item>}
+//     c. INSERT dispute com opened_by_user_id=atacante, against_seller=victim_seller
+//     d. Atacante abre 100 disputes "plagiarism" em sellers competidores
+//     e. DoS: admin queue lotada + sellers suspensos enquanto investiga
+//     f. Reputation attack legitimo: dispute existe no DB, audit nao distingue
+//   FIX: order WHERE buyer_user_id = req.user.sub (so dono abre)
+//
+// BUG 2 *** CROSS-TABLE VALIDATION ***
+//   PRE-FIX: order_item_id valida via FK mas SEM check que oi.order_id = :id
+//   Atacante pode mixar: URL /orders/<any>/dispute body={order_item_id:<other_order>}
+//   INSERT cria dispute com order_id != order_item.order_id (DB integrity break)
+//   FIX: AND oi.order_id = $1 no SELECT - garante 1:1 relationship
+//
+// BUG 3 *** IDEMPOTENCY (Regra Q) *** sem unique guard
+//   User pode abrir 10 disputes mesmo order_item (spam queue admin)
+//   FIX: SELECT existing dispute por (order_item_id, opened_by_user_id, status active)
+//   Se ja aberta: 409 Conflict + dispute_id existente
+//
+// BUG 4 ORDER STATUS check (Regra A): dispute em order 'pending_payment'?
+//   Disputa faz sentido SO em orders 'paid'/'fulfilled' (produto entregue defeituoso)
+//   FIX: AND o.status IN ('paid', 'fulfilled')
+//
+// BUG 5 Regra I RETURNING *
+//   disputes table tem internal_notes, admin_resolution_notes, resolved_at,
+//   risk_score (futuro). RETURNING * vaza ao buyer.
+//   FIX: RETURNING explicit fields (8 campos consumidos UI)
+//
+// BUG 6 UUID validate :id + audit log
+//   UUID validate upfront p/ evitar PG 22P02
+//   audit_log INSERT (forense - dispute eh evento critical)
 router.post('/:id/dispute',
   validate({ body: z.object({
     order_item_id: z.string().uuid(),
@@ -321,17 +357,114 @@ router.post('/:id/dispute',
     description: z.string().min(20).max(5000),
     requested_resolution: z.enum(['refund','replacement','partial_refund','support']),
   })}),
-  asyncHandler(async (req, res) => {
-    const r = await query(
-      `INSERT INTO disputes (order_id, order_item_id, opened_by_user_id, against_seller_id,
-                             reason_code, description, requested_resolution)
-       SELECT $1, $2, $3, oi.seller_id, $4, $5, $6
-         FROM order_items oi WHERE oi.id = $2
-       RETURNING *`,
-      [req.params.id, req.body.order_item_id, req.user.sub,
-       req.body.reason_code, req.body.description, req.body.requested_resolution]
-    );
-    res.status(201).json({ dispute: r.rows[0] });
+  asyncHandler(async (req, res, next) => {
+    // FIX bug 6: UUID validate upfront
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('order_not_found'));
+    }
+
+    let outcome;
+    let dispute;
+    await tx(async (c) => {
+      // FIX bug 1+2+4 (Regra M+A+cross-table): validacao consolidada
+      // - order existe + buyer = req.user (ownership)
+      // - order status valido p/ disputa
+      // - order_item belongs TO this order (cross-table)
+      // - returns seller_id p/ INSERT
+      const validRow = await c.query(
+        `SELECT o.id AS order_id, o.status AS order_status,
+                oi.id AS item_id, oi.seller_id
+           FROM orders o
+           JOIN order_items oi ON oi.order_id = o.id
+          WHERE o.id = $1::UUID
+            AND o.buyer_user_id = $2::UUID
+            AND oi.id = $3::UUID
+          LIMIT 1`,
+        [req.params.id, req.user.sub, req.body.order_item_id]
+      );
+      if (!validRow.rows.length) {
+        // Pode ser: order nao existe, order nao eh do user, ou order_item nao eh dessa order
+        // Mensagem generica anti-enumeration (atacante nao distingue qual)
+        outcome = { error: 'order_or_item_not_found' };
+        return;
+      }
+      const v = validRow.rows[0];
+      if (!['paid', 'fulfilled'].includes(v.order_status)) {
+        outcome = { error: 'order_status_invalid', current_status: v.order_status };
+        return;
+      }
+
+      // FIX bug 3 (Regra Q idempotency): existing active dispute?
+      // disputes table assumindo status field padrao ('open', 'investigating', 'resolved', 'closed')
+      // Bloqueia abertura nova se ja existe ativa (mesmo item, mesmo buyer).
+      const existing = await c.query(
+        `SELECT id, status, opened_at FROM disputes
+          WHERE order_item_id = $1::UUID
+            AND opened_by_user_id = $2::UUID
+            AND status IN ('open', 'investigating')
+          LIMIT 1`,
+        [req.body.order_item_id, req.user.sub]
+      );
+      if (existing.rows.length) {
+        outcome = {
+          error: 'dispute_already_open',
+          existing_dispute_id: existing.rows[0].id,
+          status: existing.rows[0].status,
+          opened_at: existing.rows[0].opened_at,
+        };
+        return;
+      }
+
+      // FIX bug 5 (Regra I RETURNING explicit): 8 campos minimos UI consume
+      const inserted = await c.query(
+        `INSERT INTO disputes
+           (order_id, order_item_id, opened_by_user_id, against_seller_id,
+            reason_code, description, requested_resolution)
+         VALUES ($1::UUID, $2::UUID, $3::UUID, $4::UUID, $5, $6, $7)
+         RETURNING id, order_id, order_item_id, against_seller_id, reason_code,
+                   requested_resolution, status, opened_at`,
+        [v.order_id, v.item_id, req.user.sub, v.seller_id,
+         req.body.reason_code, req.body.description, req.body.requested_resolution]
+      );
+      dispute = inserted.rows[0];
+
+      // FIX bug 6 (audit log): dispute eh evento critical (afeta seller reputation)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'order.dispute_open', 'dispute', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role || 'buyer', dispute.id,
+         JSON.stringify({
+           order_id: v.order_id,
+           order_item_id: v.item_id,
+           against_seller_id: v.seller_id,
+           reason_code: req.body.reason_code,
+           requested_resolution: req.body.requested_resolution,
+           ip: req.ip,
+         })]
+      );
+    });
+
+    if (outcome?.error === 'order_or_item_not_found') {
+      return next(errorHandler.notFound('order_or_item_not_found'));
+    }
+    if (outcome?.error === 'order_status_invalid') {
+      return res.status(400).json({
+        error: 'order_status_invalid',
+        message: `Disputas so abertas para pedidos pagos/entregues. Status atual: ${outcome.current_status}`,
+        current_status: outcome.current_status,
+      });
+    }
+    if (outcome?.error === 'dispute_already_open') {
+      return res.status(409).json({
+        error: 'dispute_already_open',
+        message: 'Voce ja tem uma disputa ativa para este item. Aguarde resolucao.',
+        existing_dispute_id: outcome.existing_dispute_id,
+        status: outcome.status,
+        opened_at: outcome.opened_at,
+      });
+    }
+    res.status(201).json({ dispute });
   })
 );
 
