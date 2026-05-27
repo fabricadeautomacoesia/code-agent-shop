@@ -11,8 +11,23 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const crypto = require('node:crypto');
 
 const {
-  logger, sanitize, errorHandler, asyncHandler, fail2ban
+  logger, sanitize, errorHandler, asyncHandler, fail2ban, mask
 } = require('@cas/shared');
+
+// FIX-WORKER-7 pass 68: DLP helper p/ sanitizar URLs em logs.
+// PRE-FIX: req.originalUrl logado raw em /proxy.error/.timeout/.body_too_large.
+// URLs com query string sensitive vazam para ELK/Pino sink:
+//   - /api/auth/reset-password?token=abc123 (token plain log)
+//   - /api/auth/callback?code=oauth_secret (OAuth code leak)
+//   - /api/payments/asaas/webhook?sig=sha256_xyz (webhook sig partial)
+// mask.text() ja masking sk-/Bearer/JWT MAS query params ?token=raw nao casa
+// nenhum pattern. Solucao: strip query string em logs (preserva path p/ trace).
+function logSafeUrl(url) {
+  if (!url) return null;
+  // Strip query string + apply mask.text DLP regex restantes (defensive)
+  const noQuery = String(url).split('?')[0];
+  return mask.text(noQuery);
+}
 
 const log = logger.child({ svc: 'gateway' });
 const app = express();
@@ -126,7 +141,7 @@ function bodyLimitMiddleware(maxBytes) {
     if (cl > maxBytes) {
       log.warn({
         ip: req.realIp || req.ip,
-        path: req.originalUrl,
+        path: logSafeUrl(req.originalUrl),  // FIX-WORKER-7 pass 68: DLP strip query
         content_length: cl,
         max_bytes: maxBytes,
       }, '[gateway.body_too_large]');
@@ -164,9 +179,9 @@ function proxy(target, opts = {}) {
         const isTimeout = err.code === 'ETIMEDOUT' || err.code === 'ECONNRESET'
           || /timeout/i.test(err.message);
         log.error({
-          err: err.message,
+          err: mask.text(err.message || ''),  // FIX-WORKER-7 pass 68: DLP err.message (Bearer/JWT)
           err_code: err.code,
-          path: req.originalUrl,
+          path: logSafeUrl(req.originalUrl),  // FIX-WORKER-7 pass 68: DLP strip query
           target,
           method: req.method,
           timeout_ms: timeoutMs,
@@ -272,11 +287,19 @@ app.use('/api/orders',        fail2ban.middleware(), proxy(UPSTREAMS.order,     
 app.use('/api/payments',      fail2ban.middleware(), proxy(UPSTREAMS.payment,      { pathRewrite: (p) => '/payments' + p })); // inclui MLB-5 /payments/installments/preview
 app.use('/api/reviews',       proxy(UPSTREAMS.review,       { pathRewrite: (p) => p })); // review-svc usa / direto
 app.use('/api/qna',           proxy(UPSTREAMS.review,       { pathRewrite: (p) => '/qna' + p }));
-app.use('/api/notifications', proxy(UPSTREAMS.notification, { pathRewrite: (p) => p })); // notif root
+// FIX-WORKER-7 pass 68: fail2ban em /api/notifications.
+// /test endpoint envia email (spam relay vector). Mesmo com rate-limit no svc,
+// gateway brute-force protection eh defesa em profundidade (fail2ban tracking
+// IP/user agressors atravessa multi-services em uma camada unica).
+app.use('/api/notifications', fail2ban.middleware(), proxy(UPSTREAMS.notification, { pathRewrite: (p) => p })); // notif root
 app.use('/api/search',        proxy(UPSTREAMS.search,       { pathRewrite: (p) => p })); // search root
 // FIX-WORKER-7 pass 47: vault endpoint CRITICAL crypto - fail2ban obrigatorio
 app.use('/api/vault',         fail2ban.middleware(), proxy(UPSTREAMS.vault,        { pathRewrite: (p) => p })); // vault root
-app.use('/api/aiops',         proxy(UPSTREAMS.aiops,        { pathRewrite: (p) => p })); // aiops root
+// FIX-WORKER-7 pass 68: fail2ban em /api/aiops.
+// /audit-log + /db/dead-indexes + /alerts admin-only DENTRO do svc, MAS atacante
+// brute-forcing role check escala 100+ req/s antes de jwt.requireAuth() rejeitar.
+// Fail2ban no gateway: IP atinge threshold rejected -> 403 imediato sem hit upstream.
+app.use('/api/aiops',         fail2ban.middleware(), proxy(UPSTREAMS.aiops,        { pathRewrite: (p) => p })); // aiops root
 
 app.get('/', (_req, res) => res.json({ name: 'Code & Agent Shop Gateway', version: '0.1.0' }));
 app.use((req, res) => res.status(404).json({ error: 'route_not_found', path: req.originalUrl }));

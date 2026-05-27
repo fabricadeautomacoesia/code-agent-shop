@@ -17284,7 +17284,38 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ aiops-svc /audit-log/actions + /db/dead-indexes (pass 64) - cache + drift detection
 - ✅ vault-svc /keys/rotation-due + /keys (pass 65) - Regra D+E + DLP + filters
 - ✅ order-svc GET / buyer listing (pass 66) - Regra E + filters + UX
-- ✅ product-svc /admin/qa-queue (pass 67 esta iter) - Regra D+E + LGPD + cache
+- ✅ product-svc /admin/qa-queue (pass 67) - Regra D+E + LGPD + cache
+- ✅ gateway middleware audit (pass 68 esta iter) - DLP logs + fail2ban
+
+W7 PASS 68 RESUMO:
+- gateway/src/server.js audit (3 bugs):
+  * BUG 1 *** DLP LOG LEAK *** req.originalUrl raw em logs Pino
+    - URLs com query params sensitive vazavam ELK/log sink:
+      * /api/auth/reset-password?token=abc123 (token plain)
+      * /api/auth/callback?code=oauth_xyz (OAuth code)
+      * /api/payments/asaas/webhook?sig=sha256 (webhook signature)
+    - FIX: logSafeUrl(url) helper strip query + mask.text() defensive
+    - Aplicado em 3 log sites: body_too_large + proxy.timeout + proxy.error
+    - + mask.text(err.message) p/ proxy errors (stack pode ter Bearer/JWT)
+  * BUG 2 *** /api/notifications SEM fail2ban ***
+    - /notifications/test endpoint = email spam vector (admin compromise)
+    - Rate-limit no svc OK MAS gateway defense em profundidade ausente
+    - FIX: fail2ban.middleware() adicionado upstream
+  * BUG 3 *** /api/aiops SEM fail2ban ***
+    - /audit-log + /db/dead-indexes + /alerts = admin-only DENTRO svc
+    - Atacante brute-forcing role check escala 100 req/s ANTES jwt rejeitar
+    - FIX: fail2ban.middleware() upstream gate
+- Pattern W7 em 68 endpoints + 23 regras (A-W) - 68 micro-iters
+- fail2ban cross-svc consolidado em 6 rotas gateway:
+  /api/auth + /api/sellers + /api/orders + /api/payments + /api/vault
+  + /api/notifications (pass 68) + /api/aiops (pass 68)
+- DLP cross-svc cobertura ampliada para gateway (logs sink layer)
+
+PROXIMA ITER:
+- W7 pass 69: product-svc /me CRUD audit
+- W7 pass 70: seller-svc /me + /products audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 67 RESUMO:
 - product-svc/src/routes/admin.js /qa-queue refactor (6 bugs):
