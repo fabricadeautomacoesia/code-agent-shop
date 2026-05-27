@@ -3336,3 +3336,43 @@ IMPACTO:
 GAP DETECTADO PROXIMA ITER:
 - Outros frontends (dashboard-admin, dashboard-seller) podem ter mesmo bug
 - Auditar todos os next.config.mjs com fallback 127.0.0.1
+
+## WORKER 7 pass 2 (DASHBOARDS) - mesmo bug /api/* 500 propagado
+
+VETOR DETECTADO (gap explicito documentado em W7 pass 1):
+Validar se dashboard-admin e dashboard-seller tinham o mesmo bug de fallback
+hardcoded 127.0.0.1:3002 no rewrite Next.js (storefront ja corrigido).
+
+AUDIT publica antes do fix:
+- https://admin.cas.inovareinteligenciaartificial.com/api/status -> 500
+- https://seller.cas.inovareinteligenciaartificial.com/api/status -> 500
+CONFIRMADO: bug presente em AMBOS dashboards.
+
+FIX (2 arquivos em paralelo):
+- apps/dashboard-admin/next.config.mjs: gateway:3002 fallback
+- apps/dashboard-seller/next.config.mjs: gateway:3002 fallback
+
+DEPLOY:
+- commit 0e669c9 pushed
+- Build paralelo: cas-admin:latest + cas-seller:latest (3s cada)
+- docker service update --force AMBOS converged em <5s
+- IMAGE NOTA: dashboards usam tag localhost/cas-admin:latest (nao cas/admin:latest)
+
+VALIDACAO PUBLICA (3 cenarios pos-fix):
+- admin.cas.*/api/status -> 200 + JSON gateway upstreams OK
+- seller.cas.*/api/status -> 200 + JSON gateway upstreams OK
+- admin.cas.*/api/products?limit=1 -> 200 + JSON produtos (proxy chain
+  admin storefront -> gateway -> product-svc OK)
+
+IMPACTO:
+- Painel admin (/admin/sellers, qa-queue, orders, payouts) volta a chamar
+  APIs corretamente - antes tudo retornava 500 silenciosamente
+- Painel seller (/products, /upload, /financeiro, /loja) idem
+- Bug presente desde deploy inicial em AMBOS dashboards (>= 8h)
+- Mais 1 caso onde "validacao publica" detecta bug invisivel em logs
+
+LICAO INFRA:
+3/3 apps Next.js tinham o mesmo bug (storefront + admin + seller).
+Padrao: hardcode 127.0.0.1 quebra em Swarm. Documentar no Blueprint V8
+secao "Next.js + Docker Swarm": SEMPRE usar service alias DNS como
+fallback, nunca localhost.
