@@ -102,6 +102,21 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## RELIABILITY HARDENING (WORKER 13 - NOTIFICATION OUTBOX)
+Audit em services/notification-svc/src/server.js revelou 2 bugs:
+
+BUG 1 (HIGH - double-send): SELECT sem lock + UPDATE separados, em replicas>=2
+  cada worker pegava o mesmo batch -> 2 emails por evento.
+
+BUG 2 (MEDIUM - sem backoff): 5 retries em 30s = 2.5min. SMTP transient 1min
+  queimava todas as tentativas, status='failed' antes do recovery.
+
+FIX commitado local (5be2f19):
+- Migration 013: ADD COLUMN next_retry_at + locked_by + locked_at + indice partial.
+- processOutbox usa UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED).
+- Backoff exponencial 30s/2min/10min/1h antes de marcar 'failed' permanente.
+- Reclaim cron a cada minuto libera locks orfaos > 5min (worker crashado).
+
 ## SECURITY HARDENING (WORKER 11 - PAYMENT-SVC WEBHOOK BYPASS CRITICO)
 Audit em services/payment-svc/src/server.js linha 176 revelou:
 - valid = !secret || sig === secret  -> fail-OPEN se secret nao configurado.
