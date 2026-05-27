@@ -65,17 +65,137 @@ function slugify(text) {
     .slice(0, 180);
 }
 
-// GET /products/me - lista produtos do seller
+// GET /products/me - lista produtos do seller (e admin com ?seller_id filter)
+// FIX-WORKER-7 pass 69: 7 BUGS aplicando Pattern W7.
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING *** ORDER BY created_at DESC nao determ
+//   2 products created_at identicos (bulk import seller) -> ordem indefinida.
+//   FIX: + p.id DESC tiebreaker.
+//
+// BUG 2 *** Regra E NO LIMIT *** response unbounded
+//   Seller heavy (500+ products) -> response 500 rows ~250KB transferred.
+//   FIX: ?limit (1-200, default 50) + ?offset.
+//
+// BUG 3 *** ?status FILTER MISSING ***
+//   Seller quer triar: ver só "qa_pending" (rascunhos), "rejected" (refazer),
+//   "approved" (publicados). Sem filter -> frontend filter post-fetch = waste.
+//   FIX: ?status enum whitelist (draft|qa_pending|qa_running|approved|rejected|archived).
+//
+// BUG 4 *** ?kind FILTER MISSING ***
+//   Seller multi-kind quer triar por tipo (ai_agent vs n8n_workflow).
+//   FIX: ?kind enum (matches draftSchema.kind).
+//
+// BUG 5 *** ADMIN BYPASS *** roles ['seller','admin'] mas JOIN sellers
+//   PRE-FIX: admin SEM entry em sellers -> JOIN retorna 0 rows.
+//   Endpoint inutil para admin investigar produtos cross-seller.
+//   Pattern admin bypass cross-svc estabelecido pass 36/56/67.
+//   FIX: isAdmin path com opcional ?seller_id filter (sem ownership).
+//
+// BUG 6 *** TOTAL + has_more UX ***
+//   Frontend "Carregar mais" nao sabe quando "no more".
+//   FIX: COUNT + has_more flag.
+//
+// BUG 7 *** Regra I price_cents currency missing ***
+//   PRE-FIX: response sem currency - frontend assume BRL hardcoded.
+//   FIX: + p.currency (consistencia multi-currency futuro).
+const SELLER_PRODUCT_STATUS = new Set([
+  'draft','qa_pending','qa_running','approved','rejected','archived','platform_owned'
+]);
+const SELLER_PRODUCT_KIND = new Set([
+  'automation','ai_agent','n8n_workflow','node_script','python_script',
+  'php_script','prompt_pack','template','dataset','other'
+]);
+const SELLER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 router.get('/', asyncHandler(async (req, res) => {
+  const isAdmin = req.user && req.user.role === 'admin';
+  const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+  // Status filter optional
+  const statusFilter = req.query.status ? String(req.query.status) : null;
+  if (statusFilter && !SELLER_PRODUCT_STATUS.has(statusFilter)) {
+    return res.status(400).json({ error: 'invalid_status', allowed: Array.from(SELLER_PRODUCT_STATUS) });
+  }
+  // Kind filter optional
+  const kindFilter = req.query.kind ? String(req.query.kind) : null;
+  if (kindFilter && !SELLER_PRODUCT_KIND.has(kindFilter)) {
+    return res.status(400).json({ error: 'invalid_kind', allowed: Array.from(SELLER_PRODUCT_KIND) });
+  }
+
+  // Build WHERE
+  const whereParts = ['p.deleted_at IS NULL'];
+  const params = [];
+  let i = 1;
+
+  if (isAdmin) {
+    // Admin path: opcional ?seller_id filter (sem ownership via JOIN sellers)
+    const sellerIdFilter = req.query.seller_id ? String(req.query.seller_id) : null;
+    if (sellerIdFilter) {
+      if (!SELLER_UUID_RE.test(sellerIdFilter)) {
+        return res.status(400).json({ error: 'invalid_seller_id' });
+      }
+      whereParts.push(`p.seller_id = $${i++}::UUID`);
+      params.push(sellerIdFilter);
+    }
+    // Sem seller_id: admin vê TODOS products (uso debug/investigacao)
+  } else {
+    // Seller path: ownership via JOIN sellers
+    whereParts.push(`s.user_id = $${i++}::UUID`);
+    params.push(req.user.sub);
+  }
+
+  if (statusFilter) {
+    whereParts.push(`p.status = $${i++}`);
+    params.push(statusFilter);
+  }
+  if (kindFilter) {
+    whereParts.push(`p.kind = $${i++}`);
+    params.push(kindFilter);
+  }
+
+  params.push(limit, offset);
+  const limIdx = i++;
+  const offIdx = i++;
+
+  const joinClause = isAdmin
+    ? 'LEFT JOIN sellers s ON s.id = p.seller_id'  // admin: LEFT JOIN (platform_owned products sem seller)
+    : 'JOIN sellers s ON s.id = p.seller_id';      // seller: INNER JOIN (ownership)
+
   const r = await query(
-    `SELECT p.id, p.slug, p.title, p.status, p.kind, p.price_cents, p.qa_verdict, p.qa_confidence_score,
-            p.sales_count, p.avg_rating, p.review_count, p.created_at, p.published_at
+    `SELECT p.id, p.slug, p.title, p.status, p.kind, p.price_cents, p.currency,
+            p.qa_verdict, p.qa_confidence_score,
+            p.sales_count, p.avg_rating, p.review_count,
+            p.created_at, p.published_at
        FROM products p
-       JOIN sellers s ON s.id = p.seller_id
-      WHERE s.user_id = $1 AND p.deleted_at IS NULL
-      ORDER BY p.created_at DESC`, [req.user.sub]
+       ${joinClause}
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT $${limIdx} OFFSET $${offIdx}`,
+    params
   );
-  res.json({ products: r.rows });
+
+  // Total count
+  const countParams = params.slice(0, -2);
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM products p ${joinClause} WHERE ${whereParts.join(' AND ')}`,
+    countParams
+  );
+  const total = totalRes.rows[0].total;
+
+  res.json({
+    products: r.rows,
+    total,
+    limit,
+    offset,
+    has_more: (offset + r.rows.length) < total,
+    filters: {
+      status: statusFilter,
+      kind: kindFilter,
+      seller_id: isAdmin && req.query.seller_id ? req.query.seller_id : null,
+    },
+    is_admin_view: isAdmin,
+  });
 }));
 
 // POST /products/me - cria draft

@@ -17285,7 +17285,34 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ vault-svc /keys/rotation-due + /keys (pass 65) - Regra D+E + DLP + filters
 - ✅ order-svc GET / buyer listing (pass 66) - Regra E + filters + UX
 - ✅ product-svc /admin/qa-queue (pass 67) - Regra D+E + LGPD + cache
-- ✅ gateway middleware audit (pass 68 esta iter) - DLP logs + fail2ban
+- ✅ gateway middleware audit (pass 68) - DLP logs + fail2ban
+- ✅ product-svc GET /products/me (pass 69 esta iter) - admin bypass + Regra D+E+I + filters
+
+W7 PASS 69 RESUMO:
+- product-svc/src/routes/seller-mgmt.js GET / refactor (7 bugs):
+  * Regra D: + p.id DESC tiebreaker (bulk import seller burst)
+  * Regra E: ?limit (1-200, default 50) + ?offset
+    - Antes UNBOUNDED - seller 500+ products = 250KB transferred
+  * NEW ?status filter enum whitelist (draft|qa_pending|qa_running|approved|
+    rejected|archived|platform_owned)
+  * NEW ?kind filter enum whitelist (matches draftSchema.kind enum)
+  * Admin bypass FIX:
+    - PRE: JOIN sellers + s.user_id=$1 -> admin sem entry sellers = 0 rows
+    - POS: isAdmin path com ?seller_id opcional + LEFT JOIN
+      (platform_owned products sem seller agora visiveis)
+    - Pattern admin bypass cross-svc estabelecido pass 36/56/67
+  * Regra I: + p.currency (consistencia multi-currency futuro)
+  * Total + has_more UX paginacao
+- Pattern W7 em 69 endpoints + 23 regras (A-W) - 69 micro-iters
+- Admin bypass pattern em 5 endpoints:
+  review-svc /qna/:id/answer (36) + /seller/received (56) + /qna/seller/pending (57)
+  product-svc /admin/qa-queue (67) + /products/me (69)
+
+PROXIMA ITER:
+- W7 pass 70: seller-svc /products audit (se houver endpoint similar)
+- W7 pass 71: order-svc /admin/financials audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 68 RESUMO:
 - gateway/src/server.js audit (3 bugs):
