@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup, cache } = require('@cas/shared');
 const asaas = require('./asaas');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
@@ -78,7 +78,24 @@ app.get('/payments/health', _healthHandler);
 //   1x  -> sem juros
 //   2-3x-> sem juros (parcela minima R$5)
 //   4-12x -> juros 2.99% a.m. (composto), parcela minima R$10
-app.get('/payments/installments/preview', asyncHandler(async (req, res) => {
+//
+// FIX-WORKER-18 pass 5: cache 600s (10min) por (amount_cents, max).
+// Endpoint deterministico - mesma amount sempre retorna mesmas parcelas.
+// /checkout chama isto a cada troca de payment_method (multi-toggles).
+// W18 pass 3 + pass 2: cache pattern ja estabelecido em product-svc + aiops.
+//
+// TTL longo (10min vs 60s outros): tabela de juros nao muda ao longo do dia.
+// monthlyRate=0.0299 constante. Se mudar, restart payment-svc invalida cache.
+//
+// Cache key: amount + max (parseado para int p/ canonicalizar "1000" vs "01000")
+// Sem auth = cache compartilhado entre todos users (mesmo amount = mesma resposta).
+app.get('/payments/installments/preview',
+  cache.cacheMiddleware((req) => {
+    const amount = parseInt(req.query.amount_cents, 10) || 0;
+    const max = Math.min(12, Math.max(1, parseInt(req.query.max || '12', 10)));
+    return `payments:installments:${amount}:${max}`;
+  }, 600),
+  asyncHandler(async (req, res) => {
   // FIX-WORKER-11: amount_cents agora valida explicitamente (antes silenciava
   // param invalido/ausente como amount=0 -> {installments:[]} confuso).
   // Tambem rejeita negativos e amounts absurdos para evitar DoS via huge loop.
