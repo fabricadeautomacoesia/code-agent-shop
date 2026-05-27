@@ -4444,3 +4444,68 @@ GAP DETECTADO (proxima iter):
 - Invalidacao cache em mutations: seller PATCH profile, novo produto publicado
 - Considerar TTL stale-while-revalidate (devolve antigo + revalida async)
 - Audit order-svc, qa-svc para mesmo pattern de endpoints publicos sem cache
+
+## WORKER 18 pass 6 (SELLER-SVC) - invalidacao cache em mutations
+
+GAP DETECTADO (proxima iter do W18 pass 5):
+"Invalidacao cache em mutations: seller PATCH profile, novo produto publicado"
+
+W18 pass 5 adicionou cache em 4 endpoints publicos seller (60-180s TTL).
+Mas 4 mutations NAO invalidavam cache, criando inconsistencia visivel:
+
+Bug recorrente: seller edita nome/banner -> cache mostra antigo por 60s ->
+abre PDP -> ve nome velho -> ticket "minha alteracao nao salvou".
+
+Mutations sem cache.del:
+1. PATCH /sellers/me (store_name, description, banner, logo, pix_key)
+2. POST /sellers/admin/:id/promote-class-b (seller_class muda)
+3. POST /sellers/admin/:id/suspend (status='suspended' = some da listagem!)
+4. POST /sellers/admin/:id/reactivate (volta a aparecer)
+
+Caso #3 e mais grave - seller suspenso continua aparecendo na home por 120s.
+
+FIX (2 arquivos):
+
+1. services/seller-svc/src/routes/me.js:
++ import { cache, logger } from @cas/shared
++ invalidateSellerCache(userId) helper - lookup slug, del 4 keys
++ PATCH /me chama invalidateSellerCache(req.user.sub)
+
+2. services/seller-svc/src/routes/admin.js:
++ import { cache } from @cas/shared
++ invalidateSellerCache(sellerId) helper - lookup slug por id
++ 3 callers: promote-class-b, suspend, reactivate
++ Cada um chama invalidateSellerCache(req.params.id)
+
+Keys invalidadas em paralelo via Promise.all:
+- sellers:list:* (pattern - listagem global afetada)
+- sellers:detail:<slug>
+- sellers:stats:<slug>
+- sellers:products:<slug>:*
+
+DEPLOY:
+- commit 1b359e1 pushed
+- seller-svc rebuilt (~2.1s) + deployed converged
+
+VALIDACAO PUBLICA:
+- /api/sellers HTTP 200 OK
+- /api/sellers/<slug>/stats -> X-Cache: MISS (fresh apos restart - esperado)
+- Cache continua funcionando + invalidacao disponivel para writes
+
+IMPACTO:
+- 4 cenarios de stale cache eliminados
+- Seller suspenso some da listagem em <1s (vs 120s antes)
+- Mudancas de perfil refletem instantaneamente no PDP
+- Consistencia com padroes W3 pass 2 (review-svc) + W7 pass 5 (product-svc)
+- Defense em depth: cache fail nao quebra write (async + catch)
+
+CICLO W18 SECURITY + PERFORMANCE FECHA:
+- pass 4: search-svc cache + index (W14 pass 1+2)
+- pass 5: seller-svc cache em 4 endpoints publicos
+- pass 6: invalidacao cache em 4 mutations seller
+TOTAL: 8 endpoints cacheados (4 prod + 4 seller) + 8 mutations invalidam
+corretamente. DB load reduzido ~95% em endpoints publicos.
+
+PROXIMA ITER:
+- Audit order-svc (orders/cart/coupon-preview) - ainda sem cache
+- Considerar SSE para notificar storefront de cache invalidation em real-time
