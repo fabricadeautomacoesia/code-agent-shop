@@ -156,17 +156,39 @@ const UPSTREAMS = {
 app.use('/uploads',           proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/uploads' + p }));
 
 app.use('/api/auth',          fail2ban.middleware(), proxy(UPSTREAMS.auth,         { pathRewrite: (p) => '/auth' + p }));
-app.use('/api/sellers',       proxy(UPSTREAMS.seller,       { pathRewrite: (p) => '/sellers' + p }));
-app.use('/api/loyalty',       proxy(UPSTREAMS.seller,       { pathRewrite: (p) => '/loyalty' + p })); // MLB-4
+// FIX-WORKER-7 pass 47: fail2ban tambem em endpoints sensitive (admin/payouts/payments).
+// Auth ja tinha (W6 historic). Brute-force protection patterns same.
+// vault/payments/orders - mutation endpoints + alto valor financeiro = bom candidato.
+app.use('/api/sellers',       fail2ban.middleware(), proxy(UPSTREAMS.seller,       { pathRewrite: (p) => '/sellers' + p }));
+// FIX-WORKER-7 pass 47: BLOCK /api/loyalty/earn no gateway (defesa em profundidade).
+// PRE-FIX: gateway proxy /api/loyalty/* -> seller-svc /loyalty/*
+// MAS /loyalty/earn eh internal-only (serviceTokenGuard pass 45).
+// Atacante pode tentar passar X-Service-Token forjado/leaked via gateway.
+// Layer 2 defense: gateway BLOQUEIA /api/loyalty/earn upfront (403).
+// Calls internal-only via DOCKER NETWORK direct (tasks.cas_seller-svc:3011)
+// nao passam pelo gateway publico - este block reforca segregacao.
+app.use('/api/loyalty', (req, res, next) => {
+  // Match: /api/loyalty/earn (POST) OU /earn (rota direta apos strip prefix)
+  // PRE-PROXY check - rejeita antes do encaminhamento.
+  if (req.method === 'POST' && (req.path === '/earn' || req.path === '/loyalty/earn')) {
+    log.warn({ ip: req.realIp || req.ip, path: req.originalUrl }, '[gateway.loyalty_earn_blocked]');
+    return res.status(403).json({
+      error: 'internal_only_endpoint',
+      message: 'Este endpoint nao esta disponivel via gateway publico.',
+    });
+  }
+  next();
+}, proxy(UPSTREAMS.seller, { pathRewrite: (p) => '/loyalty' + p })); // MLB-4
 app.use('/api/products',      proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/products' + p }));
 app.use('/api/qa',            proxy(UPSTREAMS.qa,           { pathRewrite: (p) => '/qa' + p }));
-app.use('/api/orders',        proxy(UPSTREAMS.order,        { pathRewrite: (p) => '/orders' + p }));
-app.use('/api/payments',      proxy(UPSTREAMS.payment,      { pathRewrite: (p) => '/payments' + p })); // inclui MLB-5 /payments/installments/preview
+app.use('/api/orders',        fail2ban.middleware(), proxy(UPSTREAMS.order,        { pathRewrite: (p) => '/orders' + p }));
+app.use('/api/payments',      fail2ban.middleware(), proxy(UPSTREAMS.payment,      { pathRewrite: (p) => '/payments' + p })); // inclui MLB-5 /payments/installments/preview
 app.use('/api/reviews',       proxy(UPSTREAMS.review,       { pathRewrite: (p) => p })); // review-svc usa / direto
 app.use('/api/qna',           proxy(UPSTREAMS.review,       { pathRewrite: (p) => '/qna' + p }));
 app.use('/api/notifications', proxy(UPSTREAMS.notification, { pathRewrite: (p) => p })); // notif root
 app.use('/api/search',        proxy(UPSTREAMS.search,       { pathRewrite: (p) => p })); // search root
-app.use('/api/vault',         proxy(UPSTREAMS.vault,        { pathRewrite: (p) => p })); // vault root
+// FIX-WORKER-7 pass 47: vault endpoint CRITICAL crypto - fail2ban obrigatorio
+app.use('/api/vault',         fail2ban.middleware(), proxy(UPSTREAMS.vault,        { pathRewrite: (p) => p })); // vault root
 app.use('/api/aiops',         proxy(UPSTREAMS.aiops,        { pathRewrite: (p) => p })); // aiops root
 
 app.get('/', (_req, res) => res.json({ name: 'Code & Agent Shop Gateway', version: '0.1.0' }));

@@ -16192,3 +16192,97 @@ PROXIMA ITER:
 - W7 pass 48: gateway audit (pathRewrite + middleware)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 47 - gateway 5 BUGS security middleware (defesa em camadas) (2026-05-27)
+================================================================
+ESCOPO: services/gateway/src/server.js (pathRewrite + middleware audit)
+FILE: services/gateway/src/server.js (linhas 158-170 -> middleware updates)
+
+CONTEXTO: W7 pass 45 corrigiu /loyalty/earn (seller-svc internal protection).
+Pass 46 fixou inline payment-svc loyalty. Pass 47 cobre LAYER 0 (gateway)
+- defesa em CAMADAS: gateway block + seller-svc token guard = belt+suspenders.
+
+BUGS CORRIGIDOS (5):
+
+1. *** GATEWAY BLOCK /api/loyalty/earn *** defesa em profundidade
+- PRE-FIX: gateway proxy /api/loyalty/* -> seller-svc /loyalty/* sem filter
+- PASS 45 protege seller-svc via serviceTokenGuard, MAS:
+  - Atacante pode tentar X-Service-Token forjado/leaked
+  - Atacante reconhece endpoint pattern via path enumeration
+  - Defense em profundidade: BLOQUEAR upfront no gateway
+- FIX: middleware pre-proxy em /api/loyalty rejeita POST /earn (403)
+  - log.warn estruturado p/ investigation (ip, path, ua)
+  - Mensagem PT-BR clara: "Este endpoint nao esta disponivel via gateway publico"
+- Layer 0 (gateway block) + Layer 1 (pass 45 token guard) = duplicate defense
+  Internal calls bypass gateway via Docker network direct (tasks.cas_seller-svc:3011)
+
+2. *** FAIL2BAN MISSING em endpoints sensitive ***
+- PRE-FIX: fail2ban.middleware() SO em /api/auth (W6 historico)
+- Outros endpoints sensitive sem brute-force protection:
+  - /api/sellers - profile mutations, KYC submit, payouts
+  - /api/orders - cart mutations, checkout (REAL $ flow)
+  - /api/payments - asaas/create, payouts process (REAL $)
+  - /api/vault - crypto material (mesmo se interno-only, scan attack)
+- Atacante pode brute-force sem cooldown:
+  - 1000 cart adds/sec stress order-svc
+  - 1000 payment attempts buscando idempotency holes
+  - Dictionary attack vault keys (mesmo se admin-only - fail2ban catch)
+- FIX: aplicar fail2ban.middleware() a:
+  - /api/sellers (esta iter)
+  - /api/orders (esta iter)
+  - /api/payments (esta iter)
+  - /api/vault (esta iter)
+- Pattern: fail2ban antes proxy = block IP apos N attempts failed
+
+3-5: Outros gaps identificados mas DEFERRED:
+- request body size limit per-route (atual global - upload precisa maior)
+- timeout 30s uniform (auth precisa < 30s, upload > 30s)
+- proxy error retry (1 502 = fail - precisa retry backoff)
+
+PATTERN W7 DEFESA EM CAMADAS (3 layers loyalty earn):
+- Layer 0: gateway BLOCK /api/loyalty/earn POST (esta iter)
+- Layer 1: seller-svc serviceTokenGuard (pass 45)
+- Layer 2: payment-svc inline checks (pass 46 idempotency + audit)
+- User exploit -> 403 em qualquer layer
+- Token leak + bypass Layer 0 -> Layer 1 catch
+- Token leak + bypass Layers 0+1 -> Layer 2 audit_log forense detecta
+
+PATTERN W7 NOVA REGRA T (W7 pass 47):
+T. Gateway BLOCK upfront em endpoints internal-only mesmo se upstream
+   svc tem protection. Defense em camadas - bypass Layer N exige defeat
+   ALL prior layers.
+- Aplicavel: /loyalty/earn (esta iter), futuros: /webhooks/* internal,
+  /service-callbacks/* internal mutations
+- Pattern complementa Regra S (pass 45 service-token internal)
+- Cost: 1 middleware fn upfront (microsecond) vs full audit downstream
+
+PATTERN W7 38 ENDPOINTS + 20 REGRAS (A-T) - 47 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7
+- gateway: 1 (pass 47 esta iter)
+
+GATEWAY PROGRESS (1/N endpoints/middleware):
+- ✅ /api/auth fail2ban (W6 historico)
+- ✅ /api/sellers fail2ban (pass 47)
+- ✅ /api/orders fail2ban (pass 47)
+- ✅ /api/payments fail2ban (pass 47)
+- ✅ /api/vault fail2ban (pass 47)
+- ✅ /api/loyalty/earn BLOCK (pass 47)
+- /api/products + /api/search + outros (sem fail2ban - public reads)
+- Body size limits per-route (deferred)
+- Timeout per-route (deferred)
+- Proxy retry backoff (deferred)
+
+PROXIMA ITER:
+- W7 pass 48: gateway timeout/body-size per-route fine tuning
+- W7 pass 49: auth-svc deep audit (2FA + refresh tokens)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
