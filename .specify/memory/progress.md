@@ -17011,3 +17011,112 @@ PROXIMA ITER:
 - W7 pass 56: read-only audit endpoints (Regra I cross-svc)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 55 - auth-svc 2FA /setup + /recovery 5 BUGS (bypass + audit) (2026-05-27)
+================================================================
+ESCOPO: auth-svc 2FA enrollment endpoints (/setup, /recovery)
+FILE: services/auth-svc/src/routes/two-factor.js (linhas 95-183 -> rewrite)
+
+CONTEXTO: W7 pass 54 cobriu /activate + /disable (3 bugs criticos critical
+sessions revoke). Pass 55 fecha 2FA suite com /setup + /recovery.
+
+BUGS CORRIGIDOS (5):
+
+/setup (2 bugs):
+
+1. *** BYPASS 2FA VIA SETUP *** ON CONFLICT UPDATE sobrescreve enabled
+- PRE-FIX: ON CONFLICT (user_id) DO UPDATE SET ... is_enabled=FALSE
+- Se user JA TEM 2FA enabled, /setup silenciosamente:
+  a. Sobrescreve secret_encrypted (novo secret randomico)
+  b. SET is_enabled=FALSE -> DESATIVA 2FA
+- ATAQUE PARALELO A pass 54 /disable bug:
+  T0: Atacante phisha password user (user com 2FA ativo nao consegue login so)
+  T1: Atacante POST /2fa/setup -> 2FA desabilitado silenciosamente
+  T2: Atacante /login com so password -> sucesso (2FA off)
+  T3: Pos-pass-54 fix em /disable + pass 55 fix em /setup =
+      DUAS ROTAS BYPASS fechadas
+- FIX: SELECT is_enabled ANTES INSERT/UPDATE - se enabled -> 409 'already_enabled'
+- Mensagem PT-BR: "Use /2fa/disable primeiro (exige senha + token atual)"
+
+2. *** AUDIT_LOG MISSING *** setup 2FA = sec event
+- Setup = atacante interno preparing bypass OR user re-config legitimate
+- FIX: tx() atomic INSERT + INSERT audit_log severity info
+- Payload: ip + ua_prefix + re_setup boolean (1a vez vs re-config)
+
+/recovery (3 bugs):
+
+1. *** authenticator.check sem window *** (mesmo bug /login + /activate + /disable)
+- FIX: { window: 1 } - consistencia cross-endpoint 2FA
+
+2. *** AUDIT_LOG missing *** recovery codes regen = sec event critical
+- Atacante pode regen codes -> printar fisicamente -> usar offline depois
+- FIX: INSERT audit_log severity warn no MESMO tx
+
+3. *** NOTIFICATION user MISSING *** UX cross-device sync
+- Pattern industry GitHub/AWS: recovery codes regen = email/notif user
+- Anti-account-takeover detection: user em outro device ve "codigos regen"
+  + sabe que houve atividade nao autorizada
+- FIX: INSERT notification priority 2 ('2fa_recovery_regen')
+
+PATTERN W7 2FA DEFESA EM PROFUNDIDADE COMPLETA (5 endpoints + 5 layers):
+
+5 endpoints 2FA auditados pass 49+54+55:
+- /login 2FA path (pass 49)
+- /activate (pass 54)
+- /disable (pass 54)
+- /setup (pass 55 esta iter)
+- /recovery (pass 55 esta iter)
+- /status read-only (deferred - pre-existing audit clean)
+
+5 layers defesa em profundidade:
+- L1: HMAC TOTP authenticator.check window=1 (consistencia TODOS endpoints)
+- L2: Anti-replay sha256 hash 60s (pass 49 /login)
+- L3: fail2ban report failure (pass 49 todos paths fail)
+- L4: Audit log severity critical/warn (passes 49+54+55 TODOS endpoints)
+- L5: Session revocation pos-mutation (pass 54 /disable revoga ALL)
+
+2 ROTAS BYPASS DE 2FA FECHADAS:
+- /disable bug pass 54: sessions nao revogadas (fechou - revoke ALL pos-disable)
+- /setup bug pass 55: re-setup desabilita silenciosamente (fechou - 409 already_enabled)
+
+PATTERN W7 NOVA REGRA W (W7 pass 55 - declarado em audit pass 49 mas formalizado aqui):
+W. RFC 6238 §5.2 anti-replay TOTP + window=1 consistency cross-endpoint.
+   - Anti-replay sha256 hash 60s window
+   - authenticator.check { window: 1 } TODOS endpoints (login/activate/disable/recovery)
+   - audit_log severity em events sec critical
+   - Session revocation pos-mutation 2FA
+
+PATTERN W7 49 ENDPOINTS + 23 REGRAS (A-W) - 55 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7
+- gateway: 2
+- auth-svc: 9 (login, forgot, reset, register, refresh, logout,
+              /2fa/activate, /2fa/disable, /2fa/setup, /2fa/recovery)
++ refactor @cas/shared.htmlEscape (pass 52)
+
+AUTH-SVC PROGRESS 100% mutation paths:
+- ✅ POST /login 2FA (pass 49)
+- ✅ POST /forgot-password (pass 50)
+- ✅ POST /reset-password (pass 50)
+- ✅ POST /register (pass 51)
+- ✅ POST /refresh (pass 53)
+- ✅ POST /logout (pass 54 audit clean - W6 pass 3)
+- ✅ POST /2fa/activate (pass 54)
+- ✅ POST /2fa/disable (pass 54)
+- ✅ POST /2fa/setup (pass 55 esta iter)
+- ✅ POST /2fa/recovery (pass 55 esta iter)
+- GET /2fa/status (read-only - deferred low priority)
+
+PROXIMA ITER:
+- W7 pass 56: read-only audit endpoints (Regra I explicit massive)
+- W7 pass 57: review-svc /seller/received audit (cross-seller queries)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod

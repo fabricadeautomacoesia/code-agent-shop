@@ -93,21 +93,65 @@ router.get('/status', totpStatusLimiter, asyncHandler(async (req, res) => {
 }));
 
 // POST /auth/2fa/setup -> retorna QR + secret temporario
-router.post('/setup', totpSetupLimiter, asyncHandler(async (req, res) => {
+// FIX-WORKER-7 pass 55: 2 BUGS - bypass 2FA via setup + audit missing.
+//
+// BUG 1 *** BYPASS 2FA VIA SETUP *** ON CONFLICT UPDATE sobrescreve enabled
+//   PRE-FIX: ON CONFLICT (user_id) DO UPDATE SET ... is_enabled=FALSE
+//   Se user JA TEM 2FA enabled, /setup silenciosamente:
+//     a. Sobrescreve secret_encrypted (novo secret)
+//     b. SET is_enabled = FALSE (DESATIVA 2FA!)
+//   ATAQUE:
+//     T0: User com 2FA ativo + password phishada (atacante tem cookie session)
+//     T1: Atacante POST /2fa/setup -> 2FA disabled silenciosamente
+//     T2: Atacante /login so password -> sucesso (2FA off)
+//     T3: BYPASS 2FA via setup endpoint (mesmo objetivo pass 54 /disable bug
+//         mas via outra rota - paralelo defesa)
+//   FIX: rejeitar /setup se ja enabled - usuario deve /disable primeiro
+//   (exige password + TOTP - prova posse)
+//
+// BUG 2 *** AUDIT_LOG missing *** setup 2FA = security event
+//   Setup = atacante interno preparing bypass OR user legitimate re-config
+//   FIX: INSERT audit_log severity warn
+router.post('/setup', totpSetupLimiter, asyncHandler(async (req, res, next) => {
+  // BUG 1 FIX: check status atual ANTES INSERT/UPDATE
+  const cur = await query(
+    'SELECT is_enabled FROM user_two_factor WHERE user_id = $1',
+    [req.user.sub]
+  );
+  if (cur.rows.length && cur.rows[0].is_enabled) {
+    return res.status(409).json({
+      error: 'already_enabled',
+      message: '2FA ja esta ativo. Use /2fa/disable primeiro (exige senha + token atual).',
+    });
+  }
+
   const secret = authenticator.generateSecret();
   const { encrypted, iv, tag } = cryp.encrypt(secret);
-  // FIX SEG-2FA: tag GCM (16 bytes) eh obrigatorio para validar integridade do segredo TOTP
-  await query(
-    `INSERT INTO user_two_factor (user_id, secret_encrypted, secret_iv, secret_tag, is_enabled)
-     VALUES ($1, $2, $3, $4, FALSE)
-     ON CONFLICT (user_id) DO UPDATE SET
-       secret_encrypted = EXCLUDED.secret_encrypted,
-       secret_iv = EXCLUDED.secret_iv,
-       secret_tag = EXCLUDED.secret_tag,
-       is_enabled = FALSE,
-       updated_at = NOW()`,
-    [req.user.sub, encrypted, iv, tag]
-  );
+
+  await tx(async (c) => {
+    await c.query(
+      `INSERT INTO user_two_factor (user_id, secret_encrypted, secret_iv, secret_tag, is_enabled)
+       VALUES ($1, $2, $3, $4, FALSE)
+       ON CONFLICT (user_id) DO UPDATE SET
+         secret_encrypted = EXCLUDED.secret_encrypted,
+         secret_iv = EXCLUDED.secret_iv,
+         secret_tag = EXCLUDED.secret_tag,
+         is_enabled = FALSE,
+         updated_at = NOW()`,
+      [req.user.sub, encrypted, iv, tag]
+    );
+    // BUG 2 FIX: audit_log atomic
+    await c.query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, 'user', '2fa.setup', 'user', $1, 'info', $2::JSONB)`,
+      [req.user.sub, JSON.stringify({
+        ip: req.ip,
+        ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+        re_setup: cur.rows.length > 0,  // primeira vez OR re-config pos-disable
+      })]
+    );
+  });
+
   const otpauth = authenticator.keyuri(req.user.email, process.env.TOTP_ISSUER || 'CodeAgentShop', secret);
   const qr = await QRCode.toDataURL(otpauth);
   res.json({ qr_data_url: qr, otpauth, manual_code: secret });
@@ -156,6 +200,19 @@ router.post('/activate',
 // Exige senha + token TOTP atual (mesmo nivel de seguranca de /disable).
 // Substitui os 10 codigos antigos (que podem ter sido perdidos/usados).
 // V8 4.2: alto risco -> mesmo gate de seguranca que disable.
+// POST /auth/2fa/recovery - regenera codigos recovery
+// FIX-WORKER-7 pass 55: 3 BUGS aplicando Pattern W7.
+//
+// BUG 1 *** authenticator.check sem window *** (consistencia /login + /activate + /disable)
+//   FIX: { window: 1 } = ±1 step 90s tolerance
+//
+// BUG 2 *** AUDIT_LOG missing *** sec event critical (recovery codes regen)
+//   FIX: INSERT audit_log severity warn (account takeover signal)
+//
+// BUG 3 *** Notification user MISSING *** UX cross-device sync
+//   Se atacante regen recovery codes, user com sessao ativa em outro device
+//   precisa ser notified (anti-account-takeover detection)
+//   FIX: INSERT notification priority 2
 router.post('/recovery',
   totpVerifyLimiter,
   validate({ body: z.object({ password: z.string(), token: z.string().length(6) }) }),
@@ -170,14 +227,37 @@ router.post('/recovery',
     );
     if (!r.rows.length || !r.rows[0].secret_tag) return next(errorHandler.notFound('2fa_not_enabled'));
     const secret = cryp.decrypt({ encrypted: r.rows[0].secret_encrypted, iv: r.rows[0].secret_iv, tag: r.rows[0].secret_tag });
-    if (!authenticator.check(req.body.token, secret)) return next(errorHandler.unauthorized('invalid_token'));
+    // BUG 1 FIX: window=1 (consistencia)
+    if (!authenticator.check(req.body.token, secret, { window: 1 })) {
+      return next(errorHandler.unauthorized('invalid_token'));
+    }
 
     const recovery = Array.from({ length: 10 }, () => crypto.randomBytes(5).toString('hex'));
     const hashed = await Promise.all(recovery.map((c) => bcrypt.hash(c, 10)));
-    await query(
-      `UPDATE user_two_factor SET recovery_codes_hash = $1::JSONB, updated_at = NOW() WHERE user_id = $2`,
-      [JSON.stringify(hashed), req.user.sub]
-    );
+    // BUG 2+3 FIX: tx() atomic UPDATE + audit + notification
+    await tx(async (c) => {
+      await c.query(
+        `UPDATE user_two_factor SET recovery_codes_hash = $1::JSONB, updated_at = NOW() WHERE user_id = $2`,
+        [JSON.stringify(hashed), req.user.sub]
+      );
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'user', '2fa.recovery_regenerated', 'user', $1, 'warn', $2::JSONB)`,
+        [req.user.sub, JSON.stringify({
+          ip: req.ip,
+          ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+          codes_count: 10,
+        })]
+      );
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
+         VALUES ($1, 'in_app', '2fa_recovery_regen',
+                 'Codigos de recuperacao 2FA regenerados',
+                 'Os codigos de recuperacao 2FA da sua conta foram regenerados. Se nao foi voce, troque sua senha imediatamente.',
+                 2)`,
+        [req.user.sub]
+      );
+    });
     res.json({ recovery_codes: recovery, warn: 'Codigos antigos invalidados. Guarde os novos com seguranca.' });
   })
 );
