@@ -102,6 +102,37 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## NOTIF MUSTACHE RENDER - WORKER 13 (FIX EMAILS QUEBRADOS)
+Audit revelou bug grave em production: 12 templates registrados em
+notification_templates usam {{name}}, {{order_number}}, {{product_title}}, etc.
+notification-svc.processOutbox lia n.title e n.body direto do row e enviava
+ao SMTP/Telegram SEM substituir placeholders.
+
+USUARIO RECEBIA EMAIL COM:
+'Ola {{name}}, seu pedido #{{order_number}} foi confirmado em {{store_name}}.'
+ao inves de:
+'Ola Joao, seu pedido #CAS-001 foi confirmado em Vendedor Demo Um.'
+
+UX horrivel + spam-filter trigger por subject com sintaxe estranha.
+
+FIX commitado + deployed (b85b869):
+- Novo helper renderMustache(template, ctx) em notification-svc/server.js.
+- Suporta {{var}} simples + {{nested.path}} (dot notation).
+- Var ausente vira '' (nao 'undefined' literal).
+- processOutbox antes de send: detecta '{{', popula ctx com payload + user vars,
+  renderiza title/body/body_html. Sem placeholder = pass-through (backward compat).
+- Defense: title vazio vira '(sem assunto - revise template)' anti-spam.
+
+VALIDADO E2E pos-deploy:
+- Test 1: 'Ola {{name}}, pedido #{{order_number}}' + {name:Joao, order:CAS-001}
+  -> 'Ola Joao, pedido #CAS-001'
+- Test 2: var ausente -> string vazia
+- Test 3: nested {{user.email}} -> dot lookup OK
+- Test 4: sem placeholders -> pass-through
+- Test 5: numero {{n}}=42 -> 'Numero: 42' (string casted)
+
+12 templates antigos passam a funcionar corretamente sem mudancas neles.
+
 ## TRUST SIGNALS PDP - WORKER 16 MLB NEW
 Mercado Livre exibe 'Devolucao gratuita 30 dias' + 'Mercado Pago seguro' em
 todo PDP. Equivalente CAS para digital products via 4 trust signals com defaults.
