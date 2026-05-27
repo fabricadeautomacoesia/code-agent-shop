@@ -102,6 +102,32 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## DLP MASS PROPAGATION + WORKER 6 AUTH SMOKE
+Apos WORKER 7 atualizar packages/shared/error-handler.js, mass rebuild dos 11
+svcs restantes para propagar o fix de DLP no errorMiddleware:
+
+REBUILT + CONVERGED em 1 iteracao paralela (max 3 simultaneos):
+- gateway, auth-svc, seller-svc, order-svc, qa-svc, review-svc, search-svc, aiops-svc
+
+REBUILT mas sem service no Swarm (imagens prontas para deploy futuro):
+- analytics-svc, image-svc, category-svc
+
+TOTAL svcs com DLP fix ativo agora: 12/12 com service Swarm
+(product-svc + 11 deste batch + auth/vault/payment/notification que ja foram
+rebuilt nas iteracoes anteriores - todos pegaram o shared atualizado).
+
+WORKER 6 AUTH SMOKE E2E pos-rebuild:
+- POST /auth/register email duplicado -> 409 email_already_in_use OK
+- POST /auth/register full_name<2 chars -> 400 validation_error (Zod details) OK
+- POST /auth/register novo + POST /auth/login -> 200 com JWT OK
+- GET /auth/me sem token -> 401 missing_token OK
+- POST /auth/refresh sem cookie -> 401 missing_refresh OK
+- POST /auth/forgot-password email inexistente -> 200 generico (sem enumeration) OK
+- POST /auth/reset-password token fake -> 400 invalid_or_expired_token OK
+- POST /auth/login senha errada -> 401 invalid_credentials generico (sem distinguir email vs senha) OK
+
+Auth-svc considerado HEALTHY pos-audit completo.
+
 ## SECURITY+DLP HARDENING (WORKER 7 - PRODUCT-SVC + SHARED)
 Audit via curl: POST /products/wishlist com UUID inexistente devolvia HTTP 500
 com mensagem PG crua: 'insert or update on table product_wishlist violates
