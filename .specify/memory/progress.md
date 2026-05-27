@@ -9115,3 +9115,76 @@ PROXIMA ITER:
 - W11 pass 8: POST /payments/webhooks/:id/reset (admin UI button sem psql)
 - W4 pass 9: /admin/vault UI consume idx_vault_usage_failures
 - W17 pass 12: rotacao automatica vault keys
+
+## WORKER 3 PASS 11 - CompareButton 5 bugs a11y/UX + smart "limite" CTA
+
+AUDIT components/compare-button.tsx (MLB-NEW comparador):
+
+BUG 1 (a11y aria-pressed ausente):
+- Toggle sem aria-pressed (pattern ja em W3 6, 9)
+FIX: aria-pressed={selected} em ambos variants
+
+BUG 2 (a11y icons):
+- GitCompare, Check, ArrowRight sem aria-hidden
+FIX: aria-hidden="true" em 4 icons
+
+BUG 3 (UX dead-end "limite atingido"):
+  ANTES: <button disabled>Limite de 4 atingido</button>
+- Botao morto sem feedback nem proximo passo
+- User frustrado nao sabe se cancela selecao ou abre comparacao
+FIX: Quando full && variant='pdp', renderiza Link:
+  <Link href={`/comparar?ids=${selectedIds.join(',')}`}>
+- Visual amarelo (warning, nao disabled)
+- Texto "Limite de 4 atingido - Ver comparacao" + ArrowRight
+- User clica -> vai direto p/ pagina comparacao com selecionados
+- Resolve dead-end naturalmente (deep link inteligente)
+
+BUG 4 (title em PDP ausente):
+- Card tinha title, PDP nao
+FIX: title={titleText} em ambos variants
+- titleText derivado uma vez (DRY)
+
+BUG 5 (focus-visible ausente):
+- Pattern W3 6, 7, 9 estabeleceu focus-visible
+FIX: focus-visible:outline-2 outline-magenta (yellow no Link warning)
+
+BONUS:
+- disabled={full} card variant (era so cursor visual)
+- aria-pressed tambem no card (era so aria-label)
+
+DEPLOY:
+- commit b583ce6 push main OK
+- 50 insertions, 13 deletions
+- storefront rebuild via VPS cron
+
+W3 PDP AUDIT PROGRESS (passes 1-11):
+- pass 1: AddToCart funcional + friendly errors
+- pass 2: breadcrumb slash orfao
+- pass 3: QnaForm 6 bugs UX
+- pass 4: ReviewForm 8 bugs UX + a11y
+- pass 5: ProductTabs WAI-ARIA
+- pass 6: WishlistButton 5 bugs (toggle pattern)
+- pass 7: AskQuickButton modal WCAG 2.1
+- pass 8: comparar errors granulares (W7-6)
+- pass 9: PriceAlertButton 5 bugs (toggle pattern)
+- pass 10: DRY friendly-errors.ts
+- pass 11: CompareButton 5 bugs + smart CTA (esta iter)
+
+PADRAO TOGGLE BUTTONS CONSOLIDADO (4 components):
+- WishlistButton (heart): pass 6
+- AskQuickButton (modal): pass 7
+- PriceAlertButton (bell): pass 9
+- CompareButton (comparar): pass 11 (esta iter)
+
+TODOS com pattern unificado:
+- aria-pressed (toggle state)
+- aria-hidden (icons decorativos)
+- focus-visible:outline-2 outline-magenta
+- title attribute (desktop tooltip)
+- friendly aria-label dinamico
+- optimistic ou smart-CTA conforme caso
+
+PROXIMA ITER:
+- W3 pass 12: AddToCart enhancement ("+N produtos no carrinho")
+- W3 pass 13: official-badge.tsx audit (selo OFICIAL MAIS VENDIDO)
+- W8: visual polish entre compare/wishlist/price-alert (consistencia size)
