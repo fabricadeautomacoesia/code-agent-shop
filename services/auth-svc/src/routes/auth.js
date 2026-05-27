@@ -245,14 +245,37 @@ router.post('/refresh', asyncHandler(async (req, res, next) => {
 }));
 
 // POST /auth/logout
+// FIX-WORKER-6 pass 3: 3 melhorias UX + security:
+// 1. Antes: 200 OK sem cookie -> resposta enganosa (parece logout, mas nada feito)
+//    Agora: 200 com `was_logged_in: false` se nao havia sessao (UX claro)
+// 2. Antes: UPDATE silencioso se cookie nao matchea (revoked row count nao reportado)
+//    Agora: RETURNING id + verifica se realmente revogou
+// 3. Audit log: registra logout no audit_log p/ forensics (era so DB update)
 router.post('/logout', asyncHandler(async (req, res) => {
   const rt = req.cookies?.[REFRESH_COOKIE];
-  if (rt) {
-    await query('UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(), revoked_reason = $1 WHERE refresh_token_hash = $2',
-      ['logout', jwt.hashToken(rt)]);
-  }
+  // FIX-WORKER-6 pass 3: clearCookie sempre (idempotente, defesa em profundidade)
   res.clearCookie(REFRESH_COOKIE, { path: '/' });
-  res.json({ ok: true });
+  if (!rt) {
+    return res.json({ ok: true, was_logged_in: false, message: 'Nenhuma sessao ativa' });
+  }
+  const r = await query(
+    `UPDATE user_sessions
+        SET is_revoked = TRUE, revoked_at = NOW(), revoked_reason = $1
+      WHERE refresh_token_hash = $2 AND is_revoked = FALSE
+      RETURNING id, user_id`,
+    ['logout', jwt.hashToken(rt)]
+  );
+  if (!r.rows.length) {
+    // Cookie presente mas nao matchea sessao ativa (token invalid, ja revoked, ou forgery)
+    return res.json({ ok: true, was_logged_in: false, message: 'Sessao nao encontrada ou ja revogada' });
+  }
+  // FIX-WORKER-6 pass 3: audit log
+  await query(
+    `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+     VALUES ($1, 'user', 'auth.logout', 'user_session', $2, 'info', $3::JSONB)`,
+    [r.rows[0].user_id, r.rows[0].id, JSON.stringify({ ip: req.ip, ua: req.headers['user-agent']?.slice(0, 200) })]
+  ).catch((e) => log.warn({ err: e.message }, '[logout.audit.fail]'));
+  res.json({ ok: true, was_logged_in: true });
 }));
 
 // POST /auth/forgot-password
