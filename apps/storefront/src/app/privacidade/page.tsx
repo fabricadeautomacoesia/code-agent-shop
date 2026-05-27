@@ -21,13 +21,16 @@ export const metadata = {
 
 export default function PrivacidadePage() {
   return (
+    // FIX-WORKER-8 pass 2: consistencia visual com /termos (prose prose-invert) e /sobre (glass card).
+    // Antes: text direto no fundo da home sem hierarchical separation - looked cheap.
+    // Agora: glass panel wrapper + prose plugin para tipografia melhor (margins/spacing automaticos).
     <div className="container mx-auto px-6 py-8 max-w-3xl">
-      <Link href="/" className="text-sm text-white/60 hover:text-white">&larr; Voltar</Link>
+      <Link href="/" className="text-sm text-white/60 hover:text-white not-prose">&larr; Voltar</Link>
 
       <h1 className="font-display font-bold text-4xl mt-4 mb-2">Politica de Privacidade</h1>
-      <p className="text-white/50 text-sm mb-8">Em conformidade com LGPD (Lei 13.709/2018) - 26/05/2026</p>
+      <p className="text-white/50 text-sm mb-6">Em conformidade com LGPD (Lei 13.709/2018) - 26/05/2026</p>
 
-      <div className="space-y-6 text-white/80">
+      <div className="glass p-6 md:p-8 prose prose-invert max-w-none space-y-6 text-white/80">
         <section>
           <h2 className="font-display font-bold text-2xl text-white">1. Dados que coletamos</h2>
           <ul className="list-disc pl-6 space-y-1">

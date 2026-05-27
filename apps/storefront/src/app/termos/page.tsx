@@ -21,13 +21,14 @@ export const metadata = {
 
 export default function TermosPage() {
   return (
-    <div className="container mx-auto px-6 py-8 max-w-3xl prose prose-invert">
+    // FIX-WORKER-8 pass 2: consistencia com /privacidade (mesma fix): glass panel + prose
+    <div className="container mx-auto px-6 py-8 max-w-3xl">
       <Link href="/" className="text-sm text-white/60 hover:text-white not-prose">&larr; Voltar</Link>
 
       <h1 className="font-display font-bold text-4xl mt-4 mb-2">Termos de Uso</h1>
-      <p className="text-white/50 text-sm mb-8">Ultima atualizacao: 26 de maio de 2026</p>
+      <p className="text-white/50 text-sm mb-6">Ultima atualizacao: 26 de maio de 2026</p>
 
-      <div className="space-y-6 text-white/80">
+      <div className="glass p-6 md:p-8 prose prose-invert max-w-none space-y-6 text-white/80">
         <section>
           <h2 className="font-display font-bold text-2xl text-white">1. Aceitacao</h2>
           <p>Ao usar a Code & Agent Shop (CAS), voce concorda com estes Termos. Se nao concordar, nao use os servicos.</p>
