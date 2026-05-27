@@ -515,17 +515,40 @@ app.get('/trending',
 //    FIX: tiebreaker name ASC + id (sempre unique).
 // 4. SELECT c.* expoe colunas internas (updated_at, meta_keywords, etc).
 //    Pattern security: lista explicita de campos consumidos pelo frontend.
+// GET /search/categories - mega menu storefront
+// FIX-WORKER-7 pass 94: 2 BUGS aplicando Pattern W7 (product_count + parent_id NULL filter).
+//
+// BUG 1 *** product_count MISSING ***
+//   PRE-FIX: response sem count produtos por categoria.
+//   Frontend MLB-style precisa "Agentes IA (147)" no mega menu - tem que fazer
+//   N+1 fetch (/facets per category) = wasteful.
+//   FIX: subquery LATERAL count + cache 900s ja existente cobre.
+//
+// BUG 2 *** parent_id NULL FILTER REDUNDANTE no children subquery ***
+//   PRE-FIX: subquery children sem AND c2.parent_id IS NOT NULL.
+//   Em theory, c2.parent_id = c.id ja garante NOT NULL, MAS dataset legado
+//   pode ter parent_id=NULL E... edge case improbable. Defensive skip.
 app.get('/categories',
-  cache.cacheMiddleware(() => 'search:categories', 900),
+  cache.cacheMiddleware(() => 'search:categories:v2', 900),
   asyncHandler(async (_req, res) => {
   const r = await query(
     `SELECT c.id, c.slug, c.name, c.name_singular, c.description, c.icon,
             c.sort_order, c.parent_id, c.is_active,
+       (SELECT COUNT(*)::INT FROM products p
+         WHERE p.category_id = c.id
+           AND p.status IN ('approved','platform_owned')
+           AND p.deleted_at IS NULL) AS product_count,
        COALESCE(
          (SELECT json_agg(json_build_object(
                     'id', c2.id, 'slug', c2.slug, 'name', c2.name,
                     'name_singular', c2.name_singular, 'description', c2.description,
-                    'icon', c2.icon, 'sort_order', c2.sort_order
+                    'icon', c2.icon, 'sort_order', c2.sort_order,
+                    'product_count', (
+                      SELECT COUNT(*)::INT FROM products p2
+                       WHERE p2.category_id = c2.id
+                         AND p2.status IN ('approved','platform_owned')
+                         AND p2.deleted_at IS NULL
+                    )
                   ) ORDER BY c2.sort_order, c2.name, c2.id)
             FROM categories c2
            WHERE c2.parent_id = c.id AND c2.is_active),
@@ -548,19 +571,47 @@ app.get('/categories',
 // FIX-WORKER-7 pass 14: rate-limit aplicado (era hot endpoint sem proteção)
 // Bot hit 100/s em /facets sem cache = 3s PG CPU (50k base CTE + 4 aggregates).
 // Cache 180s ajuda mas combo cat+kind ~50 keys -> miss rate alto pos-restart.
+// FIX-WORKER-7 pass 94: 3 BUGS aplicando Pattern W7 (Regra D + kind 400 + UX guard).
+//
+// BUG 1 *** Regra D kinds/seller_tiers ARRAYS sem ORDER BY ***
+//   PRE-FIX: json_agg sem ORDER BY -> kinds=[{kind:'x',cnt:N},...] ordem
+//   indefinida entre cache evictions. UI mega-filter salta posicoes.
+//   FIX: ORDER BY cnt DESC, kind/tier ASC determ.
+//
+// BUG 2 *** kindFilter SILENT FALLBACK ***
+//   PRE-FIX: ?kind=invalid -> null silent (UX confuso, user pensa filtrado).
+//   Pattern pass 73/91: 400 explicit com allowed[].
+//   FIX: validate antes do cache hit, retorna 400 invalid_kind.
+//
+// BUG 3 *** price_range AVG=0 quando empty sample ***
+//   PRE-FIX: COALESCE(AVG(price_cents),0) retorna 0 quando 0 products.
+//   Response.price_range.avg=0 confunde frontend "preço médio: R\$ 0".
+//   FIX: retornar NULL quando count=0 (frontend pode renderizar "—").
+const FACETS_KIND_ENUM = new Set([
+  'automation','ai_agent','n8n_workflow','node_script','python_script',
+  'php_script','prompt_pack','template','dataset','other'
+]);
+
 app.get('/facets',
   searchLimiter,
+  // BUG 2: validate kind ANTES do cache (validacao deve preceder cache hit)
+  (req, res, next) => {
+    const kind = (req.query.kind || '').toString().trim().toLowerCase();
+    if (kind && !FACETS_KIND_ENUM.has(kind)) {
+      return res.status(400).json({ error: 'invalid_kind', allowed: Array.from(FACETS_KIND_ENUM) });
+    }
+    next();
+  },
   cache.cacheMiddleware((req) => {
     const cat = (req.query.category || '').toString().trim().toLowerCase();
     const kind = (req.query.kind || '').toString().trim().toLowerCase();
-    return `search:facets:cat=${cat}:kind=${kind}`;
+    return `search:facets:v2:cat=${cat}:kind=${kind}`;
   }, 180),
   asyncHandler(async (req, res) => {
   const cat = (req.query.category || '').toString().trim().toLowerCase();
   const kind = (req.query.kind || '').toString().trim().toLowerCase();
-  // Whitelist kind para evitar SQL surprise (apesar do parametrizado)
-  const VALID_KINDS = new Set(['automation','ai_agent','n8n_workflow','node_script','python_script','php_script','prompt_pack','template','dataset','other']);
-  const kindFilter = VALID_KINDS.has(kind) ? kind : null;
+  // Pos-validate: kind ja confirmado valido OU vazio
+  const kindFilter = FACETS_KIND_ENUM.has(kind) ? kind : null;
   const catFilter = cat || null;
   // FIX-WORKER-7 pass 14: 2 bugs CTE base:
   // 1. Regra A: status='approved' ignorava platform_owned -> INCONSISTENCIA
@@ -581,21 +632,30 @@ app.get('/facets',
      )
      SELECT
        COALESCE(
-         (SELECT json_agg(json_build_object('kind', kind, 'count', cnt))
+         (SELECT json_agg(json_build_object('kind', kind, 'count', cnt)
+                          ORDER BY cnt DESC, kind ASC)
             FROM (SELECT kind, COUNT(*) AS cnt FROM base GROUP BY kind) k),
          '[]'::JSON
        ) AS kinds,
        COALESCE(
-         (SELECT json_agg(json_build_object('tier', reputation_tier, 'count', cnt))
+         (SELECT json_agg(json_build_object('tier', reputation_tier, 'count', cnt)
+                          ORDER BY cnt DESC, reputation_tier ASC NULLS LAST)
             FROM (SELECT s.reputation_tier, COUNT(*) AS cnt FROM base b JOIN sellers s ON s.id=b.seller_id
                     GROUP BY s.reputation_tier) t),
          '[]'::JSON
        ) AS seller_tiers,
-       (SELECT json_build_object(
-          'min', COALESCE(MIN(price_cents), 0),
-          'max', COALESCE(MAX(price_cents), 0),
-          'avg', COALESCE(AVG(price_cents)::INT, 0)
-        ) FROM base) AS price_range,
+       (SELECT
+          CASE WHEN COUNT(*) = 0 THEN
+            json_build_object('min', NULL, 'max', NULL, 'avg', NULL, 'count', 0)
+          ELSE
+            json_build_object(
+              'min', MIN(price_cents),
+              'max', MAX(price_cents),
+              'avg', AVG(price_cents)::INT,
+              'count', COUNT(*)::INT
+            )
+          END
+        FROM base) AS price_range,
        (SELECT COUNT(*) FROM base)::INT AS total`,
     [catFilter, kindFilter]
   );

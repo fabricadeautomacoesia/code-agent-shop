@@ -17310,7 +17310,37 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ aiops-svc /status (pass 90) - 4 bugs DLP recon + tier-split
 - ✅ search-svc /search (pass 91) - 4 bugs enums + DLP
 - ✅ search-svc /autocomplete (pass 92) - 3 bugs DLP cache + limit + parallel
-- ✅ search-svc /top-sellers + /top-sellers/:category + /trending (pass 93 esta iter) - 6 bugs
+- ✅ search-svc /top-sellers + /top-sellers/:category + /trending (pass 93) - 6 bugs
+- ✅ search-svc /categories + /facets (pass 94 esta iter) - 5 bugs
+
+W7 PASS 94 RESUMO:
+- search-svc/src/server.js 2 endpoints refactor (5 bugs):
+  * /categories (2 bugs):
+    - NEW product_count subquery por categoria + sub-categoria
+      * Frontend MLB-style mostra "Agentes IA (147)" no mega menu
+      * Antes: N+1 fetch /facets per category - wasteful
+      * Agora: single fetch /categories retorna counts inline
+    - Cache key v2 (invalidacao do v1 antigo)
+  * /facets (3 bugs):
+    - Regra D: + ORDER BY cnt DESC, kind/tier ASC em json_agg
+      (kinds/seller_tiers arrays ordem indefinida entre cache evictions)
+    - Kind enum 400 explicit (em vez de silent null fallback)
+      * Pattern pass 73/91: 400 invalid_kind allowed[]
+      * Validate ANTES do cache (validacao precede cache hit)
+    - price_range NULL quando empty sample
+      * PRE-FIX: COALESCE(AVG, 0) -> "preço medio: R\$ 0" UX confuso
+      * POS-FIX: CASE WHEN count=0 -> {min:NULL, max:NULL, avg:NULL, count:0}
+      * Frontend renderiza "—" em vez de valor falso
+- Pattern W7 em 101 endpoints + 23 regras (A-W) - 94 micro-iters
+- search-svc 100% W7 nos 7 endpoints core:
+  / (91) + /autocomplete (92) + /top-sellers (93) + /top-sellers/:category (93)
+  + /trending (93) + /categories (94) + /facets (94)
+
+PROXIMA ITER:
+- W7 pass 95: payment-svc remaining endpoints audit
+- W7 pass 96: qa-svc endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 93 RESUMO:
 - search-svc/src/server.js 3 endpoints refactor (6 bugs):
