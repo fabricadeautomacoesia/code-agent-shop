@@ -1182,3 +1182,30 @@ PROXIMOS GAPS MLB (remanescentes):
 - Loyalty UI redeem ja existe na cart (vista no audit), gap eh extrato historico
   em /conta/pontos com lista de transactions ledger
 - Quantidade vendida "+N vendidos" badge esta no PDP, mas falta no card
+
+## WORKER 16 (MLB-NEW) - Sales count badge "+N vendidos" no ProductCard
+Mercado Livre exibe badge verde proeminente "+N vendidos" abaixo do titulo nos
+cards de catalogo (com arredondamento psicologico para baixo no proximo 10).
+CAS exibia apenas "{N} vendas" plain text discreto - agora ambos:
+
+EDIT: apps/storefront/src/components/product-card.tsx
+- Import TrendingUp lucide-react
+- Badge inline-flex verde (bg-green-500/15 text-green-300 border) com TrendingUp
+  + "+{floor(sales_count/10)*10} vendidos" SE sales > 50
+- Mantem contagem plain "N vendas" no rodape SO se sales <= 50 (evita
+  redundancia visual quando ja ha badge no topo)
+
+WORKER 14 (paralelo) - Auditoria de indices Postgres:
+- 49 indices custom em products, product_views, orders, order_items,
+  cart_items, coupons, sellers, user_loyalty, user_two_factor
+- Tabelas review/qna/wishlist usam prefixo "product_*": product_reviews
+  (7 idx), product_qna (5 idx), product_qna_votes (2 idx), product_wishlist
+  (2 idx), review_votes (pkey covers review_id via leftmost prefix)
+- Conclusao: cobertura solida, sem migration necessaria nesta iteracao
+
+VALIDACAO PUBLICA HTML SSR:
+- /products renderizou 10 badges +N vendidos com numeros arredondados:
+  +60 +80 +130 +140 +170 +190 +230 +240 +410 +520
+- Tags HTML div presentes (SSR direto, nao precisa hydration)
+
+DEPLOY: commit 748799a pushed, build via Dockerfile.next, service updated --force, OK.
