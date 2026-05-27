@@ -15572,3 +15572,104 @@ W7 PROGRESS GERAL: 30 endpoints + 18 regras (A-R) - 39 micro-iters
 - notification-svc: 3 ✅
 - qa-svc: 2 ✅
 - review-svc: 8 ✅ (100% - esta iter ultimo)
+
+================================================================
+ITER W7 PASS 40 - seller-svc POST /payout 7 BUGS CRITICOS (REAL $ OUT) (2026-05-27)
+================================================================
+ESCOPO: seller-svc POST /sellers/me/payout (seller solicita saque)
+FILE: services/seller-svc/src/routes/me.js (linhas 120-134 -> rewrite)
+
+CONTEXTO: review-svc 100% concluido pass 39. Pass 40 inicia AUDIT
+seller-svc (9o svc, 1/13 endpoints). Comecei pelo endpoint MAIS
+CRITICO: payout request = REAL $ EXIT solicitation.
+
+PARALELO pass 23 (payment-svc /payouts/:id/process - admin processa):
+- pass 23 = ADMIN approve+execute Asaas transfer
+- pass 40 = SELLER REQUEST inicial (esta iter)
+Ambos = REAL MONEY OUT, severidade maxima.
+
+BUGS CORRIGIDOS (7 + bonus audit):
+
+1. *** SALDO DISPONIVEL CHECK MISSING *** monetary loss real direct
+- PRE-FIX: zero check balance. Seller POST {amount: R$ 1.000.000}
+  sem ter receita = INSERT seller_payouts pending entra DB.
+- Admin processa (trust DB integrity) -> Asaas transfer real -> LOSS.
+- FIX: WITH non_final AS (SUM payouts pending/approved/processing/paid)
+  available = total_revenue_cents - reserved
+  if (amount > available) -> 400 insufficient_balance
+
+2. *** INFLIGHT PAYOUT MULTIPLICATION *** race spam
+- Seller dispara 100 requests simultaneos {amount=R$50}
+- Sem cumulative check - cada valida amount > min individualmente
+- Admin aprova todos sem ver soma -> R$50 x 100 = R$5000 transferred
+- FIX: tx() + SELECT FOR UPDATE sellers (Regra K serializa)
+  WITH non_final ja cobre cumulative no calc available
+
+3. *** Regra A *** seller_status check missing
+- Seller suspended/banned pode pedir saque
+- FIX: WHERE status = 'active' (bloqueia pending_kyc/suspended/banned)
+
+4. *** KYC compliance/AML ***
+- PRE-FIX: aceita payout em status='pending_kyc'
+- Lavagem dinheiro vector + AML violation
+- FIX: status='active' (enum garante KYC approved upstream)
+
+5. *** Regra K *** SELECT FOR UPDATE seller row
+- 2 requests simultaneos leem mesmo balance -> ambos passam
+- FIX: FOR UPDATE OF s serializa
+
+6. *** Regra I *** RETURNING * vaza internal_notes/risk_score
+- FIX: RETURNING explicit 4 fields (id, amount_cents, status, requested_at)
+
+7. *** RATE-LIMIT *** seller pwned spam payouts
+- PRE-FIX: zero rate-limit. Conta compromised -> spam.
+- FIX: rateLimiter 3/hr/IP (real users <1 payout/dia)
+
+BONUS: audit_log atomic INSERT no MESMO tx (pattern pass 23 real-$ endpoints):
+- action='payout.request', target=seller_payout, payload_after JSON
+  inclui amount, available_before, ip, seller_id
+
+VALIDATION RESPONSE shape (UX clara):
+- 'seller_not_active': mensagem PT-BR + current_status retornado
+  ("Sua conta esta em status 'pending_kyc'. KYC aprovado obrigatorio.")
+- 'amount_below_min': mensagem com min_cents
+- 'insufficient_balance': available_cents + requested_cents
+  ("Saldo R$ 5,00. Solicitado R$ 50,00.")
+- Pattern anti-confusion - user entende exatamente o porque
+
+PATTERN W7 REAL MONEY OUT ENDPOINTS COMPLETO:
+- pass 23: payment-svc /payouts/:id/process (admin execute Asaas)
+- pass 40: seller-svc /sellers/me/payout (seller request) - esta iter
+- Defesa em profundidade:
+  Layer 1: seller request validate balance + status (esta iter)
+  Layer 2: admin aprovacao manual (process queue UI)
+  Layer 3: payment-svc execute Asaas transfer atomic (pass 23)
+  Layer 4: webhook reconcile + cron stuck (pass 22)
+
+PATTERN W7 31 ENDPOINTS + 18 REGRAS (A-R) - 40 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 1 (POST /payout pass 40 esta iter)
+
+SELLER-SVC PROGRESS (estimativa 8+ endpoints visiveis):
+- POST /sellers/me/payout (pass 40 esta iter)
+- GET /sellers/me (pendente)
+- PATCH /sellers/me (pendente)
+- POST /sellers/me/kyc (pendente - critical KYC submit)
+- GET /sellers/me/sla-status (pendente)
+- GET /sellers/me/sla-history (pendente)
+- GET /sellers/me/payouts (pendente - read-only)
+- GET /sellers/me/kpi (pendente - read-only)
+- + admin.js + sellers.js + loyalty.js (rotas adicionais)
+
+PROXIMA ITER:
+- W7 pass 41: seller-svc POST /sellers/me/kyc (compliance critical)
+- W7 pass 42: PATCH /sellers/me (profile update)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
