@@ -14712,3 +14712,77 @@ PROXIMA ITER:
 - W3 pass 14: testes e2e Dialog wrapper (Playwright)
 - W7 pass 32: review-svc audit (mesmo pattern)
 - W13 pass 2: notification-svc /enqueue upstream sanitize ({{}} stripping)
+
+================================================================
+ITER W18 PASS 8 - dead indexes audit endpoint + SQL script (2026-05-27)
+================================================================
+ESCOPO: ferramenta auditoria pg_stat_user_indexes via SQL + API
+FILES:
+- db/audits/dead_indexes.sql (NEW)
+- services/aiops-svc/src/server.js (GET /aiops/db/dead-indexes endpoint)
+
+CONTEXTO: W18 pass 7 (rolling idx product_views) fechou idx perf
+strategy. Pass 8 estabelece TOOLING para detect idx mortos pos-deploy.
+Pattern industry-standard: 2 semanas de prod stats coletadas, audit
+detecta idx que NUNCA scanned -> drop = storage saved + INSERTs +5x.
+
+ABORDAGEM PIVOTADA:
+
+INTENCAO ORIGINAL: drop dead indexes via migration 043
+PROBLEMA: nao posso executar EXPLAIN ANALYZE no DB remoto p/ identificar
+DROP CANDIDATES. Sem dados reais pg_stat, drop "as cegas" risk regression.
+
+SOLUCAO PIVOT: criar TOOLING permanente p/ admin executar audit on-demand.
+Drops em iters futuras quando admin reportar resultados.
+
+FERRAMENTAS CRIADAS (2):
+
+1. db/audits/dead_indexes.sql (script standalone psql)
+   - Query 1: Zero scans idx (exclui PK/UNIQUE - constraints usam mesmo sem scans)
+   - Query 2: Redundant idx (mesma 1a coluna - menor pode ser drop)
+   - Query 3: Bloat estimation (idx > 50% table size = REINDEX candidate)
+   - Query 4: Top 10 usage (sanity check - critical idx ativos)
+   - USAGE: psql -f db/audits/dead_indexes.sql (SSH manual ou cron)
+
+2. GET /aiops/db/dead-indexes (admin-only API endpoint)
+   - Mirror das queries SQL standalone
+   - Response shape:
+     summary { dead_candidates, low_usage, bloated_indices, total_dead_size_pretty }
+     dead_indices [...] (50 max)
+     bloated_indices [...] (20 max)
+     top_used [...] (10 sanity check)
+     warnings [...] (4 avisos pre-drop)
+     generated_at
+   - Auth jwt.requireAuth admin/staff
+   - Consumido em dashboard-admin/db-audit (futura UI W4)
+
+WARNINGS DOCUMENTADOS NO ENDPOINT:
+- NUNCA dropar idx PK ou UNIQUE (PG usa enforce constraint mesmo se idx_scan=0)
+- Idx parciais (migs 011/031/038/041/042) podem ter 0 scans mas serem
+  criticos em queries futuras documentadas
+- Aguardar 2+ semanas prod stats antes de drop (warm-up cycle)
+- SEMPRE EXPLAIN ANALYZE staging post-drop
+
+HEURISTICAS APLICADAS NO ENDPOINT:
+- pg_stat_user_indexes.idx_scan = 0 + table.n_tup_ins > 100 = CANDIDATE_DROP
+  (filtra idx em tabela vazia que ninguem escreveu)
+- pg_relation_size(indexrelid) > pg_relation_size(relid) = REINDEX_RECOMMENDED
+  (idx maior que tabela = bloat severo)
+- ORDER BY idx_scan ASC, pg_relation_size DESC = idx grande nunca usado primeiro
+
+EXEMPLOS HISTORICOS DROP MIGRATIONS:
+- mig 023: idx_notif_outbox_unlocked (redundant)
+- mig 029: idx_notif_user_unread (dead - WHERE filter coverage)
+- pattern: criar idx em migration N, descobrir dead via audit, DROP em mig N+M
+
+PROXIMA ITER:
+- Admin executa audit em prod -> reporta candidates
+- W18 pass 9: DROP migration baseado em audit reportado
+- W4 pass: dashboard-admin /admin/db-audit (consume endpoint)
+- W3 pass 14: Dialog wrapper e2e tests (Playwright)
+- W7 pass 32: review-svc audit
+
+W7+W13+W18 PROGRESS:
+- W7: 22 endpoints + 18 regras (A-R)
+- W13: renderMustache XSS hardening (pass 1)
+- W18: 8 passes (cache, lazy, idx, rolling, audit tooling)

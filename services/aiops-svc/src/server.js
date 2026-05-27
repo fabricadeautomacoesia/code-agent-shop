@@ -322,6 +322,94 @@ const auditActionsHandler = asyncHandler(async (_req, res) => {
 });
 app.get('/audit-log/actions', jwt.requireAuth({ roles: ['admin','staff'] }), auditActionsHandler);
 
+// ============================================================
+// FIX-WORKER-18 pass 8: DB indexes audit - dead/redundant/bloated detection
+// ============================================================
+// Endpoint admin-only que executa audit via pg_stat_user_indexes.
+// Mirror do script db/audits/dead_indexes.sql (manual psql via SSH).
+// Resultado consumido em dashboard-admin/db-audit (futura UI W4).
+//
+// USO TIPICO: admin acessa pos-2-weeks de prod stats, drop dead idx,
+// reduzir storage + acelerar INSERTs (cada idx = update extra per row).
+app.get('/db/dead-indexes',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  asyncHandler(async (_req, res) => {
+    // 1. Indices ZERO scans (candidatos DROP, exclui PK/UNIQUE)
+    const dead = await query(
+      `SELECT schemaname, tablename, indexname,
+              pg_size_pretty(pg_relation_size(ui.indexrelid)) AS size,
+              pg_relation_size(ui.indexrelid) AS size_bytes,
+              idx_scan AS scans, idx_tup_read AS reads, idx_tup_fetch AS fetches,
+              CASE WHEN idx_scan = 0 THEN 'CANDIDATE_DROP'
+                   WHEN idx_scan < 50 THEN 'LOW_USAGE'
+                   ELSE 'ACTIVE' END AS recommendation
+         FROM pg_stat_user_indexes ui
+         JOIN pg_index i ON i.indexrelid = ui.indexrelid
+        WHERE NOT i.indisunique
+          AND NOT i.indisprimary
+          AND schemaname NOT IN ('pg_catalog', 'information_schema')
+          AND (SELECT n_tup_ins FROM pg_stat_user_tables t WHERE t.relid = ui.relid) > 100
+        ORDER BY idx_scan ASC, pg_relation_size(ui.indexrelid) DESC
+        LIMIT 50`
+    );
+
+    // 2. Bloat estimation - idx > 50% table size
+    const bloated = await query(
+      `SELECT schemaname, tablename, indexname,
+              pg_size_pretty(pg_relation_size(indexrelid)) AS idx_size,
+              pg_size_pretty(pg_relation_size(relid)) AS table_size,
+              ROUND(100.0 * pg_relation_size(indexrelid) / NULLIF(pg_relation_size(relid), 0), 1) AS pct_of_table
+         FROM pg_stat_user_indexes
+        WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+          AND pg_relation_size(indexrelid) > 1048576
+          AND pg_relation_size(indexrelid) > pg_relation_size(relid) * 0.5
+        ORDER BY pg_relation_size(indexrelid) DESC
+        LIMIT 20`
+    );
+
+    // 3. Top usage (sanity check - critical idx ativos)
+    const topUsed = await query(
+      `SELECT schemaname, tablename, indexname, idx_scan AS scans,
+              pg_size_pretty(pg_relation_size(indexrelid)) AS size
+         FROM pg_stat_user_indexes
+        WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+        ORDER BY idx_scan DESC LIMIT 10`
+    );
+
+    // Resumo stats agregadas (UI dashboard quick view)
+    const totalDeadSize = dead.rows
+      .filter((r) => r.recommendation === 'CANDIDATE_DROP')
+      .reduce((acc, r) => acc + parseInt(r.size_bytes, 10), 0);
+
+    res.json({
+      summary: {
+        dead_candidates: dead.rows.filter((r) => r.recommendation === 'CANDIDATE_DROP').length,
+        low_usage: dead.rows.filter((r) => r.recommendation === 'LOW_USAGE').length,
+        bloated_indices: bloated.rows.length,
+        total_dead_size_bytes: totalDeadSize,
+        total_dead_size_pretty: formatBytes(totalDeadSize),
+      },
+      dead_indices: dead.rows,
+      bloated_indices: bloated.rows,
+      top_used: topUsed.rows,
+      generated_at: new Date().toISOString(),
+      warnings: [
+        'NUNCA dropar idx PK ou UNIQUE (PG usa para enforce constraint).',
+        'Idx parciais (mig 011/031/038/041/042) podem ter 0 scans mas serem criticos futuros.',
+        'Aguardar 2+ semanas de prod stats antes de drop (warm-up cycle).',
+        'SEMPRE EXPLAIN ANALYZE em staging apos drop.',
+      ],
+    });
+  })
+);
+
+function formatBytes(n) {
+  if (n < 1024) return `${n}B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)}KB`;
+  if (n < 1073741824) return `${(n / 1048576).toFixed(1)}MB`;
+  return `${(n / 1073741824).toFixed(2)}GB`;
+}
+
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
 
