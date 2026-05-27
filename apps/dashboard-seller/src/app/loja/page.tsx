@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { sellerFetch } from '@/lib/seller-api';
+import { useSellerAction } from '@/lib/use-seller-action';
 import { Save, Shield } from 'lucide-react';
 
 export default function LojaPage() {
@@ -15,8 +16,7 @@ export default function LojaPage() {
     address_line1: '', address_city: '', address_state: '', address_zip: '',
   });
   const [status, setStatus] = useState<string>('');
-  const [error, setError] = useState('');
-  const [ok, setOk] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   async function load() {
     try {
@@ -31,26 +31,28 @@ export default function LojaPage() {
         allow_platform_resale: s.allow_platform_resale ?? true,
       });
       setStatus(s.status);
-    } catch (e: any) { setError(e.message); }
+      setLoadError('');
+    } catch (e: any) { setLoadError(e.message); }
   }
   useEffect(() => { load(); }, []);
 
+  // FIX-WORKER-5 pass 3: useSellerAction hook unifica feedback save + KYC
+  const action = useSellerAction(load);
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    setError(''); setOk('');
-    try {
+    action.run('save-profile', async () => {
       await sellerFetch('/sellers/me', { method: 'PATCH', body: JSON.stringify(form) });
-      setOk('Salvo!');
-    } catch (e: any) { setError(e.message); }
+      return 'Perfil da loja atualizado';
+    });
   }
 
   async function submitKyc(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    action.run('submit-kyc', async () => {
       await sellerFetch('/sellers/me/kyc', { method: 'POST', body: JSON.stringify(kyc) });
-      setOk('KYC enviado. Status: active');
-      load();
-    } catch (e: any) { setError(e.message); }
+      return 'KYC enviado com sucesso. Sua loja sera ativada apos validacao admin.';
+    });
   }
 
   return (
@@ -58,6 +60,21 @@ export default function LojaPage() {
       <h1 className="font-display font-bold text-4xl mb-2">Minha loja</h1>
       <p className="text-white/60 mb-2">Status atual: <span className="px-2 py-0.5 rounded bg-white/10 text-xs">{status}</span></p>
       <p className="text-white/60 mb-8">Personalize sua loja e dados de pagamento.</p>
+
+      {/* FIX-WORKER-5 pass 3: banners centralizados (era inline no form rodape) */}
+      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando dados: {loadError}</div>}
+      {action.error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.error}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.success}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
 
       {status === 'pending_kyc' && (
         <section className="glass p-6 mb-6 border-l-4 border-yellow-500">
@@ -95,7 +112,10 @@ export default function LojaPage() {
               <input placeholder="CEP" value={kyc.address_zip} onChange={(e) => setKyc({...kyc, address_zip: e.target.value})} required
                 className="px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
             </div>
-            <button type="submit" className="btn-primary">Enviar KYC</button>
+            <button type="submit" disabled={action.busyKey === 'submit-kyc'}
+              className="btn-primary disabled:opacity-50 disabled:cursor-wait">
+              {action.busyKey === 'submit-kyc' ? 'Enviando KYC...' : 'Enviar KYC'}
+            </button>
           </form>
         </section>
       )}
@@ -143,10 +163,11 @@ export default function LojaPage() {
           </label>
         </section>
 
-        {error && <div className="text-red-400 text-sm bg-red-500/10 p-3 rounded">{error}</div>}
-        {ok && <div className="text-green-400 text-sm bg-green-500/10 p-3 rounded">{ok}</div>}
-
-        <button type="submit" className="btn-primary flex items-center gap-2"><Save className="w-4 h-4" /> Salvar</button>
+        {/* FIX-WORKER-5 pass 3: banners movidos para o topo (centralizados action hook) */}
+        <button type="submit" disabled={action.busyKey === 'save-profile'}
+          className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait">
+          <Save className="w-4 h-4" /> {action.busyKey === 'save-profile' ? 'Salvando...' : 'Salvar'}
+        </button>
       </form>
     </div>
   );
