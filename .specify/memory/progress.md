@@ -8392,3 +8392,88 @@ PROXIMA ITER:
 - W3 pass 9: PriceAlertButton audit
 - W3 pass 10: extrair friendly mappers para lib/friendly-errors.ts (DRY)
 - W8: visual polish em comparar tabela (cell hover, sort options)
+
+## WORKER 13 PASS 6 - notification-svc /test 3 hardenings (anti-bombing + audit)
+
+AUDIT notification-svc encontrou endpoint admin sensitivo SEM:
+- Rate-limit
+- Max length em subject/body
+- Audit log
+
+POST /api/notifications/test era basicamente "free SMTP relay" se admin
+compromised. 4 vetores de ataque identificados:
+
+VETOR 1 (email-bombing built-in):
+- Admin compromise (XSS/hijack) dispara emails em loop
+- Quota SMTP esgota rapido, reputacao IP/domain degrada
+- Pode triggerar blocklist (Gmail, Outlook) -> emails legitimos param
+
+VETOR 2 (anonymous-ish relay):
+- to: aceita qualquer email
+- Atacante usa CAS para phishing terceiros
+- SPF/DKIM valido = bypass filtros spam receivers
+
+VETOR 3 (quota DoS):
+- Sem max length em subject/body
+- 50MB email x N calls = bloqueia SMTP service real
+- Notifications legitimas (order_paid, password_reset) param
+
+VETOR 4 (forensics impossivel):
+- Sem audit log de /test sends
+- Pos-compromise nao da para saber quantos/para-quem/conteudo
+
+FIX (3 mudancas):
+
+1. testEmailLimiter rate-limit:
+   - 10/h por admin (keyGenerator: req.user.sub)
+   - Cobre debugging legitimate (templates novos)
+   - Bombing limitado a 10/h ate session perdida
+   - standardHeaders X-RateLimit-* visiveis
+
+2. Zod schema max lengths:
+   - to: email max 180 chars
+   - subject: 1-200 chars
+   - body: 1-50000 chars (50KB - email normal <10KB)
+   - 50MB rejeitado upfront antes sendEmail
+
+3. Audit log async:
+   - action: 'notification.test_email_sent'
+   - severity: 'info'
+   - payload: { to_masked, subject (truncated 100), message_id, ip }
+   - to mascarado via mask.text (PII partial)
+   - .catch() nao impede send (best-effort)
+
+DEPS:
+- express-rate-limit ^7.4.0 adicionado package.json
+  (mesma version cross-svcs - auth, vault, search)
+
+DEPLOY:
+- commit 42591ed push main OK
+- 42 insertions, 2 deletions (2 files)
+- notification-svc rebuild via VPS cron (npm install baixa dep)
+- audit_log table ja existe (db mig 002)
+
+VALIDACAO POS-DEPLOY:
+- 11 POST /test rapidos -> 11a retorna 429
+- POST body 100KB -> 400 validation_error
+- Send com sucesso cria row em audit_log
+- SELECT action='notification.test_email_sent' FROM audit_log
+
+W13 NOTIFICATION AUDIT (passes 1-6):
+- pass 1: SELECT explicit nao expoe outbox internals (locked_*, retry_*)
+- pass 2: mustache render + XSS escape
+- pass 3: SMTP fail retry exponential backoff
+- pass 4: unread-count endpoint dedicado
+- pass 5: sendTelegram + sendEmail silent failure fix
+- pass 6: /test rate-limit + max length + audit (esta iter)
+
+W13 ENDPOINTS PROTEGIDOS:
+- /test: 10/h/admin + audit log (esta iter)
+- /:id/read: UUID validation + idempotency
+- /read-all: admin role only
+- Cron outbox: HMAC + retry 5x exponential
+
+PROXIMA ITER:
+- W13 pass 7: notification preferences (opt-out por template_code)
+- W17 pass 12: rotacao vault keys
+- W4 pass 7: /admin/reports KPI dashboard
