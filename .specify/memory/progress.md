@@ -14301,3 +14301,71 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d cron
 - W4: dashboard-admin /admin/disputes listar (consume pass 29 endpoint)
 - W13: notification-svc templates XSS audit
+
+================================================================
+ITER W3 PASS 12 - SearchAutocomplete refator <Dialog> (2026-05-27)
+================================================================
+ESCOPO: storefront SearchAutocomplete migra pattern -> <Dialog>
+FILE: apps/storefront/src/components/search-autocomplete.tsx
+
+CONTEXTO: W3 pass 10 (CartDrawer drawer-right) + pass 11 (AskQuick centered)
+validaram wrapper. Pass 12 = 3o consumer (centered c/ posicionamento custom).
+
+REFATORACAO APLICADA:
+
+REMOVIDO (~10 linhas pre-fix):
+- useEffect ESC key listener manual (linhas 23-26 pre-fix)
+- <div outer wrapper> manual (Dialog renderiza)
+- <button backdrop> + onClick stopPropagation manual
+- <div role=dialog aria-modal aria-label> JSX manual
+
+ADICIONADO declarativo:
+- <Dialog open={true} onClose={onClose} ariaLabel="Busca de produtos"
+    variant='centered' zIndex={60} closeLabel='Fechar busca'
+    className="...mt-[-30vh] sm:mt-[-25vh]">
+- open={true} hardcoded (component so monta quando parent open)
+- mt-[-30vh] negative-margin override compensar items-center default
+  -> visual aproximado do pre-fix items-start pt-24
+
+DIFICULDADE / TRADE-OFF:
+- Pre-fix usava items-start pt-24 (modal nao centro vertical, fica
+  no terco superior pra visibilidade SERP-like estilo MLB/Google)
+- Dialog wrapper variant='centered' = items-center (centro vertical)
+- TRADE-OFF: posicionamento ABSOLUTO via negative margin hack vs
+  adicionar variant nova ao Dialog
+- DECISAO: negative margin hack neste consumer - 1 caso edge nao
+  justifica polluir Dialog API
+- Visual aproximadamente identico pre-fix (modal ~30vh above center)
+
+INPUT FOCUS:
+- inputRef.current?.focus() MANTIDO (defensive)
+- Dialog wrapper focus auto-mount no PRIMEIRO focusable (sera input)
+- Ambos redundantes mas defensive cross-changes (e.g. se DOM adicionar
+  outro focusable antes do input no futuro, defensive ainda foca input)
+
+BUG SUTIL CORRIGIDO INCIDENTALLY:
+- Pre-fix linha 80: <TrendingUp aria-hidden> faltava
+- Pos-fix: adicionado aria-hidden="true" (icone decorativo)
+- Pequeno fix a11y - icones decorativos sempre aria-hidden
+
+PATTERN W3 DIALOG REFACTOR PROGRESS:
+- ✅ pass 10 CartDrawer (drawer-right complex)
+- ✅ pass 11 AskQuickButton (centered simple)
+- ✅ pass 12 SearchAutocomplete (centered custom positioning - esta iter)
+- pass 13 (futura) Nav mobile menu (drawer-right c/ nav links)
+- NotificationBell: mantem custom (popover != dialog full)
+
+BENEFICIOS CUMULATIVOS (3 consumers refatorados):
+- ~75 linhas removidas total (30+35+10)
+- A11Y bonus universal (focus management gratuito)
+- 3o consumer = wrapper validado em variants principais
+- Dialog API: title + ariaLabel + variant + className + zIndex
+  -> covers 95% casos uso modal/drawer
+- Edge case (custom positioning) resolvido via className negative-margin
+  -> wrapper API NAO precisa crescer
+
+PROXIMA ITER:
+- W3 pass 13: Nav mobile menu refator (drawer-right c/ nav links - ultimo consumer)
+- W18 pass 7: idx parcial product_views > 90d cron-based
+- W4: dashboard-admin /admin/disputes listar
+- W13: notification-svc templates XSS audit
