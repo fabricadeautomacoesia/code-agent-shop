@@ -3,6 +3,7 @@ import { ArrowRight, Bot, Workflow, Code2, Sparkles, Shield, Zap, TrendingUp } f
 import { api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
 import { HeroAnimated } from '@/components/hero-animated';
+import { RecentlyViewed } from '@/components/recently-viewed';
 
 export const revalidate = 60;
 export const dynamic = 'force-dynamic';
@@ -78,6 +79,9 @@ export default async function HomePage() {
           ))}
         </div>
       </section>
+
+      {/* MLB-NEW: Vistos recentemente (renderiza vazio se nao logado / sem views) */}
+      <RecentlyViewed />
 
       {/* PRODUTOS EM DESTAQUE */}
       {featured.length > 0 && (

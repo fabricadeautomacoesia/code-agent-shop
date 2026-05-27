@@ -56,6 +56,41 @@ router.get('/recommendations/for-me',
   })
 );
 
+// MLB-NEW: GET /products/recently-viewed - "Vistos recentemente" estilo Mercado Livre
+// Retorna ultimos N produtos distintos vistos pelo user nos ultimos 14 dias.
+// Distinto por product_id (so a view mais recente conta), ORDER BY DESC.
+router.get('/recently-viewed',
+  require('@cas/shared').jwt.requireAuth(),
+  asyncHandler(async (req, res) => {
+    const lim = Math.min(parseInt(req.query.limit || '12', 10), 30);
+    const r = await query(
+      `WITH last_views AS (
+         SELECT product_id, MAX(created_at) AS last_view_at
+           FROM product_views
+          WHERE user_id = $1::UUID
+            AND created_at > NOW() - INTERVAL '14 days'
+          GROUP BY product_id
+          ORDER BY MAX(created_at) DESC
+          LIMIT $2::INT
+       )
+       SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
+              p.cover_image_url, p.price_cents, p.currency, p.is_free,
+              p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
+              p.is_platform_owned, p.flash_promo_active, p.flash_promo_discount_pct,
+              (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug,
+              (SELECT store_name FROM sellers WHERE id = p.seller_id) AS store_name,
+              (SELECT reputation_tier FROM sellers WHERE id = p.seller_id) AS reputation_tier,
+              lv.last_view_at
+         FROM last_views lv
+         JOIN products p ON p.id = lv.product_id
+        WHERE p.status = 'approved' AND p.deleted_at IS NULL
+        ORDER BY lv.last_view_at DESC`,
+      [req.user.sub, lim]
+    );
+    res.json({ products: r.rows, count: r.rows.length });
+  })
+);
+
 // GET /products/:slug/related - produtos relacionados (mesma categoria, exclui o atual)
 // FIX-WORKER-18 pass2: cache 300s - related products muda raramente (categoria + same tier)
 router.get('/:slug/related',
