@@ -10055,3 +10055,93 @@ PROXIMA ITER:
 - W4 pass 13: /admin/products audit (validar/criar)
 - W18 pass 4: image optimization audit
 - W16: MLB feature nova (Loyalty resgate avancado, recomendacoes ML, etc)
+
+## WORKER 4 PASS 13 - /admin/products 6 bugs UX + a11y + security
+
+AUDIT /admin/products encontrou 6 bugs cumulativos:
+
+BUG 1 (state morto): filter UI ausente
+- useState filter + useEffect [filter] reload existem
+- MAS sem UI dropdown -> sempre fixo em "approved"
+- 6 outros statuses inacessiveis (qa_pending, rejected, archived, etc)
+FIX: 7 botoes filter pill (pattern W4 pass 4 /payouts)
+- aria-pressed indicado
+- Cores: ativo gradient magenta-violet, inativo glass
+
+BUG 2 (count enganoso):
+  "100 produto(s)" sempre, mesmo com 500 no DB
+FIX: "Exibindo X produto(s) no filtro Y"
+- Warning amarelo se products.length >= 100
+
+BUG 3 (status badge HARDCODED):
+  <span>approved</span> texto fixo verde
+- Filter=rejected -> badge ainda dizia "approved"
+FIX: STATUS_COLOR record + statusReal = p.status || filter
+- Badge cor-coded dinamico (7 statuses)
+
+BUG 4 (<img> sem next/image):
+- Pattern W8/W3 ja consolidado
+FIX: next/image fill sizes="48px"
+
+BUG 5 (rel security tabnabbing):
+  <a target="_blank"> sem rel="noopener noreferrer"
+FIX: pattern W4 pass 7 aplicado
+
+BUG 6 (sem disabled busy):
+- Botoes Take/Arquivar permitiam 10 clicks = 10 requests
+FIX: disabled={busy} + mutex entre take/archive
+
+BONUS:
+- aria-label dinamico em buttons
+- aria-hidden em icons decorativos (Award/Archive/ExternalLink)
+- Empty state explicit "Nenhum produto com status X"
+- loadError com retry button
+- Arquivar so renderiza se statusReal != 'archived' (anti double-archive)
+
+DEPLOY:
+- commit 2f3628b push main OK
+- 92 insertions, 19 deletions
+- dashboard-admin rebuild via VPS cron
+- Sem backend mudanca
+
+W4 ADMIN AUDIT (passes 1-13):
+| Pass | Page | Tema |
+|---|---|---|
+| 1-3 | hook + sellers/qa-queue | useAdminAction |
+| 4 | /payouts | Transferir Asaas |
+| 5 | /qa-queue | 4 bugs UX |
+| 6 | /orders | poll + status |
+| 7 | /reports | 6 fixes security+a11y |
+| 8 | /webhooks | dead letter UI |
+| 9 | /vault | currency fix |
+| 10 | /vault | Saude 7d |
+| 11 | /vault | rotation UI |
+| 12 | /audit-log | NEW dashboard |
+| 13 | /products | 6 bugs (esta iter) |
+
+COBERTURA admin dashboard 10 pages 100% AUDITADAS:
+- /sellers (W4-1..3)
+- /qa-queue (W4-5)
+- /orders (W4-6)
+- /payouts (W4-4)
+- /reports (W4-7)
+- /webhooks (W4-8 NEW)
+- /vault (W4-9, 10, 11)
+- /audit-log (W4-12 NEW)
+- /products (W4-13 esta iter)
+- /alerts (W10-5 backend sanitized)
+
+W4 CICLO ADMIN 100% FECHADO:
+- 11 pages com UX consistente
+- Pattern useAdminAction em 9 pages com write actions
+- Pattern filters pill em /payouts, /products
+- Pattern retry button em loadError em 4 pages
+- Pattern badge cor-coded em status em /payouts, /qa-queue, /products
+- Pattern rel security em todas pages com external links
+- Pattern aria-label/pressed/hidden universal
+- Pattern empty state com mensagem condicional
+
+PROXIMA ITER:
+- W18 pass 4: image optimization audit
+- W16: MLB feature nova
+- Mover useAdminAction + useSellerAction para packages/shared-ui (DRY)
