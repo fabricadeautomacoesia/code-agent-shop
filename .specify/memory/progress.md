@@ -2255,3 +2255,58 @@ boa pratica para staging/dev terem URLs corretas.
 GAP RESTANTE: cada produto /product/[slug] ja tinha generateMetadata com
 images dinamicas via cover_image_url - mas estava limitado por metadataBase
 ausente. AGORA tambem funcionam. Validar em proxima iteracao.
+
+## WORKER 6 pass 2 (GATEWAY + REVIEW-SVC) - POST /reports anti-spam validations
+Re-auditoria gateway pathRewrite + endpoints com routes via review-svc.
+Mapeamento OK em geral (auth, sellers, products, qa, orders, payments,
+reviews, qna, notifications, search, vault, aiops). 1 bug critico em
+review-svc apos exploracao por curl.
+
+BUG (Spam / DoS admin alerts):
+POST /api/reviews/reports validava SO formato (Zod target_id uuid) mas:
+1) NAO validava existencia do target -> qualquer buyer podia POST com
+   UUID fake -> INSERT row em reports + alert em alerts table
+2) Sem deduplicacao -> mesmo user podia reportar mesmo target+reason 100x
+   -> 100 alerts para admin processar (DoS por noise)
+3) Crescimento sem limite das tabelas reports + alerts
+
+Confirmado em producao:
+- POST com target_id=00000000-0000-0000-0000-000000000000 -> 201 +
+  row criada em reports + alert criada em alerts. Sem FK constraint
+  guard, sem applicacao-level check.
+
+FIX: services/review-svc/src/server.js linha 218-243
+- Map TARGET_TABLE_MAP { product, seller, review, user, qna } -> tabela DB
+- Validacao 1 (existencia): SELECT 1 FROM <tbl> WHERE id = target_id -> se
+  rows.length == 0, return 404 target_not_found
+- Validacao 2 (dedup): SELECT 1 FROM reports WHERE reporter_user_id +
+  target_type + target_id + reason_code + created_at > NOW() - 7 days -> se
+  match, return 409 duplicate_report com msg em PT-BR
+- INSERT em reports + alerts so ocorre apos as 2 validacoes passarem.
+
+VALIDACAO PUBLICA (3 cenarios):
+1) POST /reports target UUID inexistente -> 404 target_not_found OK
+   (era 201 silencioso criando garbage row + alert)
+2) POST /reports target real first time -> 201 OK
+3) POST /reports MESMO target+reason 2x em <7 dias -> 409 duplicate_report
+   "Voce ja reportou este item nos ultimos 7 dias" OK
+
+Cleanup do audit:
+- 3 reports test criados durante exploracao deletados via psql
+- 3 alerts correspondentes deletados
+
+DEPLOY: commit 0769e32 pushed, review-svc rebuilt via Dockerfile.node
+SVC=review-svc, service updated --force, converged OK.
+
+OUTRAS OBSERVACOES gateway (todos OK):
+- /api/auth -> auth-svc com fail2ban middleware (correto)
+- /api/sellers + /api/loyalty ambos -> seller-svc (correto, app.use rotas
+  distintas)
+- /api/qa -> qa-svc (W12 ja adicionou qaRunGuard auth obrigatorio)
+- /api/payments -> payment-svc (W11 pass 2 ja adicionou asaasCreateGuard)
+- /api/vault -> vault-svc (W17 ja adicionou vaultUseGuard para /usage)
+- 5 routes "no prefix" pathRewrite (p => p): reviews, notifications,
+  search, vault, aiops - correto pois svcs montam routes em /
+- 7 routes "with prefix" pathRewrite (p => '/svc' + p): auth, sellers,
+  loyalty, products, qa, orders, payments, qna - correto pois svcs
+  montam app.use('/svc', router)
