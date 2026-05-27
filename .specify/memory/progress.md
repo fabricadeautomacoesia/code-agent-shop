@@ -11324,3 +11324,82 @@ PROXIMA ITER:
 - W3 pass 3: AddToCart loading state + optimistic update
 - W18 pass 6: idx parcial order_items status='paid' p/ co_buyers CTE
 - W7 pass 11: /recommendations/trending por categoria (MLB-5 nao feita)
+
+================================================================
+ITER W3 PASS 2 - also-bought.tsx 4 bugs (BUG #1 PRODUCAO CRITICA) (2026-05-27)
+================================================================
+ESCOPO: storefront component AlsoBought (server component MLB-13)
+FILE: apps/storefront/src/components/also-bought.tsx
+
+CONTEXTO: W3 pass 1 estabeleceu 3 regras SSR fetch helpers. Auditoria
+da regra A/B/C aplicada a also-bought.tsx revelou 4 bugs - incluindo
+UM CRITICO DE PRODUCAO ativo desde deploy MLB-13.
+
+BUGS CORRIGIDOS (4 - inclui producao critica):
+
+1. *** PRODUCAO CRITICA *** URL fallback 'http://gateway:3002' INCORRETO
+- Outros 9 server components usam '127.0.0.1:3002' (host network Docker Swarm)
+- Auditoria: grep GATEWAY_URL --include="*.tsx" --include="*.ts" -> 10 files
+  - api.ts: 127.0.0.1
+  - sitemap.ts: 127.0.0.1
+  - sellers/page.tsx: 127.0.0.1
+  - seller/[slug]/page.tsx: 127.0.0.1
+  - comparar/page.tsx: 127.0.0.1
+  - page.tsx (home): 127.0.0.1
+  - product/[slug]/page.tsx: 127.0.0.1
+  - categoria/[slug]/page.tsx: 127.0.0.1
+  - categoria/[slug]/layout.tsx: 127.0.0.1
+  - promocoes/page.tsx: 127.0.0.1
+  - also-bought.tsx: 'gateway:3002' <- OUTLIER
+- Em prod com host network mode, 'gateway' nao resolve no DNS Docker
+- fetch lanca ECONNREFUSED -> catch retorna null -> products: []
+- "if (products.length === 0) return null" -> componente SUMIA do PDP
+- IMPACTO REAL: secao "Quem comprou isto, tambem comprou" estava
+  INVISIVEL para 100% dos PDPs em prod desde deploy MLB-13.
+- FIX: 'http://127.0.0.1:3002' consistente
+- USERS NUNCA VIRAM A FEATURE - regression silenciosa
+
+2. r.json() retornava Promise sem await (regra B pass 1 violada)
+- async fetchSafe<T>: return r.json() (Promise<unknown>)
+- Caller: const data = await fetchSafe(...) - await FORA do try interno
+- JSON malformed (backend HTML error, body truncado) -> rejeita CALLER
+- Throw subia ao server component AlsoBought -> Next error boundary
+- FIX: const json = await r.json() DENTRO do try + return json as T
+
+3. Sem Array.isArray defense (regra B+)
+- data?.products || [] aceitava products: "string" sem crashar imediato
+- products.length === 0 falso -> .map() crashava no JSX
+- FIX: Array.isArray(data?.products) ? data.products : []
+
+4. UI dead code: ternario singular/plural inalcancavel
+- {p.co_buyers > 1 && ...} ja filtra >= 2
+- DENTRO: ternario {p.co_buyers === 1 ? 'comprador' : 'compradores'} = sempre 'compradores'
+- Dead branch confunde manutencao
+- FIX: simplificado para >= 2 + string fixa plural
+
+SEVERIDADE:
+- Bug 1: CRITICO PROD - feature MLB-13 invisivel 100% dos PDPs
+- Bug 2: Correctness - error boundary em vez de fallback null
+- Bug 3: Crash JSX se backend retornar shape errado
+- Bug 4: Dead code (sem impacto runtime)
+
+PATTERN W3 SSR AUDIT - 3 REGRAS + 1 NOVA:
+- A. revalidate alinhado com TTL backend (pass 1)
+- B. r.json() DENTRO do try-catch (pass 1)
+- C. .catch defense-in-depth Promise.all (pass 1)
+- D. NOVA: GATEWAY_URL fallback consistente cross-files (pass 2)
+  RULE: SEMPRE '127.0.0.1:3002' (host network Docker Swarm prod)
+  NUNCA 'gateway:3002' (nao resolve fora de network compartilhada)
+
+VALIDACAO PROD: gateway expoe :3002 em host (servidor unico Swarm).
+Storefront roda no MESMO host -> 127.0.0.1 funciona.
+Multi-host futuro: usar VAR ENV GATEWAY_URL explicita.
+
+W3 PDP PROGRESS:
+- pass 1: fetchRelated 3 bugs (cache no-store, json fora try, sem catch)
+- pass 2: also-bought 4 bugs (incluindo CRITICO prod - URL outlier)
+
+PROXIMA ITER:
+- W3 pass 3: AddToCart loading state + optimistic update
+- W18 pass 6: idx parcial order_items status='paid' (co_buyers CTE)
+- W8 audit: consistencia visual - icones lucide-react cross-PDP

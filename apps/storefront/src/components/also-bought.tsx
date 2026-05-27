@@ -4,6 +4,23 @@
  * Server component fetcha /api/products/<slug>/also-bought
  * Collaborative filtering real - co-occurrence em order_items.
  * Fallback gracioso se 0 results (produto novo sem compras correlatas).
+ *
+ * FIX-WORKER-3 pass 2: 4 bugs aplicando regras pass 1:
+ * 1. BUG CRITICO PRODUCAO: fallback URL 'http://gateway:3002' INCORRETO.
+ *    Todos os 9 outros server components usam '127.0.0.1:3002' (host
+ *    network mode Docker Swarm). 'gateway:3002' nao resolve no DNS Docker
+ *    da rede compartilhada -> fetch lanca -> catch retorna null -> /also-bought
+ *    SUMIU SILENCIOSAMENTE de TODO PDP em prod desde deploy MLB-13.
+ *    FIX: 'http://127.0.0.1:3002' consistente com api.ts/sitemap.ts/seller/etc.
+ * 2. r.json() retornava Promise sem await (regra B pass 1).
+ *    Caller faz await fora do try -> JSON malformed rejeita fora -> error
+ *    boundary Next em vez de fallback null.
+ *    FIX: const json = await r.json() dentro do try.
+ * 3. Sem Array.isArray defense (regra B). Backend retornando products:string
+ *    (corrupcao Redis?) crashava .map() no JSX.
+ *    FIX: Array.isArray check.
+ * 4. UI dead code: ternario singular/plural inalcancavel (filtra > 1 antes).
+ *    FIX: simplificado para >= 2 (mensagem sempre plural).
  */
 
 import Link from 'next/link';
@@ -13,18 +30,22 @@ import { Api } from '@/lib/api';
 
 async function fetchSafe<T>(path: string): Promise<T | null> {
   try {
-    const base = process.env.GATEWAY_URL || 'http://gateway:3002';
+    // FIX bug 1: 127.0.0.1 consistente com outros server components (Docker host network)
+    const base = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';
     const r = await fetch(`${base}${path}`, { next: { revalidate: 600 } });
     if (!r.ok) return null;
-    return r.json();
+    // FIX bug 2: await dentro do try (regra B pass 1) - JSON malformed = null gracioso
+    const json = await r.json();
+    return json as T;
   } catch { return null; }
 }
 
 export async function AlsoBought({ slug }: { slug: string }) {
   const data: any = await fetchSafe(`/api/products/${slug}/also-bought?limit=6`);
-  const products = data?.products || [];
+  // FIX bug 3: Array.isArray defense - backend products invalido = fallback gracioso
+  const products: any[] = Array.isArray(data?.products) ? data.products : [];
 
-  // Fallback gracioso: produto novo sem co-buyers
+  // Fallback gracioso: produto novo sem co-buyers OU backend falhou OU 404
   if (products.length === 0) return null;
 
   return (
@@ -53,9 +74,10 @@ export async function AlsoBought({ slug }: { slug: string }) {
             <div className="text-xs text-magenta-glow font-bold mt-1">
               {p.is_free ? 'Gratis' : Api.formatBRL(p.price_cents)}
             </div>
-            {p.co_buyers > 1 && (
+            {/* FIX bug 4: filtra >= 2 ja garante plural - ternario singular era dead code */}
+            {p.co_buyers >= 2 && (
               <div className="text-[10px] text-white/40 mt-1">
-                {p.co_buyers} {p.co_buyers === 1 ? 'comprador em comum' : 'compradores em comum'}
+                {p.co_buyers} compradores em comum
               </div>
             )}
           </Link>
