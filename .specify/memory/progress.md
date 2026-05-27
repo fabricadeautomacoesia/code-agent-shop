@@ -6071,3 +6071,56 @@ PROXIMA ITER:
 - /upload (last remaining write action)
 - Considerar mover useSellerAction + useAdminAction para packages/shared-ui
   (mesmo codigo duplicado em dois apps - DRY cross-app)
+
+## WORKER 5 PASS 5 (FINAL) - /upload com useSellerAction
+
+CICLO W5 FECHADO COMPLETAMENTE: 5/5 write pages dashboard-seller no hook pattern.
+
+REFATORACAO /upload:
+1 ACTION migrada:
+- submit(e) -> action.run('create-draft', ...): POST /products/me
+
+STATES REMOVIDOS:
+- submitting (boolean) -> action.busyKey === 'create-draft'
+- error (string) -> action.error + uploadError (separado)
+
+DECISAO DE DESIGN:
+- useSellerAction SEM reload callback (post-create faz router.push)
+- uploadError mantido SEPARADO de action.error
+  (uploads cover/pkg sao actions independentes do submit principal,
+   precisam de feedback proprio sem disparar success banner do hook)
+
+IMPROVEMENTS:
++ submit button disabled tambem durante uploads ativos
+  (impede criar draft com upload em andamento)
++ Banner uploadError com botao fechar
++ Mensagem success: "Draft criado com sucesso, redirecionando..."
+  (aparece brevemente antes do router.push completar)
+
+DEPLOY:
+- commit b3d7023 (final do ciclo W5)
+
+PROGRESS METRIC SELLER DASH FINAL: 5 de 5 write pages (100%)
+- /products (W5 pass 1) submitQA per-product
+- /qna (W5 pass 2) answer per-row (innovation over admin)
+- /loja (W5 pass 3) save-profile + submit-kyc
+- /products/[id] (W5 pass 4) save + submit mutual exclusion
+- /upload (W5 pass 5) create-draft + upload guard
+
+DELTAS DO CICLO COMPLETO (passes 1-5):
+- 1 hook reusavel novo: useSellerAction (50 linhas)
+- 5 pages refactored
+- ~200 linhas de ad-hoc state removidas
+- Padrao 100% consistente (busyKey + error + success + clear + run)
+- Cobertura total dashboard-seller write actions: 100%
+
+W4 + W5 = SIMETRIA TOTAL DASHBOARDS:
+- dashboard-admin: 6/7 pages no useAdminAction (1 read-only por design)
+- dashboard-seller: 5/5 write pages no useSellerAction
+- 2 hooks identicos em estrutura -> candidatos a packages/shared-ui
+
+PROXIMA ITER:
+- Mover useSellerAction + useAdminAction para packages/shared-ui (DRY cross-app)
+- Toast component centralizado (opcional, banners ja funcionais)
+- W14 audit DB indices faltantes
+- W16 MLB-14 feature nova (price drop email, wishlist sharing, etc)
