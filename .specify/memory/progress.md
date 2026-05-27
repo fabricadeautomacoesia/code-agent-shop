@@ -102,6 +102,40 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## MLB-4 LOYALTY REDEEM - WORKER 16 (POINTS AS DISCOUNT)
+Antes apenas ganhar pontos estava implementado (welcome bonus + earn em order paid).
+Agora resgate completo de pontos como desconto no cart.
+
+POLITICA:
+- 1 ponto = 1 cent (100pts = R\$1, igual Mercado Pontos)
+- Minimo 500pts por resgate (R\$5)
+- Cap 30% do subtotal anti-abuso
+- Pontos sao 'reservados' no cart, debitados pessimisticamente no checkout (FOR UPDATE)
+
+MIGRATION 014:
+- carts.loyalty_points_redeemed INT + carts.loyalty_discount_cents BIGINT
+- orders.loyalty_points_redeemed + orders.loyalty_discount_cents (historico)
+
+order-svc novos endpoints:
+- POST /api/orders/cart/loyalty/redeem {points} - reserva no cart
+- DELETE /api/orders/cart/loyalty/redeem - remove resgate
+- recalcCart subtrai loyalty_discount_cents do total
+- checkout debita balance + cria transaction com delta negativo reason='order_redeem'
+
+storefront cart UI:
+- Card 'CAS PONTOS' visivel se saldo>=500
+- Quick-select 500/1000/5000pts + Max button
+- Linha 'X pts -RY,YY' no resumo
+- Api.cartLoyaltyRedeem + Api.cartLoyaltyClear helpers
+
+VALIDADO E2E publicamente (user com 10000 pts, cart R\$57):
+- Redeem 500pts -> applied=500, total R\$57->R\$52
+- Redeem 5000pts -> applied=1710 (cap 30%), total R\$57->R\$39.90
+- Insufficient saldo -> 400 insufficient_points
+- DELETE -> remove e libera
+
+Bug fix durante deploy: PG 42P08 \$1 INT/BIGINT mismatch resolvido com cast explicito \$1::INT/\$1::BIGINT em ambas posicoes do UPDATE.
+
 ## CHECKOUT UX - WORKER 2 (CART QUANTITY CONTROLS)
 Audit E2E do fluxo /cart -> /checkout -> /conta/pedidos revelou:
 - Cart UI exibia apenas 'Qtde: N' como texto estatico (nao editavel).
