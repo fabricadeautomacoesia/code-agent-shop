@@ -4,7 +4,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, maskPII } = require('@cas/shared');
 
 const router = express.Router();
 const log = logger.child({ svc: 'order-svc', mod: 'orders' });
@@ -239,17 +239,27 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 // GET /orders/admin/recent (todos pedidos, role admin)
+// FIX-WORKER-7 pass 59: LGPD role-tier PII masking (admin=full, staff=masked)
+//   PRE-FIX: SELECT u.email + u.full_name returned plain text para STAFF role.
+//   Staff (sub-admin) podia coletar PII compradores sem necessidade (LGPD Art 6° II).
+//   Pattern pass 57 estabelecido em review-svc -> aqui replicado cross-svc.
+//   FIX: isAdmin path full visibility; staff path maskPII.email/name.
+// + Regra E pagination ?limit/?offset
 router.get('/admin/recent',
   jwt.requireAuth({ roles: ['admin','staff'] }),
   asyncHandler(async (req, res) => {
     // FIX-WORKER-7 pass 18: tiebreaker (Regra D) + window temporal stats
+    // FIX-WORKER-7 pass 59: ?limit (1-200, default 100) + ?offset paginacao
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 100));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const r = await query(
       `SELECT o.id, o.order_number, o.status, o.payment_status, o.total_cents, o.currency,
               o.payment_method, o.buyer_user_id, o.created_at, o.paid_at,
               u.email AS buyer_email, u.full_name AS buyer_name
          FROM orders o
          JOIN users u ON u.id = o.buyer_user_id
-        ORDER BY o.created_at DESC, o.id LIMIT 100`
+        ORDER BY o.created_at DESC, o.id LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
     // FIX-WORKER-7 pass 18: stats window temporal 90 days.
     // PRE-FIX: COUNT(*) FROM orders SEM filtro temporal -> full table scan
@@ -267,7 +277,16 @@ router.get('/admin/recent',
          '90 days' AS window
          FROM orders WHERE created_at > NOW() - INTERVAL '90 days'`
     );
-    res.json({ orders: r.rows, stats: stats.rows[0] });
+
+    // FIX-WORKER-7 pass 59: LGPD role-tier masking
+    const isAdmin = req.user && req.user.role === 'admin';
+    const orders = r.rows.map((row) => isAdmin ? row : ({
+      ...row,
+      buyer_email: maskPII.email(row.buyer_email),
+      buyer_name: maskPII.name(row.buyer_name),
+    }));
+
+    res.json({ orders, stats: stats.rows[0], limit, offset });
   })
 );
 
@@ -518,7 +537,18 @@ router.get('/admin/disputes',
         GROUP BY status`
     );
     const counts = stats.rows.reduce((acc, r) => ({ ...acc, [r.status]: r.n }), {});
-    res.json({ disputes: r.rows, counts, limit: lim, filter: statusFilter });
+
+    // FIX-WORKER-7 pass 59: LGPD role-tier masking
+    // PRE-FIX: buyer_email/buyer_name plain text para STAFF
+    // Pattern pass 57/59 cross-svc - staff vê masked, admin vê full
+    const isAdmin = req.user && req.user.role === 'admin';
+    const disputes = r.rows.map((row) => isAdmin ? row : ({
+      ...row,
+      buyer_email: maskPII.email(row.buyer_email),
+      buyer_name: maskPII.name(row.buyer_name),
+    }));
+
+    res.json({ disputes, counts, limit: lim, filter: statusFilter });
   })
 );
 

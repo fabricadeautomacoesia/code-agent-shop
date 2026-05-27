@@ -17275,7 +17275,22 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ GET /seller/received (pass 56) - LGPD + admin + cache
 - ✅ GET /admin/reports (pass 57) - Regra D+E+I + LGPD staff mask
 - ✅ GET /qna/seller/pending (pass 57) - admin bypass + Regra A+D+E + LGPD
-- ✅ @cas/shared.maskPII NEW (pass 58 esta iter) - LGPD DRY cross-svc
+- ✅ @cas/shared.maskPII NEW (pass 58) - LGPD DRY cross-svc
+- ✅ order-svc /admin/recent + /admin/disputes (pass 59 esta iter) - role-tier mask
+
+W7 PASS 59 RESUMO:
+- order-svc/src/routes/orders.js refactor:
+  * /admin/recent: role-tier mask (admin=full, staff=maskPII) + ?limit/?offset
+  * /admin/disputes: role-tier mask (buyer_email/buyer_name LGPD masked p/ staff)
+- LGPD Art 6° II (necessidade) cumprido: staff só vê PII mascarada
+- Pattern W7 cross-svc consolidado: review-svc + order-svc (4 admin endpoints)
+- Pattern W7 estabelecido em 54 endpoints + 23 regras (A-W) - 59 micro-iters
+
+PROXIMA ITER:
+- W7 pass 60: audit seller-svc /admin/* endpoints + payment-svc /admin
+- W7 pass 61: refactor notification-svc admin views (se houver)
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 58 RESUMO:
 - packages/shared/src/mask-pii.js NEW
