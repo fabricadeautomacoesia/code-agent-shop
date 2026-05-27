@@ -5,6 +5,7 @@ import { Api } from '@/lib/api';
 import { AddToCart } from '@/components/add-to-cart';
 import { WishlistButton } from '@/components/wishlist-button';
 import { ProductTabs } from '@/components/product-tabs';
+import { JsonLd, productLd, breadcrumbLd } from '@/components/json-ld';
 
 export const revalidate = 30;
 
@@ -71,6 +72,10 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
 
   return (
     <div className="container mx-auto px-6 py-8">
+      {/* FIX-WORKER-9 pass 3: JSON-LD para rich snippets Google */}
+      <JsonLd data={productLd(product, reviews)} />
+      <JsonLd data={breadcrumbLd(product)} />
+
       <div className="text-sm text-white/40 mb-4">
         <Link href="/products" className="hover:text-white">Catalogo</Link> /{' '}
         {product.category_slug && <Link href={`/products?category=${product.category_slug}`} className="hover:text-white">{product.category_name}</Link>}

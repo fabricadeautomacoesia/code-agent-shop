@@ -4,6 +4,7 @@ import { Providers } from '@/components/providers';
 import { Nav } from '@/components/nav';
 import { Footer } from '@/components/footer';
 import { CartDrawer } from '@/components/cart-drawer';
+import { JsonLd, organizationLd, webSiteLd } from '@/components/json-ld';
 
 export const metadata: Metadata = {
   title: 'Code & Agent Shop - O Marketplace de Automacoes e IA',
@@ -28,6 +29,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           window.addEventListener('error', function(e){ console.error('[Fatal]', e.message); e.preventDefault(); });
           window.addEventListener('unhandledrejection', function(e){ console.error('[Promise]', e.reason); e.preventDefault(); });
         `}}/>
+        {/* FIX-WORKER-9 pass 3: JSON-LD Organization + WebSite SearchAction (sitelinks search box no Google) */}
+        <JsonLd data={organizationLd()} />
+        <JsonLd data={webSiteLd()} />
       </head>
       <body className="min-h-screen relative overflow-x-hidden">
         <div className="grid-bg" aria-hidden />
