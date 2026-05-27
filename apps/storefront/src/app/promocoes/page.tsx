@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { Zap } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
@@ -49,7 +50,11 @@ export default async function PromocoesPage() {
             <div key={p.id} className="glass p-6 grid md:grid-cols-3 gap-6 items-center">
               <Link href={`/product/${p.slug}`} className="block">
                 {p.cover_image_url && (
-                  <img src={p.cover_image_url} alt={p.title} className="w-full h-48 object-cover rounded-lg" />
+                  {/* FIX-WORKER-8: next/image substituindo <img> raw (perf + a11y) */}
+                  <div className="w-full h-48 relative rounded-lg overflow-hidden">
+                    <Image src={p.cover_image_url} alt={p.title || 'Produto'}
+                      fill sizes="(max-width:768px) 100vw, 400px" className="object-cover" />
+                  </div>
                 )}
               </Link>
               <div className="md:col-span-2">

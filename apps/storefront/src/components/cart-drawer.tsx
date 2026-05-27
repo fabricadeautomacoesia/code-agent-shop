@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { X, Trash2, ShoppingBag, ArrowRight, Plus, Minus, Star } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth, useUI } from '@/lib/store';
@@ -81,10 +82,15 @@ export function CartDrawer() {
             <div className="space-y-3">
               {items.map((it: any) => (
                 <div key={it.id} className="flex gap-3 p-3 rounded-lg bg-white/5">
+                  {/* FIX-WORKER-8: <img> -> next/image (perf + a11y). Antes carregava
+                      imagem fullsize do CDN para renderizar em 64px + alt vazio em conteudo. */}
                   {it.product?.cover_image_url ? (
-                    <img src={it.product.cover_image_url} alt="" className="w-16 h-16 object-cover rounded" />
+                    <div className="w-16 h-16 relative rounded overflow-hidden flex-shrink-0">
+                      <Image src={it.product.cover_image_url} alt={it.product.title || 'Produto'}
+                        fill sizes="64px" className="object-cover" />
+                    </div>
                   ) : (
-                    <div className="w-16 h-16 bg-gradient-vibe/20 rounded flex items-center justify-center text-xs font-bold">CAS</div>
+                    <div className="w-16 h-16 bg-gradient-vibe/20 rounded flex items-center justify-center text-xs font-bold flex-shrink-0">CAS</div>
                   )}
                   <div className="flex-1 min-w-0">
                     <Link href={`/product/${it.product?.slug}`} onClick={() => setCartOpen(false)}

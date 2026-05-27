@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { Trash2, Tag, TrendingUp, Plus, Minus, Star } from 'lucide-react';
 import { Api } from '@/lib/api';
@@ -116,10 +117,14 @@ export default function CartPage() {
           <div className="lg:col-span-2 space-y-4">
             {items.map((it: any) => (
               <div key={it.id} className="glass p-4 flex gap-4">
+                {/* FIX-WORKER-8: <img> -> next/image (perf + a11y) */}
                 {it.product?.cover_image_url ? (
-                  <img src={it.product.cover_image_url} alt={it.product.title} className="w-24 h-24 object-cover rounded-lg" />
+                  <div className="w-24 h-24 relative rounded-lg overflow-hidden flex-shrink-0">
+                    <Image src={it.product.cover_image_url} alt={it.product.title || 'Produto'}
+                      fill sizes="96px" className="object-cover" />
+                  </div>
                 ) : (
-                  <div className="w-24 h-24 bg-gradient-vibe/10 rounded-lg flex items-center justify-center font-bold">CAS</div>
+                  <div className="w-24 h-24 bg-gradient-vibe/10 rounded-lg flex items-center justify-center font-bold flex-shrink-0">CAS</div>
                 )}
                 <div className="flex-1">
                   <div className="text-xs text-white/40 uppercase">{it.product?.kind?.replace(/_/g,' ')}</div>
