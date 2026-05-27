@@ -17320,7 +17320,35 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ W7 MARCO pass 100 - 100 micro-iters + deploy script + doc
 - ✅ review-svc /qna/:id/voted (pass 101) - 4 bugs UUID+Regra A+UX+cache
 - ✅ vault-svc /use endpoint (pass 102) - 3 bugs critical security
-- ✅ notification-svc /:id/read (pass 103 esta iter) - 3 bugs Regra K+rate+UX
+- ✅ notification-svc /:id/read (pass 103) - 3 bugs Regra K+rate+UX
+- ✅ order-svc cart.js GET / + DELETE /items/:id (pass 104 esta iter) - 7 bugs
+
+W7 PASS 104 RESUMO:
+- order-svc/src/routes/cart.js 2 endpoints refactor (7 bugs):
+  * GET / cart (5 bugs):
+    - Regra I: SELECT c.* -> explicit fields whitelist
+      (era vazando colunas internas carts: abandoned_at_cron etc)
+    - Regra A: + status IN ('approved','platform_owned') na subquery products
+      (PRE: product rejected/archived ainda aparecia stale no carrinho)
+    - Regra B: + p.deleted_at IS NULL na subquery
+      (PRE: product deletado ainda aparecia stale)
+    - N+1 FIX: subquery seller_name -> LEFT JOIN sellers
+      (10 items = 10 subqueries -> 1 plan node)
+    - Regra H: COALESCE json_agg -> '[]'::JSON
+      (PRE: cart vazio -> items NULL -> frontend .map crash)
+  * DELETE /items/:id (2 bugs):
+    - UUID validate missing: PG 22P02 -> 500 leak
+    - SILENT 404: rowcount=0 retornava {ok:true} (UX confuso)
+      * Frontend pensava removeu mas item nunca existia/pertencia outro user
+      * FIX: rowcount check + 404 cart_item_not_found explicit
+- Pattern W7 em 113 endpoints + 23 regras (A-W) - 104 micro-iters
+
+PROXIMA ITER:
+- W7 pass 105: order-svc cart.js PATCH /items/:id + coupon endpoints
+- W7 pass 106: product-svc admin /:id/force-approve audit
+- Operacional: SSH VPS + bash deploy/w7-deploy-validate.sh
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 103 RESUMO:
 - notification-svc/src/server.js POST /:id/read refactor (3 bugs):

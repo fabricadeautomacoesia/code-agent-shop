@@ -9,21 +9,56 @@ const router = express.Router();
 router.use(jwt.requireAuth());
 
 // GET /orders/cart - carrinho atual do user
+// FIX-WORKER-7 pass 104: 5 BUGS aplicando Pattern W7 (Regras A+B+I + N+1 + COALESCE).
+//
+// BUG 1 *** Regra I SELECT c.* *** carts.* expoe colunas internas
+//   carts table pode ter abandoned_at_cron / coupon_applied_metadata / etc.
+//   FIX: explicit fields (id, user_id, subtotal_cents, discount_cents,
+//   loyalty_points_redeemed, coupon_code, updated_at).
+//
+// BUG 2 *** Regra A products status MISSING ***
+//   PRE-FIX: cart_items JOIN products p sem filter status.
+//   Cenario: product foi rejected/archived apos user adicionar -> aparece
+//   no carrinho como if available (UX confuso, checkout falha later).
+//   FIX: + AND p.status IN ('approved','platform_owned') na subquery.
+//
+// BUG 3 *** Regra B products deleted_at MISSING ***
+//   Mesmo cenario - product deletado -> ainda no carrinho stale.
+//   FIX: + AND p.deleted_at IS NULL.
+//
+// BUG 4 *** N+1 SUBQUERY seller_name ***
+//   (SELECT store_name FROM sellers WHERE id = p.seller_id) per cart_item.
+//   10 items = 10 subqueries adicionais.
+//   FIX: LEFT JOIN sellers s ON s.id = p.seller_id na subquery aggregate.
+//
+// BUG 5 *** Regra H json_agg NULL guard ***
+//   PRE-FIX: cart vazio -> items NULL no response. Frontend .items.map crash.
+//   FIX: COALESCE(json_agg(...) FILTER (WHERE ci.id IS NOT NULL), '[]'::JSON).
 router.get('/', asyncHandler(async (req, res) => {
   await query(
     `INSERT INTO carts (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, [req.user.sub]
   );
   const c = await query(
-    `SELECT c.*,
-      (SELECT json_agg(json_build_object(
-         'id', ci.id, 'product_id', ci.product_id, 'quantity', ci.quantity,
-         'unit_price_cents', ci.unit_price_cents, 'line_total_cents', ci.line_total_cents,
-         'product', json_build_object(
-           'title', p.title, 'slug', p.slug, 'cover_image_url', p.cover_image_url,
-           'kind', p.kind, 'is_platform_owned', p.is_platform_owned,
-           'seller_name', (SELECT store_name FROM sellers WHERE id = p.seller_id)
-         )
-       )) FROM cart_items ci JOIN products p ON p.id = ci.product_id WHERE ci.cart_id = c.id) AS items
+    `SELECT c.id, c.user_id, c.subtotal_cents, c.discount_cents,
+            c.loyalty_points_redeemed, c.coupon_code, c.updated_at,
+      COALESCE(
+        (SELECT json_agg(json_build_object(
+           'id', ci.id, 'product_id', ci.product_id, 'quantity', ci.quantity,
+           'unit_price_cents', ci.unit_price_cents, 'line_total_cents', ci.line_total_cents,
+           'product', json_build_object(
+             'title', p.title, 'slug', p.slug, 'cover_image_url', p.cover_image_url,
+             'kind', p.kind, 'is_platform_owned', p.is_platform_owned,
+             'seller_name', s.store_name
+           )
+         ))
+         FROM cart_items ci
+         JOIN products p ON p.id = ci.product_id
+                       AND p.status IN ('approved','platform_owned')
+                       AND p.deleted_at IS NULL
+         LEFT JOIN sellers s ON s.id = p.seller_id
+        WHERE ci.cart_id = c.id),
+        '[]'::JSON
+      ) AS items
      FROM carts c WHERE c.user_id = $1`, [req.user.sub]
   );
   res.json({ cart: c.rows[0] });
@@ -82,14 +117,38 @@ router.post('/items',
   })
 );
 
-router.delete('/items/:id', asyncHandler(async (req, res) => {
+// DELETE /orders/cart/items/:id - remove item do carrinho
+// FIX-WORKER-7 pass 104: 2 BUGS aplicando Pattern W7 (UUID + silent 404).
+//
+// BUG 1 *** UUID VALIDATE MISSING *** PG 22P02 -> 500 leak
+//   PRE-FIX: req.params.id direto na query - 'invalid' -> PG cast fail.
+//   FIX: CART_ITEM_UUID_RE.test() upfront.
+//
+// BUG 2 *** SILENT 404 ***
+//   PRE-FIX: DELETE rowcount=0 retorna {ok:true} (item nao existia
+//   ou pertence a outro user). UX confuso: frontend pensa removeu mas
+//   item ainda aparece (na verdade nunca existia).
+//   FIX: check rowcount + 404 cart_item_not_found explicit.
+const CART_ITEM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+router.delete('/items/:id', asyncHandler(async (req, res, next) => {
+  if (!CART_ITEM_UUID_RE.test(req.params.id)) {
+    return next(errorHandler.notFound('cart_item_not_found'));
+  }
+
+  let removed = false;
   await tx(async (c) => {
     const r = await c.query(
       `DELETE FROM cart_items WHERE id = $1 AND cart_id IN (SELECT id FROM carts WHERE user_id = $2) RETURNING cart_id`,
       [req.params.id, req.user.sub]
     );
-    if (r.rows.length) await recalcCart(c, r.rows[0].cart_id);
+    if (r.rows.length) {
+      removed = true;
+      await recalcCart(c, r.rows[0].cart_id);
+    }
   });
+
+  if (!removed) return next(errorHandler.notFound('cart_item_not_found'));
   res.json({ ok: true });
 }));
 
