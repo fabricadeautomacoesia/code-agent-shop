@@ -375,16 +375,37 @@ app.get('/trending',
 
 // GET /search/categories - mega menu
 // cache 900s - categorias mudam raramente (admin only)
+// FIX-WORKER-7 pass 15: 4 bugs aplicando Pattern W7 8 regras consolidadas:
+// 1. Children query SEM is_active filter -> admin desativava children mas
+//    apareciam no mega menu storefront -> click vai pra /categoria/inativa = 404
+// 2. Regra H violada: json_agg NULL quando 0 children ativos -> frontend
+//    .children.map() crash TypeError. Pattern defensive COALESCE.
+// 3. Regra D violada: ORDER BY sort_order sem tiebreaker -> 2 cats com
+//    sort_order=10 = ordem arbitraria PG planner (cache evict = ordem diferente)
+//    FIX: tiebreaker name ASC + id (sempre unique).
+// 4. SELECT c.* expoe colunas internas (updated_at, meta_keywords, etc).
+//    Pattern security: lista explicita de campos consumidos pelo frontend.
 app.get('/categories',
   cache.cacheMiddleware(() => 'search:categories', 900),
   asyncHandler(async (_req, res) => {
   const r = await query(
-    `SELECT c.*,
-       (SELECT json_agg(c2.* ORDER BY c2.sort_order) FROM categories c2 WHERE c2.parent_id = c.id) AS children
-       FROM categories c WHERE c.parent_id IS NULL AND c.is_active
-       ORDER BY c.sort_order`
+    `SELECT c.id, c.slug, c.name, c.name_singular, c.description, c.icon,
+            c.sort_order, c.parent_id, c.is_active,
+       COALESCE(
+         (SELECT json_agg(json_build_object(
+                    'id', c2.id, 'slug', c2.slug, 'name', c2.name,
+                    'name_singular', c2.name_singular, 'description', c2.description,
+                    'icon', c2.icon, 'sort_order', c2.sort_order
+                  ) ORDER BY c2.sort_order, c2.name, c2.id)
+            FROM categories c2
+           WHERE c2.parent_id = c.id AND c2.is_active),
+         '[]'::JSON
+       ) AS children
+       FROM categories c
+      WHERE c.parent_id IS NULL AND c.is_active
+      ORDER BY c.sort_order, c.name, c.id`
   );
-  res.json({ categories: r.rows });
+  res.json({ categories: r.rows, total: r.rows.length });
 }));
 
 // GET /search/facets?category=...&kind=... - opcoes para filtros laterais

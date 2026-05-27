@@ -12586,3 +12586,89 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d (cron-based)
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W14: migration adicionar idx parcial categories.parent_id IS NULL
+
+================================================================
+ITER W7 PASS 15 - /categories 4 bugs + aiops-svc audit (2026-05-27)
+================================================================
+ESCOPO: search-svc GET /categories + audit aiops-svc endpoints
+FILE: services/search-svc/src/server.js (linhas 377-396)
+
+CONTEXTO: W7 pass 14 estabeleceu 8 regras (A-H). Aplicacao a /categories
++ audit aiops-svc. /categories viola 3 regras + 1 bug security. aiops-svc
+audit mostra bem protegido (admin-only + DLP /status).
+
+BUGS /categories CORRIGIDOS (4):
+
+1. CHILDREN SEM is_active FILTER (linha 383)
+- PRE-FIX: SELECT json_agg(c2.*) FROM categories c2 WHERE c2.parent_id = c.id
+  - Children inactives apareciam no mega menu storefront
+  - Admin desativava children (manutencao/hidden) mas continuavam visiveis
+  - Click vai pra /categoria/<slug> categoria inativa = 404 ou conteudo errado
+- FIX: WHERE c2.parent_id = c.id AND c2.is_active
+
+2. REGRA H violada - json_agg NULL crash
+- 0 children ativos -> json_agg(NULL) (nao array vazio)
+- frontend mega-menu: c.children.map(child => ...) crash TypeError
+- FIX: COALESCE(json_agg(...), '[]'::JSON) defense
+- Pattern W7 pass 14 (/facets) consolidado cross-endpoint
+
+3. REGRA D violada - ORDER BY sort_order sem tiebreaker
+- 2 categorias com sort_order=10 (admin esqueceu sequencia) -> ordem
+  arbitraria PG planner. Cache 900s amortiza, mas evict rebuild ordem diferente.
+- UX: usuario habituado a "Automacoes" posicao 3 ve "Templates" la apos cache evict
+- FIX: ORDER BY sort_order, name ASC, id (3-tier deterministic)
+- Mesmo fix aplicado ao json_agg ORDER BY children (consistencia)
+
+4. SELECT c.* exposicao colunas internas (security pattern)
+- PRE-FIX: SELECT c.*, json_agg(c2.*) - exposia updated_at, meta_keywords,
+  e futuras colunas (internal_notes, last_audit_at, etc)
+- IMPACT: hoje minimo (campos low-sensitive), MAS pattern de seguranca:
+  novas colunas auto-vazadas ate alguem notar
+- FIX: lista explicita id/slug/name/name_singular/description/icon/
+  sort_order/parent_id/is_active (campos consumidos por mega-menu)
+- BONUS: json_build_object explicit no children (mesmo principio)
+
+AUDIT AIOPS-SVC (status: clean - bem protegido):
+
+ENDPOINTS PUBLICOS:
+- /status (cache 5s public): JA sanitizado (linha 217-222 so cpu/ram/disk
+  + load_avg_1m). Removido hostname/uptime/platform (DLP W10 pass 5).
+- /health: minimal {ok: true}
+
+ENDPOINTS ADMIN/STAFF (protegidos):
+- /metrics, /metrics/latest: jwt.requireAuth roles
+- /alerts, /alerts/recent: jwt.requireAuth roles
+- /audit-log, /audit-log/actions: jwt.requireAuth roles
+
+PEQUENOS ISSUES NOT-FIXED (deferidos low priority):
+- /metrics linha 241: SELECT * expoe hostname/pid/node_version (admin-only
+  OK mas pattern security explicit fields preferivel) - DEFERIDO
+- /metrics linha 241: ORDER BY collected_at DESC sem tiebreaker
+  (timestamps com mesma resolucao ms = ordem arbitraria) - DEFERIDO
+- /alerts linha 252: ($1 || ' days')::INTERVAL string concat
+  - Funcional + parseInt+Math.min validacao OK, mas idiomatic preferivel
+    INTERVAL '1 day' * $1::INT - DEFERIDO
+
+aiops-svc bem auditado em iters anteriores (W10 pass 5 DLP). Nao precisa
+mais fix nesta iter.
+
+PATTERN W7 8 ENDPOINTS + 8 REGRAS CONSOLIDADAS:
+- product-svc: /recently-viewed, /for-me, /related, /also-bought
+- search-svc: /top-sellers, /top-sellers/:cat, /search, /autocomplete,
+              /facets, /categories (esta iter), /trending (audit clean)
+
+NOVA REGRA I (pattern security cross-svc):
+I. SELECT explicit fields - nunca SELECT * em endpoints public/admin.
+   Pattern protege contra novas colunas auto-vazadas ate explicito audit.
+   Aplicavel a TODOS endpoints retornando rows ao frontend.
+
+W7 PROGRESS:
+- product-svc: passes 1-10
+- search-svc: passes 11-15 (top-sellers, /search, /autocomplete, /facets,
+              /categories + /trending audit, aiops-svc audit)
+
+PROXIMA ITER:
+- W7 pass 16: order-svc audit (cart, checkout) - mesmas 9 regras
+- W18 pass 7: idx parcial product_views > 90d (cron-based)
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W8 pass 4: aplicar Regra I (SELECT explicit) em outros services
