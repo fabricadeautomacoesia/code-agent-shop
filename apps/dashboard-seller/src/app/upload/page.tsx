@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { sellerFetch, sellerUpload } from '@/lib/seller-api';
+import { useSellerAction } from '@/lib/use-seller-action';
 import { UploadCloud, ImageIcon, FileArchive, AlertTriangle } from 'lucide-react';
 
 export default function UploadPage() {
@@ -17,12 +18,16 @@ export default function UploadPage() {
     cover_image_url: '', package_url: '',
   });
   const [uploading, setUploading] = useState<{ cover: boolean; pkg: boolean }>({ cover: false, pkg: false });
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
+  const [uploadError, setUploadError] = useState('');
 
   useEffect(() => {
     sellerFetch<{ categories: any[] }>('/search/categories').then((r) => setCategories(r.categories || []));
   }, []);
+
+  // FIX-WORKER-5 pass 5 (final): useSellerAction substitui submitting+error ad-hoc.
+  // Sem reload callback (post-create redireciona para /products).
+  // uploadError separado pois uploads sao independentes do submit principal.
+  const action = useSellerAction();
 
   async function handleFile(field: 'cover' | 'pkg', e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -31,13 +36,14 @@ export default function UploadPage() {
     // capturava o estado antigo. Uploads paralelos (cover+pkg) faziam um sobrescrever
     // o flag do outro. Functional setState resolve.
     setUploading((p) => ({ ...p, [field]: true }));
+    setUploadError('');
     try {
       const endpoint = field === 'cover' ? '/products/upload/media' : '/products/upload/package';
       const r = await sellerUpload(endpoint, file);
       const targetField = field === 'cover' ? 'cover_image_url' : 'package_url';
       setForm((p) => ({ ...p, [targetField]: r.url }));
     } catch (e: any) {
-      setError(`Upload falhou: ${e.message}`);
+      setUploadError(`Upload falhou: ${e.message}`);
     } finally {
       setUploading((p) => ({ ...p, [field]: false }));
     }
@@ -45,8 +51,7 @@ export default function UploadPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true); setError('');
-    try {
+    action.run('create-draft', async () => {
       const payload = {
         ...form,
         price_cents: Number(form.price_cents),
@@ -56,9 +61,8 @@ export default function UploadPage() {
       };
       const r: any = await sellerFetch('/products/me', { method: 'POST', body: JSON.stringify(payload) });
       router.push(`/products?created=${r.product.id}`);
-    } catch (e: any) {
-      setError(e.message);
-    } finally { setSubmitting(false); }
+      return 'Draft criado com sucesso, redirecionando...';
+    });
   }
 
   return (
@@ -194,10 +198,29 @@ export default function UploadPage() {
           </div>
         </section>
 
-        {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg">{error}</div>}
+        {/* FIX-WORKER-5 pass 5: banners hook + uploadError separado (paralelo a action) */}
+        {uploadError && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg flex items-center justify-between">
+            <span>{uploadError}</span>
+            <button type="button" onClick={() => setUploadError('')} className="text-xs hover:underline">fechar</button>
+          </div>
+        )}
+        {action.error && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg flex items-center justify-between">
+            <span>{action.error}</span>
+            <button type="button" onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          </div>
+        )}
+        {action.success && (
+          <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg flex items-center justify-between">
+            <span>{action.success}</span>
+            <button type="button" onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          </div>
+        )}
 
-        <button type="submit" disabled={submitting} className="btn-primary flex items-center gap-2 disabled:opacity-50">
-          <UploadCloud className="w-4 h-4" /> {submitting ? 'Criando draft...' : 'Criar draft'}
+        <button type="submit" disabled={action.busyKey === 'create-draft' || uploading.cover || uploading.pkg}
+          className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait">
+          <UploadCloud className="w-4 h-4" /> {action.busyKey === 'create-draft' ? 'Criando draft...' : 'Criar draft'}
         </button>
       </form>
     </div>
