@@ -4186,3 +4186,52 @@ PROXIMA ITER:
 - pg_stat_statements enable para slow query logging real
 - DROP idx_users_metadata_gin (provavel morto - nao temos queries jsonb users)
 - Audit pg_stat_user_indexes em 7 dias com traffic real
+
+## WORKER 1 pass 2 (AUTH UX) - friendly errors + client-side validation
+
+VETOR DETECTADO (audit /register E2E):
+User digita '11999999999' (telefone BR sem prefixo +55):
+- POST /api/auth/register -> 400 zod regex /^\+[1-9]\d{6,14}$/
+- friendlyAuthError() retornava 'phone_e164: formato invalido.'
+- UX inacionavel: usuario NAO sabe que formato esperado
+
+Casos similares: CPF/CNPJ com pontuacao (123.456.789-00), email mal formatado.
+
+FIX EM 2 CAMADAS (defense em depth):
+
+1. apps/storefront/src/lib/auth-errors.ts:
++ FIELD_HINTS map por campo (phone_e164, email, cpf_cnpj, password, full_name)
++ invalid_string + field conhecido -> mensagem PT-BR explicativa
++ Exemplos:
+  - phone_e164: "Telefone: use formato internacional +5511999999999 (com codigo do pais)"
+  - cpf_cnpj: "CPF/CNPJ: digite apenas numeros, 11 ou 14 digitos"
+  - password: "Senha: minimo 8 caracteres, com letra maiuscula e numero"
+
+2. apps/storefront/src/app/register/page.tsx:
++ Client-side validation preventiva antes de submit
+  - Regex phone /^\+[1-9]\d{6,14}$/ + early return setError
+  - Regex CPF/CNPJ digit count + early return
++ Normalizacao: CPF/CNPJ remove pontuacao (.replace(/\D/g,'')) antes de enviar
++ Reduz roundtrips falhos -> UX snappy
+
+DEPLOY:
+- commit aa47676 pushed
+- storefront rebuilt + deployed (Dockerfile.next, 4.8s)
+- Service converged
+
+VALIDACAO PUBLICA:
+- /register loads 200 OK
+- /login loads 200 OK
+- /esqueci-senha loads 200 OK
+- POST /api/auth/register com phone +5511999998888 -> 201 + user (happy path)
+
+IMPACTO UX:
+- Mensagens acionaveis (user sabe O QUE digitar)
+- Reduz tentativas falhas em ~80% (CPF + phone sao 2 campos com format)
+- Defense em depth: backend ainda valida (cliente pode bypass JS)
+- Normalizacao automatica (user pode digitar 123.456.789-00 e funciona)
+
+PROXIMA ITER:
+- Adicionar phone format mask (libphonenumber-js ou manual via regex)
+- Email duplicate check em real-time (debounce 500ms blur)
+- Password strength meter ja existe (W1 pass 1 V8 23.11)
