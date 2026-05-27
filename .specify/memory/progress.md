@@ -102,6 +102,23 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## ENDPOINT FIXES (WORKER 10 - SEARCH+AIOPS)
+Audit via curl identificou 3 bugs:
+- /api/search/top-sellers?category=X ignorava o filtro (retornava todas as cats)
+- /api/aiops/metrics retornava 404 (gateway proxia /api/aiops/* mas svc tinha so /metrics/latest)
+- /api/aiops/alerts retornava 404 (mesmo problema, so existia /alerts/recent)
+
+FIX commitado (528b31b) + deployed:
+- search-svc top-sellers aceita ?category=slug (filtra na CTE com c.slug = $2)
+- aiops-svc: handlers /metrics e /alerts (aliasam /metrics/latest e /alerts/recent)
+  + aceitam ?limit=N (metrics, max 500) e ?days=N (alerts, max 90)
+
+VALIDADO publicamente:
+- top-sellers?category=agentes-ia -> {filter:"agentes-ia", cats:["agentes-ia"]}
+- top-sellers sem filtro -> 6 cats retornadas
+- aiops/metrics?limit=3 -> 3 entries
+- aiops/alerts?days=30 -> 1 entry
+
 ## SECURITY/RELIABILITY HARDENING - DEPLOY E2E VALIDADO (sessao 26/05)
 
 Apos rede do cliente voltar, deploy completo dos 4 fixes acumulados offline:
