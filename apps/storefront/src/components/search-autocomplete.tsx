@@ -43,15 +43,23 @@ export function SearchAutocomplete({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-start justify-center pt-24 px-4" onClick={onClose}>
-      <div className="glass-strong w-full max-w-2xl rounded-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+    // FIX-WORKER-3 pass 8 (a11y): wrapper passivo + backdrop semantico button
+    <div className="fixed inset-0 z-[60] flex items-start justify-center pt-24 px-4">
+      <button type="button" aria-label="Fechar busca"
+        onClick={onClose}
+        className="absolute inset-0 bg-black/80 backdrop-blur-sm cursor-default" />
+      {/* role=dialog + aria-labelledby. searchbox role no input com aria-label */}
+      <div role="dialog" aria-modal="true" aria-label="Busca de produtos"
+        className="relative glass-strong w-full max-w-2xl rounded-2xl overflow-hidden">
         <form onSubmit={submit} className="flex items-center p-4 border-b border-white/10">
-          <Search className="w-5 h-5 text-white/40 mr-3" />
+          <Search className="w-5 h-5 text-white/40 mr-3" aria-hidden="true" />
           <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)}
+            aria-label="Buscar produtos"
             placeholder="Buscar agentes IA, workflows n8n, scripts..."
             className="flex-1 bg-transparent outline-none text-lg" />
-          <button type="button" onClick={onClose} className="p-2 hover:bg-white/5 rounded">
-            <X className="w-5 h-5" />
+          <button type="button" onClick={onClose} aria-label="Fechar busca"
+            className="p-2 hover:bg-white/5 rounded focus-visible:outline-2 focus-visible:outline-magenta">
+            <X className="w-5 h-5" aria-hidden="true" />
           </button>
         </form>
 

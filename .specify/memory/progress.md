@@ -12008,3 +12008,77 @@ PROXIMA ITER:
 - W3 pass 8: outros <div onClick> codebase (cart-drawer, etc)
 - W3 pass 9: PDP variant WishlistButton /check -> store (architectural)
 - W18 pass 6: idx parcial order_items status='paid'
+
+================================================================
+ITER W3 PASS 8 - 3 modals a11y dialog pattern (2026-05-27)
+================================================================
+ESCOPO: 3 modals/drawers com <div onClick> backdrop nao-semantico
+FILES:
+- apps/storefront/src/components/cart-drawer.tsx
+- apps/storefront/src/components/nav.tsx (mobile menu)
+- apps/storefront/src/components/search-autocomplete.tsx
+
+CONTEXTO: W3 pass 7 estabeleceu pattern a11y div-as-button + Escape close.
+grep <div onClick> retornou 4 files - notification-bell ja corrigido.
+Auditoria dos 3 restantes revelou pattern uniforme: modal/drawer com
+backdrop click=close, faltando dialog semantica + Escape + a11y.
+
+BUGS CORRIGIDOS (10 distribuidos):
+
+CartDrawer (4 bugs):
+1. Sem Escape key handler -> keyboard trapped
+   FIX: useEffect [cartOpen] window keydown Escape
+2. Sem body scroll lock -> page scrollava por baixo
+   FIX: document.body.style.overflow=hidden + cleanup
+3. <div onClick> backdrop nao semantico
+   FIX: <button aria-label="Fechar carrinho">
+4. <aside> sem role=dialog -> screen readers anunciavam "aside"
+   FIX: role="dialog" aria-modal="true" aria-labelledby + icons aria-hidden
+
+nav.tsx mobile menu (3 bugs):
+1. Sem Escape (so click outside) - keyboard trapped
+   FIX: keydown listener no mesmo useEffect ja existente (DRY)
+2. Backdrop <div onClick> nao-semantico
+   FIX: <button aria-label="Fechar menu">
+3. <aside> sem role=dialog
+   FIX: role="dialog" aria-modal aria-labelledby="mobile-menu-title"
+NOTE: body scroll lock JA EXISTIA - bom precedente
+
+search-autocomplete (3 bugs):
+1. Backdrop <div onClick> nao-semantico
+   FIX: <button aria-label="Fechar busca">
+2. Container sem role=dialog
+   FIX: role="dialog" aria-modal aria-label="Busca de produtos"
+3. Input/icons sem aria-label e aria-hidden
+   FIX: input aria-label + X/Search aria-hidden
+NOTE: Escape handler JA EXISTIA (linha 24) - bom precedente
+
+PATTERN W3 A11Y DIALOG MODAL ESTABELECIDO (pass 7+8):
+Componente requer 5 elementos:
+1. Container role="dialog" + aria-modal="true"
+2. aria-labelledby (h2 com id) OU aria-label string
+3. Escape key listener via useEffect (cleanup on unmount)
+4. Body scroll lock (overflow hidden + restore)
+5. Backdrop semantico <button aria-label> em vez de <div onClick>
+   - cursor-default para nao parecer pointer-button
+   - position absolute inset-0 com bg color
+6. Icones decorativos aria-hidden="true"
+7. focus-visible outline-magenta em botoes
+
+REUSE: aplicavel a futuros modais (LoyaltyDrawer, CouponModal, etc).
+Considerar extrair <Dialog> wrapper component p/ DRY.
+
+PATTERN W3 PROGRESS COMPLETO (passes 1-8):
+- pass 1: fetchRelated 3 bugs
+- pass 2: also-bought 4 bugs (CRITICO prod)
+- pass 3: AddToCart 4 race conditions
+- pass 4: WishlistButton Pattern B+D
+- pass 5: CompareButton 2 bugs UX
+- pass 6: PriceAlertButton Pattern B + /check
+- pass 7: NotificationBell optimistic + a11y
+- pass 8: 3 modals dialog a11y (esta iter)
+
+PROXIMA ITER:
+- W3 pass 9: extrair <Dialog> wrapper DRY (architectural)
+- W3 pass 10: PDP variant WishlistButton /check -> store
+- W18 pass 6: idx parcial order_items status='paid'

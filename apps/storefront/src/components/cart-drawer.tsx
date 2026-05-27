@@ -26,6 +26,22 @@ export function CartDrawer() {
   }
   useEffect(() => { if (cartOpen) load(); }, [cartOpen, token]);
 
+  // FIX-WORKER-3 pass 8 (a11y Escape close): keyboard users sem mouse precisam
+  // sair do drawer. Pattern aplicado NotificationBell pass 7. WCAG 2.1.1.
+  useEffect(() => {
+    if (!cartOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCartOpen(false); };
+    window.addEventListener('keydown', onKey);
+    // FIX-WORKER-3 pass 8 (UX): lock body scroll quando drawer aberto (era
+    // possivel scrollar page por baixo). Reset on cleanup.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [cartOpen, setCartOpen]);
+
   async function removeItem(id: string) {
     if (!token) return;
     await Api.cartDel(token, id);
@@ -49,16 +65,30 @@ export function CartDrawer() {
   const items = cart?.items || [];
 
   return (
-    <div className="fixed inset-0 z-[60] flex justify-end" onClick={() => setCartOpen(false)}>
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <aside className="relative w-full max-w-md glass-strong h-full flex flex-col rounded-none border-l border-white/10"
-        onClick={(e) => e.stopPropagation()}>
+    // FIX-WORKER-3 pass 8 (a11y): outer div era click=close mas sem semantica.
+    // Agora wrapper passivo (sem role). Backdrop INNER recebe role=button para
+    // a11y (click close = action explicita). Aside vira role=dialog real.
+    <div className="fixed inset-0 z-[60] flex justify-end">
+      {/* Backdrop click = close. role=button + aria-label para screen readers
+          (era invisivel a11y). aria-hidden=false porque eh interativo. */}
+      <button type="button"
+        aria-label="Fechar carrinho"
+        onClick={() => setCartOpen(false)}
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-default" />
+      {/* FIX-WORKER-3 pass 8 (a11y): role=dialog + aria-modal + aria-labelledby
+          permite screen readers anunciar "Carrinho dialog modal" + focus trap natural */}
+      <aside role="dialog"
+        aria-modal="true"
+        aria-labelledby="cart-drawer-title"
+        className="relative w-full max-w-md glass-strong h-full flex flex-col rounded-none border-l border-white/10">
         <header className="flex items-center justify-between p-5 border-b border-white/10">
-          <h2 className="font-display font-bold text-xl flex items-center gap-2">
-            <ShoppingBag className="w-5 h-5 text-magenta" /> Carrinho
+          <h2 id="cart-drawer-title" className="font-display font-bold text-xl flex items-center gap-2">
+            <ShoppingBag className="w-5 h-5 text-magenta" aria-hidden="true" /> Carrinho
           </h2>
-          <button onClick={() => setCartOpen(false)} className="p-2 hover:bg-white/5 rounded-lg">
-            <X className="w-5 h-5" />
+          <button onClick={() => setCartOpen(false)}
+            aria-label="Fechar carrinho"
+            className="p-2 hover:bg-white/5 rounded-lg focus-visible:outline-2 focus-visible:outline-magenta">
+            <X className="w-5 h-5" aria-hidden="true" />
           </button>
         </header>
 
