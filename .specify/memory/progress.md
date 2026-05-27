@@ -4684,3 +4684,56 @@ PROXIMA ITER:
 - Audit produto features dependentes de vault (LLM autocomplete, related)
   estao broken silencioso? Validar via curl
 - Documentar Blueprint V8 secao "Internal Tokens" oficialmente
+
+## WORKER 8 pass 2 (VISUAL/UX) - legal pages consistency (glass + prose)
+
+VETOR DETECTADO (audit visual cross-pages):
+- /sobre usa glass cards (rich design) - OK
+- /termos usa prose prose-invert (typography) mas SEM glass wrapper
+- /privacidade NEM glass NEM prose - text solto no fundo
+
+User navegando /sobre -> /privacidade ve degradacao visual evidente:
+de cards glassmorphism estilizados para texto plano no fundo magenta.
+"Looks cheap" / unfinished - reduz confianca em paginas legal.
+
+FIX (2 arquivos em paralelo):
+1. apps/storefront/src/app/privacidade/page.tsx:
+   - Adicionou glass p-6 md:p-8 wrapper no div principal
+   - Adicionou prose prose-invert max-w-none (tipografia auto)
+   - Adicionou not-prose no Link "Voltar" e mb-6 (vs mb-8) ajustes
+2. apps/storefront/src/app/termos/page.tsx:
+   - Mesma fix - ja tinha prose prose-invert, faltava glass wrapper
+   - max-w-none movido do container pro inner div
+
+Padrao aplicado (Blueprint V8 update):
+- container mx-auto px-6 py-8 max-w-3xl (outer)
+- glass p-6 md:p-8 prose prose-invert max-w-none (inner card)
+- mb-6 (pre-card spacing) vs mb-8 (no-card)
+- not-prose em links/h1 externos (nao herda margins prose)
+
+Tailwind @tailwindcss/typography (prose plugin):
+- Automatic margins entre headings/paragraphs/lists
+- prose-invert flip dark theme
+- max-w-none herda largura do container (vs prose default 65ch)
+
+DEPLOY:
+- commit 9969072 pushed
+- storefront rebuilt (~3.4s) + deployed converged
+
+VALIDACAO PUBLICA (2 cenarios pos-fix):
+- /privacidade -> <div class="glass p-6 md:p-8 prose prose-invert ..."> OK
+- /termos -> mesma class OK
+- HTTP 200 em ambas
+
+IMPACTO:
+- Visual consistency restaurada entre 3 pages legal/info
+- prose plugin: typography melhor (line-height, margins, list styles)
+- glass: depth/separation visual do background
+- Brand perception: pages legal nao parecem mais "afterthought"
+- Mobile: p-6 -> p-8 responsive ajuda em small screens
+- Sem performance impact (Tailwind purge tree-shakes unused)
+
+PROXIMA ITER:
+- Audit visual: /cloud-code-ilimitado vs /sobre coherence
+- Verificar /status custom styling vs glass cards do dashboard
+- Audit dark mode contraste em forms (login/register)
