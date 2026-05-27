@@ -91,14 +91,24 @@ router.get('/recently-viewed',
   cache.cacheMiddleware((req) => `products:recently-viewed:${req.user.sub}:lim=${req.query.limit || 12}`, 30),
   asyncHandler(async (req, res) => {
     const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 30));
+    // FIX-WORKER-7 pass 7: bug "menos produtos que limit" quando user viu produtos
+    // deletados/nao-approved.
+    // ANTES: CTE last_views LIMIT N -> JOIN products WHERE approved -> retorna < N
+    //   Ex: user viu 12 produtos, 5 foram deletados -> retorna apenas 7
+    //   Frontend espera 12, ve 7, usuario confuso "ei, vi mais produtos!"
+    // AGORA: filtro WHERE approved esta DENTRO da CTE (JOIN products no proprio CTE).
+    //   CTE ja produz so produtos validos LIMIT N. Garantia: retorna ate N produtos.
     const r = await query(
       `WITH last_views AS (
-         SELECT product_id, MAX(created_at) AS last_view_at
-           FROM product_views
-          WHERE user_id = $1::UUID
-            AND created_at > NOW() - INTERVAL '14 days'
-          GROUP BY product_id
-          ORDER BY MAX(created_at) DESC
+         SELECT pv.product_id, MAX(pv.created_at) AS last_view_at
+           FROM product_views pv
+           JOIN products p ON p.id = pv.product_id
+          WHERE pv.user_id = $1::UUID
+            AND pv.created_at > NOW() - INTERVAL '14 days'
+            AND p.status = 'approved'
+            AND p.deleted_at IS NULL
+          GROUP BY pv.product_id
+          ORDER BY MAX(pv.created_at) DESC
           LIMIT $2::INT
        )
        SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
@@ -111,7 +121,6 @@ router.get('/recently-viewed',
               lv.last_view_at
          FROM last_views lv
          JOIN products p ON p.id = lv.product_id
-        WHERE p.status = 'approved' AND p.deleted_at IS NULL
         ORDER BY lv.last_view_at DESC`,
       [req.user.sub, lim]
     );
