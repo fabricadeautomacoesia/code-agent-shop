@@ -468,4 +468,157 @@ router.post('/:id/dispute',
   })
 );
 
+// ============================================================
+// FIX-WORKER-4 + W7 pass 31: ADMIN endpoints p/ gerenciar disputes
+// Aplicando Pattern W7 17 regras (A-R) consolidadas em 30 iters anteriores.
+// ============================================================
+
+// GET /orders/admin/disputes - lista disputes paginadas com filtros
+// (Regra I SELECT explicit, Regra D tiebreaker, Regra E response shape limit)
+router.get('/admin/disputes',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  asyncHandler(async (req, res) => {
+    // Status enum mig 007: opened|under_review|resolved_buyer|resolved_seller|cancelled
+    const status = (req.query.status || '').toString();
+    const VALID_STATUSES = ['opened', 'under_review', 'resolved_buyer', 'resolved_seller', 'cancelled'];
+    const statusFilter = VALID_STATUSES.includes(status) ? status : null;
+    const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
+
+    const r = await query(
+      `SELECT d.id, d.order_id, d.order_item_id, d.opened_by_user_id,
+              d.against_seller_id, d.reason_code, d.description,
+              d.requested_resolution, d.status,
+              d.opened_at, d.resolved_at, d.resolution_action,
+              d.refund_amount_cents,
+              u.email AS buyer_email, u.full_name AS buyer_name,
+              s.store_name AS seller_store_name, s.store_slug AS seller_store_slug,
+              o.order_number, o.total_cents
+         FROM disputes d
+         LEFT JOIN users u ON u.id = d.opened_by_user_id
+         LEFT JOIN sellers s ON s.id = d.against_seller_id
+         LEFT JOIN orders o ON o.id = d.order_id
+        WHERE ($1::TEXT IS NULL OR d.status::TEXT = $1)
+        ORDER BY
+          CASE d.status::TEXT
+            WHEN 'opened' THEN 1
+            WHEN 'under_review' THEN 2
+            WHEN 'resolved_buyer' THEN 3
+            WHEN 'resolved_seller' THEN 4
+            ELSE 5
+          END,
+          d.opened_at DESC,
+          d.id
+        LIMIT $2`,
+      [statusFilter, lim]
+    );
+    // Counts agregados (para badges UI). Window 90d cobre admin queue.
+    const stats = await query(
+      `SELECT status::TEXT AS status, COUNT(*)::INT AS n FROM disputes
+        WHERE opened_at > NOW() - INTERVAL '90 days'
+        GROUP BY status`
+    );
+    const counts = stats.rows.reduce((acc, r) => ({ ...acc, [r.status]: r.n }), {});
+    res.json({ disputes: r.rows, counts, limit: lim, filter: statusFilter });
+  })
+);
+
+// POST /orders/admin/disputes/:id/resolve - admin resolve dispute
+// Aplica Regra N state machine + Regra Q idempotent terminal + audit_log atomic
+const DISPUTE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Enum schema real mig 007: opened|under_review|resolved_buyer|resolved_seller|cancelled
+const DISPUTE_TERMINAL_STATUSES = new Set(['resolved_buyer', 'resolved_seller', 'cancelled']);
+const DISPUTE_ALLOWED_FROM = new Set(['opened', 'under_review']);
+
+router.post('/admin/disputes/:id/resolve',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  validate({ body: z.object({
+    resolution_action: z.enum(['refund_approved','refund_denied','replacement_sent','partial_refund','dismissed']),
+    admin_notes: z.string().min(10).max(5000),
+    // Status final mapeia ao enum schema. resolved_buyer = a favor buyer (refund/replacement).
+    // resolved_seller = a favor seller (dismissed). cancelled = dispute encerrada sem decisao.
+    next_status: z.enum(['resolved_buyer', 'resolved_seller', 'cancelled']).default('resolved_buyer'),
+    refund_amount_cents: z.number().int().nonnegative().optional(),
+  })}),
+  asyncHandler(async (req, res, next) => {
+    // Regra: UUID validate upfront (anti PG 22P02)
+    if (!DISPUTE_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+
+    let outcome;
+    await tx(async (c) => {
+      // Regra K: SELECT FOR UPDATE + Regra Q idempotent terminal guard
+      const cur = await c.query(
+        `SELECT id, status, against_seller_id, order_id, order_item_id, opened_by_user_id
+           FROM disputes WHERE id = $1::UUID FOR UPDATE`,
+        [req.params.id]
+      );
+      if (!cur.rows.length) { outcome = { error: 'not_found' }; return; }
+      const d = cur.rows[0];
+
+      // Regra N state machine: only open|investigating can be resolved
+      if (DISPUTE_TERMINAL_STATUSES.has(d.status)) {
+        outcome = {
+          error: 'already_resolved',
+          current_status: d.status,
+        };
+        return;
+      }
+      if (!DISPUTE_ALLOWED_FROM.has(d.status)) {
+        outcome = { error: 'invalid_state', current_status: d.status };
+        return;
+      }
+
+      // UPDATE atomic com idempotent guard (WHERE status IN allowed)
+      // Schema real mig 007: mediator_user_id + mediator_notes + refund_amount_cents
+      // Mig 042: + resolution_action coluna nova
+      await c.query(
+        `UPDATE disputes
+            SET status = $1::dispute_status,
+                resolution_action = $2,
+                mediator_notes = $3,
+                refund_amount_cents = $4,
+                resolved_at = NOW(),
+                mediator_user_id = $5::UUID
+          WHERE id = $6::UUID AND status IN ('opened','under_review')`,
+        [req.body.next_status, req.body.resolution_action, req.body.admin_notes,
+         req.body.refund_amount_cents || null, req.user.sub, req.params.id]
+      );
+
+      // Audit log atomic dentro do tx (pattern W7 pass 23 estabeleceu)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'order.dispute_resolve', 'dispute', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({
+           resolution_action: req.body.resolution_action,
+           next_status: req.body.next_status,
+           refund_amount_cents: req.body.refund_amount_cents || null,
+           against_seller_id: d.against_seller_id,
+           order_id: d.order_id,
+           ip: req.ip,
+         })]
+      );
+      outcome = { ok: true, dispute_id: req.params.id, new_status: req.body.next_status };
+    });
+
+    if (outcome?.error === 'not_found') return next(errorHandler.notFound('dispute_not_found'));
+    if (outcome?.error === 'already_resolved') {
+      return res.status(409).json({
+        error: 'already_resolved',
+        message: 'Disputa ja foi resolvida anteriormente.',
+        current_status: outcome.current_status,
+      });
+    }
+    if (outcome?.error === 'invalid_state') {
+      return res.status(400).json({
+        error: 'invalid_state',
+        message: `Estado atual nao permite resolucao: ${outcome.current_status}`,
+        current_status: outcome.current_status,
+      });
+    }
+    res.json(outcome);
+  })
+);
+
 module.exports = router;

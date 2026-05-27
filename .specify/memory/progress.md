@@ -14532,3 +14532,87 @@ PROXIMA ITER:
 - W13: notification-svc templates XSS audit (render context)
 - W18 pass 8: audit pg_stat_user_indexes (drop dead idx ~2 weeks data)
 - W3 pass 14: testes e2e Dialog wrapper (Playwright?)
+
+================================================================
+ITER W4 + W7 PASS 31 - /admin/disputes endpoint + UI (2026-05-27)
+================================================================
+ESCOPO: backend admin disputes endpoints + frontend page consume
+FILES:
+- services/order-svc/src/routes/orders.js (2 endpoints novos)
+- db/migrations/042_disputes_resolution_fields.sql (NEW)
+- apps/dashboard-admin/src/app/disputes/page.tsx (NEW)
+
+CONTEXTO: W7 pass 29 corrigiu POST /dispute (CRITICAL security DoS
+reputational). Backend tinha SO criar dispute mas faltava:
+- GET admin list (admin nao tinha como gerenciar queue)
+- POST admin resolve (sem fluxo dispute -> resolved)
+- Frontend /admin/disputes page completa
+
+BACKEND (2 endpoints novos aplicando 17 regras W7 A-R):
+
+1. GET /orders/admin/disputes?status=...&limit=...
+   - Auth: jwt.requireAuth roles admin/staff
+   - Filter status: opened|under_review|resolved_buyer|resolved_seller|cancelled
+   - LIMIT 1-200 clamped (Math.max+Math.min anti-abuse)
+   - SELECT explicit 15 fields (Regra I cross-svc consolidado)
+   - JOIN users + sellers + orders (Regra C JOIN nao subqueries)
+   - ORDER BY status priority CASE + opened_at DESC + id (Regra D tiebreaker 3-tier)
+   - Counts agregados 90d window (limit Regra A pass 18 stats temporal)
+   - Response { disputes, counts, limit, filter } (Regra E shape)
+
+2. POST /orders/admin/disputes/:id/resolve
+   - Auth roles admin/staff
+   - Validate body: resolution_action enum + admin_notes min 10 + next_status enum
+     + refund_amount_cents optional (partial_refund case)
+   - UUID validate upfront (anti PG 22P02)
+   - tx() atomic: SELECT FOR UPDATE (Regra K race) + state machine guard
+     (Regra N) + idempotent UPDATE WHERE status IN allowed
+   - Regra Q idempotent terminal: status IN ('resolved_*','cancelled') = 409 Conflict
+   - audit_log INSERT no MESMO tx (atomic - pattern pass 23)
+   - Mensagens PT-BR + status original preservado (anti-enumeration pattern 29)
+
+MIGRATION 042:
+- ADD COLUMN disputes.resolution_action VARCHAR(40)
+  (mig 007 ja tem refund_amount_cents + mediator_notes + mediator_user_id)
+- CREATE INDEX idx_disputes_admin_queue ON disputes(status, opened_at ASC)
+  WHERE status IN ('opened','under_review')
+  Partial idx p/ admin queue priorizada (so rows pendentes).
+
+FRONTEND (dashboard-admin/disputes/page.tsx):
+- Filtros status com count badges (5 status + 'todas')
+- Lista cards com:
+  - Status badge color-coded (5 cores diferentes por estado)
+  - Order number + total_cents (contexto financeiro)
+  - Reason code + requested_resolution (porque + o que pediu)
+  - Description line-clamp-2 (preview, full em modal futuro)
+  - Buyer + Seller + opened_at + resolved_at info row
+- Action buttons (so se status opened/under_review):
+  - Favor buyer (resolved_buyer + resolution_action prompt)
+  - Favor seller (resolved_seller + dismissed default)
+  - Cancelar (cancelled - buyer desistiu)
+- partial_refund prompts valor adicional
+- useAdminAction hook integration (busy state + feedback banners)
+- Anti-empty-state: glass card com Clock icon + mensagem
+
+W7 PROGRESS:
+- product-svc: 4 endpoints (passes 1-10)
+- search-svc: 5 endpoints (passes 11-15)
+- order-svc: 11 endpoints (passes 16-20, 29 dispute create, 31 admin list+resolve)
+- payment-svc: 3 endpoints (passes 21-23)
+- vault-svc: 2 endpoints (passes 24-25)
+- notification-svc: 2 endpoints (passes 26, 30)
+- qa-svc: 2 endpoints (passes 27-28)
+- TOTAL: 21 endpoints + 18 regras (A-R)
+
+LICAO LEARNED SCHEMA ALIGNMENT:
+- Inicial assumi enum 'open'/'investigating'/'resolved'/'closed' (W7 pass 29 doc)
+- Schema REAL (mig 007): 'opened'/'under_review'/'resolved_buyer'/'resolved_seller'/'cancelled'
+- Correcao mid-iter: ajustar Zod enums + SQL filters + UI labels
+- Pattern: SEMPRE verify schema antes endpoint nuevo
+  grep "CREATE TYPE.*<name>" db/migrations/*.sql
+
+PROXIMA ITER:
+- W13: notification-svc templates XSS audit (render context)
+- W18 pass 8: audit pg_stat_user_indexes (drop dead idx ~2 weeks data)
+- W3 pass 14: testes e2e Dialog wrapper (Playwright)
+- W7 pass 32: review-svc audit (mesmo pattern)
