@@ -102,6 +102,37 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## VAULT HARDENING - WORKER 17 (TIMING-SAFE + RATE-LIMIT + AUDIT)
+Audit deeper do vault-svc revelou 3 issues:
+
+1. (CRITICAL - timing attack) vaultUseGuard fazia internalTok === expected.
+   Comparacao curta-circuit permite atacante medir tempo e descobrir
+   VAULT_INTERNAL_TOKEN caractere por caractere.
+2. (HIGH - brute force) /vault/use sem rate-limit. Atacante podia tentar
+   milhoes de combinacoes de token sem ser bloqueado.
+3. (MEDIUM - forensics) Sem log granular de tentativas com token invalido
+   para analise futura de padroes de ataque.
+
+FIX commitado + deployed (50136ed + 6c18731):
+
+- crypto.timingSafeEqual com Buffer.from(...) (mesma length check para evitar
+  throw + comparison em tempo constante).
+- express-rate-limit 30 req/min/IP em /use (VAULT_USE_RATE_LIMIT env).
+- 5 req/min em /keys POST (admin operacao manual).
+- log.warn{ip, ua, tok_len, expected_len} ao detectar token invalido.
+- app.set('trust proxy', 1) para keyGenerator usar x-real-ip do gateway.
+- Dependency express-rate-limit 7.4.1 adicionada ao vault-svc package.json.
+
+BONUS: Bug de hoisting durante deploy - const provisionRateLimit usado em
+linha 38 mas declarado em linha 100. Const nao eh hoisted como function.
+Fix: movido todas definicoes (guard + 2 rate-limits) para BEFORE primeiro
+app.post() que os referencia.
+
+VALIDADO E2E publicamente:
+- Buyer comum -> 403 forbidden_role
+- Token interno errado -> 401 (fallthrough para JWT check)
+- 35 reqs em 60s -> primeiras 28 com 403, depois 7x 429 rate_limit_exceeded
+
 ## SEO PASS 3 - JSON-LD SCHEMA.ORG (WORKER 9)
 Novo apps/storefront/src/components/json-ld.tsx com 5 schemas helpers:
 
