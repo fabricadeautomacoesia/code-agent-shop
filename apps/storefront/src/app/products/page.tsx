@@ -1,5 +1,6 @@
 import { Api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
+import { ProductsSortSelect } from '@/components/products-sort-select';
 import Link from 'next/link';
 
 export const revalidate = 60;
@@ -32,17 +33,10 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
             {sp.q && <> para <span className="text-magenta">"{sp.q}"</span></>}
           </p>
         </div>
-        <form className="flex gap-2">
-          <select name="sort" defaultValue={params.sort}
-            className="glass px-4 py-2 text-sm bg-transparent text-white">
-            <option value="relevance">Relevancia</option>
-            <option value="sales">Mais vendidos</option>
-            <option value="newest">Novos</option>
-            <option value="price_asc">Menor preco</option>
-            <option value="price_desc">Maior preco</option>
-            <option value="rating">Melhor avaliados</option>
-          </select>
-        </form>
+        {/* FIX-WORKER-16: era <form> sem submit handler -> dropdown nao funcionava.
+            Agora ProductsSortSelect (Client Component) faz router.push onChange,
+            preservando query params + reset page=1. Adicionado recent_sales option. */}
+        <ProductsSortSelect current={params.sort} />
       </div>
 
       {data.results.length === 0 ? (
