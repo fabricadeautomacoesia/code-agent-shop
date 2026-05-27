@@ -6585,3 +6585,72 @@ PROXIMA ITER:
 - W7 pass 6: /products/compare validar match count vs requested IDs
 - W3: PDP UI consumir 404 corretamente (mostrar "produto removido")
 - W14: indice composto (slug, deleted_at) p/ otimizar pre-checks
+
+## WORKER 13 PASS 5 - sendTelegram/sendEmail falhando silenciosamente
+
+AUDIT notification-svc encontrou 2 bugs CRITICOS de silent failure:
+
+BUG-A: sendTelegram com env vars ausentes
+  if (!token || !chat) return null;
+  
+  Quando TELEGRAM_BOT_TOKEN/CHAT_ID nao configurados, sendTelegram retornava
+  null silenciosamente. processOutbox nao detectava (await resolve com null) e
+  marcava notif como sent_status='sent'.
+  
+  RESULTADO: notif registrada como ENVIADA mas mensagem NUNCA SAIU.
+  Admin perde alertas criticos (CPU>90%, payout pending, fail2ban triggered)
+  pensando que recebeu.
+
+BUG-B: sendTelegram HTTP 4xx nao detectado
+  return r.json();  // sem verificar r.ok nem body.ok
+  
+  fetch nao throw em 4xx/5xx. r.json() retorna o objeto de erro normalmente.
+  Telegram error patterns reais:
+  - {ok:false, error_code:401, description:"Unauthorized"} (token revogado)
+  - {ok:false, error_code:403, description:"Forbidden: bot was kicked"}
+  - {ok:false, error_code:400, description:"Bad Request: chat not found"}
+  
+  Todos esses passavam ileso -> notif marcada 'sent' apesar do envio falhar.
+
+BUG-C (simetrico): sendEmail sem validation upfront
+  Sem SMTP_HOST -> nodemailer crashava com "ECONNREFUSED 127.0.0.1:587"
+  Sem coluna email no user (null) -> nodemailer fail criptico
+  Eventualmente caia no catch outbox mas com failed_reason humanamente ruim.
+
+FIX (3 mudancas):
+
+sendTelegram:
+- Env vars missing -> throw 'telegram_not_configured: TOKEN ou CHAT_ID ausente'
+- await r.json().catch(()=>({})) -> resilient parser
+- if (!r.ok || body.ok === false) throw with body.description
+- return body so em success path
+
+sendEmail:
+- !process.env.SMTP_HOST -> throw 'email_not_configured: SMTP_HOST ausente'
+- !to -> throw 'email_missing_recipient: user sem coluna email no DB'
+
+IMPACTO:
+- Outbox processor agora atualiza retry_count + failed_reason corretamente
+- Backoff exponencial existente (30s/2min/10min/1h/terminal) funciona
+- Apos 5 tentativas: sent_status='failed' visivel em admin
+- Logs [notif.fail] com mensagens humanas vs ECONNREFUSED criptico
+
+DEPLOY:
+- commit 1ed4ea1 push main OK
+- 28 insertions, 2 deletions
+- notification-svc rebuild via VPS cron
+- Notifs ja 'sent' nao sao reprocessadas (state machine respeita terminal)
+- Novas notifs com fail real entram no retry loop corretamente
+
+VALIDACAO POS-DEPLOY:
+  SELECT count(*) FROM notifications WHERE sent_status='failed';
+  - Pre-fix: 0 (todas falhavam silenciosamente como 'sent')
+  - Pos-fix: numero real de falhas (Telegram/SMTP mal configurado, etc)
+  
+  Mais importante: admin pode agora confiar que alertas chegam OU
+  ver explicitamente que pipeline esta quebrado (visivel = corrigivel).
+
+PROXIMA ITER:
+- W13 pass 6: dashboard-admin /alerts mostrar sent_status='failed' count
+- W17: vault-svc audit AES-256-GCM
+- W18: cache em /notifications GET (alta frequencia poll bell)
