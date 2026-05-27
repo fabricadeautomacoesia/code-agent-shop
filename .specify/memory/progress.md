@@ -102,6 +102,27 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## SECURITY+DLP HARDENING (WORKER 7 - PRODUCT-SVC + SHARED)
+Audit via curl: POST /products/wishlist com UUID inexistente devolvia HTTP 500
+com mensagem PG crua: 'insert or update on table product_wishlist violates
+foreign key constraint product_wishlist_product_id_fkey'. Atacante extraia
+schema (nomes de tabelas + FKs) sem precisar de SQLi.
+
+FIX commitado + deployed (7fee001):
+- packages/shared/error-handler.js: isPgError() detecta SQLSTATE (5 chars [0-9A-Z]).
+  Resposta cliente vira 'database_error' + msg generica.
+  Log COMPLETO server-side (err.detail/table/constraint preservados para debug).
+- services/product-svc/routes/wishlist.js POST: pre-valida produto existente
+  (approved + nao-deletado) -> retorna 404 product_not_found. Catch defensivo
+  de 23503 (FK violation) tambem -> 404.
+- IMPACTO: afeta todos os 16 svcs que importam @cas/shared. Rebuild incremental
+  (product-svc primeiro). Demais services serao rebuilt em proximas iteracoes
+  - ate la, eles continuam vulneraveis a leak similar.
+
+VALIDADO:
+- POST /api/products/wishlist {"product_id":"00000000-..."} -> 404 product_not_found
+- POST com UUID valido existente -> 200 {ok:true}
+
 ## ENDPOINT FIXES (WORKER 10 - SEARCH+AIOPS)
 Audit via curl identificou 3 bugs:
 - /api/search/top-sellers?category=X ignorava o filtro (retornava todas as cats)
