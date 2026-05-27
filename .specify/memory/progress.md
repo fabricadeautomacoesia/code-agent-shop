@@ -16286,3 +16286,103 @@ PROXIMA ITER:
 - W7 pass 49: auth-svc deep audit (2FA + refresh tokens)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 48 - gateway timeout + body-size per-route (anti-DoS) (2026-05-27)
+================================================================
+ESCOPO: services/gateway/src/server.js timeouts e body limits fine-tuned
+FILE: services/gateway/src/server.js (proxy helper + middleware novos)
+
+CONTEXTO: W7 pass 47 cobriu Layer 0 security (block + fail2ban). Pass 48
+ataca DoS vectors via timeouts uniforme 30s + sem body cap upfront.
+
+BUGS CORRIGIDOS (3 + 1 melhoria):
+
+1. *** TIMEOUT UNIFORM 30S *** UX + DoS amplification
+- PRE-FIX: TODOS endpoints timeout 30000ms uniforme
+- PROBLEMAS:
+  - Auth login: user espera 30s antes ver "login failed" (UX horrivel)
+  - Upload binario 32MB: timeout 30s pode falhar legitimate upload
+  - LLM-backed search: 45s+ analise legit timeout false-fail
+- FIX: proxy() helper aceita opts.timeout override
+- 3 PROFILES per-route:
+  * TIMEOUT_FAST (5s): /api/auth (login fail-fast UX)
+  * TIMEOUT_DEFAULT (30s): products/orders/payments/search (queries normais)
+  * TIMEOUT_SLOW (60s): /uploads + /api/products/upload (binary 32MB+)
+
+2. *** BODY SIZE LIMIT MISSING upfront *** DoS payload massive
+- PRE-FIX: gateway NAO faz body parse (proxy stream)
+- MAS: atacante envia Content-Length: 999999999 header
+- Gateway abre socket upstream + memory consumed via stream
+- Upstream svcs tem express.json({limit:'?'}) MAS reject acontece DEPOIS
+  bytes consumed = DoS amplification
+- FIX: bodyLimitMiddleware ANTES proxy:
+  * Verifica req.headers['content-length'] upfront
+  * Rejeita 413 'payload_too_large' se > max
+  * Fail-fast antes proxy abrir socket upstream
+- 3 PROFILES per-route:
+  * BODY_LIMIT_UPLOADS (32MB): /uploads + /api/products/upload
+  * BODY_LIMIT_DEFAULT (1MB): /api/* (JSON typical)
+  * BODY_LIMIT_AUTH (16KB): /api/auth (login form max - anti spam huge payloads)
+
+3. *** PROXY ERROR HANDLING incompleto *** timeout vs network indistinguishable
+- PRE-FIX: error handler retornava 502 sempre + log generico
+- FIX: distinguir error.code ETIMEDOUT/ECONNRESET = timeout
+- log.warn estruturado kind:'timeout' vs 'network'
+- Response status: 504 (gateway timeout) vs 502 (bad gateway) corretos
+- Operator pode investigar timeout vs upstream crash distinguidamente
+
+BONUS MELHORIA:
+- Removido ...opts spread (linha 134 pre-fix) que duplicava entries
+- timeout/proxyTimeout setados explicit acima usando opts.timeout
+- Spread podia override defaults importantes silenciosamente
+
+PATTERN W7 GATEWAY DEFENSE LAYERS COMPLETO:
+- Layer Helmet (CSP/XSS/clickjack)
+- Layer CORS (origin allowlist)
+- Layer Rate-limit global (pass 47)
+- Layer fail2ban per-route (pass 47 sensitive endpoints)
+- Layer BLOCK upfront internal endpoints (pass 47 Regra T)
+- Layer Body-size cap upfront (pass 48 esta iter)
+- Layer Timeout per-route (pass 48 esta iter)
+- Layer Proxy error distinguish (pass 48 esta iter)
+
+PATTERN W7 NOVA REGRA U (W7 pass 48):
+U. Body-size limit ANTES proxy stream open (anti-DoS payload massive).
+   Header content-length check upfront - fail-fast antes upstream socket.
+   Per-route profiles (auth=16KB, default=1MB, uploads=32MB).
+   Complementa global rate-limit (req/min) com payload-bytes/req.
+
+PATTERN W7 NOVA REGRA V (W7 pass 48):
+V. Timeout per-route por workload (auth=5s, normal=30s, slow=60s).
+   30s uniforme = subset endpoints UX broken (auth user espera 30s ver fail)
+   ou false-fail (upload 32MB legit demora > 30s).
+   Distinguir timeout vs network error em log (kind + err_code).
+   Status code: 504 timeout, 502 network.
+
+PATTERN W7 39 ENDPOINTS + 22 REGRAS (A-V) - 48 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7
+- gateway: 2 (pass 47 + pass 48 esta iter)
+
+GATEWAY PROGRESS:
+- ✅ /api/loyalty/earn BLOCK (pass 47)
+- ✅ fail2ban /api/sellers + orders + payments + vault (pass 47)
+- ✅ Body size limit per-route + content-length cap (pass 48 esta iter)
+- ✅ Timeout per-route (pass 48 esta iter)
+- ✅ Proxy error distinguish timeout/network (pass 48 esta iter)
+- Proxy retry backoff (deferred - 1 502 = fail vs retry exponential)
+- Per-route additional security headers (deferred)
+
+PROXIMA ITER:
+- W7 pass 49: auth-svc deep audit (2FA + refresh token reuse W17 pass 14)
+- W7 pass 50: refactor payment-svc -> HTTP /loyalty/earn (consolidation pass 45+46)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod

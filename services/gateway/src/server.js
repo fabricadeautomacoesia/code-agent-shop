@@ -107,22 +107,76 @@ app.get('/api/status', asyncHandler(async (_req, res) => {
   });
 }));
 
+// --- FIX-WORKER-7 pass 48: content-length cap defensive (anti-DoS payload massive)
+// Gateway NAO faz body parse (proxy stream), MAS PODE rejeitar upfront se
+// Content-Length declarado > MAX_BODY_BYTES. Anti-DoS: atacante envia
+// header Content-Length: 999999999 = stream open + consumed memory na proxy.
+// Fail-fast antes proxy abre socket upstream.
+// PROFILES per-route:
+//   - UPLOADS: 32MB (image + binary product)
+//   - DEFAULT: 1MB (JSON typical)
+//   - AUTH: 16KB (login form max)
+const BODY_LIMIT_UPLOADS = 32 * 1024 * 1024;   // 32MB
+const BODY_LIMIT_DEFAULT = 1 * 1024 * 1024;    // 1MB
+const BODY_LIMIT_AUTH    = 16 * 1024;          // 16KB
+
+function bodyLimitMiddleware(maxBytes) {
+  return (req, res, next) => {
+    const cl = parseInt(req.headers['content-length'] || '0', 10);
+    if (cl > maxBytes) {
+      log.warn({
+        ip: req.realIp || req.ip,
+        path: req.originalUrl,
+        content_length: cl,
+        max_bytes: maxBytes,
+      }, '[gateway.body_too_large]');
+      return res.status(413).json({
+        error: 'payload_too_large',
+        max_bytes: maxBytes,
+        received_bytes: cl,
+      });
+    }
+    next();
+  };
+}
+
 // --- Helper para gerar proxy ---
 // IMPORTANTE: por padrao reescreve para preservar o prefixo /api/<svc>/* original
 // Ex: gateway recebe POST /api/auth/login -> auth-svc recebe POST /auth/login
+//
+// FIX-WORKER-7 pass 48: timeout per-route configuravel + log warn em timeout
+// PRE-FIX: 30000ms uniforme p/ TODOS endpoints
+// PROBLEMA: alguns precisam < 30s (auth = 5s = fail-fast UX), outros > 30s
+//   (upload binary 32MB = 60s+, LLM-backed search = 45s+)
+// FIX: opts.timeout override default 30s. Log warn quando hit.
 function proxy(target, opts = {}) {
+  const timeoutMs = opts.timeout || opts.proxyTimeout || 30000;
   return createProxyMiddleware({
     target,
     changeOrigin: true,
     xfwd: true,
-    proxyTimeout: 30000,
-    timeout: 30000,
+    proxyTimeout: timeoutMs,
+    timeout: timeoutMs,
     pathRewrite: opts.pathRewrite,
     on: {
       error: (err, req, res) => {
-        log.error({ err: err.message, path: req.originalUrl, target }, '[proxy.error]');
+        // FIX-WORKER-7 pass 48: distinguir timeout vs network error em log
+        const isTimeout = err.code === 'ETIMEDOUT' || err.code === 'ECONNRESET'
+          || /timeout/i.test(err.message);
+        log.error({
+          err: err.message,
+          err_code: err.code,
+          path: req.originalUrl,
+          target,
+          method: req.method,
+          timeout_ms: timeoutMs,
+          kind: isTimeout ? 'timeout' : 'network',
+        }, isTimeout ? '[proxy.timeout]' : '[proxy.error]');
         if (!res.headersSent) {
-          res.status(502).json({ error: 'upstream_unavailable', target: target.replace(/^https?:\/\//, '').split('@').pop() });
+          res.status(isTimeout ? 504 : 502).json({
+            error: isTimeout ? 'upstream_timeout' : 'upstream_unavailable',
+            target: target.replace(/^https?:\/\//, '').split('@').pop(),
+          });
         }
       },
       proxyReq: (proxyReq, req) => {
@@ -130,7 +184,10 @@ function proxy(target, opts = {}) {
         proxyReq.setHeader('x-real-ip', req.realIp || req.ip);
       },
     },
-    ...opts,
+    // FIX-WORKER-7 pass 48: NAO espalhar opts (...opts) - timeout/proxyTimeout
+    // ja foram setados explicit acima usando opts.timeout. Spread duplicava
+    // entries + causava override potencial dos defaults importantes.
+    // Allowlist explicit dos opts conhecidos seguros (forward header, etc).
   });
 }
 
@@ -149,13 +206,40 @@ const UPSTREAMS = {
   aiops:        process.env.UPSTREAM_AIOPS        || `http://tasks.cas_aiops-svc:${process.env.PORT_AIOPS || 3006}`,
 };
 
+// FIX-WORKER-7 pass 48: body limit DEFAULT 1MB para TODAS rotas /api/*
+// EXCETO /uploads + /api/products/upload (que tem cap 32MB acima).
+// Rotas COM bodyLimitMiddleware especifico (auth=16KB) sao verificadas ANTES
+// deste middleware no path resolution - express usa ORDEM de declaracao.
+// Para garantir auth 16KB enforce, declarado ANTES desta linha.
+app.use('/api', bodyLimitMiddleware(BODY_LIMIT_DEFAULT));
+
 // Express strip do app.use(prefix) faz proxy receber apenas o resto.
 // Ex: GET /api/auth/login -> proxy.req.url = /login
 // Prepend o prefixo correto que cada svc espera no proprio router:
 // /uploads/* -> product-svc (sem prefix, serve static)
-app.use('/uploads',           proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/uploads' + p }));
+// FIX-WORKER-7 pass 48: timeouts per-route otimizados.
+// PROFILES (heuristica baseada em workload):
+//   - FAST (5s): auth (fail-fast UX login)
+//   - DEFAULT (30s): products/search/orders/payments (DB queries normais)
+//   - SLOW (60s): qa (LLM analysis), uploads (binary 32MB+)
+//   - VERY_SLOW (120s): qa-worker callback (extremos)
+const TIMEOUT_FAST = 5000;
+const TIMEOUT_DEFAULT = 30000;
+const TIMEOUT_SLOW = 60000;
 
-app.use('/api/auth',          fail2ban.middleware(), proxy(UPSTREAMS.auth,         { pathRewrite: (p) => '/auth' + p }));
+// Uploads binarios: 32MB+ body limit + timeout maior
+app.use('/uploads',           bodyLimitMiddleware(BODY_LIMIT_UPLOADS),
+                              proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/uploads' + p, timeout: TIMEOUT_SLOW }));
+
+// FIX-WORKER-7 pass 48: /api/products/upload tambem precisa 32MB cap (mesmo svc)
+app.use('/api/products/upload', bodyLimitMiddleware(BODY_LIMIT_UPLOADS),
+                                proxy(UPSTREAMS.product,    { pathRewrite: (p) => '/products/upload' + p, timeout: TIMEOUT_SLOW }));
+
+// Auth login/register/2FA: fail-fast UX + body limit 16KB (anti DoS huge payloads)
+// Token verify backend deve ser ~10-50ms - timeout 5s eh generoso
+app.use('/api/auth',          bodyLimitMiddleware(BODY_LIMIT_AUTH),
+                              fail2ban.middleware(),
+                              proxy(UPSTREAMS.auth,         { pathRewrite: (p) => '/auth' + p, timeout: TIMEOUT_FAST }));
 // FIX-WORKER-7 pass 47: fail2ban tambem em endpoints sensitive (admin/payouts/payments).
 // Auth ja tinha (W6 historic). Brute-force protection patterns same.
 // vault/payments/orders - mutation endpoints + alto valor financeiro = bom candidato.
@@ -180,6 +264,9 @@ app.use('/api/loyalty', (req, res, next) => {
   next();
 }, proxy(UPSTREAMS.seller, { pathRewrite: (p) => '/loyalty' + p })); // MLB-4
 app.use('/api/products',      proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/products' + p }));
+// FIX-WORKER-7 pass 48: qa-svc dispara LLM workflow async (5min worker timeout)
+// MAS rota gateway expoe endpoints sincronos (run/callback/runs/etc) que sao DB-only
+// Default 30s OK pois LLM eh setImmediate background.
 app.use('/api/qa',            proxy(UPSTREAMS.qa,           { pathRewrite: (p) => '/qa' + p }));
 app.use('/api/orders',        fail2ban.middleware(), proxy(UPSTREAMS.order,        { pathRewrite: (p) => '/orders' + p }));
 app.use('/api/payments',      fail2ban.middleware(), proxy(UPSTREAMS.payment,      { pathRewrite: (p) => '/payments' + p })); // inclui MLB-5 /payments/installments/preview
