@@ -308,23 +308,50 @@ app.get('/categories',
   res.json({ categories: r.rows });
 }));
 
-// GET /search/facets?category=...&q=... - opcoes para filtros laterais
+// GET /search/facets?category=...&kind=... - opcoes para filtros laterais
 // cache 180s - facets agrega counts em products (muda em new product / order)
+// FIX-WORKER-10 pass 4: facets IGNORAVA category e kind apesar do cache key inclui-los.
+// Consequencia: UI mostrava counts GLOBAIS independente do filtro. Ex: usuario em
+// /categoria/agentes-ia via "147 templates disponiveis" (count global) sendo que
+// agentes-ia so tem 3 templates. Cache servia o numero errado por ate 180s.
+// Tambem normalizado category lowercase (slugs sao lower no DB) p/ cache hit rate.
 app.get('/facets',
-  cache.cacheMiddleware((req) => `search:facets:cat=${req.query.category || ''}:kind=${req.query.kind || ''}`, 180),
+  cache.cacheMiddleware((req) => {
+    const cat = (req.query.category || '').toString().trim().toLowerCase();
+    const kind = (req.query.kind || '').toString().trim().toLowerCase();
+    return `search:facets:cat=${cat}:kind=${kind}`;
+  }, 180),
   asyncHandler(async (req, res) => {
+  const cat = (req.query.category || '').toString().trim().toLowerCase();
+  const kind = (req.query.kind || '').toString().trim().toLowerCase();
+  // Whitelist kind para evitar SQL surprise (apesar do parametrizado)
+  const VALID_KINDS = new Set(['automation','ai_agent','n8n_workflow','node_script','python_script','php_script','prompt_pack','template','dataset','other']);
+  const kindFilter = VALID_KINDS.has(kind) ? kind : null;
+  const catFilter = cat || null;
   const r = await query(
-    `SELECT
+    `WITH base AS (
+       SELECT p.id, p.kind, p.price_cents, p.seller_id, p.category_id
+         FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.status='approved' AND p.deleted_at IS NULL
+          AND ($1::TEXT IS NULL OR c.slug = $1)
+          AND ($2::TEXT IS NULL OR p.kind = $2)
+     )
+     SELECT
        (SELECT json_agg(json_build_object('kind', kind, 'count', cnt))
-          FROM (SELECT kind, COUNT(*) AS cnt FROM products WHERE status='approved' GROUP BY kind) k) AS kinds,
+          FROM (SELECT kind, COUNT(*) AS cnt FROM base GROUP BY kind) k) AS kinds,
        (SELECT json_agg(json_build_object('tier', reputation_tier, 'count', cnt))
-          FROM (SELECT s.reputation_tier, COUNT(*) AS cnt FROM products p JOIN sellers s ON s.id=p.seller_id
-                  WHERE p.status='approved' GROUP BY s.reputation_tier) t) AS seller_tiers,
+          FROM (SELECT s.reputation_tier, COUNT(*) AS cnt FROM base b JOIN sellers s ON s.id=b.seller_id
+                  GROUP BY s.reputation_tier) t) AS seller_tiers,
        (SELECT json_build_object(
-          'min', MIN(price_cents), 'max', MAX(price_cents), 'avg', AVG(price_cents)::INT
-        ) FROM products WHERE status='approved') AS price_range`
+          'min', COALESCE(MIN(price_cents), 0),
+          'max', COALESCE(MAX(price_cents), 0),
+          'avg', COALESCE(AVG(price_cents)::INT, 0)
+        ) FROM base) AS price_range,
+       (SELECT COUNT(*) FROM base)::INT AS total`,
+    [catFilter, kindFilter]
   );
-  res.json({ facets: r.rows[0] });
+  res.json({ facets: r.rows[0], filter: { category: catFilter, kind: kindFilter } });
 }));
 
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
