@@ -16793,3 +16793,114 @@ PROXIMA ITER:
 - W7 pass 54: auth-svc /logout audit
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 53 - auth-svc /refresh 3 BUGS (banned bypass + race + rate-limit) (2026-05-27)
+================================================================
+ESCOPO: auth-svc POST /refresh (token rotation OWASP cascade)
+FILE: services/auth-svc/src/routes/auth.js (linhas 376-462 -> refactor)
+
+CONTEXTO: W17 pass 14 ja implementou OWASP cascade detection (reuse token
+revoga TODAS sessions + audit + notify). Pass 53 re-audita endpoint
+contra 22 regras W7 (A-V) novas que nao existiam em pass 14.
+
+PRE-EXISTENTES BEM IMPLEMENTADOS (auditoria confirmou):
+- OWASP cascade reuse breach (W17 pass 14) - EXCELENTE
+- JWT verify try/catch
+- Hash lookup + expired check
+- Rotação refresh atomic tx()
+- Regra I RETURNING explicit (cascaded sessions count)
+- Audit log em reuse breach (severity critical)
+- Notification user em reuse breach (priority 3)
+
+BUGS NOVOS IDENTIFICADOS PASS 53 (Regras A-V):
+
+1. *** Regra A BANNED USER BYPASS *** /refresh aceita banned users
+- PRE-FIX (linha 444): SELECT id, email, role WHERE id=$1 AND deleted_at IS NULL
+- /login linha 132 verifica is_banned/is_active MAS /refresh NAO
+- CENARIO BYPASS:
+  T0: User registra -> sessao criada (login OK)
+  T1: Admin BANE user (UPDATE users SET is_banned=TRUE)
+  T2: User chama /refresh -> recebe novo access_token + refresh_token
+  T3: Access valido 15min -> user continua acessando plataforma BANIDO
+  T4: User /refresh loop infinito -> ignora ban administrativo
+- BYPASS TOTAL DE BAN: violacao policy + risk law (banned user faz pagamentos,
+  reviews abusivas, etc apos ban)
+- FIX: AND is_banned=FALSE AND is_active=TRUE no SELECT user
+  Se banned: revoga session atual + audit critical + clearCookie + 403
+  Se inactive: clearCookie + 403 (sem audit - estado intermediario)
+
+2. *** Regra K *** SELECT user_sessions sem FOR UPDATE
+- PRE-FIX (linha 384-386): SELECT WHERE refresh_token_hash=$1 (no lock)
+- CENARIO RACE:
+  T0: User legitimate 2 requests concurrent /refresh (UI double-click bug)
+  T1: Ambos leem session is_revoked=FALSE (race window)
+  T2: Ambos rotacionam tx (UPDATE old + INSERT new)
+  T3: User fica com 2 refresh tokens validos paralelos
+  T4: Pior - se attacker race: 1 vence + outro detecta reuse cascade
+       -> CASCATA LOGOUT user LEGITIMO (falso positivo)
+- FIX: SELECT FOR UPDATE serializa - segundo request bloqueia ate primeiro
+  COMMIT, depois ve is_revoked=TRUE (rotated) -> entra OWASP cascade
+  detection corretamente (que ja existia W17 pass 14)
+
+3. *** RATE-LIMIT MISSING ***
+- PRE-FIX: zero rate-limit em /refresh
+- Atacante com refresh token vazado pode brute-force offline:
+  - Testa se token ainda valido (alvo: tokens vazados em git/logs)
+  - Cookie format/path discovery
+- Tambem: bot pode bombardear /refresh = stress DB user_sessions
+- FIX: refreshLimiter 60/min/IP (UI legitimate faz ~4/hr - generoso)
+- keyGenerator: req.ip (refresh nao tem auth context user pre-verify)
+
+VALIDATION DEPLOY curl:
+
+1. Banned user /refresh:
+   - Admin banca user via /admin/users/:id/ban (futuro endpoint)
+   - User /refresh -> 403 user_banned + cookie cleared + audit critical
+   - User /refresh novamente -> 401 missing_refresh (cookie limpo)
+
+2. Concurrent refresh race:
+   - Disparar 2 requests /refresh simultaneous mesmo cookie
+   - 1a: 200 OK (vence FOR UPDATE lock)
+   - 2a: 401 refresh_reuse_breach (OWASP cascade)
+     Trigger NAO atacante real - false positive UX bug
+     User precisa relogar (acceptable trade-off vs duplicate tokens)
+
+3. Rate-limit /refresh:
+   - curl 70x /refresh mesmo IP em 60s
+   - Requests 61+ : 429 rate_limit_exceeded
+
+PATTERN W7 SECURITY AUTH-SVC CONSOLIDADO (4 endpoints):
+- pass 49 /login 2FA RFC 6238 anti-replay
+- pass 50 /forgot+/reset HTML escape + audit + atomicity
+- pass 51 /register atomicity + CPF dedup + NIST password
+- pass 53 /refresh banned bypass + race + rate-limit (esta iter)
+- /logout pendente (pass 54)
+
+PATTERN W7 44 ENDPOINTS + 22 REGRAS (A-V) - 53 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7
+- gateway: 2
+- auth-svc: 5 (login, forgot, reset, register, refresh)
++ refactor @cas/shared.htmlEscape (pass 52)
+
+AUTH-SVC PROGRESS (5/6 endpoints - 83%):
+- ✅ POST /login 2FA (pass 49)
+- ✅ POST /forgot-password (pass 50)
+- ✅ POST /reset-password (pass 50)
+- ✅ POST /register (pass 51)
+- ✅ POST /refresh (pass 53 esta iter)
+- POST /logout (pass 54 - pendente)
+
+PROXIMA ITER:
+- W7 pass 54: auth-svc /logout audit (audit + cascade revocation opcional)
+- W7 pass 55: 2FA enrollment endpoints (/2fa/setup, /2fa/verify)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod

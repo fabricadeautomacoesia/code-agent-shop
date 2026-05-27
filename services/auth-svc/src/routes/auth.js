@@ -373,17 +373,35 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
 //    Revoga TODAS sessoes do user + audit log security event
 // 5. Atacante perde acesso (sessao roubada tambem revogada)
 // 6. User obrigado a fazer login fresh (sabe que houve incidente via notif)
-router.post('/refresh', asyncHandler(async (req, res, next) => {
+// FIX-WORKER-7 pass 53: rate-limit /refresh anti brute-force offline
+// Atacante com refresh token vazado pode tentar refresh repetido testando
+// se ainda valido + descobrir cookie path/format. Rate-limit defensive.
+// 60/min generoso (UI legitimo faz refresh ~1x a cada 14min = 4/hr).
+const refreshLimiter = rateLimit({
+  windowMs: 60_000, max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limit_exceeded' },
+  keyGenerator: (req) => req.ip, // per-IP (refresh sem auth context user pre-verify)
+});
+
+router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
   const rt = req.cookies?.[REFRESH_COOKIE];
   if (!rt) return next(errorHandler.unauthorized('missing_refresh', 'Cookie refresh ausente'));
   let payload;
   try { payload = jwt.verifyRefresh(rt); }
   catch { return next(errorHandler.unauthorized('invalid_refresh', 'Refresh invalido')); }
 
+  // FIX-WORKER-7 pass 53 (Regra K): SELECT FOR UPDATE user_sessions row
+  // Anti-race: 2 requests concurrent /refresh mesmo token podiam rotacionar 2x
+  // resultando em 2 refresh tokens validos paralelos (OR cascade reuse breach falso).
+  // FOR UPDATE serializa - segundo request bloqueia ate primeiro COMMIT,
+  // entao ve is_revoked=TRUE (rotated) -> entra OWASP cascade detection.
   const hash = jwt.hashToken(rt);
   const s = await query(
     `SELECT id, user_id, is_revoked, expires_at FROM user_sessions
-      WHERE refresh_token_hash = $1`, [hash]
+      WHERE refresh_token_hash = $1
+      FOR UPDATE`, [hash]
   );
   // Token nao encontrado: invalid (talvez forgado, talvez DB cleanup)
   if (!s.rows.length) {
@@ -441,9 +459,42 @@ router.post('/refresh', asyncHandler(async (req, res, next) => {
     return next(errorHandler.unauthorized('refresh_expired', 'Refresh expirado'));
   }
 
-  const u = await query('SELECT id, email, role FROM users WHERE id = $1 AND deleted_at IS NULL', [payload.sub]);
+  // FIX-WORKER-7 pass 53 (Regra A bug critical): banned/inactive user check missing
+  // PRE-FIX: SO deleted_at IS NULL filter. Banned/inactive users podiam /refresh
+  // infinitamente -> bypass total ban administration.
+  //   Cenario: User registra -> admin BANE -> user /refresh -> novo access_token
+  //   valido 15min + refresh rotated -> loop indefinido com ban ignorado.
+  //   /login linha 132 verifica is_banned/is_active MAS /refresh nao.
+  // FIX: AND is_banned=FALSE AND is_active=TRUE no WHERE.
+  // Banned user -> 401 user_banned (cookie cleared - forca re-login que vai rejeitar)
+  const u = await query(
+    `SELECT id, email, role, is_banned, is_active FROM users
+      WHERE id = $1 AND deleted_at IS NULL`,
+    [payload.sub]
+  );
   if (!u.rows.length) return next(errorHandler.unauthorized('user_not_found'));
   const user = u.rows[0];
+  if (user.is_banned) {
+    // Revoga session atual (mesmo se nao revoked antes) + clear cookie
+    await query(
+      `UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(),
+                                 revoked_reason = 'user_banned_on_refresh'
+        WHERE id = $1 AND is_revoked = FALSE`,
+      [s.rows[0].id]
+    );
+    // Audit critical (admin precisa saber que banned user tentou access)
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, 'system', 'auth.refresh_banned_user_blocked', 'user', $1, 'critical', $2::JSONB)`,
+      [user.id, JSON.stringify({ ip: req.ip, session_id: s.rows[0].id })]
+    ).catch(() => {});
+    res.clearCookie(REFRESH_COOKIE, { path: '/' });
+    return next(errorHandler.forbidden('user_banned', 'Conta banida.'));
+  }
+  if (!user.is_active) {
+    res.clearCookie(REFRESH_COOKIE, { path: '/' });
+    return next(errorHandler.forbidden('user_inactive', 'Conta inativa.'));
+  }
 
   // Rotacionar refresh
   const newRefresh = jwt.signRefresh({ sub: user.id });
