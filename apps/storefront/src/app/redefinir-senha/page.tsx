@@ -43,7 +43,7 @@ function ResetInner() {
     try {
       await Api.api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) });
       setDone(true);
-      setTimeout(() => router.push('/login'), 2500);
+      setTimeout(() => router.push('/login?reset=1'), 2500);
     } catch (e: any) {
       setErr(e.data?.message || e.message);
     } finally { setLoading(false); }

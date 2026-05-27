@@ -2,14 +2,22 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { CheckCircle } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
 export default function LoginPage() {
+  return <Suspense fallback={<div className="container mx-auto px-6 py-16 max-w-md">Carregando...</div>}><LoginInner /></Suspense>;
+}
+
+function LoginInner() {
   const router = useRouter();
+  const sp = useSearchParams();
+  const justRegistered = sp.get('registered') === '1';
+  const passwordReset = sp.get('reset') === '1';
   const setAuth = useAuth((s) => s.setAuth);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -35,6 +43,26 @@ export default function LoginPage() {
     <div className="container mx-auto px-6 py-16 max-w-md">
       <h1 className="font-display font-bold text-4xl mb-2">Entrar</h1>
       <p className="text-white/60 mb-8">Acesse sua conta no Code & Agent Shop</p>
+
+      {/* FIX-WORKER-1: banners de sucesso pos-registro / pos-reset (antes eram silenciosos) */}
+      {justRegistered && (
+        <div className="mb-6 flex items-start gap-3 p-4 rounded-lg bg-green-500/10 border border-green-500/30">
+          <CheckCircle className="w-5 h-5 text-green-400 mt-0.5 flex-shrink-0" />
+          <div className="text-sm">
+            <div className="font-semibold text-green-300">Conta criada com sucesso!</div>
+            <div className="text-white/70 mt-0.5">Faca login com suas credenciais para comecar.</div>
+          </div>
+        </div>
+      )}
+      {passwordReset && (
+        <div className="mb-6 flex items-start gap-3 p-4 rounded-lg bg-green-500/10 border border-green-500/30">
+          <CheckCircle className="w-5 h-5 text-green-400 mt-0.5 flex-shrink-0" />
+          <div className="text-sm">
+            <div className="font-semibold text-green-300">Senha redefinida!</div>
+            <div className="text-white/70 mt-0.5">Entre com sua nova senha abaixo.</div>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={submit} className="glass p-8 space-y-5">
         {!needs2fa ? (

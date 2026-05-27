@@ -76,6 +76,17 @@ app.post('/:id/read', jwt.requireAuth(), asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// FIX-WORKER-1: POST /api/notifications/read-all - marca todas in_app nao-lidas como lidas
+app.post('/read-all', jwt.requireAuth(), asyncHandler(async (req, res) => {
+  const r = await query(
+    `UPDATE notifications SET is_read = TRUE, read_at = NOW()
+      WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE
+      RETURNING id`,
+    [req.user.sub]
+  );
+  res.json({ ok: true, marked: r.rowCount });
+}));
+
 // POST /api/notifications/test - admin envia teste
 app.post('/test', jwt.requireAuth({ roles: ['admin'] }),
   validate({ body: z.object({ to: z.string().email(), subject: z.string(), body: z.string() }) }),
