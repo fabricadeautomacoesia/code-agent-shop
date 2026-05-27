@@ -10810,3 +10810,103 @@ PROXIMA ITER:
 - W6 pass 4: /auth/refresh logout-cascade no double-use refresh
 - W17: rate-limit /auth/logout (anti abuse)
 - W4 pass 15: /admin/audit-log filter shortcuts
+
+## WORKER 17 PASS 14 - Refresh token reuse detection + cascade logout (OWASP)
+
+BUG SECURITY CRITICAL: /auth/refresh nao detectava reuso de token revogado.
+
+CENARIO ATAQUE PRE-FIX:
+1. Atacante rouba refresh via XSS/MITM/leak
+2. Atacante POST /refresh -> 200 OK + novo access+refresh
+   Antigo revogado em DB (rotacao normal)
+3. Legitimate user faz /refresh com token antigo (que vazou)
+4. Backend: is_revoked=TRUE -> 401 'refresh_revoked' SIMPLES
+5. User redireciona login (NAO SABE QUE HOUVE INCIDENTE)
+6. ATACANTE CONTINUA NA SUA NOVA SESSAO ATE EXPIRAR 7d
+
+OWASP refresh token rotation com DETECTION:
+- Token revoked re-apresentado = SINAL FORTE de compromisso
+- Resposta correta: revogar TODAS sessoes user (cascade)
+- Notificar user + audit log + invalidate atacante
+
+FIX (logout cascade + audit + notify):
+
+1. Detect reuse:
+   if (s.rows[0].is_revoked) -> branch security breach
+   (era 401 simples antes)
+
+2. Cascade UPDATE em tx():
+   UPDATE user_sessions
+      SET is_revoked = TRUE,
+          revoked_reason = 'refresh_reuse_breach_cascade'
+    WHERE user_id = <victim> AND is_revoked = FALSE
+    RETURNING id;
+   - Revoga TODAS sessoes ativas (incluindo a roubada)
+
+3. Audit log severity='critical':
+   action='auth.refresh_reuse_breach'
+   payload: ip, ua, cascaded_sessions count, original_session_id
+   - Admin investiga via /admin/audit-log (W4-12)
+   - Forensics IP repetido em multiplos users = bot
+
+4. Notify user priority=3 critical:
+   Title: "Atividade suspeita detectada - todas sessoes encerradas"
+   Body: explica reuso + sugestao trocar senha
+   payload: { ip, cascaded_sessions }
+   - User sabe incidente real time
+
+5. clearCookie + 401 com codigo claro:
+   error: 'refresh_reuse_breach'
+   - Browser cleanup
+   - Cliente mostra mensagem especifica
+
+6. Separar branch revoked (breach) de expired (timeout natural):
+   - Antes: condicao unica check tudo
+   - Agora: revoked -> cascade; expired -> 401 simples
+
+SECURITY IMPACT:
+- Cascade aborta sessao atacante em segundos
+- Audit log forensics retrospectiva
+- Notification alerta user real time
+- Sem mudanca client (cookie ja rotacionado em uso legitimo)
+
+DEPLOY:
+- commit 2ca5f5b push main OK
+- 64 insertions, 1 deletion
+- auth-svc rebuild via VPS cron
+- Sem schema change (sessions + audit_log + notifications existem)
+- Backward compat: novo error code
+
+VALIDACAO POS-DEPLOY:
+- refresh A (revoga) -> refresh A novamente
+  Espera 401 refresh_reuse_breach
+- SELECT user_sessions WHERE user_id=X AND is_revoked=FALSE -> 0 rows
+- SELECT audit_log WHERE action='auth.refresh_reuse_breach' -> 1 row
+- SELECT notifications template_code='security_refresh_reuse' -> 1 row
+
+LIMITACOES (proximas iter):
+- Email template seed (W13 pass 9)
+- IP geolocation enrichment (suspeito se outro pais)
+- Rate limit detection (N reuses/hora = bot)
+
+W17 SECURITY AUDIT (passes 1-14):
+- pass 1-2: JWT role enforcement
+- pass 3: fail2ban global
+- pass 4: DLP tok_len
+- pass 5: timing-safe
+- pass 6: rate-limit vault
+- pass 7-8: startup envs
+- pass 9: INSERT fantasma
+- pass 10-11: rate-limit auth + 2FA
+- pass 12-13: vault rotation cron + swap atomic
+- pass 14: refresh reuse cascade (esta iter)
+
+INTEGRACAO COM W6-3 (audit log auth.logout) + W4-12 (admin audit-log UI):
+- 'auth.logout' + 'auth.refresh_reuse_breach' visiveis admin dashboard
+- Filter dropdown lista ambas actions
+- Forensics: identificar incidentes security em real time
+
+PROXIMA ITER:
+- W13 pass 9: template email security_refresh_reuse (urgency 3 = sempre email)
+- W4 pass 15: /admin/audit-log filter shortcut "Security Incidents"
+- W17 pass 15: rate-limit /auth/refresh (anti brute-force scenarios)
