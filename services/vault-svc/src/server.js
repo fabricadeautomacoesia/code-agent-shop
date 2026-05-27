@@ -7,7 +7,7 @@ const nodeCrypto = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp, fail2ban, startup } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp, fail2ban, startup, cache, mask } = require('@cas/shared');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
 // VAULT_AES_KEY 64-char hex obrigatorio (encrypt/decrypt de API keys).
@@ -199,18 +199,67 @@ async function rotationAlertCron() {
 }
 
 // GET /api/vault/keys/rotation-due - lista keys com rotacao prox/vencida
-app.get('/keys/rotation-due', adminOnly, asyncHandler(async (req, res) => {
-  const r = await query(
-    `SELECT id, key_alias, provider, is_platform_pool, rotation_due_at,
-            EXTRACT(EPOCH FROM (rotation_due_at - NOW()))/86400 AS days_remaining
-       FROM vault_api_keys
-      WHERE is_active = TRUE
-        AND rotation_due_at IS NOT NULL
-        AND rotation_due_at < NOW() + INTERVAL '30 days'
-      ORDER BY rotation_due_at ASC LIMIT 100`
-  );
-  res.json({ keys: r.rows, count: r.rows.length });
-}));
+// FIX-WORKER-7 pass 65: 4 BUGS aplicando Pattern W7 (Regras D+E + cache + UX).
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING *** ORDER BY rotation_due_at ASC nao determ
+//   Keys com rotation_due_at identico (bulk provisioning) -> ordem indefinida.
+//   FIX: + id ASC tiebreaker.
+//
+// BUG 2 *** Regra E PAGINATION MISSING *** hardcoded LIMIT 100
+//   Em prod com 500+ chaves (multi-seller scale) admin so vê primeiras 100.
+//   FIX: ?limit (1-200, default 50) + ?offset.
+//
+// BUG 3 *** ?days_window UX *** hardcoded 30d
+//   Pre-fix forca admin filtrar "proximos 30 dias". "Esta semana" (7d)
+//   ou "Esta vencida" (-1) impossivel.
+//   FIX: ?days_window (-30 a 365, default 30).
+//
+// BUG 4 *** CACHE MISSING *** rotation cron dispara este endpoint regularmente
+//   Cron 09:00 UTC + admin abre dashboard /admin/vault. Cache 5min (rotacao
+//   nao muda intra-day apos rotacao crud).
+//   FIX: cache.cacheMiddleware 300s vary by params.
+const rotationDueCacheKey = (req) => {
+  const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const dw = Math.max(-30, Math.min(365, parseInt(req.query.days_window, 10) || 30));
+  return `vault:rotation_due:lim=${lim}:off=${off}:dw=${dw}`;
+};
+
+app.get('/keys/rotation-due',
+  adminOnly,
+  cache.cacheMiddleware(rotationDueCacheKey, 300),
+  asyncHandler(async (req, res) => {
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const daysWindow = Math.max(-30, Math.min(365, parseInt(req.query.days_window, 10) || 30));
+
+    const r = await query(
+      `SELECT id, key_alias, provider, is_platform_pool, rotation_due_at,
+              EXTRACT(EPOCH FROM (rotation_due_at - NOW()))/86400 AS days_remaining
+         FROM vault_api_keys
+        WHERE is_active = TRUE
+          AND rotation_due_at IS NOT NULL
+          AND rotation_due_at < NOW() + ($1 || ' days')::INTERVAL
+        ORDER BY rotation_due_at ASC, id ASC
+        LIMIT $2 OFFSET $3`,
+      [String(daysWindow), limit, offset]
+    );
+
+    const totalRes = await query(
+      `SELECT COUNT(*)::INT AS total FROM vault_api_keys
+        WHERE is_active = TRUE AND rotation_due_at IS NOT NULL
+          AND rotation_due_at < NOW() + ($1 || ' days')::INTERVAL`,
+      [String(daysWindow)]
+    );
+
+    res.json({
+      keys: r.rows,
+      count: r.rows.length,
+      total: totalRes.rows[0].total,
+      limit, offset, days_window: daysWindow,
+    });
+  })
+);
 
 // Cron 1x/dia as 09:00 UTC (06:00 BRT) - antes do horario comercial brasileiro
 // setTimeout para 1a execucao 60s apos start (warmup), depois 24h interval
@@ -232,32 +281,116 @@ log.info('[vault.rotation.cron] daily rotation alert cron started');
 //   - 1-5%: amarelo "Watch"
 //   - >5%: vermelho "Issues"
 //   - calls_7d=0: cinza "Idle" (chave nao usada)
-app.get('/keys', adminOnly, asyncHandler(async (req, res) => {
-  const r = await query(
-    `SELECT k.id, k.seller_id, k.provider, k.key_alias, k.key_fingerprint,
-            k.is_active, k.is_platform_pool,
-            k.monthly_quota_usd_cents, k.usage_this_month_cents,
-            k.expires_at, k.rotation_due_at, k.last_used_at,
-            k.created_at, k.revoked_at, k.revoked_reason,
-            (SELECT COUNT(*)::INT FROM vault_key_usage u
-               WHERE u.vault_key_id = k.id
-                 AND u.created_at > NOW() - INTERVAL '7 days') AS calls_7d,
-            (SELECT COUNT(*)::INT FROM vault_key_usage u
-               WHERE u.vault_key_id = k.id
-                 AND u.created_at > NOW() - INTERVAL '7 days'
-                 AND u.success = FALSE) AS errors_7d,
-            (SELECT MAX(created_at) FROM vault_key_usage u
-               WHERE u.vault_key_id = k.id AND u.success = FALSE) AS last_error_at
-       FROM vault_api_keys k
-       ORDER BY k.created_at DESC LIMIT 200`
-  );
-  // Calcula error_rate no app (PG NUMERIC division pode dar tipos confusos)
-  const keys = r.rows.map((k) => ({
-    ...k,
-    error_rate: k.calls_7d > 0 ? (k.errors_7d / k.calls_7d) : 0,
-  }));
-  res.json({ keys });
-}));
+// GET /api/vault/keys - lista keys admin (mascarado, sem plain_key)
+// FIX-WORKER-7 pass 65: 5 BUGS aplicando Pattern W7 (Regras D+E + DLP + filters).
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING *** ORDER BY created_at DESC sem id DESC
+//   Keys provisionadas em burst (admin bulk provisioning + cron migration)
+//   tem created_at identico -> ordem indefinida.
+//   FIX: + k.id DESC tiebreaker.
+//
+// BUG 2 *** Regra E PAGINATION MISSING *** hardcoded LIMIT 200
+//   Multi-seller scale (1000+ chaves) admin so vê 200 primeiras.
+//   FIX: ?limit (1-200, default 50) + ?offset + total count.
+//
+// BUG 3 *** FILTERS MISSING *** UX painel sem segmentacao
+//   Admin precisa filtrar: provider=openai, is_active=false, is_platform_pool=true
+//   FIX: ?provider, ?is_active, ?is_platform_pool query params.
+//
+// BUG 4 *** DLP revoked_reason ***
+//   revoked_reason eh texto livre admin escreveu. Padroes comuns:
+//   "Chave vazada por joao.silva@email.com" (PII vazada no audit listing)
+//   "Compromised, key sk-abc123def..." (key fingerprint preview vaza ADJACENTE)
+//   "User reportou via Bearer XYZ" (token leak na rationale)
+//   FIX: mask.text() em revoked_reason pre-response.
+//
+// BUG 5 *** CACHE MISSING ***
+//   3 sub-queries vault_key_usage por row (N+1 amplificado). Mesmo com
+//   idx_vault_usage_failures, 200 rows * 3 subqueries = 600 statements PG.
+//   Cache 60s p/ admin dashboard refresh seguro (usage rate atualiza
+//   eventualmente apos vault_key_usage INSERTs).
+const keysListCacheKey = (req) => {
+  const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const prov = (req.query.provider || '').toString().toLowerCase();
+  const act = req.query.is_active;
+  const plat = req.query.is_platform_pool;
+  return `vault:keys_list:lim=${lim}:off=${off}:p=${prov}:a=${act}:pl=${plat}`;
+};
+
+app.get('/keys',
+  adminOnly,
+  cache.cacheMiddleware(keysListCacheKey, 60),
+  asyncHandler(async (req, res) => {
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    // Filters
+    const where = ['1=1'];
+    const params = [];
+    let i = 1;
+    if (req.query.provider) {
+      where.push(`k.provider = $${i++}`);
+      params.push(String(req.query.provider).toLowerCase());
+    }
+    if (req.query.is_active != null) {
+      where.push(`k.is_active = $${i++}`);
+      params.push(String(req.query.is_active) === 'true');
+    }
+    if (req.query.is_platform_pool != null) {
+      where.push(`k.is_platform_pool = $${i++}`);
+      params.push(String(req.query.is_platform_pool) === 'true');
+    }
+    params.push(limit, offset);
+
+    const r = await query(
+      `SELECT k.id, k.seller_id, k.provider, k.key_alias, k.key_fingerprint,
+              k.is_active, k.is_platform_pool,
+              k.monthly_quota_usd_cents, k.usage_this_month_cents,
+              k.expires_at, k.rotation_due_at, k.last_used_at,
+              k.created_at, k.revoked_at, k.revoked_reason,
+              (SELECT COUNT(*)::INT FROM vault_key_usage u
+                 WHERE u.vault_key_id = k.id
+                   AND u.created_at > NOW() - INTERVAL '7 days') AS calls_7d,
+              (SELECT COUNT(*)::INT FROM vault_key_usage u
+                 WHERE u.vault_key_id = k.id
+                   AND u.created_at > NOW() - INTERVAL '7 days'
+                   AND u.success = FALSE) AS errors_7d,
+              (SELECT MAX(created_at) FROM vault_key_usage u
+                 WHERE u.vault_key_id = k.id AND u.success = FALSE) AS last_error_at
+         FROM vault_api_keys k
+         WHERE ${where.join(' AND ')}
+         ORDER BY k.created_at DESC, k.id DESC
+         LIMIT $${i++} OFFSET $${i++}`,
+      params
+    );
+
+    // Total count
+    const countParams = params.slice(0, -2);
+    const totalRes = await query(
+      `SELECT COUNT(*)::INT AS total FROM vault_api_keys k WHERE ${where.join(' AND ')}`,
+      countParams
+    );
+
+    // Calcula error_rate + DLP mask revoked_reason
+    const keys = r.rows.map((k) => ({
+      ...k,
+      revoked_reason: k.revoked_reason ? mask.text(k.revoked_reason) : null,
+      error_rate: k.calls_7d > 0 ? (k.errors_7d / k.calls_7d) : 0,
+    }));
+
+    res.json({
+      keys,
+      total: totalRes.rows[0].total,
+      limit, offset,
+      filters: {
+        provider: req.query.provider || null,
+        is_active: req.query.is_active != null ? String(req.query.is_active) === 'true' : null,
+        is_platform_pool: req.query.is_platform_pool != null ? String(req.query.is_platform_pool) === 'true' : null,
+      },
+    });
+  })
+);
 
 // POST /api/vault/use -> internal: outro svc pede chave para usar
 // FIX SEG-VAULT-1: APENAS admin/staff OU header interno x-internal-token compativel com VAULT_INTERNAL_TOKEN

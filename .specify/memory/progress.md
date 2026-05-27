@@ -17281,7 +17281,35 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ payment-svc /payments/webhooks/dead (pass 61) - Regra D+E+I + DLP
 - ✅ notification-svc GET / (pass 62) - Regra D+E+I + DLP + UX
 - ✅ aiops-svc /metrics + /alerts + /audit-log (pass 63) - Regra D+E+I + DLP CRITICAL
-- ✅ aiops-svc /audit-log/actions + /db/dead-indexes (pass 64 esta iter) - cache + drift detection
+- ✅ aiops-svc /audit-log/actions + /db/dead-indexes (pass 64) - cache + drift detection
+- ✅ vault-svc /keys/rotation-due + /keys (pass 65 esta iter) - Regra D+E + DLP + filters
+
+W7 PASS 65 RESUMO:
+- vault-svc/src/server.js 2 admin endpoints refactor (9 bugs):
+  * /keys/rotation-due (4 bugs):
+    - Regra D: + id ASC tiebreaker (bulk provisioning burst)
+    - Regra E: ?limit/?offset + total count UX
+    - NEW ?days_window (-30 a 365, default 30)
+      * "Esta semana" (7d), "Vencidas" (-1) agora possiveis
+    - CACHE 300s (rotacao nao muda intra-day)
+  * /keys (5 bugs):
+    - Regra D: + k.id DESC tiebreaker (bulk migration burst)
+    - Regra E: ?limit (1-200) + ?offset + total count
+    - NEW filters: ?provider + ?is_active + ?is_platform_pool
+    - DLP CRITICAL: mask.text(revoked_reason)
+      * Texto livre admin: "vazada por user@email.com" PII leak
+      * "sk-abc123..." key fingerprint adjacente
+      * "Bearer XYZ reportou" token leak
+    - CACHE 60s (3 subqueries por row = 600 statements N+1)
+- Pattern W7 em 66 endpoints + 23 regras (A-W) - 65 micro-iters
+- DLP cross-svc consolidado em 4 svcs:
+  payment-svc + notification-svc + aiops-svc + vault-svc
+
+PROXIMA ITER:
+- W7 pass 66: order-svc GET / buyer listing (Regra E offset + DLP)
+- W7 pass 67: product-svc /admin endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 64 RESUMO:
 - search-svc auditado: ZERO admin endpoints (público) - skip
