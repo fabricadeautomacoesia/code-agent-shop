@@ -17299,7 +17299,40 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc /:slug/also-bought (pass 79) - 3 bugs UX consistency
 - ✅ product-svc wishlist.js (pass 80) - 8 bugs GET + POST
 - ✅ product-svc price-alerts.js (pass 81) - 8 bugs GET + POST
-- ✅ product-svc seller-mgmt.js POST / draft (pass 82 esta iter) - 4 bugs DoS+race
+- ✅ product-svc seller-mgmt.js POST / draft (pass 82) - 4 bugs DoS+race
+- ✅ product-svc PATCH /products/me/:id (pass 83 esta iter) - 6 bugs Regra K+P
+
+W7 PASS 83 RESUMO:
+- product-svc/src/routes/seller-mgmt.js PATCH /:id refactor (6 bugs):
+  * UUID validate missing: PG 22P02 leak (PATCH /admin -> 500)
+  * Regra K tx() ATOMICITY:
+    - 2 PATCHs simultaneos = lost update (last write wins)
+    - PATCH + admin force-approve = status race
+    - FIX: tx() wrap + SELECT FOR UPDATE OF p
+  * Field VALIDATION via Zod patchSchema:
+    - price_cents max R$ 1M (cap absoluto)
+    - estimated_install_min max 1 week (10080 min)
+    - category_id uuid format
+    - PRE-FIX: price_cents='abc' -> PG cast 500 leak
+    - PRE-FIX: price_cents=-100 aceitava preco negativo
+  * Regra P AUDIT LOG MISSING:
+    - PATCH price/title change sem trail (compliance gap)
+    - PATCH price 100->0 (fraude seller pwned) sem rastro
+    - FIX: INSERT audit_log atomic + severity=warn p/ price changes
+  * Empty body check upfront (before DB hit) - 400 explicit
+  * UPDATE re-check status (anti-race extremo)
+    - WHERE p.status IN ('draft','rejected') + rowcount check -> 409 explicit
+- Pattern W7 em 89 endpoints + 23 regras (A-W) - 83 micro-iters
+- Regra P audit_log cross-svc consolidado em 5+ endpoints:
+  vault revoke (25) + dispute resolve (31) + qna answer (36) + review reply (37)
+  + reports resolve (39) + kyc approve/reject (42) + seller suspend/reactivate (44)
+  + payment payouts (40) + webhook reset (61) + product PATCH (83)
+
+PROXIMA ITER:
+- W7 pass 84: product-svc POST /:id/submit Regra K + audit
+- W7 pass 85: product-svc upload.js endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 82 RESUMO:
 - product-svc/src/routes/seller-mgmt.js POST / refactor (4 bugs):

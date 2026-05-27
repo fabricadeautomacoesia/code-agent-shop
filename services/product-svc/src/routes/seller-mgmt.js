@@ -326,27 +326,135 @@ router.post('/',
   })
 );
 
-// PATCH /products/me/:id
-router.patch('/:id', asyncHandler(async (req, res, next) => {
-  const owns = await query(
-    `SELECT p.id FROM products p JOIN sellers s ON s.id = p.seller_id
-      WHERE p.id = $1 AND s.user_id = $2 AND p.status IN ('draft','rejected')`,
-    [req.params.id, req.user.sub]
-  );
-  if (!owns.rows.length) return next(errorHandler.notFound('product_not_editable'));
+// PATCH /products/me/:id - edit draft/rejected product
+// FIX-WORKER-7 pass 83: 6 BUGS aplicando Pattern W7 (UUID+Regra K+P+validation).
+//
+// BUG 1 *** UUID VALIDATE MISSING *** PG 22P02 -> 500 leak
+//   PRE-FIX: req.params.id sem validate antes query.
+//   PATCH /products/me/admin (slug invalido como UUID) -> PG cast error 500.
+//   FIX: PRODUCT_UUID_RE.test() upfront.
+//
+// BUG 2 *** Regra K tx() ATOMICITY MISSING ***
+//   PRE-FIX: SELECT ownership + UPDATE em statements separados (TOCTOU race):
+//   - 2 PATCHs simultaneos do mesmo seller = lost update (last write wins)
+//   - PATCH + admin force-approve simultaneo = status race
+//   - PATCH + seller mass-update title -> slug stale cache
+//   FIX: tx() wrap + SELECT FOR UPDATE em products.
+//
+// BUG 3 *** FIELD VALIDATION MISSING *** raw values -> PG errors
+//   PRE-FIX: vals.push(req.body[k]) sem type/range check:
+//   - price_cents = 'abc' -> PG INTEGER cast 22P02 -> 500
+//   - price_cents = -100 -> aceita preco negativo (UX FAIL)
+//   - category_id = 'not-a-uuid' -> PG UUID cast 22P02 -> 500
+//   - estimated_install_min = -50 -> aceita tempo negativo
+//   FIX: Zod patchSchema (subset draftSchema, todos optional).
+//
+// BUG 4 *** Regra P AUDIT LOG MISSING ***
+//   Mutation critica (price/title change) sem trail. Compliance gap.
+//   PATCH price 100 -> 0 (fraude seller pwned) sem rastro.
+//   FIX: INSERT audit_log atomic dentro tx() (severity warn p/ price changes).
+//
+// BUG 5 *** noop EARLY RETURN BEFORE OWNERSHIP CHECK ***
+//   PRE-FIX: ownership query rodava ANTES do empty-body check.
+//   Wasteful DB hit p/ payload vazio. Sem leak mas inefficient.
+//   FIX: empty check upfront -> 400 no_fields_to_update.
+//
+// BUG 6 *** UPDATE retorna 0 rows silencioso ***
+//   PRE-FIX: WHERE p.id=$N (sem ownership re-check). Em race extremo,
+//   product pode mudar status entre SELECT e UPDATE -> rowcount=0 mas
+//   response 200 ok (UX confuso).
+//   FIX: WHERE incluindo status IN ('draft','rejected') + check rowcount.
+const PATCH_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const patchSchema = z.object({
+  title: z.string().min(5).max(200).optional(),
+  subtitle: z.string().max(300).optional(),
+  description: z.string().min(50).optional(),
+  short_description: z.string().max(500).optional(),
+  price_cents: z.number().int().min(0).max(100000000).optional(),  // max R$ 1M
+  tech_stack: z.array(z.string()).optional(),
+  requirements: z.string().optional(),
+  install_instructions: z.string().optional(),
+  api_keys_required: z.array(z.string()).optional(),
+  estimated_install_min: z.number().int().nonnegative().max(10080).optional(),  // max 1 week
+  cover_image_url: z.string().url().optional(),
+  category_id: z.string().uuid().optional(),
+  attributes: z.record(z.any()).optional(),
+  meta_keywords: z.array(z.string()).optional(),
+});
+
+router.patch('/:id', validate({ body: patchSchema }), asyncHandler(async (req, res, next) => {
+  // BUG 1: UUID validate upfront
+  if (!PATCH_UUID_RE.test(req.params.id)) {
+    return next(errorHandler.notFound('product_not_editable'));
+  }
+
+  // BUG 5: empty body check ANTES de qualquer DB hit
   const allowed = ['title','subtitle','description','short_description','price_cents','tech_stack',
     'requirements','install_instructions','api_keys_required','estimated_install_min',
     'cover_image_url','category_id','attributes','meta_keywords'];
-  const cols = []; const vals = []; let i = 1;
-  for (const k of allowed) {
-    if (req.body[k] !== undefined) {
+  const fieldsProvided = allowed.filter((k) => req.body[k] !== undefined);
+  if (!fieldsProvided.length) {
+    return res.status(400).json({ error: 'no_fields_to_update', message: 'Nenhum campo valido fornecido.' });
+  }
+
+  let outcome;
+  await tx(async (c) => {
+    // BUG 2 Regra K: SELECT FOR UPDATE em products (anti-race)
+    const owns = await c.query(
+      `SELECT p.id, p.title, p.price_cents AS old_price, p.status
+         FROM products p JOIN sellers s ON s.id = p.seller_id
+        WHERE p.id = $1 AND s.user_id = $2 AND p.status IN ('draft','rejected')
+        FOR UPDATE OF p`,
+      [req.params.id, req.user.sub]
+    );
+    if (!owns.rows.length) { outcome = { error: 'not_editable' }; return; }
+    const prevState = owns.rows[0];
+
+    // Build SET dinamico
+    const cols = []; const vals = []; let i = 1;
+    for (const k of fieldsProvided) {
       cols.push(`${k} = $${i++}`);
       vals.push(k === 'attributes' ? JSON.stringify(req.body[k]) : req.body[k]);
     }
+    vals.push(req.params.id);
+
+    // BUG 6: UPDATE com re-check status (anti-race)
+    const upd = await c.query(
+      `UPDATE products SET ${cols.join(', ')}, updated_at = NOW()
+        WHERE id = $${i} AND status IN ('draft','rejected')`,
+      vals
+    );
+    if (upd.rowCount === 0) { outcome = { error: 'status_changed_during_update' }; return; }
+
+    // BUG 4 Regra P: audit log atomic - severity=warn se preco mudou
+    const priceChanged = req.body.price_cents !== undefined
+      && req.body.price_cents !== prevState.old_price;
+    await c.query(
+      `INSERT INTO audit_log
+        (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'product.patch', 'product', $3, $4, $5::JSONB)`,
+      [req.user.sub, req.user.role, req.params.id,
+       priceChanged ? 'warn' : 'info',
+       JSON.stringify({
+         fields: fieldsProvided,
+         price_changed: priceChanged,
+         old_price_cents: priceChanged ? prevState.old_price : null,
+         new_price_cents: priceChanged ? req.body.price_cents : null,
+         ip: req.ip,
+       })]
+    );
+
+    outcome = { ok: true };
+  });
+
+  if (outcome?.error === 'not_editable') return next(errorHandler.notFound('product_not_editable'));
+  if (outcome?.error === 'status_changed_during_update') {
+    return res.status(409).json({
+      error: 'status_changed',
+      message: 'Status do produto mudou durante a edicao. Recarregue e tente novamente.',
+    });
   }
-  if (!cols.length) return res.json({ ok: true, noop: true });
-  vals.push(req.params.id);
-  await query(`UPDATE products SET ${cols.join(', ')}, updated_at = NOW() WHERE id = $${i}`, vals);
+
   // FIX-WORKER-7 pass 5: passa productId para invalidate cache detail/reviews/qna por slug
   await invalidate(req.params.id);
   res.json({ ok: true });
