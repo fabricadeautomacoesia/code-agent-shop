@@ -1063,3 +1063,37 @@ VALIDACAO PUBLICA (HTML SSR direto):
 
 DEPLOY: commit 041839e pushed, build storefront via /opt/cas/deploy/Dockerfile.next
 com contexto /opt/cas/apps/storefront, service updated --force, converged OK.
+
+## WORKER 16 (MLB-NEW) - ForYou personalized recommendations (Home Section)
+Mercado Livre exibe "Recomendados para [Nome]" na home apos primeira visita do user
+- principal driver de conversao apos onboarding. Backend ja existia mas nao tinha
+UI surface, ent ao implementado:
+
+NOVO COMPONENTE: apps/storefront/src/components/for-you.tsx
+- 'use client' (depende de auth state), useAuth().token + useAuth().user.name
+- Chama GET /api/products/recommendations/for-me com Bearer token
+- Algoritmo backend (existente public.js:12-57): WITH user_categories (top 3
+  categorias mais vistas 30d) + NOT IN cart_or_owned + reco_score (boost se
+  categoria match) + ORDER BY reco_score, avg_rating, sales_count
+- Skip render se nao logado OU < 4 recomendacoes (evita secao raquitica)
+- Header: "Personalizado" badge magenta + "Recomendados para <firstName>"
+- Grid 1/2/4 cols com ProductCard padrao
+
+INTEGRACAO: apps/storefront/src/app/page.tsx
+- Import ForYou + render apos RecentlyViewed e antes de "Mais vendidos"
+
+VALIDACAO PUBLICA (DUAL):
+- Frontend chunk _next/static/chunks/app/page-69e5cb19f5a8c858.js contem:
+  ForYou / Recomendados para / Personalizado / Baseado nos produtos /
+  recommendations/for-me -> TUDO OK
+- Backend (curl + Bearer token teste1@cas.io):
+  GET /api/products/recommendations/for-me retorna products[8] reais -> OK
+  Algoritmo gera lista de 8 produtos personalizados baseado em product_views.
+
+DEPLOY: commit 93f1ade pushed, build storefront via deploy/Dockerfile.next,
+service updated --force, converged OK.
+
+PROXIMOS GAPS MLB:
+- Mercado Pontos backend ja existe (seller-svc/loyalty.js) mas falta UI redeem
+- Comparador UI ja existe (/comparar) mas falta drawer flutuante de selecao
+- Cupom progressivo ja existe (order-svc/cart.js) mas falta widget na cart
