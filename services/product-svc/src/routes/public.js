@@ -626,51 +626,148 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
 }));
 
 // GET /products/:slug/reviews
-// FIX-WORKER-18 pass 4: cache 60s (reviews mudam pouco, novas reviews populam
-// em background). Invalidated on POST /reviews via cache.del em review-svc.
-// FIX-WORKER-7 pass 5: /:slug/reviews retornava 200 {reviews:[]} para slugs
-// inexistentes (inconsistente com /:slug que retorna 404). UI nao distinguia
-// "produto sem avaliacoes" de "produto deletado/inexistente".
-// User com link compartilhado /product/slug-deletado/reviews via "Nenhuma
-// avaliacao" e pensava que produto era novo. Agora: 404 product_not_found
-// igual ao endpoint detail. Sub-query EXISTS evita N+1 e e barata (index slug).
+// FIX-WORKER-18 pass 4: cache 60s. Invalidated on POST /reviews via review-svc cache.del.
+// FIX-WORKER-7 pass 5: 404 product_not_found para slugs inexistentes.
+// FIX-WORKER-7 pass 75: 5 BUGS aplicando Pattern W7 (Regras A+D+E + filters + UX).
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING ***
+//   ORDER BY helpful_count DESC, created_at DESC nao determ.
+//   Reviews helpful_count=0 burst (produto novo) -> ordem indefinida.
+//   FIX: + r.id DESC tiebreaker.
+//
+// BUG 2 *** Regra A PRE-CHECK INCOMPLETO ***
+//   PRE-FIX: SELECT 1 FROM products WHERE slug AND deleted_at IS NULL
+//   Aceita products com status='draft','qa_pending','rejected' - reviews
+//   aparecem para products nao publicados.
+//   FIX: + status IN ('approved','platform_owned') alinhado pass 73/74.
+//
+// BUG 3 *** Regra E NO TOTAL/has_more ***
+//   Pagination UI sem visibility de fim - "Carregar mais" sempre disponivel.
+//   FIX: COUNT + has_more.
+//
+// BUG 4 *** ?sort FILTER MISSING ***
+//   PDP MLB feature: "mais uteis" (default) vs "mais recentes" vs "mais criticas".
+//   Sem server-side sort - frontend nao consegue alterar ordenacao.
+//   FIX: ?sort enum (helpful|newest|critical|highest).
+//
+// BUG 5 *** ?rating FILTER MISSING ***
+//   PDP MLB feature: "ver só 5 estrelas" / "ver só 1 estrela".
+//   FIX: ?rating (1-5) inteiro.
+const REVIEW_SORT_ENUM = new Set(['helpful','newest','critical','highest']);
+
 router.get('/:slug/reviews',
-  cache.cacheMiddleware((req) => `products:reviews:${req.params.slug}:lim=${req.query.limit||20}:p=${req.query.page||1}`, 60),
+  cache.cacheMiddleware((req) => `products:reviews:${req.params.slug}:lim=${req.query.limit||20}:p=${req.query.page||1}:s=${req.query.sort||'helpful'}:r=${req.query.rating||''}`, 60),
   asyncHandler(async (req, res, next) => {
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 20, 100));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
-  // Pre-check produto existe (evita 200 enganoso quando slug inexistente)
+
+  // BUG 4: sort enum whitelist
+  const sort = req.query.sort || 'helpful';
+  if (!REVIEW_SORT_ENUM.has(sort)) {
+    return res.status(400).json({ error: 'invalid_sort', allowed: Array.from(REVIEW_SORT_ENUM) });
+  }
+  // BUG 5: rating filter (1-5)
+  let ratingFilter = null;
+  if (req.query.rating !== undefined) {
+    const rn = parseInt(req.query.rating, 10);
+    if (!Number.isFinite(rn) || rn < 1 || rn > 5) {
+      return res.status(400).json({ error: 'invalid_rating', range: '1-5' });
+    }
+    ratingFilter = rn;
+  }
+
+  // BUG 2: Regra A status whitelist no pre-check
   const exists = await query(
-    `SELECT 1 FROM products WHERE slug = $1 AND deleted_at IS NULL LIMIT 1`,
+    `SELECT 1 FROM products
+      WHERE slug = $1
+        AND status IN ('approved','platform_owned')
+        AND deleted_at IS NULL LIMIT 1`,
     [req.params.slug]
   );
   if (!exists.rows.length) return next(errorHandler.notFound('product_not_found'));
+
+  // BUG 1: + r.id DESC tiebreaker em TODOS sorts
+  const orderClause = ({
+    helpful:  'r.helpful_count DESC, r.created_at DESC, r.id DESC',
+    newest:   'r.created_at DESC, r.id DESC',
+    critical: 'r.rating ASC, r.created_at DESC, r.id DESC',
+    highest:  'r.rating DESC, r.helpful_count DESC, r.id DESC',
+  })[sort];
+
+  const whereParts = [`p.slug = $1`, `r.is_hidden = FALSE`];
+  const params = [req.params.slug];
+  let i = 2;
+  if (ratingFilter !== null) {
+    whereParts.push(`r.rating = $${i++}`);
+    params.push(ratingFilter);
+  }
+  params.push(lim, off);
+  const limIdx = i++;
+  const offIdx = i++;
+
   const r = await query(
-    `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase, r.helpful_count, r.unhelpful_count,
+    `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase,
+            r.helpful_count, r.unhelpful_count,
             r.reply_from_seller, r.reply_at, r.created_at,
             u.display_name AS buyer_name, u.avatar_url AS buyer_avatar
        FROM product_reviews r
        JOIN products p ON p.id = r.product_id
        LEFT JOIN users u ON u.id = r.buyer_user_id
-      WHERE p.slug = $1 AND r.is_hidden = FALSE
-      ORDER BY r.helpful_count DESC, r.created_at DESC LIMIT $2 OFFSET $3`,
-    [req.params.slug, lim, off]
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY ${orderClause}
+      LIMIT $${limIdx} OFFSET $${offIdx}`,
+    params
   );
-  res.json({ reviews: r.rows });
+
+  // BUG 3: total count + has_more
+  const countParams = params.slice(0, -2);
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM product_reviews r
+       JOIN products p ON p.id = r.product_id
+      WHERE ${whereParts.join(' AND ')}`,
+    countParams
+  );
+  const total = totalRes.rows[0].total;
+
+  res.json({
+    reviews: r.rows,
+    total, limit: lim, page: Math.max(parseInt(req.query.page, 10) || 1, 1),
+    has_more: (off + r.rows.length) < total,
+    sort, rating: ratingFilter,
+  });
 }));
 
 // GET /products/:slug/qna
 // FIX-WORKER-18 pass 4: cache 60s (qna upvotes mudam mas hot path eh leitura)
-// FIX-WORKER-7 pass 5: 404 product_not_found para slugs inexistentes (mesma
-// motivacao do /reviews acima - UX consistente com endpoint detail).
+// FIX-WORKER-7 pass 5: 404 product_not_found para slugs inexistentes.
+// FIX-WORKER-7 pass 75: 5 BUGS aplicando Pattern W7 (Regras A+D+E + filter + UX).
+//
+// BUG 1 *** Regra D *** ORDER BY is_pinned DESC, asked_at DESC sem id tiebreaker
+// BUG 2 *** Regra A PRE-CHECK *** falta status IN ('approved','platform_owned')
+// BUG 3 *** Regra E *** hardcoded LIMIT 50 sem ?limit/?offset
+// BUG 4 *** ?answered_only filter MISSING *** UX MLB "ver só respondidas"
+// BUG 5 *** No total/has_more *** pagination UI quebrada
 router.get('/:slug/qna',
-  cache.cacheMiddleware((req) => `products:qna:${req.params.slug}`, 60),
+  cache.cacheMiddleware((req) => `products:qna:${req.params.slug}:lim=${req.query.limit||50}:p=${req.query.page||1}:ans=${req.query.answered_only||''}`, 60),
   asyncHandler(async (req, res, next) => {
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 100));
+  const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
+  const answeredOnly = String(req.query.answered_only || '').toLowerCase() === 'true';
+
+  // BUG 2: Regra A status whitelist no pre-check
   const exists = await query(
-    `SELECT 1 FROM products WHERE slug = $1 AND deleted_at IS NULL LIMIT 1`,
+    `SELECT 1 FROM products
+      WHERE slug = $1
+        AND status IN ('approved','platform_owned')
+        AND deleted_at IS NULL LIMIT 1`,
     [req.params.slug]
   );
   if (!exists.rows.length) return next(errorHandler.notFound('product_not_found'));
+
+  // BUG 4: answered_only filter
+  const whereParts = [`p.slug = $1`, `q.is_hidden = FALSE`, `q.is_public = TRUE`];
+  if (answeredOnly) whereParts.push(`q.answer IS NOT NULL`);
+
   const r = await query(
     `SELECT q.id, q.question, q.answer, q.is_pinned, q.upvote_count,
             q.asked_at, q.answered_at,
@@ -680,11 +777,27 @@ router.get('/:slug/qna',
        JOIN products p ON p.id = q.product_id
        LEFT JOIN users ua ON ua.id = q.asked_by_user_id
        LEFT JOIN users us ON us.id = q.answered_by_user_id
-      WHERE p.slug = $1 AND q.is_hidden = FALSE AND q.is_public = TRUE
-      ORDER BY q.is_pinned DESC, q.asked_at DESC LIMIT 50`,
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY q.is_pinned DESC, q.upvote_count DESC, q.asked_at DESC, q.id DESC
+      LIMIT $2 OFFSET $3`,
+    [req.params.slug, lim, off]
+  );
+
+  // BUG 5: total + has_more
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM product_qna q
+       JOIN products p ON p.id = q.product_id
+      WHERE ${whereParts.join(' AND ')}`,
     [req.params.slug]
   );
-  res.json({ qna: r.rows });
+  const total = totalRes.rows[0].total;
+
+  res.json({
+    qna: r.rows,
+    total, limit: lim, page: Math.max(parseInt(req.query.page, 10) || 1, 1),
+    has_more: (off + r.rows.length) < total,
+    answered_only: answeredOnly,
+  });
 }));
 
 module.exports = router;

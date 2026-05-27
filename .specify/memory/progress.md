@@ -17291,7 +17291,34 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ order-svc POST /:id/dispute rate-limit (pass 71) - anti-spam
 - ✅ seller-svc /kpi + sellers.js GET / (pass 72) - Regra D+I + enum + UX
 - ✅ product-svc GET / public listing (pass 73) - 8 bugs major
-- ✅ product-svc GET /:slug detail PDP (pass 74 esta iter) - 5 bugs DLP + whitelist
+- ✅ product-svc GET /:slug detail PDP (pass 74) - 5 bugs DLP + whitelist
+- ✅ product-svc /:slug/reviews + /:slug/qna (pass 75 esta iter) - 10 bugs filters + UX
+
+W7 PASS 75 RESUMO:
+- product-svc/src/routes/public.js 2 PDP sub-endpoints refactor (10 bugs):
+  * /:slug/reviews (5 bugs):
+    - Regra D: + r.id DESC tiebreaker em TODOS 4 sorts
+    - Regra A pre-check: + status IN ('approved','platform_owned')
+      (antes: reviews aparecia em products draft/qa_pending/rejected)
+    - Total + has_more UX paginacao
+    - NEW ?sort enum (helpful|newest|critical|highest)
+      * MLB PDP feature "mais uteis" / "mais recentes" / "mais criticas"
+    - NEW ?rating filter (1-5)
+      * MLB PDP feature "ver SO 5 estrelas"
+  * /:slug/qna (5 bugs):
+    - Regra D: + q.id DESC + q.upvote_count em ORDER BY
+    - Regra A pre-check: + status IN ('approved','platform_owned')
+    - Regra E: ?limit/?offset (antes hardcoded LIMIT 50)
+    - NEW ?answered_only=true filter (UX MLB "ver SO respondidas")
+    - Total + has_more
+- Pattern W7 em 78 endpoints + 23 regras (A-W) - 75 micro-iters
+- product-svc public.js 100% W7 em listing+detail+reviews+qna (4 endpoints core PDP)
+
+PROXIMA ITER:
+- W7 pass 76: product-svc /compare + /flash-promo/active audit
+- W7 pass 77: product-svc /recommendations/for-me audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 74 RESUMO:
 - product-svc/src/routes/public.js GET /:slug refactor (5 bugs):
