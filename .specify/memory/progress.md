@@ -6849,3 +6849,76 @@ PROXIMA ITER:
 - W15 pass 6: AskQuickButton modal em 375px
 - W15 pass 7: CompareDrawer responsive (4 produtos lado a lado)
 - W8: consistencia visual gradients/tipografia random pages
+
+## WORKER 12 PASS 4 - qa-svc inflacao total_products_active counter
+
+BUG encontrado em qa-svc callback handler:
+
+CAUSA:
+  await c.query(`UPDATE sellers SET total_products_active = total_products_active + 1
+                   WHERE id = (SELECT seller_id FROM products WHERE id = $1)`, [pid]);
+
+Executado em CADA QA callback approved, independente de transicao real.
+QA roda multiplas vezes no mesmo produto (cada update do seller dispara
+novo run). Counter so sobe.
+
+CENARIO REPRO:
+1. Seller submete produto v1 -> QA approved -> counter +1 (correto)
+2. Seller edita e submete v2 -> QA approved -> counter +1 (BUG)
+3. Seller editou 10x ao longo de 6 meses -> counter=11 com 1 produto real
+4. Ranking "Top Sellers" no admin/leaderboards usa este counter
+   -> sellers que mais editam ficam no topo, nao quem tem maior catalogo
+
+IMPACTO METRICAS:
+- /admin/sellers KPI total_products_active errado
+- Possible badge/tier logic dependente (Ouro/Platinum thresholds)
+- "Vendedores destacados" tendencia para iterators
+- Auditoria interna nao batia: COUNT(*) FROM products WHERE seller_id=X AND status='approved'
+  != sellers.total_products_active
+
+FIX SIMETRICO (2 mudancas):
+
+1. Capturar prevStatus ANTES do UPDATE:
+   const prev = await c.query(`SELECT status FROM products WHERE id = $1`, [pid]);
+
+2. Branch APPROVED: increment apenas em transicao real
+   if (prevStatus !== 'approved') counter += 1
+   - draft -> approved: +1
+   - rejected -> approved: +1
+   - approved -> approved (v2 ok): noop
+
+3. Branch REJECTED: decrement complementar (bug duplo)
+   if (prevStatus === 'approved') counter -= 1
+   - approved -> rejected (v2 falhou): -1 (sai da vitrine)
+   - GREATEST(0, x-1) defensivo contra underflow
+
+CASOS COBERTOS:
+- Submission inicial OK
+- Update aprovado nao infla
+- Update rejeitado decrementa
+- Re-submissao apos rejeicao incrementa de novo
+
+NOTA OPERACIONAL:
+- Counters historicos podem estar inflados desde MLB-3 ou anterior
+- Pass 5 roadmap: migration 020+ para reset:
+    UPDATE sellers s SET total_products_active = (
+      SELECT COUNT(*) FROM products p
+       WHERE p.seller_id = s.id AND p.status = 'approved' AND p.deleted_at IS NULL
+    );
+
+DEPLOY:
+- commit 921f0ab push main OK
+- 31 insertions, 5 deletions
+- qa-svc rebuild via VPS cron
+- Novos callbacks usam logica correta imediatamente
+
+QA PIPELINE AUDIT (passes 1-4):
+- pass 1: callback handler basico (V8 baseline)
+- pass 2: HMAC SHA-256 + QA_CALLBACK_SECRET (anti-forge critical)
+- pass 3: timing-safe compare + raw body validation
+- pass 4: counter inflation fix (esta iter)
+
+PROXIMA ITER:
+- W12 pass 5: migration reset total_products_active historico
+- W12 pass 6: archived branch (manual via admin) tambem decrementar
+- W4: dashboard admin /sellers usar COUNT(*) live em vez de counter cached
