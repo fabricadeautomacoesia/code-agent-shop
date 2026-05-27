@@ -17302,7 +17302,41 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc seller-mgmt.js POST / draft (pass 82) - 4 bugs DoS+race
 - ✅ product-svc PATCH /products/me/:id (pass 83) - 6 bugs Regra K+P
 - ✅ product-svc POST /:id/submit (pass 84) - 7 bugs state machine
-- ✅ product-svc POST /:id/versions (pass 85 esta iter) - 8 bugs versioning
+- ✅ product-svc POST /:id/versions (pass 85) - 8 bugs versioning
+- ✅ product-svc POST /:id/qna/:qid/answer (pass 86 esta iter) - 9 bugs duplicated route
+
+W7 PASS 86 RESUMO:
+- product-svc/src/routes/seller-mgmt.js POST /:id/qna/:qid/answer refactor (9 bugs):
+  * HISTORIA: rota duplicada com review-svc pass 36 (POST /qna/:id/answer)
+    Mesma tabela product_qna - product-svc rota era SEM Pattern W7.
+    Replica fixes pass 36 aqui (TODO pass 87+ consolidar em 1 svc).
+  * UUID validate missing ambos params (id + qid): PG 22P02 leak
+  * Regra Q IDEMPOTENCY: re-answer overwrite silencioso
+    - Seller respondia mesma qna 10x - audit history corrompido
+    - FIX: SELECT FOR UPDATE + check q.answer != null -> 409 already_answered
+  * SILENT 404: UPDATE rowcount=0 + res.json({ok:true})
+    - Seller "respondia" mas DB nao mudou (UX broken)
+    - FIX: rowcount check + 404 not_found_or_not_owned
+  * Regra K tx() + SELECT FOR UPDATE OF qna
+  * Regra A: ownership sem status check
+    - PRE-FIX: aceita answer em product deletado/archived = qna fantasma
+    - FIX: status IN ('approved','platform_owned') + deleted_at NULL
+  * Regra P audit log atomic INSERT dentro tx()
+  * NEW notification buyer asker (pattern pass 36)
+    - PRE-FIX: buyer nunca sabia que recebeu resposta
+    - FIX: INSERT notifications atomic com product context
+  * is_hidden check: 409 qna_moderated (waste prevention)
+  * NEW qnaAnswerLimiter 30/hr/seller (anti-spam pwned)
+- Pattern W7 em 92 endpoints + 23 regras (A-W) - 86 micro-iters
+- product-svc seller-mgmt.js 100% W7 em TODAS mutations:
+  POST / (82) + PATCH /:id (83) + POST /:id/submit (84)
+  + POST /:id/versions (85) + POST /:id/qna/:qid/answer (86)
+
+PROXIMA ITER:
+- W7 pass 87: product-svc upload.js endpoints audit
+- W7 pass 88: consolidate qna/answer route (review-svc vs product-svc duplicate)
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 85 RESUMO:
 - product-svc/src/routes/seller-mgmt.js POST /:id/versions refactor (8 bugs):
