@@ -13223,3 +13223,105 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W5: dashboard-seller UI p/ editar max_downloads (consume schema 039)
+
+================================================================
+ITER W7 PASS 21 - payment-svc /asaas/create 4 BUGS CRITICOS (2026-05-27)
+================================================================
+ESCOPO: payment-svc POST /payments/asaas/create (CORE PAYMENT FLOW)
+FILE: services/payment-svc/src/server.js (linhas 152-260)
+
+CONTEXTO: W7 pass 20 (download.js) completou order-svc. Pass 21 audita
+payment-svc - endpoint MAIS CRITICO da plataforma (paga revenue).
+Audit revelou 1 SECURITY CRITICO + 3 patterns + UPDATE idempotency gap.
+
+BUGS CORRIGIDOS (4):
+
+1. *** SECURITY CRITICO *** SEM buyer_user_id check
+- PRE-FIX:
+  SELECT o.*, u.*
+    FROM orders o JOIN users u ON u.id = o.buyer_user_id
+   WHERE o.id = $1
+- asaasCreateGuard autentica que tem token valido MAS NAO verifica que
+  o token belongs ao buyer do order
+- ATAQUE:
+  a. Atacante autentica (qualquer conta valida)
+  b. Descobre order_id de victim (log leak, brute force UUID muito hard
+     porem possivel via partner-svc leaks, audit_log queries leaks, etc)
+  c. POST /asaas/create {order_id: '<victim_uuid>'}
+  d. Backend cria Asaas payment vinculado a VICTIM ORDER
+  e. PIX/boleto URL retornado AO ATACANTE
+  f. Cenarios fraude:
+     - Atacante paga PIX, victim recebe produto (confusao + audit poluido)
+     - Atacante manipula boleto externamente (Asaas frauds)
+     - Atacante consome rate-limit Asaas API com payments fraudulentos
+- FIX: AND o.buyer_user_id = $2 (req.user.sub) - hard ownership check
+- Defense-in-depth: somando aos guards downstream (download.js pass 20,
+  orders.js read pass 18)
+
+2. *** RACE CONDITION (Regra K) *** SELECT sem FOR UPDATE
+- PRE-FIX: 2 requests simultaneas user (frontend bug double-click OR
+  bot) ambas leem payment_status='pending', ambas chamam Asaas API,
+  ambas criam payments DISTINTOS no Asaas
+- UPDATE final sobrescreve so ultimo asaas_payment_id
+- IMPACTO REAL:
+  - 2 cobrancas Asaas para mesmo order (Asaas fee duplicado)
+  - Primeiro payment FANTASMA: invoice gerado, usuario nunca ve
+  - Se user paga ambos (descuido), 2x receita capturada
+  - Reconciliacao manual: refund Asaas + ajuste DB
+- FIX: tx() + SELECT FOR UPDATE OF o
+  - Segunda request bloqueia ate primeira terminar
+  - Pattern W7 Regra K consolidado (orders/checkout, cart/loyalty, payment esta iter)
+
+3. *** UPDATE IDEMPOTENCY (anti-race-residual) ***
+- Mesmo com FOR UPDATE, gap entre release lock + Asaas API call + UPDATE final
+- Cenario edge: lock release apos SELECT, Asaas API demora 2s, outra request
+  entra, le pending, cria seu Asaas payment, UPDATE rapido. Nossa UPDATE
+  segunda - sobrescreve outra
+- FIX: WHERE id=$6 AND payment_status='pending' RETURNING id
+  - ROWCOUNT=0 -> race detectada + cancelar nosso payment Asaas (best-effort)
+  - 400 'payment_already_authorized' com mensagem PT-BR
+  - Defense em profundidade contra race partial
+
+4. Regra B + Regra I patterns
+- JOIN users SEM u.deleted_at IS NULL - user soft-deleted (admin moderou)
+  pode ainda ter order pending -> Asaas customer criado p/ user fantasma
+  - FIX: AND u.deleted_at IS NULL
+- SELECT o.* expoe idempotency_key, buyer_ip, buyer_user_agent etc
+  Response final eh explicit OK, mas pattern security cross-svc.
+  - FIX: lista explicita o.id, o.buyer_user_id, o.order_number,
+    o.payment_status, o.payment_method, o.total_cents, o.currency
+    (8 campos consumidos)
+
+PATTERN W7 SECURITY CRITICO PAYMENT FLOW:
+- Pass 17 CRITICAL WRITE: deleted_at em checkout (cart products)
+- Pass 18 SECURITY: download_token nao vaza em /orders/:id
+- Pass 19 RACE: cart loyalty/redeem FOR UPDATE
+- Pass 20 SECURITY+CAP: download.js cap + race + DMCA + audit
+- Pass 21 SECURITY+RACE: payment-svc create ownership check + FOR UPDATE
+                          + idempotent UPDATE (esta iter)
+
+DEFESA EM PROFUNDIDADE COMPLETA:
+- pass 18 nao vaza token
+- pass 20 cap+expira limita dano se vazar
+- pass 17 produtos deletados nao chegam ao checkout
+- pass 21 atacante nao consegue criar payment ID outro
+- pass 19/21 race conditions WRITE recursos pessimistic lock
+
+NOVA REGRA M (W7 pass 21):
+M. Ownership check explicit em endpoints que mutam state cross-resource.
+   - Token valido != autorizacao p/ qualquer resource
+   - SEMPRE WHERE owner_id = req.user.sub no SELECT inicial
+   - Aplica: payment create, payout request, qna answer, review edit, etc.
+   - asaasCreateGuard (rate-limit) NAO substitui ownership check.
+
+PATTERN W7 13 ENDPOINTS + 13 REGRAS (A-M):
+- product-svc: 4 endpoints
+- search-svc: 5 endpoints
+- order-svc: 8 endpoints (cart x3, orders x4, download x1)
+- payment-svc: /asaas/create (esta iter)
+
+PROXIMA ITER:
+- W7 pass 22: payment-svc /asaas/webhook audit (assinatura, idempotency)
+- W7 pass 23: payment-svc payouts/process audit
+- W18 pass 7: idx parcial product_views > 90d
+- W3 pass 10: refatorar CartDrawer usar <Dialog>

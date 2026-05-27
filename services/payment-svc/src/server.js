@@ -156,14 +156,63 @@ app.post('/payments/asaas/create',
     installment_count: z.number().int().min(1).max(12).optional(),
   }) }),
   asyncHandler(async (req, res, next) => {
-    const o = await query(
-      `SELECT o.*, u.email, u.full_name, u.cpf_cnpj, u.phone_e164
-         FROM orders o JOIN users u ON u.id = o.buyer_user_id
-        WHERE o.id = $1`, [req.body.order_id]
-    );
-    if (!o.rows.length) return next(errorHandler.notFound('order_not_found'));
-    const order = o.rows[0];
-    if (order.payment_status !== 'pending') return next(errorHandler.badRequest('payment_not_pending'));
+    // FIX-WORKER-7 pass 21 (3 BUGS - 1 SECURITY CRITICO + 1 race + 1 pattern):
+    //
+    // BUG 1 *** SECURITY CRITICO *** sem buyer_user_id check
+    // Pre-fix: SELECT order WHERE id=$1 (qualquer user com token podia criar
+    //   Asaas payment para order DE OUTRO USER se conhecer order_id).
+    // Ataque:
+    //   a. Atacante descobre order_id victim (log leak, predicao UUID, etc)
+    //   b. POST /asaas/create {order_id:<victim>} -> backend cria invoice
+    //   c. Atacante recebe PIX/boleto URL da order de outro
+    //   d. Scenarios: confusion fraud, double-billing, etc
+    // FIX: AND o.buyer_user_id = $2 (req.user.sub) - so o dono cria payment.
+    //
+    // BUG 2 RACE (Regra K): SELECT sem FOR UPDATE permite 2 requests
+    //   simultaneas criarem 2 Asaas payments distintos. UPDATE final
+    //   persiste so o ultimo. PRIMEIRO payment fica fantasma no Asaas
+    //   (custo de transacao + 1 PIX a mais para usuario reconciliar).
+    // FIX: tx() + FOR UPDATE em orders (lock pessimistico).
+    //
+    // BUG 3 (Regra I): SELECT o.* + u.email,... mistura explicito e wildcard.
+    //   o.* expoe idempotency_key, buyer_ip, buyer_user_agent, asaas_charge_id,
+    //   expires_at. Aqui nao vaza no response (linhas finais sao explicitas)
+    //   mas pattern security cross-svc: lista explicita sempre.
+    //
+    // BUG 4 (Regra B): JOIN users sem u.deleted_at IS NULL. User soft-deleted
+    //   (admin moderou) ainda permite payment. Edge case mas defensive.
+    //
+    // Toda lógica de criacao em tx() atomic (commit so apos UPDATE de
+    // asaas_payment_id). Se Asaas API falha, tx() rollback - order
+    // payment_status volta a 'pending' (consistencia DB <-> Asaas).
+    let order;
+    let lockResult;
+    await tx(async (c) => {
+      const o = await c.query(
+        `SELECT o.id, o.buyer_user_id, o.order_number, o.payment_status,
+                o.payment_method, o.total_cents, o.currency,
+                u.email, u.full_name, u.cpf_cnpj, u.phone_e164
+           FROM orders o
+           JOIN users u ON u.id = o.buyer_user_id AND u.deleted_at IS NULL
+          WHERE o.id = $1 AND o.buyer_user_id = $2
+          FOR UPDATE OF o`,
+        [req.body.order_id, req.user.sub]
+      );
+      if (!o.rows.length) {
+        lockResult = { error: 'order_not_found' };
+        return;
+      }
+      order = o.rows[0];
+      if (order.payment_status !== 'pending') {
+        lockResult = { error: 'payment_not_pending' };
+        return;
+      }
+      // Lock ativo - segue para criacao Asaas fora do tx() (rede + tempo
+      // alto = nao bloquear DB pool). Re-check status pos-Asaas via UPDATE
+      // condicional anti-race.
+    });
+    if (lockResult?.error === 'order_not_found') return next(errorHandler.notFound('order_not_found'));
+    if (lockResult?.error === 'payment_not_pending') return next(errorHandler.badRequest('payment_not_pending'));
 
     // FIX-WORKER-11 pass 4: bloqueia checkout se user nao tem CPF/CNPJ.
     // Antes: enviava '00000000000' (CPF zerado) -> Asaas rejeita com 400
@@ -236,15 +285,38 @@ app.post('/payments/asaas/create',
       try { pix = await asaas.getPixQrCode(payment.id); } catch (e) { log.warn({ err: e.message }, '[pix.qr.fail]'); }
     }
 
-    await query(
+    // FIX-WORKER-7 pass 21: UPDATE idempotente anti-race condition.
+    // Pre-fix: WHERE id=$6 - se segunda request criou outro Asaas payment
+    //   entre nossa criacao e este UPDATE, sobrescreve referencia (perdemos
+    //   primeiro payment.id sem reembolso, custo Asaas fee).
+    // Pos-fix: WHERE id=$6 AND payment_status='pending' (idempotent guard).
+    //   Se outra request ja virou 'authorized', UPDATE NAO faz nada.
+    //   ROWCOUNT=0 -> log warn + cancela payment Asaas que criamos
+    //   (graceful cleanup anti-double-charge).
+    const upd = await query(
       `UPDATE orders SET asaas_payment_id = $1, asaas_invoice_url = $2,
                          asaas_pix_qrcode = $3, asaas_pix_copy_paste = $4,
                          asaas_boleto_url = $5, payment_status = 'authorized'
-        WHERE id = $6`,
+        WHERE id = $6 AND payment_status = 'pending'
+        RETURNING id`,
       [payment.id, payment.invoiceUrl || null,
        pix?.encodedImage || null, pix?.payload || null,
        payment.bankSlipUrl || null, order.id]
     );
+    if (!upd.rows.length) {
+      // Race: outra request ja autorizou. Tentar cancelar nosso payment
+      // duplicado no Asaas (best-effort, evita cobrar usuario duas vezes).
+      log.warn({ order_id: order.id, payment_id: payment.id },
+        '[asaas.create.race_detected] outra request ja autorizou, tentando cancelar duplicate');
+      try {
+        await asaas.cancelPayment?.(payment.id);
+      } catch (e) {
+        log.error({ err: e.message, payment_id: payment.id },
+          '[asaas.cancel.fail] duplicate Asaas payment criado mas falhou cancelar - investigar manual');
+      }
+      return next(errorHandler.badRequest('payment_already_authorized',
+        'Pagamento ja foi gerado em outra requisicao. Recarregue a pagina.'));
+    }
 
     res.json({
       ok: true,
