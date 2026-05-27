@@ -6162,3 +6162,55 @@ VALIDACAO:
 - Source verificado: 14 insertions, 4 deletions
 - Estrutura HTML: <nav> > Link + (span+Link)? + span + <span>
 - Consistencia com breadcrumbLd JSON-LD: OK
+
+## WORKER 18 PASS 1 - Cache em /autocomplete + /top-sellers/:category
+
+AUDIT search-svc:
+- 7 endpoints publicos totais
+- 4 com cache (top-sellers grouped, trending, categories, facets)
+- 3 SEM cache: / (search principal), /autocomplete, /top-sellers/:category
+
+PRIORIZACAO:
+- / (search) deixado SEM cache por design - combinatorial (q+kind+price+sort)
+  resulta em miss rate alto, cache nao agrega valor.
+- /autocomplete e /top-sellers/:category SAO bons candidatos.
+
+MUDANCAS APLICADAS:
+
+GET /autocomplete (TTL 60s):
+- Endpoint mais quente do svc (1 req/keystroke SearchBar)
+- Key normalizada: lowercase + trim
+  -> agrega "Autom", "AUTOM ", "autom" no mesmo cache entry
+- 60s = curto suficiente para novos produtos aparecerem
+- Beneficio extra: reduz pressao no autocompleteLimiter
+  (sem cache, cada user dispara hits independentes)
+
+GET /top-sellers/:category (TTL 180s):
+- SSR de /categoria/[slug] (Next revalidate=30)
+- Query custosa: 1 categories + 1 products com 3 SUBQUERIES (sellers x3) per row
+- 180s alinha com /facets (mesmo padrao MLB-style top-sellers)
+- Key inclui :category + ?limit p/ desambiguar
+
+COBERTURA CACHE search-svc FINAL: 6/7 endpoints (86%)
+1. /              SEM CACHE (intencional - combinatorial)
+2. /autocomplete  60s  (NEW)
+3. /top-sellers   120s (W10 ja tinha)
+4. /top-sellers/:category 180s (NEW)
+5. /trending      300s (W10 ja tinha)
+6. /categories    900s (W10 ja tinha)
+7. /facets        180s (W10 ja tinha)
+
+DEPLOY:
+- commit 9f72b14 push main OK
+- VPS aplicara via cron auto-pull + rebuild search-svc
+- X-Cache header ainda nao visivel publicamente (pre-deploy)
+
+VALIDACAO LOCAL:
+- node -c sintaxe OK
+- 6 cacheMiddleware confirmados via grep
+- 14 insertions, 2 deletions
+
+PROXIMA ITER:
+- W6: gateway pathRewrite audit + auth-svc 2FA flow E2E
+- Mover useSellerAction+useAdminAction para packages/shared-ui (DRY cross-app)
+- W14: indices SQL faltando em queries com 3 subqueries (sellers join inline)
