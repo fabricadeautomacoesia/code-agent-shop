@@ -169,13 +169,28 @@ async function rotationAlertCron() {
         [key.id]
       );
       if (existing.rows.length) continue;
+      const payload = JSON.stringify({
+        key_id: key.id, alias: key.key_alias, provider: key.provider, days
+      });
       for (const a of admins.rows) {
+        // FIX-WORKER-13 pass 7: in_app sempre, email APENAS overdue (urgent).
+        // - in_app: notify ate admin web active
+        // - email: garante delivery ate admin offline, mas evita inbox flood
+        //   para warnings normais (-7d ate -1d). Email so quando ja vencida.
         await query(
           `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
            VALUES ($1, 'in_app', 'vault_rotation_due', $2, $3, $4, $5::JSONB)`,
-          [a.id, title, body, isOverdue ? 3 : 1,
-           JSON.stringify({ key_id: key.id, alias: key.key_alias, provider: key.provider, days })]
+          [a.id, title, body, isOverdue ? 3 : 1, payload]
         ).catch((e) => log.warn({ err: e.message }, '[vault.rotation.notif.fail]'));
+        if (isOverdue) {
+          // Email com mesma payload - notification-svc outbox vai aplicar
+          // mustache render usando template seed mig 036.
+          await query(
+            `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+             VALUES ($1, 'email', 'vault_rotation_due', $2, $3, 3, $4::JSONB)`,
+            [a.id, title, body, payload]
+          ).catch((e) => log.warn({ err: e.message }, '[vault.rotation.email.fail]'));
+        }
       }
     }
   } catch (e) {
