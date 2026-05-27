@@ -28,22 +28,30 @@ export function FlashPromoTimer({ endsAt, discountPct }: { endsAt: string; disco
   const secs = remaining % 60;
 
   return (
-    <div className="glass-strong border-2 border-orange-500 rounded-lg p-4 mb-4 animate-pulse-slow">
-      <div className="flex items-center gap-2 mb-2">
-        <Zap className="w-5 h-5 text-orange-400" />
-        <span className="font-display font-bold text-orange-400 uppercase text-sm">Promocao Relampago</span>
-        <span className="ml-auto px-2 py-0.5 rounded bg-orange-500 text-black text-xs font-bold">
+    <div className="glass-strong border-2 border-orange-500 rounded-lg p-3 sm:p-4 mb-4 animate-pulse-slow">
+      {/* FIX-WORKER-15 pass 5: overflow horizontal em 375px com days>0.
+          ANTES: 5 elementos inline (Clock + "Termina em:" + 4 badges)
+          em uma row sem flex-wrap. Em 375px, container util ~343px e
+          conteudo minimo ~370px -> overflow / squeeze ilegivel.
+          AGORA: badges em row propria + flex-wrap no header (Zap+title
+          podem quebrar com -% se titulo for longo). p-3 mobile/p-4 sm+. */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        <Zap className="w-5 h-5 text-orange-400 flex-shrink-0" />
+        <span className="font-display font-bold text-orange-400 uppercase text-xs sm:text-sm">Promocao Relampago</span>
+        <span className="ml-auto px-2 py-0.5 rounded bg-orange-500 text-black text-xs font-bold flex-shrink-0">
           -{discountPct}%
         </span>
       </div>
-      <div className="flex items-center gap-2 text-sm">
-        <Clock className="w-4 h-4 text-orange-300" />
+      <div className="flex items-center gap-2 text-xs sm:text-sm flex-wrap">
+        <Clock className="w-4 h-4 text-orange-300 flex-shrink-0" />
         <span className="text-white/80">Termina em:</span>
-        <div className="ml-auto flex gap-1.5 font-mono font-bold">
-          {days > 0 && <span className="bg-orange-500/30 px-2 py-1 rounded text-orange-200">{days}d</span>}
-          <span className="bg-orange-500/30 px-2 py-1 rounded text-orange-200">{String(hours).padStart(2, '0')}h</span>
-          <span className="bg-orange-500/30 px-2 py-1 rounded text-orange-200">{String(mins).padStart(2, '0')}m</span>
-          <span className="bg-orange-500/30 px-2 py-1 rounded text-orange-200">{String(secs).padStart(2, '0')}s</span>
+        {/* sm:ml-auto: badges ficam a direita em desktop, mas em mobile fluem natural
+            depois do label "Termina em:". Sem ml-auto forcando squeeze. */}
+        <div className="flex gap-1.5 font-mono font-bold sm:ml-auto">
+          {days > 0 && <span className="bg-orange-500/30 px-1.5 sm:px-2 py-1 rounded text-orange-200">{days}d</span>}
+          <span className="bg-orange-500/30 px-1.5 sm:px-2 py-1 rounded text-orange-200">{String(hours).padStart(2, '0')}h</span>
+          <span className="bg-orange-500/30 px-1.5 sm:px-2 py-1 rounded text-orange-200">{String(mins).padStart(2, '0')}m</span>
+          <span className="bg-orange-500/30 px-1.5 sm:px-2 py-1 rounded text-orange-200">{String(secs).padStart(2, '0')}s</span>
         </div>
       </div>
     </div>
