@@ -7383,3 +7383,83 @@ PROXIMA ITER:
 - W3 pass 5: product-tabs.tsx audit (Visao/Pre-req/Changelog/Reviews/Q&A)
 - W3 pass 6: WishlistButton.tsx audit
 - Mover friendly error mappers para lib/friendly-errors.ts (DRY)
+
+## WORKER 10 PASS 5 - aiops-svc DLP critical (4 vazamentos publicos)
+
+AUDIT aiops-svc revelou problema arquitetural: svc NAO importava jwt.
+TODOS os endpoints publicos sem auth, com exposicao de dados sensiveis.
+
+BUG 1 (CRITICAL DLP - /alerts):
+  curl /api/aiops/alerts
+  -> Reporter UUIDs de denuncias (PII de users que denunciaram)
+  -> target_id + target_type (produtos sob investigacao)
+  -> payload completo das denuncias (potential libel)
+  -> Concorrentes podiam scrape para sabotage map
+
+BUG 2 (DLP - /metrics):
+  -> hostname container interno ("07887696bc89")
+  -> uptime_s revela quando svc foi restartado (vuln disclosure)
+  -> Timestamps a cada 30s permitem timing attack mapping
+
+BUG 3 (DLP - /status mistura levels):
+  -> recent_alerts: 10 rows COMPLETOS (mesma exposicao de /alerts)
+  -> services{}: TODOS ports internos (network recon)
+  -> host + uptime
+
+BUG 4 (DLP - /health):
+  -> host + thresholds revelando logica de deteccao
+  -> Atacante sabe exato cutoff para evadir alertas
+
+FIX A (services/aiops-svc/src/server.js):
+
+1. Import jwt: const { jwt } = require('@cas/shared') (era 0 referencia)
+2. /metrics + /metrics/latest -> jwt.requireAuth admin/staff
+3. /alerts + /alerts/recent -> jwt.requireAuth admin/staff
+4. /status publica sanitized:
+   - Remove recent_alerts -> alerts_24h aggregate por severity (counter)
+   - Remove services{} (port map)
+   - Remove host + uptime_s
+   - Metrics: so cpu_percent + ram_percent + disk_percent + load_avg_1m
+5. /health minimal: { ok, svc } (sem host nem thresholds)
+
+FIX B (apps/storefront/src/app/status/page.tsx):
+
+Status page publica atualizada para consumir novo schema:
+1. allOk = totalAlerts === 0 (era recent_alerts.length === 0)
+2. Header attention: "X alerta(s) (Y critico)" agregado
+3. Antiga lista detalhada -> grid 4 cards (1 por severity)
+   Visual: cor + numero grande + label / opacity-40 quando 0
+4. "Servidor (host XYZ)" -> "Recursos do servidor" (sem hostname)
+   Grid 3 cols CPU/RAM/Disco + load_avg_1m rodape
+5. Bloco "Microsservicos" + ports REMOVIDO (era network recon)
+6. Imports limpos: XCircle/Database/StatusIcon removidos
+
+IMPACTO:
+- Storefront /status mantem proposito (status page publica funcional)
+- Sem qualquer dado sensitive vazado
+- Admin dashboard /alerts e /metrics continuam funcionando (ja tinham Bearer)
+
+DEPLOY:
+- pass 5a commit 54cdd8b - aiops-svc fix (32 ins/31 del)
+- pass 5b commit 5d03d96 - storefront acompanha (44 ins/59 del)
+- Total: 76 ins / 90 del
+- aiops-svc + storefront rebuild via VPS cron
+- Breaking change resolvido apos ambos rebuilds completarem
+
+VALIDACAO POS-DEPLOY:
+- curl /api/aiops/alerts -> 401 missing_token (era 200 com PII)
+- curl /api/aiops/metrics -> 401 missing_token (era 200 com hostname)
+- curl /api/aiops/status -> 200 sanitized (sem recent_alerts/services/host)
+- curl com Bearer admin -> 200 dados completos
+- Storefront /status renderiza grid 4 cards severity + cpu/ram/disco
+
+W10 SEARCH/AIOPS AUDIT (passes 1-5):
+- pass 1-2: search-svc top-sellers categoria + queries cache
+- pass 3: trending sanitize SQLi/XSS
+- pass 4: facets ignorava filters category/kind
+- pass 5: aiops-svc DLP critical 4 vazamentos (esta iter)
+
+PROXIMA ITER:
+- W17 pass 10: rotacao automatica vault keys
+- W4 pass 6: /admin/orders read-only validation
+- W18 pass 2: cache em /aiops/status (publica, baixa mutacao)
