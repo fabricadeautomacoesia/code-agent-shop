@@ -102,6 +102,25 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## MOBILE RESPONSIVE - WORKER 15 (NAV HAMBURGER MENU)
+Audit em 375px mobile: Nav escondia todos os 6 nav links em lg:flex - mobile users
+viam apenas logo + 3 icones. Icone Menu de lucide importado mas nunca usado.
+
+FIX commitado + deployed (772afbd):
+- Hamburger button visivel apenas em <lg (Menu icon, aria-label='Menu').
+- Drawer slide-from-right glass-strong, max-w-[85vw], z-[70].
+- Body scroll lock quando aberto (useEffect overflow=hidden).
+- Backdrop click-out + close button (X icon).
+- 6 NAV_LINKS centralizados com icones Lucide (Bot, Workflow, Cpu, Zap, Users, Layers).
+- Cada link com hover-color matching o desktop nav.
+- Login/Register no fim do drawer ou link 'Minha conta' se logado.
+- Logo responsivo: text-base em mobile -> text-xl em sm+, 'Shop' escondido <sm.
+- 'Entrar' button mostrado apenas >=sm (acessivel via drawer em <sm).
+
+VALIDADO publicamente:
+- HTML SSR contem 1x aria-label='Menu' + 1x lg:hidden no nav
+- Bot icon presente no homepage (NAV_LINKS funcionando)
+
 ## UX HARDENING - WORKER 1 (AUTH UI + NOTIFICATIONS)
 Audit estatico das 4 pages auth + NotificationBell revelou 2 issues UX:
 1. /login nao exibia confirmacao apos register ou reset (silencioso, user confuso).
