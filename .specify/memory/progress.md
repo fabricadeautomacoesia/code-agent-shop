@@ -102,6 +102,23 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
-## PENDENCIA UNICA: DNS A pelo usuario
-- cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
-- Sistema 100% acessivel via Host header (curl --resolve) ate la
+## SECURITY HARDENING (WORKER 6 - 2FA CRITICAL FIX)
+Code audit estatico em auth-svc/routes/auth.js + two-factor.js revelou bug critico:
+- AES-256-GCM exige authentication tag de 16 bytes para validar integridade.
+- user_two_factor armazenava apenas secret_encrypted + secret_iv (sem tag).
+- Todos os 3 sites de decrypt (login, 2fa/activate, 2fa/disable) passavam Buffer.alloc(0).
+- Fluxo 2FA TOTALMENTE QUEBRADO em prod (Invalid authentication tag length).
+
+CORRECAO commitada localmente (4f32e82) - aguardando connectivity para push+deploy:
+- migration 012_user_2fa_auth_tag.sql: ADD COLUMN secret_tag BYTEA + DO blocks tolerantes
+- two-factor.js setup salva tag (3a coluna)
+- two-factor.js activate/disable carregam secret_tag e validam NOT NULL
+- auth.js login JOIN inclui secret_tag, decrypt try/catch -> 'twofa_corrupt' (sem 500)
+- Log estruturado [2fa.missing_tag] / [2fa.decrypt_fail]
+
+Tabela user_two_factor tem 0 rows em prod (audit confirmou) - sem impacto em usuarios.
+
+## PENDENCIAS EXTERNAS
+- DNS A pelo usuario: cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
+- VPS+GitHub temporariamente inacessiveis do cliente (rede local 100% packet loss em 8.8.8.8 e 209.145.60.53)
+- Quando connectivity voltar: git push commit 4f32e82 + aplicar migration 012 + rebuild auth-svc
