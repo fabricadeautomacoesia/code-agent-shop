@@ -2959,3 +2959,42 @@ NOTA OPERACIONAL:
   LOGIN_MAX_FAILURES=10 (default), LOGIN_LOCK_MINUTES=15
 - Em prod com bots ativos: aumentar para 5/30
 - Em staging com tests automated: aumentar para 20/5
+
+## WORKER 16 (MLB) - /products sort dropdown nao funcional + faltava recent_sales
+Gap documentado em W16 iteracao anterior (Vendendo agora home section): UI
+de /products tinha <select> SEM handler -> mudancas nao aplicavam.
+
+BUGS:
+1) Dropdown era <form><select defaultValue=...></select></form> sem submit
+   nem onChange handler -> usuario mudava opcao e NADA acontecia
+2) Faltava option recent_sales (W16 anterior adicionou backend mas nao UI)
+3) Page e Server Component -> nao podia ter onChange direto
+
+FIX: novo apps/storefront/src/components/products-sort-select.tsx
+- Client Component 'use client'
+- useRouter + useSearchParams + usePathname para navigation programatica
+- onChange handler: router.push(`${pathname}?${URLSearchParams}`)
+- Preserva TODOS os outros params (q, category, tier, price, etc) via spread
+- Reset page=1 ao mudar sort (UX padrao MLB)
+- Icon ArrowDownUp + 7 opcoes:
+  relevance, sales, recent_sales(NOVO), newest, price_asc, price_desc, rating
+- aria-label + hover bg + cursor-pointer (a11y polish)
+
+INTEGRACAO: apps/storefront/src/app/products/page.tsx
+- Import ProductsSortSelect
+- Substitui <form><select>...</select></form> por <ProductsSortSelect current={params.sort} />
+
+VALIDACAO PUBLICA (TRIPLE):
+1) HTML SSR /products: 7 options renderizadas (relevance selected="") OK
+2) Nova option 'Vendendo agora' (recent_sales) presente OK
+3) Chunk JS /products/page-1177ba0b37609622.js contem:
+   ProductsSortSelect, recent_sales, Vendendo agora OK
+
+DEPLOY: commit 61234ee pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
+
+SINERGIA com W16+W14 anteriores:
+- recent_sales sort -> idx_products_last_sale Index Scan (W14 pass 2)
+- Usuario clica "Vendendo agora" no dropdown -> lista por last_sale_at DESC
+- Combina com RecentSaleBadge "Vendido hoje" overlay nos cards = social
+  proof completo
