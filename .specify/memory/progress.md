@@ -10439,3 +10439,65 @@ PROXIMA ITER:
 - W8 pass 5: audit /comparar tabela mobile (CompareDrawer + page)
 - W15 pass 6: audit /conta/* pages mobile (perfil, pontos, favoritos)
 - W16: MLB feature nova (Loyalty avancado, ML recomendacoes, etc)
+
+## WORKER 9 PASS 7 - Enriquecer metadata 5 layouts (cart + checkout + 3 conta/*)
+
+W9 passes 1-6 padronizaram 19 pages. Audit identificou 5 layouts ainda com
+versao minima (so title+description+robots basicos).
+
+5 LAYOUTS ENRIQUECIDOS:
+
+1. /cart:
+   - canonical='/cart' (anti ?return=X duplicate URLs Google)
+   - openGraph completo (chats compartilhados ganham preview)
+   - robots: index:false + follow:false
+
+2. /checkout (CRITICAL):
+   - canonical='/checkout' (anti ?installments=N indexacao)
+   - openGraph com siteName + locale
+   - robots: index+follow:false + NOCACHE:TRUE
+   - URL pode conter session-state, bot jamais cachear
+
+3. /conta/pontos:
+   - canonical='/conta/pontos'
+   - openGraph com features loyalty
+   - robots: index+follow:false
+
+4. /conta/perfil:
+   - canonical='/conta/perfil'
+   - openGraph generico
+   - robots: TRINCA + NOCACHE (PII: CPF, telefone)
+
+5. /conta/seguranca:
+   - canonical='/conta/seguranca'
+   - openGraph generico
+   - robots: TRINCA SEGURANCA (noindex+nofollow+nocache)
+   - 2FA QR code + recovery codes jamais devem ser cacheados
+
+PADRAO CONSOLIDADO (W9 passes 6+7):
+- Pages auth/checkout sensitive -> trinca robots
+- Pages publicas -> canonical + og + index:true follow:true
+- Pages private (/conta/*) -> canonical + og + noindex+nofollow
+- Pages com PII -> + nocache
+
+DEPLOY:
+- commit d892668 push main OK
+- 5 files, 64 insertions, 6 deletions
+- storefront rebuild via VPS cron
+- Pure metadata changes
+
+W9 SEO AUDIT PROGRESS (passes 1-7):
+- pass 1-5: 19 pages baseline
+- pass 6: login + esqueci-senha + redefinir-senha
+- pass 7: cart + checkout + 3 conta/* (esta iter)
+
+COBERTURA TOTAL: 24 layouts auditados com metadata especifica
+- Public: 12 (catalogo, products, sobre, termos, etc)
+- Auth flow: 4 (login, register, esqueci, redefinir)
+- Cart/checkout: 2
+- Conta privada: 6 (favoritos, pedidos, perfil, pontos, seguranca, downloads)
+
+PROXIMA ITER:
+- W9 pass 8: /status, /comparar layouts (verificar se metadata especifica)
+- W3 pass continued: PDP audit deeper
+- W4 polish remaining pages
