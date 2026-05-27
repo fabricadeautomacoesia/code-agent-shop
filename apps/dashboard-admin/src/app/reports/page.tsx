@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
+import { useAdminAction } from '@/lib/use-admin-action';
 import { AlertOctagon, Check, X } from 'lucide-react';
 
 const REASON_LABEL: Record<string, string> = {
@@ -16,26 +17,35 @@ const REASON_LABEL: Record<string, string> = {
 export default function AdminReportsPage() {
   const [reports, setReports] = useState<any[]>([]);
   const [filter, setFilter] = useState('open');
-  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   async function load() {
     try {
       const r = await adminFetch<{ reports: any[] }>(`/reviews/admin/reports?status=${filter}`);
       setReports(r.reports || []);
+      setLoadError('');
     } catch (e: any) {
-      setError(e.message);
+      setLoadError(e.message);
     }
   }
   useEffect(() => { load(); }, [filter]);
 
+  // FIX-WORKER-4 pass 5: useAdminAction hook (W4 pass 2 pattern).
+  // Antes: resolve() era silent swallow em error (await sem try/catch).
+  // Agora: feedback explicit success/error + busyKey per-row.
+  const action = useAdminAction(load);
+
   async function resolve(id: string, dismissed = false) {
     const notes = prompt(dismissed ? 'Justificativa para descartar:' : 'Notas da resolucao:');
     if (!notes) return;
-    await adminFetch(`/reviews/reports/${id}/resolve`, {
-      method: 'POST',
-      body: JSON.stringify({ status: dismissed ? 'dismissed' : 'resolved', notes }),
+    const op = dismissed ? 'dismiss' : 'resolve';
+    action.run(`${op}-${id}`, async () => {
+      await adminFetch(`/reviews/reports/${id}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({ status: dismissed ? 'dismissed' : 'resolved', notes }),
+      });
+      return `Denuncia ${id.slice(0, 8)}... ${dismissed ? 'descartada' : 'resolvida'}`;
     });
-    load();
   }
 
   return (
@@ -54,7 +64,21 @@ export default function AdminReportsPage() {
         </select>
       </div>
 
-      {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">{error}</div>}
+      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+
+      {/* FIX-WORKER-4 pass 5: banners action via useAdminAction */}
+      {action.error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.error}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.success}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
 
       <div className="glass p-6">
         {reports.length === 0 ? (
@@ -83,11 +107,13 @@ export default function AdminReportsPage() {
                   </div>
                   {r.status === 'open' && (
                     <div className="flex gap-2">
-                      <button onClick={() => resolve(r.id, false)} className="text-green-400 hover:underline text-xs flex items-center gap-1">
-                        <Check className="w-3 h-3" /> Resolver
+                      <button onClick={() => resolve(r.id, false)} disabled={action.busyKey === `resolve-${r.id}` || action.busyKey === `dismiss-${r.id}`}
+                        className="text-green-400 hover:underline text-xs flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                        <Check className="w-3 h-3" /> {action.busyKey === `resolve-${r.id}` ? '...' : 'Resolver'}
                       </button>
-                      <button onClick={() => resolve(r.id, true)} className="text-white/40 hover:underline text-xs flex items-center gap-1">
-                        <X className="w-3 h-3" /> Descartar
+                      <button onClick={() => resolve(r.id, true)} disabled={action.busyKey === `resolve-${r.id}` || action.busyKey === `dismiss-${r.id}`}
+                        className="text-white/40 hover:underline text-xs flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                        <X className="w-3 h-3" /> {action.busyKey === `dismiss-${r.id}` ? '...' : 'Descartar'}
                       </button>
                     </div>
                   )}
