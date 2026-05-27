@@ -3,6 +3,8 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../../../.env') });
 
 const express = require('express');
+const nodeCrypto = require('node:crypto');
+const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
 const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp } = require('@cas/shared');
@@ -12,6 +14,8 @@ const app = express();
 const PORT = parseInt(process.env.PORT_VAULT || '3020', 10);
 
 app.disable('x-powered-by');
+// FIX-WORKER-17: trust proxy para rate-limit usar IP real (x-forwarded-for do gateway)
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '64kb' }));
 app.use(sanitize.middleware());
 
@@ -31,7 +35,7 @@ const provisionSchema = z.object({
 });
 
 // POST /api/vault/keys -> admin provisiona chave para pool ou seller especifico
-app.post('/keys', adminOnly, validate({ body: provisionSchema }), asyncHandler(async (req, res) => {
+app.post('/keys', provisionRateLimit, adminOnly, validate({ body: provisionSchema }), asyncHandler(async (req, res) => {
   const { seller_id, provider, key_alias, plain_key, monthly_quota_usd_cents, is_platform_pool, expires_at } = req.body;
   const { encrypted, iv, tag } = cryp.encrypt(plain_key);
   const fp = cryp.sha256(plain_key).slice(0, 16);
@@ -63,17 +67,56 @@ app.get('/keys', adminOnly, asyncHandler(async (req, res) => {
 // FIX SEG-VAULT-1: APENAS admin/staff OU header interno x-internal-token compativel com VAULT_INTERNAL_TOKEN
 // Antes, qualquer JWT valido (incluindo buyer comum) podia chamar este endpoint e
 // receber plain_key da pool da plataforma - vazamento critico.
+// FIX-WORKER-17 (timing-safe): comparacao '===' do token interno era vulneravel
+// a timing attack. Atacante pode descobrir o token caractere por caractere medindo
+// tempo de resposta. crypto.timingSafeEqual com Buffer de mesmo length resolve.
 function vaultUseGuard(req, res, next) {
   const internalTok = req.headers['x-internal-token'];
   const expected = process.env.VAULT_INTERNAL_TOKEN;
-  if (expected && internalTok && internalTok === expected) {
-    return next(); // chamada interna (gateway -> service mesh) liberada
+  if (expected && internalTok) {
+    let valid = false;
+    try {
+      const a = Buffer.from(String(internalTok));
+      const b = Buffer.from(expected);
+      valid = a.length === b.length && nodeCrypto.timingSafeEqual(a, b);
+    } catch { valid = false; }
+    if (valid) return next();
+    // Token enviado mas invalido -> log para forensics (possivel brute-force)
+    log.warn({
+      ip: req.ip,
+      ua: req.headers['user-agent'],
+      tok_len: String(internalTok).length,
+      expected_len: expected.length,
+    }, '[vault.invalid_internal_token]');
   }
-  // senao, exige JWT com role privilegiado
+  // senao (sem header ou invalido), exige JWT com role privilegiado
   return jwt.requireAuth({ roles: ['admin', 'staff', 'service'] })(req, res, next);
 }
 
+// FIX-WORKER-17 (rate-limit): /use eh o endpoint que retorna plain_key.
+// 30 reqs/min por IP eh generoso para uso legitimo (LLM calls) mas barra
+// brute-force de VAULT_INTERNAL_TOKEN.
+const useRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.VAULT_USE_RATE_LIMIT || '30', 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limit_exceeded' },
+  // Considera IP do x-forwarded-for (gateway propaga)
+  keyGenerator: (req) => req.headers['x-real-ip'] || req.ip,
+});
+
+// Provisionamento de chaves: 5/min eh suficiente (admin operacao manual)
+const provisionRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limit_exceeded' },
+});
+
 app.post('/use',
+  useRateLimit,
   vaultUseGuard,
   validate({ body: z.object({ provider: z.string(), seller_id: z.string().uuid().optional(), operation: z.string().optional() }) }),
   asyncHandler(async (req, res, next) => {

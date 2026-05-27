@@ -11,6 +11,7 @@
     "@cas/db-client": "0.1.0",
     "@cas/shared": "0.1.0",
     "express": "^5.0.1",
+    "express-rate-limit": "^7.4.1",
     "zod": "^3.23.8"
   }
 }
