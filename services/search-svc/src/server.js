@@ -57,13 +57,20 @@ app.get('/', asyncHandler(async (req, res) => {
     params.push(tag);
   }
 
+  // MLB-NEW WORKER 16: filtro recently_sold (24h window) usa idx_products_last_sale partial
+  if (req.query.recently_sold === '1' || req.query.recently_sold === 'true') {
+    where.push(`p.last_sale_at IS NOT NULL AND p.last_sale_at > NOW() - INTERVAL '24 hours'`);
+  }
+
   const order = ({
-    relevance:  q ? `rank DESC, p.sales_count DESC` : `p.sales_count DESC, p.avg_rating DESC NULLS LAST`,
-    newest:     `p.published_at DESC NULLS LAST`,
-    price_asc:  `p.price_cents ASC`,
-    price_desc: `p.price_cents DESC`,
-    rating:     `p.avg_rating DESC NULLS LAST, p.review_count DESC`,
-    sales:      `p.sales_count DESC`,
+    relevance:    q ? `rank DESC, p.sales_count DESC` : `p.sales_count DESC, p.avg_rating DESC NULLS LAST`,
+    newest:       `p.published_at DESC NULLS LAST`,
+    price_asc:    `p.price_cents ASC`,
+    price_desc:   `p.price_cents DESC`,
+    rating:       `p.avg_rating DESC NULLS LAST, p.review_count DESC`,
+    sales:        `p.sales_count DESC`,
+    // MLB-NEW WORKER 16: sort por venda mais recente (combina com idx_products_last_sale)
+    recent_sales: `p.last_sale_at DESC NULLS LAST, p.sales_count DESC`,
   })[req.query.sort || 'relevance'];
 
   params.push(lim, off);

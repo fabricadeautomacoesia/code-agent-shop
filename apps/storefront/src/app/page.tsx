@@ -21,8 +21,11 @@ async function fetchSafe<T>(path: string): Promise<T | null> {
 export default async function HomePage() {
   const search: any = await fetchSafe('/api/search?sort=sales&limit=8');
   const t: any = await fetchSafe('/api/search/trending');
+  // MLB-NEW WORKER 16: "Vendendo agora" - produtos vendidos nas ultimas 24h
+  const sellingNow: any = await fetchSafe('/api/search?recently_sold=1&sort=recent_sales&limit=4');
   const featured: any[] = search?.results || [];
   const trending: any[] = (t?.trending || []).slice(0, 6);
+  const hotNow: any[] = (sellingNow?.results || []).slice(0, 4);
 
   return (
     <div className="space-y-32 pb-32">
@@ -87,6 +90,25 @@ export default async function HomePage() {
 
       {/* MLB-NEW WORKER 16: Recomendados para voce (so renderiza se logado E >=4 sugestoes) */}
       <ForYou />
+
+      {/* MLB-NEW WORKER 16: Vendendo agora (24h window, usa idx_products_last_sale) */}
+      {hotNow.length > 0 && (
+        <section className="container mx-auto px-6">
+          <div className="flex items-end justify-between mb-6">
+            <div>
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/15 text-orange-300 text-xs font-semibold mb-2 border border-orange-500/20">
+                <Zap className="w-3.5 h-3.5 fill-orange-300" /> AGORA
+              </div>
+              <h2 className="font-display font-bold text-3xl reveal-up">Vendendo agora</h2>
+              <p className="text-sm text-white/50 mt-1">Produtos comprados nas ultimas 24 horas</p>
+            </div>
+            <Link href="/products?sort=recent_sales" className="text-sm text-magenta hover:underline">Ver todos</Link>
+          </div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {hotNow.map((p) => <ProductCard key={p.id} product={p} />)}
+          </div>
+        </section>
+      )}
 
       {/* PRODUTOS EM DESTAQUE */}
       {featured.length > 0 && (
