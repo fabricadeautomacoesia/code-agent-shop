@@ -2875,3 +2875,42 @@ OBSERVACAO sobre SQL injection:
   whitelist torna isso EXPLICITO + auditavel.
 - params parameterized ($1, $2 etc) sempre foram seguros - o risco era
   apenas no ORDER BY clause que nao aceita parametros.
+
+## WORKER 13 pass 2 (NOTIFICATION) - XSS via renderMustache em body_html
+Re-auditoria notification-svc apos W12 pass 2. Achei vuln REAL no Mustache
+template render:
+
+VETOR DE ATAQUE:
+1. Seller cria produto com title='Awesome<script>alert(document.cookie)</script>'
+2. payment-svc/qa-svc insere notification com payload={title: <seller-controlled>}
+3. notification-svc/server.js linha 209 renderMustache(bodyHtml, ctx)
+4. body_html template tem '<p>{{title}}</p>' -> output:
+   '<p>Awesome<script>alert(...)</script></p>'
+5. Gmail/Outlook preview ou inline HTML em /conta/notifs (se renderizado raw)
+   -> XSS execution potencialmente
+
+ROOT CAUSE:
+- Comment do codigo dizia 'Anti-XSS minimo' mas funcao NAO escapava nada
+- Apenas convertia null/undefined -> '' (gracioso) sem touch nos chars
+
+FIX services/notification-svc/src/server.js linha 34-50:
+- Nova funcao _htmlEscape(s) com 6 chars perigosos: & < > \\\" ' /
+- renderMustache(template, ctx, isHtml=false) novo parametro
+- Quando isHtml=true: aplica _htmlEscape no value antes de injetar
+- bodyHtml call (linha 211) explicit isHtml=true; title/body (text) ficam raw
+
+VALIDACAO PUBLICA (UNIT TEST in container, 2 cenarios):
+- Test 1 isHtml=false: ctx.title='Evil<script>alert(1)</script>' -> 'Evil<script>...' raw
+  (correto - email texto plain nao renderiza HTML)
+- Test 2 isHtml=true: mesmo input -> 'Evil&lt;script&gt;alert(1)&lt;&#x2F;script&gt;'
+  + 'Bob &amp; Alice' (& tambem escapado)
+  TODOS chars perigosos escapados corretamente.
+
+DEPLOY: commit 9cd6246 pushed, notification-svc rebuilt via Dockerfile.node
+SVC=notification-svc, service updated --force, converged OK.
+
+OBSERVACAO sobre exposicao:
+- Hoje impacto baixo: NotificationBell renderiza apenas n.title + n.body
+  (text), nao n.body_html. Email envio via nodemailer (vetor real).
+- A11y: a fix tambem protege contra HTML injection futuro se UI passar a
+  renderizar body_html via dangerouslySetInnerHTML.
