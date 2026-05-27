@@ -3774,3 +3774,54 @@ IMPACTO:
 PROXIMA ITER:
 - Auditar order-svc, seller-svc, qa-svc para mesmo pattern
 - Considerar middleware shared 'parseClampedLimit' para evitar duplicacao
+
+## WORKER 7 pass 4 (SHARED+5 SVCS) - lim clamp em 8 locations + helper
+
+GAP DETECTADO (proxima iter do W7 pass 3):
+"Auditar order-svc, seller-svc, qa-svc para mesmo pattern. Considerar
+middleware shared 'parseClampedLimit' para evitar duplicacao"
+
+Audit grep revelou MESMO bug em 8 locations de 5 services diferentes.
+Cada um com Math.min(parseInt||def, max) sem Math.max(1, ...) inner.
+
+CRIADO (packages/shared/src/paginate.js):
++ parsePaginate({query, default, max}) -> { lim, off, page }
++ parseLimit(query, opts) -> lim only
++ Garante invariant 1 <= lim <= max em TODOS edge cases
++ Documentado: NaN, 0, negativo, overflow
++ Exported via shared/index.js como `paginate`
+
+FIX em 8 locations (mantido pattern Math.max(1, Math.min(...)) inline
+para nao quebrar - migracao para helper sera gradual em proximas iters):
+
+| File | Endpoint | lim range |
+|------|----------|-----------|
+| aiops-svc/server.js:227 | metrics history | 1..500 |
+| notification-svc/server.js:92 | inbox | 1..100 |
+| search-svc/server.js:207 | top-sellers/:cat | 1..50 |
+| seller-svc/admin.js:92 | admin/all | 1..100 |
+| seller-svc/loyalty.js:31 | loyalty history | 1..200 |
+| seller-svc/me.js:118 | payouts | 1..200 |
+| seller-svc/sellers.js:13 | listagem publica | 1..100 |
+| seller-svc/sellers.js:147 | :slug/products | 1..100 |
+
+DEPLOY:
+- commit d642f20 pushed
+- 4 builds paralelos (aiops + notification + search + seller-svc) ~3s cada
+- 4 services updates converged em <5s
+- product-svc ja corrigido no pass 3 (4 locations)
+
+VALIDACAO PUBLICA (3 cenarios pos-fix):
+- /api/sellers?limit=-5 -> 200 + 1 seller (era 0 silencioso)
+- /api/search/top-sellers/automacoes?limit=-3 -> 200 + 1 product
+- /api/notifications?limit=-7 -> 200 + 1 notif
+
+IMPACTO:
+- ZERO endpoints publicos vulneraveis ao bypass (12 locations fixed total)
+- Helper `paginate` disponivel para futuras rotas (consistencia)
+- Cliente API agora recebe resposta determinista em TODOS os edge cases
+- Frontend grids/listas nao mostram mais "0 itens" enganador
+- Padronizacao para Blueprint V8: add seção "Pagination Helper"
+
+LICAO: bugs sutis se propagam por copy-paste. Helper compartilhado +
+greps regulares por anti-pattern devem fazer parte do Blueprint V8.
