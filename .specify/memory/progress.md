@@ -10741,3 +10741,72 @@ PROXIMA ITER:
 - W7 pass 8: /recommendations/for-me mesmo padrao (filtro pre-CTE)
 - W18 pass 7: cache /orders/me historico per-user
 - W3 PDP audit continuado
+
+## WORKER 6 PASS 3 - /auth/logout 3 melhorias UX + audit + idempotency
+
+AUDIT via curl --resolve encontrou 3 issues em POST /auth/logout:
+
+CENARIO 1 (sem cookie):
+  curl POST /auth/logout -> 200 OK { ok: true }
+- Silencioso, cliente nao sabia se logout real ou nao havia sessao
+
+CENARIO 2 (cookie fake):
+  curl POST /auth/logout -H "Cookie: cas_rt=fake"
+  -> 200 OK silencioso
+- jwt.hashToken(fake) produz hash valido
+- UPDATE 0 rows mas response identico a logout real
+
+CENARIO 3 (forensics gap):
+- audit_log nao registrava logouts
+- Investigacao "quando user X deslogou?" impossivel
+
+FIX (3 melhorias):
+
+1. RESPONSE structured com `was_logged_in`:
+   - Sem cookie: { ok, was_logged_in: false, message: 'Nenhuma sessao ativa' }
+   - Cookie sem match: { ok, was_logged_in: false, message: 'Sessao nao encontrada' }
+   - Logout real: { ok, was_logged_in: true }
+   - Frontend usa was_logged_in para feedback UX claro
+
+2. clearCookie SEMPRE no inicio:
+   - Idempotente + defense in depth
+   - Mesmo cookie forgado, browser remove
+   - Pattern defensive: cookie clear primeiro, trabalho depois
+
+3. UPDATE com RETURNING + audit log:
+   - WHERE refresh_token_hash AND is_revoked = FALSE (anti double-logout)
+   - RETURNING id, user_id (audit completo)
+   - INSERT audit_log action='auth.logout' com IP + UA
+   - Best-effort: log fail nao bloqueia (catch interno)
+
+SECURITY:
+- /logout permanece publico (design intencional: tab-close sem token)
+- Audit log permite detectar logout suspeito (W17 alerta futuro)
+- clearCookie inicio = idempotencia mesmo em request abortado
+
+DEPLOY:
+- commit afd8c2c push main OK
+- 28 insertions, 5 deletions
+- auth-svc rebuild via VPS cron
+- Sem schema change
+- Backward compat: was_logged_in adicional nao quebra clients
+
+VALIDACAO POS-DEPLOY:
+- curl POST /logout sem cookie -> { was_logged_in: false }
+- curl POST /logout cookie real -> { was_logged_in: true }
+- SELECT audit_log WHERE action='auth.logout' -> N rows
+
+W6 GATEWAY/AUTH AUDIT (passes 1-3):
+- pass 1: /auth/register cpf_cnpj/phone empty string fix
+- pass 2: gateway /api/status DLP critical (UPSTREAMS map leak)
+- pass 3: /auth/logout structured + audit (esta iter)
+
+INTEGRACAO COM W4-12 /admin/audit-log:
+- action='auth.logout' agora visivel no dashboard admin
+- Filter dropdown lista 'auth.logout' apos uso
+- Forensics: "user X deslogou de IP Y em Z?"
+
+PROXIMA ITER:
+- W6 pass 4: /auth/refresh logout-cascade no double-use refresh
+- W17: rate-limit /auth/logout (anti abuse)
+- W4 pass 15: /admin/audit-log filter shortcuts
