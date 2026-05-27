@@ -6,7 +6,16 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, startup } = require('@cas/shared');
+
+// FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
+// QA_CALLBACK_SECRET obrigatorio (HMAC do worker -> autenticidade de scores).
+// QA_RUN_INTERNAL_TOKEN warn (sem ele, /qa/run cai em jwt auth fallback OK).
+startup.validateStartupEnv({
+  critical: ['PG_PASS'],
+  minLength: { PG_PASS: 12, QA_CALLBACK_SECRET: 32 },
+  warnIfMissing: ['QA_CALLBACK_SECRET', 'QA_RUN_INTERNAL_TOKEN'],
+});
 
 const log = logger.child({ svc: 'qa-svc' });
 const app = express();

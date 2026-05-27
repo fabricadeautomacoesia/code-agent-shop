@@ -7,7 +7,16 @@ const nodeCrypto = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp, fail2ban } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp, fail2ban, startup } = require('@cas/shared');
+
+// FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
+// VAULT_AES_KEY 64-char hex obrigatorio (encrypt/decrypt de API keys).
+// VAULT_INTERNAL_TOKEN warn (operacional, nao critico para boot).
+startup.validateStartupEnv({
+  critical: ['PG_PASS', 'VAULT_AES_KEY'],
+  minLength: { PG_PASS: 12, VAULT_AES_KEY: 64 },
+  warnIfMissing: ['VAULT_INTERNAL_TOKEN'],
+});
 
 const log = logger.child({ svc: 'vault-svc' });
 const app = express();

@@ -6,8 +6,18 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup } = require('@cas/shared');
 const asaas = require('./asaas');
+
+// FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
+// ASAAS_WEBHOOK_SECRET ausente em prod = fail-closed em fix anterior, mas
+// agora valida no startup tambem (alerta ops mais cedo).
+// PG_PASS curta = brute-force possivel via Docker network interno.
+startup.validateStartupEnv({
+  critical: ['PG_PASS'],
+  minLength: { PG_PASS: 12, ASAAS_WEBHOOK_SECRET: 16 },
+  warnIfMissing: ['ASAAS_WEBHOOK_SECRET', 'ASAAS_API_KEY', 'PAYMENT_INTERNAL_TOKEN'],
+});
 
 const log = logger.child({ svc: 'payment-svc' });
 const app = express();

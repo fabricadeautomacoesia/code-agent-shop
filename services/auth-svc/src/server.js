@@ -4,8 +4,17 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../../.env'
 
 const express = require('express');
 const cookieParser = require('cookie-parser');
-const { logger, sanitize, errorHandler } = require('@cas/shared');
+const { logger, sanitize, errorHandler, startup } = require('@cas/shared');
 const { healthcheck } = require('@cas/db-client');
+
+// FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
+// PG_PASS curta/ausente em prod -> fail-closed (Swarm restart loop = alerta ops).
+// JWT secrets ja validados pelo packages/shared/src/jwt.js no module-load.
+// VAULT_AES_KEY usado em 2FA encrypt/decrypt - critico.
+startup.validateStartupEnv({
+  critical: ['PG_PASS', 'VAULT_AES_KEY'],
+  minLength: { PG_PASS: 12, VAULT_AES_KEY: 64 },
+});
 
 const log = logger.child({ svc: 'auth-svc' });
 const app = express();

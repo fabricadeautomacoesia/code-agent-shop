@@ -15,5 +15,6 @@ module.exports = {
   llmFallback:  require('./llm-fallback'),
   cache:        require('./cache'),
   paginate:     require('./paginate'),
+  startup:      require('./startup'),
   sleep:        (ms) => new Promise((r) => setTimeout(r, ms)),
 };
