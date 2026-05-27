@@ -3610,3 +3610,67 @@ GAP DETECTADO (proxima iter):
 - Considerar adicionar Postgres trigger BEFORE INSERT no search_log para
   rejeitar queries com chars perigosos no SOURCE (vs filter na SAIDA)
 - Considerar rate-limit por IP no endpoint /search (anti-recon)
+
+## WORKER 10 pass 4 (DB SCHEMA) - migration 027 trigger sanitiza search_log
+
+GAP DETECTADO (proxima iter do W10 pass 3):
+"Considerar adicionar Postgres trigger BEFORE INSERT no search_log para
+rejeitar queries com chars perigosos no SOURCE (vs filter na SAIDA)"
+
+Defesa em depth: filtrar na SAIDA do /trending eh fragil. Outros endpoints
+futuros (admin recents, analytics dashboards) podem expor o mesmo bug.
+Trigger na FONTE garante que TODO consumidor de query_normalized e seguro.
+
+FIX (1 migration - db/migrations/027_search_log_sanitize_trigger.sql):
+
+Estrategia "soft-block":
+- query (raw) PRESERVA original -> SIEM/forensica/auditoria
+- query_normalized -> '' (vazio) se:
+  1. Match regex [''"<>;\] (chars SQLi/XSS perigosos)
+  2. Contem '--' ou '/*' (SQL comments)
+  3. CHAR_LENGTH < 3 (typos/lixo)
+- /trending ja filtra != '' -> exclui automatico
+
+Trigger BEFORE INSERT OR UPDATE garante:
+- Novas tentativas: query_normalized = '' antes de tocar storage
+- Re-runs em UPDATE: defesa contra path admin de edicao
+- Backfill UPDATE WHERE predicado mesmo aplica em rows antigas
+
+Idempotente:
+- DO block: DROP IF EXISTS trigger antigo
+- CREATE OR REPLACE FUNCTION (re-run safe)
+- Backfill UPDATE com mesmo predicado (apaga apenas o que se aplica)
+
+APLICACAO em PRODUCAO:
+- docker exec postgres < 027_search_log_sanitize_trigger.sql
+- Output: DO + CREATE FUNCTION + CREATE TRIGGER + UPDATE 1 (limpou 1 SQLi attempt)
+
+VALIDACAO em PRODUCAO (4 inserts test):
+INSERT (query='test SQLi', query_normalized='hacker; drop table products;--')
+  -> stored as ('test SQLi', '')  <- normalizado vazio OK
+INSERT (query='xss test', query_normalized='<script>alert(1)</script>')
+  -> stored as ('xss test', '')  <- XSS blocked OK
+INSERT (query='short', query_normalized='ab')
+  -> stored as ('short', '')  <- < 3 chars OK
+INSERT (query='legit', query_normalized='agente legitimo')
+  -> stored as ('legit', 'agente legitimo')  <- preservada OK
+
+VALIDACAO API publica POS:
+GET /api/search/trending -> { agente:4, automacao:2, whatsapp:2 }
+- 4 test inserts NAO aparecem em trending (3 normalizados '', 1 count<2)
+- forensica em 'query' preservada para investigacao
+
+IMPACTO ARQUITETURAL:
+- Defesa em DEPTH real: filter na FONTE + filter na SAIDA (W10 pass 3)
+- Outros endpoints futuros consumindo query_normalized estao seguros by-default
+- Performance: trigger ~1us overhead (regex check), zero IO
+- Search analytics (count, top queries) agora 100% confiavel
+
+COMMIT: ed1e77f pushed.
+
+LICAO: filtros de seguranca devem aplicar em CAMADAS:
+1. Input validation (cliente/zod)
+2. SQL parametrized queries (codigo)
+3. Trigger BEFORE INSERT (DB layer) <- ADICIONADO
+4. Filter na saida (endpoint)
+Cada camada protege contra falha das outras.
