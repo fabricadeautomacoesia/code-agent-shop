@@ -79,10 +79,14 @@ router.post('/checkout',
       );
 
       // Cria order_items + calcula splits
+      // FIX-WORKER-11 pass 3: rate clamp 0..1 (era unrestricted -> admin podia setar
+      // custom_commission_rate=1.5 (150%) e gerar payout NEGATIVO ao seller, ou negativo
+      // (rouba seller). Math.max(0, Math.min(1, rate)) garante invariant.
       for (const it of items.rows) {
-        const rate = it.is_platform_owned ? 1.0 : (it.custom_commission_rate ?? TAKE_RATE);
+        const rawRate = it.is_platform_owned ? 1.0 : (Number(it.custom_commission_rate) || TAKE_RATE);
+        const rate = Math.max(0, Math.min(1, rawRate)); // clamp 0..1
         const commission = it.is_platform_owned ? it.line_total_cents : Math.floor(it.line_total_cents * rate);
-        const payout = it.line_total_cents - commission;
+        const payout = Math.max(0, it.line_total_cents - commission); // defense em depth
         const dl_token = crypto.randomUUID();
         const license_key = `CAS-${crypto.randomBytes(12).toString('hex').toUpperCase()}`;
         const snapshot = await c.query('SELECT fn_product_snapshot($1) AS s', [it.product_id]);
