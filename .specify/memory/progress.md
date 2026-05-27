@@ -17314,9 +17314,32 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ search-svc /categories + /facets (pass 94) - 5 bugs
 - ✅ payment-svc /webhooks/:id/reset (pass 95) - 4 bugs admin race+DLP
 - ✅ qa-svc /qa/runs/:product_id + /qa/runs/stuck (pass 96) - 10 bugs DLP+tier-split
-- ✅ auth-svc PATCH /me (pass 97 esta iter) - 8 bugs validation+race+audit
+- ✅ auth-svc PATCH /me (pass 97) - 8 bugs validation+race+audit
+- ✅ auth-svc /logout (pass 98 esta iter) - 4 bugs + MLB revoke_all
 
-W7 PASS 97 RESUMO:
+W7 PASS 98 RESUMO:
+- auth-svc/src/routes/auth.js POST /logout refactor (4 bugs):
+  * NEW logoutLimiter 20/hr/IP (anti-bot cookie sweep + DoS DB UPDATE)
+  * DLP mask.text() em user-agent header (audit_log payload defensive)
+  * NEW MLB FEATURE ?revoke_all=true (Sair de todos os dispositivos):
+    - Requer JWT access token (Bearer) p/ identificar user
+    - UPDATE user_sessions WHERE user_id revoga TODAS active
+    - audit_log action='auth.logout_all' (diferencia de single logout)
+    - response: sessions_revoked count
+  * Audit log AWAIT (era fire-and-forget):
+    - PRE-FIX: .catch(log.warn) - audit falha = logout sucedeu sem trail
+    - POS-FIX: await + audit_warning flag no response se falhar
+    - Compliance LGPD: rastreio obrigatorio de session terminations
+- Pattern W7 em 106 endpoints + 23 regras (A-W) - 98 micro-iters
+- auth-svc 100% W7 em fluxos core:
+  /register (51) + /login (49) + /refresh (53) + /forgot-password (50)
+  + /reset-password (50) + /2fa/* (54-55) + /logout (98) + PATCH /me (97)
+
+PROXIMA ITER:
+- W7 pass 99: seller-svc /:slug/products + /:slug/stats audit
+- W7 pass 100: review-svc remaining endpoints
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 - auth-svc/src/routes/me.js PATCH / refactor (8 bugs):
   * Regra K tx() + SELECT FOR UPDATE OF users
     - PRE-FIX: 2 PATCHs simultaneos multi-tab = lost update

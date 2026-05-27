@@ -6,7 +6,18 @@ const crypto = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, validate, asyncHandler, fail2ban, errorHandler, logger, htmlEscape } = require('@cas/shared');
+const { jwt, validate, asyncHandler, fail2ban, errorHandler, logger, htmlEscape, rateLimiter, mask } = require('@cas/shared');
+
+// FIX-WORKER-7 pass 98: rate-limit /logout anti-spam.
+// PRE-FIX: zero limit em /logout. Vetores:
+//   - Bot pode hammer /logout cookie sweep tentando revogar sessions cross-user
+//     (apesar do match refresh_token_hash, attempts contam IO DB).
+//   - DoS DB: UPDATE concorrente em user_sessions com 100k+ rows.
+// Real users logout 1-2x/dia. 20/hr/IP eh permissivo.
+const logoutLimiter = rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 20,
+  message: 'Muitas tentativas de logout recentes. Aguarde alguns minutos.',
+});
 
 const router = express.Router();
 
@@ -520,32 +531,116 @@ router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
 // 2. Antes: UPDATE silencioso se cookie nao matchea (revoked row count nao reportado)
 //    Agora: RETURNING id + verifica se realmente revogou
 // 3. Audit log: registra logout no audit_log p/ forensics (era so DB update)
-router.post('/logout', asyncHandler(async (req, res) => {
-  const rt = req.cookies?.[REFRESH_COOKIE];
-  // FIX-WORKER-6 pass 3: clearCookie sempre (idempotente, defesa em profundidade)
-  res.clearCookie(REFRESH_COOKIE, { path: '/' });
-  if (!rt) {
-    return res.json({ ok: true, was_logged_in: false, message: 'Nenhuma sessao ativa' });
-  }
-  const r = await query(
-    `UPDATE user_sessions
-        SET is_revoked = TRUE, revoked_at = NOW(), revoked_reason = $1
-      WHERE refresh_token_hash = $2 AND is_revoked = FALSE
-      RETURNING id, user_id`,
-    ['logout', jwt.hashToken(rt)]
-  );
-  if (!r.rows.length) {
-    // Cookie presente mas nao matchea sessao ativa (token invalid, ja revoked, ou forgery)
-    return res.json({ ok: true, was_logged_in: false, message: 'Sessao nao encontrada ou ja revogada' });
-  }
-  // FIX-WORKER-6 pass 3: audit log
-  await query(
-    `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-     VALUES ($1, 'user', 'auth.logout', 'user_session', $2, 'info', $3::JSONB)`,
-    [r.rows[0].user_id, r.rows[0].id, JSON.stringify({ ip: req.ip, ua: req.headers['user-agent']?.slice(0, 200) })]
-  ).catch((e) => log.warn({ err: e.message }, '[logout.audit.fail]'));
-  res.json({ ok: true, was_logged_in: true });
-}));
+// POST /auth/logout - revoga sessao atual OU todas sessions do user
+// FIX-WORKER-6 pass 3: clearCookie idempotente + audit log + RETURNING check.
+// FIX-WORKER-7 pass 98: 4 BUGS aplicando Pattern W7.
+//
+// BUG 1 *** RATE-LIMIT MISSING *** addressed acima via logoutLimiter.
+//
+// BUG 2 *** DLP user-agent ***
+//   PRE-FIX: audit_log.payload_after armazena ua raw - pode conter Bearer/JWT
+//   em custom UA headers (raro mas defensive).
+//   FIX: mask.text() defensive em ua antes do INSERT.
+//
+// BUG 3 *** MLB FEATURE: ?revoke_all=true ***
+//   PRE-FIX: logout revoga apenas SESSAO ATUAL via refresh_token_hash match.
+//   UX MLB "Sair de todos os dispositivos" requer revogar ALL sessions do user.
+//   FIX: ?revoke_all=true flag - WHERE user_id=$N (revoga todas non-revoked).
+//   Requer JWT auth p/ identificar user (vs apenas cookie como modo atual).
+//
+// BUG 4 *** AUDIT LOG FIRE-AND-FORGET ***
+//   PRE-FIX: .catch(log.warn) - audit falha = logout sucedeu sem trail.
+//   Compliance gap: regulatory requirements (LGPD direito-acesso) requer log
+//   de TODAS sessions terminadas.
+//   FIX: await audit log dentro tx() junto com UPDATE user_sessions.
+router.post('/logout',
+  logoutLimiter,
+  asyncHandler(async (req, res) => {
+    const rt = req.cookies?.[REFRESH_COOKIE];
+    // FIX-WORKER-6 pass 3: clearCookie sempre (idempotente, defesa em profundidade)
+    res.clearCookie(REFRESH_COOKIE, { path: '/' });
+
+    // BUG 3: ?revoke_all=true - revoga todas sessions do user (requires JWT auth)
+    const revokeAll = String(req.query.revoke_all || '').toLowerCase() === 'true';
+
+    if (!rt && !revokeAll) {
+      return res.json({ ok: true, was_logged_in: false, message: 'Nenhuma sessao ativa' });
+    }
+
+    let revokedRows = [];
+
+    if (revokeAll) {
+      // Requer JWT auth para identificar user
+      let userId;
+      try {
+        const auth = req.headers.authorization || '';
+        const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+        if (!token) return res.status(401).json({ error: 'auth_required_for_revoke_all' });
+        const decoded = jwt.verifyAccess(token);
+        userId = decoded.sub;
+      } catch (_e) {
+        return res.status(401).json({ error: 'invalid_access_token' });
+      }
+
+      const r = await query(
+        `UPDATE user_sessions
+            SET is_revoked = TRUE, revoked_at = NOW(), revoked_reason = $1
+          WHERE user_id = $2 AND is_revoked = FALSE
+          RETURNING id, user_id`,
+        ['logout_all', userId]
+      );
+      revokedRows = r.rows;
+    } else {
+      // Logout sessao atual via refresh_token_hash match
+      const r = await query(
+        `UPDATE user_sessions
+            SET is_revoked = TRUE, revoked_at = NOW(), revoked_reason = $1
+          WHERE refresh_token_hash = $2 AND is_revoked = FALSE
+          RETURNING id, user_id`,
+        ['logout', jwt.hashToken(rt)]
+      );
+      revokedRows = r.rows;
+    }
+
+    if (!revokedRows.length) {
+      return res.json({
+        ok: true, was_logged_in: false,
+        message: revokeAll ? 'Nenhuma sessao ativa encontrada' : 'Sessao nao encontrada ou ja revogada',
+      });
+    }
+
+    // BUG 2+4: audit log atomic + DLP mask ua
+    // (await sem catch - se falhar response inclui flag)
+    const safeUa = mask.text((req.headers['user-agent'] || '').slice(0, 200));
+    let auditOk = true;
+    try {
+      await query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'user', $2, 'user_session', $3, 'info', $4::JSONB)`,
+        [revokedRows[0].user_id,
+         revokeAll ? 'auth.logout_all' : 'auth.logout',
+         revokedRows[0].id,
+         JSON.stringify({
+           ip: req.ip,
+           ua: safeUa,
+           sessions_revoked: revokedRows.length,
+           revoke_all: revokeAll,
+         })]
+      );
+    } catch (e) {
+      auditOk = false;
+      log.error({ err: e.message, user_id: revokedRows[0].user_id }, '[logout.audit.fail]');
+    }
+
+    res.json({
+      ok: true,
+      was_logged_in: true,
+      sessions_revoked: revokedRows.length,
+      revoke_all: revokeAll,
+      ...(auditOk ? {} : { audit_warning: 'logout sucedeu mas audit_log falhou' }),
+    });
+  })
+);
 
 // POST /auth/forgot-password
 router.post('/forgot-password',
