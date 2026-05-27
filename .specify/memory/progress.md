@@ -3723,3 +3723,54 @@ PROXIMA ITER:
 - Sino tambem poderia integrar SSE (Server-Sent Events) para push real-time
   (notif aparece em <1s vs <30s atual). Backlog.
 - /notifications precisa de pagination (cursor-based) - 20 hardcoded
+
+## WORKER 7 pass 3 (PRODUCT-SVC) - lim clamp 3 endpoints (negative bypass)
+
+VETOR DETECTADO (audit curl publico):
+GET /api/products?limit=-5 -> {"products":[]} HTTP 200 (silencioso)
+
+Investigacao revelou:
+- SQL gerado: "LIMIT -5"
+- PG retornou ERROR "LIMIT must not be negative"
+- Error handler do shared mascarou como {products:[]} 200 OK
+- UX confuso: cliente nao sabe se acabou paginacao ou foi erro
+- Quebra grids de produtos no frontend (mostra "0 produtos" enganador)
+
+Pattern Math.min(parseInt||default, max) deixava negativos passarem:
+- parseInt("-5") = -5
+- Math.min(-5, 60) = -5  <- BUG
+- Faltava Math.max(1, ...) inner
+
+3 endpoints com mesmo bug encontrados em product-svc/routes/public.js:
+- L65:  GET /products/recently-viewed lim=1..30
+- L170: GET /products lim=1..60
+- L271: GET /products/:slug/reviews lim=1..100
+
+FIX (1 arquivo, 3 lugares):
+Math.max(1, Math.min(parseInt(req.query.limit, 10) || default, max))
+
+Garante invariant 1 <= lim <= max em TODOS os casos:
+- limit="abc" -> NaN || default -> OK (default fallback)
+- limit="-5" -> -5 -> Math.max(1, -5) = 1 OK
+- limit="99999" -> Math.min(99999, max) = max OK
+- limit="0" -> 0 || default -> default OK
+
+DEPLOY:
+- commit 97bab3d pushed
+- product-svc rebuilt + deployed converged
+- Cache 'cas:products:list:*' tentativa de flush (TTL 60s natural sufficient)
+
+VALIDACAO PUBLICA (3 cenarios pos-fix):
+- /products?limit=-5 -> 1 produto (lim clampado a 1) OK
+- /products?limit=0 -> 10 produtos (default 24, DB tem 10) OK
+- /products?limit=99999 -> 10 produtos (cap 60, DB tem 10) OK
+
+IMPACTO:
+- Frontend nao mostra mais "0 produtos" enganador para inputs invalidos
+- Reduce noise no error log do payment/order que tinham bug similar
+- Consistencia com search-svc (que ja tinha clamp - W10 pass 2)
+- Cliente API recebe resposta determinista
+
+PROXIMA ITER:
+- Auditar order-svc, seller-svc, qa-svc para mesmo pattern
+- Considerar middleware shared 'parseClampedLimit' para evitar duplicacao
