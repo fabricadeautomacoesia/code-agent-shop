@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Package, ShoppingBag, Settings, Shield, LogOut, Store, Star, Heart } from 'lucide-react';
+import { Package, ShoppingBag, Settings, Shield, LogOut, Store, Star, Heart, User } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
@@ -54,6 +54,9 @@ export default function ContaPage() {
               ? `${Number(loyalty.points_balance).toLocaleString('pt-BR')} pts - tier ${loyalty.tier}`
               : 'Ver saldo e historico' },
           { href: '/conta/favoritos',Icon: Heart,       label: 'Favoritos',      desc: 'Produtos salvos' },
+          // FIX-WORKER-1 pass 3: card editar perfil (CPF/nome/telefone)
+          { href: '/conta/perfil',   Icon: User,        label: 'Editar perfil',
+            desc: me.cpf_cnpj ? 'Nome, CPF, telefone' : 'Complete CPF para pagar' },
           { href: '/conta/seguranca',Icon: Shield,      label: 'Seguranca + 2FA',desc: me.twofa_enabled ? '2FA ativo' : 'Ativar 2FA' },
           ...(me.role === 'seller'
             ? [{ href: '/seller/dashboard', Icon: Store, label: 'Painel vendedor', desc: 'Gerenciar loja' }]

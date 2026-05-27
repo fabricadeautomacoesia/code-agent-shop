@@ -183,7 +183,8 @@ export default function CheckoutPage() {
           <div className="font-semibold text-yellow-300 mb-1">Cadastro incompleto</div>
           <div className="text-white/80">
             CPF/CNPJ obrigatorio para pagamento via Asaas. {' '}
-            <Link href="/conta" className="text-magenta underline hover:text-magenta-glow">
+            {/* FIX-WORKER-1 pass 3: link direto para /conta/perfil (form de edicao) */}
+            <Link href="/conta/perfil" className="text-magenta underline hover:text-magenta-glow">
               Completar cadastro &rarr;
             </Link>
           </div>

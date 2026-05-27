@@ -41,6 +41,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   payment_not_pending:    'Este pedido nao esta pendente de pagamento.',
   order_not_found:        'Pedido nao encontrado.',
   empty_cart:             'Seu carrinho esta vazio.',
+
+  // Profile / CPF validation (W2 pass 5 auth-svc)
+  invalid_cpf:            'CPF invalido. Verifique os digitos (algoritmo Receita Federal).',
+  invalid_cnpj:           'CNPJ invalido. Verifique os digitos (algoritmo Receita Federal).',
+  invalid_cpf_cnpj_length:'CPF precisa ter 11 digitos ou CNPJ 14 digitos.',
 };
 
 export function friendlyAuthError(e: any): string {
