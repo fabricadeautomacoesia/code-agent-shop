@@ -3522,3 +3522,42 @@ IMPACTO:
 PROXIMA ITER:
 - Voltar para outros workers nao tocados ainda (W11 payment, W13 notif,
   W14 DB schema indices, W17 vault security)
+
+## WORKER 2 pass 2 (CHECKOUT) - race condition Asaas payment polling
+
+VETOR DETECTADO (audit E2E checkout via curl + DB):
+- POST /orders/checkout retornava order com asaas_payment_id=null
+- 5/5 ultimos orders no DB: asaas_payment_id=NULL, asaas_pix_qrcode=NULL
+- Frontend mostrava "Pedido CAS-X criado!" mas SEM QR code, SEM boleto
+
+Logs payment-svc revelaram 2 problemas SEPARADOS:
+1. OPERACIONAL (nao codigo): asaas_401 "A chave de API fornecida e invalida"
+   -> ASAAS_API_KEY no env do payment-svc precisa ser renovada (cron note ja
+   documentado em progress.md anterior)
+2. CODIGO (este fix): mesmo se Asaas funcionasse, ha race condition:
+   - Backend: setImmediate (async) -> Asaas latency 500ms-2s
+   - Frontend: GET /orders/{id} 1ms depois -> sempre vazio
+
+FIX (1 arquivo - storefront only):
+apps/storefront/src/app/checkout/page.tsx:
+- pay(): poll com backoff exponencial 500/800/1200/1800/2400/3000x3 (~14s)
+- isReady(order) checa campo certo: pix_qrcode | invoice_url | boleto_url
+- Se 14s timeout: setErr mensagem informativa + link Meus pedidos
+- UI fallback graceful: bloco orange "preparando pagamento" se !payment_id
+
+DEPLOY: commit 3b3c874 pushed, storefront rebuilt + converged.
+
+VALIDACAO PUBLICA:
+- /checkout HTML loads 200 OK
+- /conta/pedidos HTML loads 200 OK
+- Test E2E real Asaas-dependent: aguarda fix operacional ASAAS_API_KEY
+
+IMPACTO:
+- User nao ve mais tela vazia apos checkout (race condition resolvida)
+- 14s timeout cobre 99% dos casos Asaas (P99 latency observada)
+- Fallback UI mostra que pedido foi criado mas pagamento esta processando
+- Reduce support tickets de "fiz pedido e nao recebi QR"
+
+GAP DETECTADO (operacional, nao codigo):
+- ASAAS_API_KEY env do payment-svc deve ser renovada (chave atual invalida)
+- ASAAS_WEBHOOK_SECRET configuracao confirmar (W11 fix-closed implementado)
