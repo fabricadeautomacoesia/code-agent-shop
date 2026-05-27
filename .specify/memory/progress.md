@@ -2748,3 +2748,47 @@ UNLOCK proximas features:
 - Filtro /products?sort=recent_sales (usa idx_products_last_sale)
 - Badge "Vendido recentemente" em PDP se last_sale_at > NOW() - 7 days
 - Admin alert: produtos sem vendas em 90+ dias
+
+## WORKER 16 (MLB-NEW) - RecentSaleBadge "Vendido hoje/semana/mes"
+Mercado Livre exibe badge urgency "Vendido hoje" / "Vendido esta semana"
+para criar pressao social + recency proof. CAS expoe agora via W14 pass 2
+fix (last_sale_at populated).
+
+NOVO COMPONENTE: apps/storefront/src/components/recent-sale-badge.tsx
+- Server Component (zero JS bundle)
+- 3 tiers de recency baseados em hoursAgo:
+  * <= 24h: "Vendido hoje" (Flame laranja bg-orange-500/20)
+  * <= 7d:  "Vendido esta semana" (Flame amarelo bg-yellow-500/15)
+  * <= 30d: "Vendido este mes" (Clock cinza bg-white/5)
+  * > 30d ou null: nao renderiza (gracioso)
+- Variants:
+  * pdp: pill rounded-md ml-2 inline ao lado dos outros badges
+  * card: absolute bottom-2 left-2 z-10 overlay backdrop-blur
+
+BACKEND search-svc/server.js linha 79:
+- Adicionado p.last_sale_at no SELECT (PDP via SELECT * ja expunha).
+
+INTEGRACOES:
+- PDP /product/[slug]: <RecentSaleBadge variant='pdp' /> antes do wishlist badge
+- ProductCard: <RecentSaleBadge variant='card' /> overlay no cover
+
+VALIDACAO PUBLICA (QUAD):
+1) Backend /api/search retorna last_sale_at para 10/10 produtos
+2) PDP agente-rag-documentos (last_sale=NOW): "Vendido hoje" OK
+3) PDP prompt-pack (3 dias atras): "Vendido esta semana" OK
+4) Catalog /products HTML SSR: 9 "Vendido hoje" + 1 "Vendido esta semana"
+   = 10 badges renderizados (1 por produto)
+
+DEPLOY: commit 4846ccc pushed,
+- search-svc rebuilt via Dockerfile.node SVC=search-svc, converged OK
+- storefront rebuilt via Dockerfile.next, converged OK
+- 2 produtos seeded com last_sale_at recente para E2E test
+
+SINERGIAS:
+- W14 pass 2 populated last_sale_at -> habilita esse badge
+- payment-svc agora UPDATE last_sale_at em order paid -> badge auto-atualiza
+- idx_products_last_sale partial -> permite future "Filtro: vendidos esta semana"
+
+GAP RESTANTE proxima iter:
+- ?sort=recent_sales filtro no /products (UI dropdown)
+- Banner home "Mais vendidos hoje" (last_sale_at <= 24h + sales_count > 5)
