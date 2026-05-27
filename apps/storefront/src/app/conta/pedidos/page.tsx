@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { Package, ArrowRight, Clock, CheckCircle, AlertCircle } from 'lucide-react';
 import { Api } from '@/lib/api';
@@ -55,10 +56,14 @@ export default function PedidosPage() {
             const b = STATUS_BADGE[o.status] || STATUS_BADGE.cart;
             return (
               <Link key={o.id} href={`/conta/pedidos/${o.id}`} className="glass p-4 hover:border-magenta transition-colors flex items-center gap-4 group">
+                {/* FIX-WORKER-8 pass 2: <img> stack -> next/image stack */}
                 <div className="flex gap-2 -space-x-3">
                   {o.items_preview?.slice(0, 3).map((it: any, i: number) => (
                     it.cover && (
-                      <img key={i} src={it.cover} className="w-12 h-12 object-cover rounded border-2 border-cyber-dark" alt="" />
+                      <div key={i} className="w-12 h-12 relative rounded border-2 border-cyber-dark overflow-hidden flex-shrink-0">
+                        <Image src={it.cover} alt={it.title || 'Item do pedido'}
+                          fill sizes="48px" className="object-cover" />
+                      </div>
                     )
                   ))}
                 </div>

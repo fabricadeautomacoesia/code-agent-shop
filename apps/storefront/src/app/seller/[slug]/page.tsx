@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Star, Award, Package, TrendingUp, MapPin, Calendar, BadgeCheck, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
@@ -77,11 +78,14 @@ export default async function SellerPage({ params }: { params: Promise<{ slug: s
             style={{ backgroundImage: `url(${seller.store_banner_url})` }} />
         )}
         <div className="p-8 flex flex-col md:flex-row gap-6 items-start md:items-center">
+          {/* FIX-WORKER-8 pass 2: <img> -> next/image */}
           {seller.store_logo_url ? (
-            <img src={seller.store_logo_url} alt={seller.store_name}
-              className="w-24 h-24 rounded-xl object-cover border-2 border-magenta" />
+            <div className="w-24 h-24 relative rounded-xl overflow-hidden border-2 border-magenta flex-shrink-0">
+              <Image src={seller.store_logo_url} alt={seller.store_name || 'Vendedor'}
+                fill sizes="96px" className="object-cover" />
+            </div>
           ) : (
-            <div className="w-24 h-24 rounded-xl bg-gradient-vibe flex items-center justify-center text-3xl font-display font-bold">
+            <div className="w-24 h-24 rounded-xl bg-gradient-vibe flex items-center justify-center text-3xl font-display font-bold flex-shrink-0">
               {seller.store_name?.[0] || 'S'}
             </div>
           )}

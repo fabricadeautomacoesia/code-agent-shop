@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { CheckCircle, Clock, Download, AlertCircle, Copy } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
@@ -116,8 +117,12 @@ export default function PedidoPage() {
         <div className="space-y-3">
           {items.map((it) => (
             <div key={it.id} className="flex items-start gap-4 p-3 rounded-lg bg-white/5">
+              {/* FIX-WORKER-8 pass 2: <img> -> next/image */}
               {it.snapshot?.cover_image_url && (
-                <img src={it.snapshot.cover_image_url} alt="" className="w-16 h-16 object-cover rounded" />
+                <div className="w-16 h-16 relative rounded overflow-hidden flex-shrink-0">
+                  <Image src={it.snapshot.cover_image_url} alt={it.snapshot?.title || 'Produto'}
+                    fill sizes="64px" className="object-cover" />
+                </div>
               )}
               <div className="flex-1">
                 <div className="font-display font-semibold">{it.snapshot?.title || 'Produto'}</div>

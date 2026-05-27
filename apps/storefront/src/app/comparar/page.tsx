@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { Check, X, GitCompare, Star, Award, Zap } from 'lucide-react';
 import { Api } from '@/lib/api';
 
@@ -71,8 +72,12 @@ export default async function CompararPage({ searchParams }: { searchParams: Pro
               {products.map((p: any) => (
                 <th key={p.id} className="p-3 min-w-[240px]">
                   <Link href={`/product/${p.slug}`} className="block">
+                    {/* FIX-WORKER-8 pass 2: <img> -> next/image */}
                     {p.cover_image_url ? (
-                      <img src={p.cover_image_url} alt={p.title} className="w-full h-32 object-cover rounded-lg mb-2" />
+                      <div className="w-full h-32 relative rounded-lg overflow-hidden mb-2">
+                        <Image src={p.cover_image_url} alt={p.title || 'Produto'}
+                          fill sizes="240px" className="object-cover" />
+                      </div>
                     ) : (
                       <div className="w-full h-32 bg-gradient-vibe/10 rounded-lg mb-2" />
                     )}

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { Award, Star, Package } from 'lucide-react';
 
 export const revalidate = 120;
@@ -60,10 +61,14 @@ export default async function SellersPage({ searchParams }: { searchParams: Prom
           {sellers.map((s: any) => (
             <Link key={s.id} href={`/seller/${s.store_slug}`} className="glass p-5 hover:scale-105 transition-transform group">
               <div className="flex items-start gap-3 mb-3">
+                {/* FIX-WORKER-8 pass 2: <img> -> next/image */}
                 {s.store_logo_url ? (
-                  <img src={s.store_logo_url} alt={s.store_name} className="w-14 h-14 rounded-lg object-cover" />
+                  <div className="w-14 h-14 relative rounded-lg overflow-hidden flex-shrink-0">
+                    <Image src={s.store_logo_url} alt={s.store_name || 'Vendedor'}
+                      fill sizes="56px" className="object-cover" />
+                  </div>
                 ) : (
-                  <div className="w-14 h-14 rounded-lg bg-gradient-vibe flex items-center justify-center font-display font-bold text-xl">
+                  <div className="w-14 h-14 rounded-lg bg-gradient-vibe flex items-center justify-center font-display font-bold text-xl flex-shrink-0">
                     {s.store_name?.[0]}
                   </div>
                 )}
