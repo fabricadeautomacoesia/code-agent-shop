@@ -8025,3 +8025,76 @@ PROXIMA ITER:
 - W14 pass 7: partition vault_key_usage mensal
 - W14 pass 8: drop dead indices (pg_stat_user_indexes audit)
 - W18 pass 4: image optimization audit (next/image consistency)
+
+## WORKER 3 PASS 6 - WishlistButton 5 bugs a11y/UX/state
+
+AUDIT components/wishlist-button.tsx (PDP + product-card variants):
+
+BUG 1 (a11y PDP variant):
+- aria-label apenas em card variant; PDP variant so tinha title
+- title nao e lido consistentemente por screen readers
+- WCAG fail: button icone-only sem rotulo acessivel
+FIX: aria-label + aria-pressed em ambos variants
+- aria-pressed indica toggle state (favoritado yes/no)
+- focus-visible outline-2 outline-magenta no PDP variant
+
+BUG 2 (a11y SVG icons):
+- <Heart> + <Loader2> sem aria-hidden em 4 ocorrencias
+- Screen reader podia anunciar SVG paths como ruido
+FIX: aria-hidden="true" em todos os icons
+
+BUG 3 (silent failure):
+- catch { console.error } sem feedback visual ao user
+- Network down/backend 500 = user clica, nada acontece visualmente
+- User nao sabia se favoritou ou nao
+FIX: errorFlash state + setTimeout 2s
+- ring-2 ring-red-500 animate-pulse por 2s em erro
+- Botao "vibra" vermelho indicando falha
+- User reage e pode retentar
+
+BUG 4 (sem rollback robusto):
+- setFavorited APOS request OK (delay 200-400ms visual)
+- Em erro nao-404, estado nao revertia visualmente
+- Card variant: store global ficava dessincronizada
+FIX: optimistic flip imediato + rollback no catch
+- setFavorited(!wasInWishlist) imediato (UX snappy)
+- Store add/remove imediato tambem
+- Catch nao-404: reverte local + store + errorFlash
+- Catch 404 not_in_wishlist: estado ja sincronizado, return
+
+BUG 5 (stale closure has):
+  load(token).then(() => setFavorited(has(productId)))
+- has eh closure do render anterior
+- Apos load(), store update propaga mas has ainda eh velho
+- setFavorited(false) mesmo com item presente no store
+- 'has' nao estava nas deps do useEffect
+FIX: load(token).catch(...) sem callback
+- Segundo useEffect [inStore] sincroniza automaticamente
+- inStore re-renderiza quando store update propaga
+- Stale closure eliminado
+
+DEPLOY:
+- commit 91dbb67 push main OK
+- 51 insertions, 19 deletions
+- storefront rebuild via VPS cron
+- Componente client-side
+
+W3 PDP AUDIT PROGRESS (passes 1-6):
+- pass 1: AddToCart funcional + friendly errors
+- pass 2: breadcrumb slash orfao
+- pass 3: QnaForm 6 bugs UX
+- pass 4: ReviewForm 8 bugs UX + a11y
+- pass 5: ProductTabs WAI-ARIA + a11y
+- pass 6: WishlistButton 5 bugs (esta iter)
+
+PDP a11y/UX consolidado:
+- Forms (qna+review): friendly errors + char counter + role=alert + auto-clear
+- Tabs (WAI-ARIA): roles + keyboard nav + tabpanel ids
+- Toggle button (wishlist): aria-pressed + optimistic + rollback + errorFlash
+- SVG icons: aria-hidden consistente em todo PDP
+- Focus visible: outline-2 outline-magenta em todos buttons interativos
+
+PROXIMA ITER:
+- W3 pass 7: AskQuickButton modal audit (Q&A rapida pre-purchase)
+- W3 pass 8: CompareButton + InstantBuy audit
+- DRY: extrair friendly error mappers para lib/friendly-errors.ts
