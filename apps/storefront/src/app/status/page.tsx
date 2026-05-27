@@ -4,18 +4,15 @@ export const dynamic = 'force-dynamic';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { CheckCircle, AlertTriangle, XCircle, Activity, Database, Cpu, HardDrive, MemoryStick } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Activity, Cpu, HardDrive, MemoryStick } from 'lucide-react';
 import { Api } from '@/lib/api';
 
 /**
  * Status page publica (V8 5.3).
  * Consome /api/aiops/status com refresh 10s.
+ * FIX-WORKER-10 pass 5: removido XCircle/Database/StatusIcon - dependiam
+ * de services{} e db detalhado que viraram DLP-only no admin.
  */
-
-function StatusIcon({ ok }: { ok: boolean }) {
-  if (ok) return <CheckCircle className="w-5 h-5 text-green-400" />;
-  return <XCircle className="w-5 h-5 text-red-400" />;
-}
 
 function MetricBar({ label, value, max = 100, threshold = 85, Icon }: any) {
   const v = Number(value || 0);
@@ -52,7 +49,13 @@ export default function StatusPage() {
   if (err) return <div className="container mx-auto px-6 py-16 text-center text-red-400">Erro ao carregar status: {err}</div>;
   if (!status) return <div className="container mx-auto px-6 py-16 text-center text-white/60">Carregando...</div>;
 
-  const allOk = status.ok && (status.recent_alerts?.length || 0) === 0;
+  // FIX-WORKER-10 pass 5: aiops sanitized agora retorna alerts_24h aggregate
+  // { critical: N, error: N, warn: N, info: N } em vez de recent_alerts array completo.
+  // Total = soma de severities (apenas counter, sem IDs/conteudo sensivel).
+  const alerts24h = status.alerts_24h || {};
+  const totalAlerts = Object.values(alerts24h).reduce((s: number, n: any) => s + (Number(n) || 0), 0);
+  const criticalAlerts = (alerts24h.critical || 0) + (alerts24h.error || 0);
+  const allOk = status.ok && totalAlerts === 0;
   const m = status.metrics || {};
 
   return (
@@ -68,68 +71,50 @@ export default function StatusPage() {
         <div className="flex items-center gap-3">
           {allOk
             ? <><CheckCircle className="w-8 h-8 text-green-400" /><div><div className="font-display font-bold text-2xl text-green-400">Operacional</div><div className="text-sm text-white/60">Todos os sistemas funcionando normalmente</div></div></>
-            : <><AlertTriangle className="w-8 h-8 text-yellow-400" /><div><div className="font-display font-bold text-2xl text-yellow-400">Atencao</div><div className="text-sm text-white/60">{status.recent_alerts?.length || 0} alerta(s) nas ultimas 24h</div></div></>
+            : <><AlertTriangle className="w-8 h-8 text-yellow-400" /><div><div className="font-display font-bold text-2xl text-yellow-400">Atencao</div><div className="text-sm text-white/60">{totalAlerts} alerta(s) nas ultimas 24h{criticalAlerts > 0 ? ` (${criticalAlerts} critico)` : ''}</div></div></>
           }
         </div>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6 mb-6">
-        <div className="glass p-6">
-          <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
-            <Activity className="w-5 h-5 text-magenta" /> Servidor (host {status.host})
-          </h2>
-          <div className="space-y-4">
-            <MetricBar label="CPU" value={m.cpu_percent} threshold={85} Icon={Cpu} />
-            <MetricBar label="RAM" value={m.ram_percent} threshold={90} Icon={MemoryStick} />
-            <MetricBar label="Disco" value={m.disk_percent} threshold={90} Icon={HardDrive} />
-            <div className="text-xs text-white/40 pt-2 border-t border-white/5 grid grid-cols-2 gap-2">
-              <div>Uptime: {Math.floor((status.uptime_s || 0) / 3600)}h</div>
-              <div>Load: {m.load_avg_1m?.toFixed(2)} / {m.load_avg_5m?.toFixed(2)} / {m.load_avg_15m?.toFixed(2)}</div>
-              <div>RAM: {m.ram_used_mb?.toLocaleString() || 0} / {m.ram_total_mb?.toLocaleString() || 0} MB</div>
-              <div>Disco: {m.disk_used_gb} / {m.disk_total_gb} GB</div>
-            </div>
-          </div>
+      {/* FIX-WORKER-10 pass 5: removidos host/uptime/services{} (DLP - eram recon de infra).
+          Mantido cards CPU/RAM/Disco (legitimo status page publica) sem detalhes internos.
+          Servicos detalhados ficam no admin dashboard. */}
+      <div className="glass p-6 mb-6">
+        <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
+          <Activity className="w-5 h-5 text-magenta" /> Recursos do servidor
+        </h2>
+        <div className="grid sm:grid-cols-3 gap-4">
+          <MetricBar label="CPU" value={m.cpu_percent} threshold={85} Icon={Cpu} />
+          <MetricBar label="RAM" value={m.ram_percent} threshold={90} Icon={MemoryStick} />
+          <MetricBar label="Disco" value={m.disk_percent} threshold={90} Icon={HardDrive} />
         </div>
-
-        <div className="glass p-6">
-          <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
-            <Database className="w-5 h-5 text-magenta" /> Microsservicos
-          </h2>
-          <div className="space-y-2 text-sm">
-            {Object.entries(status.services || {}).map(([name, port]: any) => (
-              <div key={name} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
-                <span className="flex items-center gap-2 capitalize">
-                  <StatusIcon ok={true} /> {name}
-                </span>
-                <span className="text-xs text-white/40 font-mono">:{port}</span>
-              </div>
-            ))}
-            <div className="flex items-center justify-between py-2 border-t border-white/10 pt-3 mt-2">
-              <span className="flex items-center gap-2"><StatusIcon ok={status.db?.ok} /> PostgreSQL</span>
-              <span className="text-xs text-white/40">{status.db?.ok ? 'OK' : 'FAIL'}</span>
-            </div>
+        {m.load_avg_1m !== undefined && (
+          <div className="text-xs text-white/40 mt-4 pt-3 border-t border-white/5 text-center">
+            Load average (1min): <span className="font-mono">{Number(m.load_avg_1m).toFixed(2)}</span>
           </div>
-        </div>
+        )}
       </div>
 
-      {status.recent_alerts?.length > 0 && (
+      {/* FIX-WORKER-10 pass 5: alertas detalhados (com IDs/title) eram DLP leak (reporter UUIDs).
+          Agora exibe agregado por severity (counter apenas). Detalhes ficam no admin dashboard. */}
+      {totalAlerts > 0 && (
         <div className="glass p-6">
-          <h2 className="font-display font-bold text-xl mb-4">Alertas recentes (24h)</h2>
-          <div className="space-y-2 text-sm">
-            {status.recent_alerts.map((a: any) => (
-              <div key={a.id} className="flex items-start gap-3 p-2 bg-white/5 rounded">
-                <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                  a.severity === 'critical' ? 'bg-red-500/30 text-red-300' :
-                  a.severity === 'error'    ? 'bg-orange-500/30 text-orange-300' :
-                  a.severity === 'warn'     ? 'bg-yellow-500/30 text-yellow-300' :
-                                              'bg-blue-500/30 text-blue-300'
-                }`}>{a.severity}</span>
-                <div className="flex-1">
-                  <div className="font-medium">{a.title}</div>
-                  <div className="text-xs text-white/40">{new Date(a.created_at).toLocaleString('pt-BR')}</div>
+          <h2 className="font-display font-bold text-xl mb-4">Alertas nas ultimas 24h</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {(['critical','error','warn','info'] as const).map((sev) => {
+              const n = alerts24h[sev] || 0;
+              const color =
+                sev === 'critical' ? 'bg-red-500/20 text-red-300 border-red-500/30' :
+                sev === 'error'    ? 'bg-orange-500/20 text-orange-300 border-orange-500/30' :
+                sev === 'warn'     ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' :
+                                     'bg-blue-500/20 text-blue-300 border-blue-500/30';
+              return (
+                <div key={sev} className={`rounded-lg border p-3 text-center ${color} ${n === 0 ? 'opacity-40' : ''}`}>
+                  <div className="text-2xl font-bold font-display">{n}</div>
+                  <div className="text-xs uppercase mt-1">{sev}</div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
