@@ -5,9 +5,21 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Star, Award, Gift, TrendingUp, Trophy } from 'lucide-react';
+import { Star, Award, Gift, TrendingUp, Trophy, ShoppingBag, RotateCcw, RefreshCw, Sparkles, Tag } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
+
+// MLB-NEW WORKER 16: catalogo de razoes de transacoes loyalty -> icone + label legivel
+const REASON_INFO: Record<string, { icon: any; label: string; color: string }> = {
+  welcome_bonus:        { icon: Sparkles,    label: 'Bonus de boas-vindas',     color: 'text-magenta-glow' },
+  order_paid:           { icon: ShoppingBag, label: 'Compra paga',              color: 'text-green-400' },
+  order_redeem:         { icon: Tag,         label: 'Pontos resgatados',        color: 'text-orange-300' },
+  order_refunded:       { icon: RotateCcw,   label: 'Pontos estornados',        color: 'text-red-400' },
+  order_refund_restore: { icon: RefreshCw,   label: 'Pontos devolvidos',        color: 'text-cyan-300' },
+};
+function reasonInfo(reason: string) {
+  return REASON_INFO[reason] || { icon: Gift, label: reason.replace(/_/g, ' '), color: 'text-white/60' };
+}
 
 const TIER_INFO: Record<string, { name: string; color: string; gradient: string; min: number; next?: number }> = {
   starter:  { name: 'Starter',  color: 'text-gray-300',   gradient: 'from-gray-500 to-gray-600',   min: 0,    next: 500 },
@@ -19,13 +31,21 @@ export default function PontosPage() {
   const router = useRouter();
   const { token } = useAuth();
   const [data, setData] = useState<any>(null);
+  const [limit, setLimit] = useState(20);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     if (!token) { router.push('/login'); return; }
-    Api.api<any>('/loyalty/me', { auth: token, cache: 'no-store' })
+    Api.api<any>(`/loyalty/me?limit=${limit}`, { auth: token, cache: 'no-store' })
       .then(setData)
-      .catch(() => {});
-  }, [token]);
+      .catch(() => {})
+      .finally(() => setLoadingMore(false));
+  }, [token, limit]);
+
+  function loadMore() {
+    setLoadingMore(true);
+    setLimit((l) => l + 20);
+  }
 
   if (!data) return <div className="container mx-auto px-6 py-16 text-center text-white/60">Carregando...</div>;
   const loyalty = data.loyalty;
@@ -95,23 +115,54 @@ export default function PontosPage() {
       </div>
 
       <div className="glass p-6">
-        <h2 className="font-display font-bold text-xl mb-4">Historico de pontos</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display font-bold text-xl">Extrato de pontos</h2>
+          <span className="text-xs text-white/40">{transactions.length} transac{transactions.length === 1 ? 'ao' : 'oes'}</span>
+        </div>
         {transactions.length === 0 ? (
           <p className="text-white/60 text-center py-8">Nenhuma transacao ainda. Faca uma compra para comecar a ganhar pontos!</p>
         ) : (
-          <div className="space-y-2">
-            {transactions.map((t: any) => (
-              <div key={t.id} className="flex items-center justify-between p-3 rounded bg-white/5">
-                <div>
-                  <div className="text-sm font-semibold capitalize">{t.reason.replace(/_/g, ' ')}</div>
-                  <div className="text-xs text-white/40">{new Date(t.created_at).toLocaleString('pt-BR')}</div>
-                </div>
-                <div className={`font-display font-bold ${t.points_delta > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {t.points_delta > 0 ? '+' : ''}{t.points_delta}
-                </div>
+          <>
+            {/* MLB-NEW WORKER 16: lista com icone + label legivel + cor por categoria */}
+            <div className="divide-y divide-white/5">
+              {transactions.map((t: any) => {
+                const info = reasonInfo(t.reason);
+                const Icon = info.icon;
+                const earned = t.points_delta > 0;
+                return (
+                  <div key={t.id} className="flex items-center gap-3 py-3">
+                    <div className={`w-9 h-9 flex-shrink-0 rounded-full bg-white/5 flex items-center justify-center ${info.color}`}>
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold truncate">{info.label}</div>
+                      <div className="text-[11px] text-white/40">
+                        {new Date(t.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                        {t.reference_type && t.reference_id && (
+                          <span className="ml-2 font-mono text-white/30">ref: {t.reference_id.slice(0,8)}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className={`font-display font-bold text-base whitespace-nowrap ${earned ? 'text-green-400' : 'text-red-400'}`}>
+                      {earned ? '+' : ''}{t.points_delta} <span className="text-xs font-normal text-white/40">pts</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* MLB-NEW WORKER 16: ver mais paginacao (sempre tenta se chegou no limit) */}
+            {transactions.length >= limit && (
+              <div className="mt-4 text-center">
+                <button
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="px-4 py-2 rounded-lg border border-white/15 bg-white/5 text-sm hover:bg-white/10 transition-colors disabled:opacity-50"
+                >
+                  {loadingMore ? 'Carregando...' : 'Ver mais transacoes'}
+                </button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
     </div>
