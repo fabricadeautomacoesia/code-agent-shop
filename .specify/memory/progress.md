@@ -8098,3 +8098,84 @@ PROXIMA ITER:
 - W3 pass 7: AskQuickButton modal audit (Q&A rapida pre-purchase)
 - W3 pass 8: CompareButton + InstantBuy audit
 - DRY: extrair friendly error mappers para lib/friendly-errors.ts
+
+## WORKER 6 PASS 2 - Gateway /api/status DLP critical (UPSTREAMS network map)
+
+AUDIT gateway encontrou DLP leak severo em endpoint publico /api/status:
+
+CURL EM PROD CONFIRMOU LEAK:
+  curl /api/status
+  -> { ok, svc, uptime_s, ts, env: "production",
+       upstreams: {
+         auth:         "http://tasks.cas_auth-svc:3010",
+         seller:       "http://tasks.cas_seller-svc:3011",
+         product:      "http://tasks.cas_product-svc:3012",
+         qa:           "http://tasks.cas_qa-svc:3013",
+         order:        "http://tasks.cas_order-svc:3015",
+         payment:      "http://tasks.cas_payment-svc:3016",
+         review:       "http://tasks.cas_review-svc:3017",
+         notification: "http://tasks.cas_notification-svc:3018",
+         search:       "http://tasks.cas_search-svc:3019",
+         vault:        "http://tasks.cas_vault-svc:3020",
+         aiops:        "http://tasks.cas_aiops-svc:3006"
+       }
+     }
+
+IMPACTO SEC:
+
+1. NETWORK RECON COMPLETO sem auth
+   - 11 services + DNS pattern (tasks.cas_X) + ports
+   - 1 GET = mapa completo da infra
+
+2. LATERAL MOVEMENT facilitado
+   - Atacante comprometendo 1 container (RCE, env leak, etc) tem
+     mapa pronto p/ pivotar
+   - curl http://tasks.cas_vault-svc:3020/keys (bypass gateway)
+   - Sem o mapa: precisava enumerar DNS (queries ruidosas)
+
+3. VULN DISCLOSURE
+   - uptime_s revela quando svc foi restartado (timing attack window)
+   - env="production" confirma target prod vs hit acidental staging
+
+PARALELO: identico ao aiops-svc pre-W10 pass 5 (recent_alerts DLP).
+
+ANALISE DE CONSUMERS (pre-fix):
+- grep "/api/status" em apps/ + services/ -> ZERO matches
+- Storefront /status page usa /api/aiops/status (diferente endpoint)
+- Endpoint era debug exposto sem proposito legitimo
+
+FIX:
+- Remove upstreams: UPSTREAMS do response (pior leak)
+- Remove uptime_s (vuln disclosure adicional)
+- Remove env (info production/staging)
+- Mantem: { ok, svc, ts } - suficiente p/ healthcheck legitimo
+- UPSTREAMS continua local scope (proxy() ainda usa)
+
+DEPLOY:
+- commit e7440ce push main OK
+- 15 insertions, 3 deletions
+- gateway rebuild via VPS cron
+- Zero impacto frontend (sem consumers)
+
+VALIDACAO POS-DEPLOY:
+  curl /api/status
+  -> { "ok": true, "svc": "gateway", "ts": "2026-..." }
+  - Sem upstreams (network map): OK
+  - Sem uptime_s (vuln disclosure): OK
+  - Sem env: OK
+
+W6 GATEWAY/AUTH-SVC AUDIT PROGRESS:
+- pass 1: /auth/register cpf_cnpj/phone empty string fix
+- pass 2: /api/status UPSTREAMS DLP (esta iter)
+
+DLP AUDIT CROSS-SVCS COMPLETO:
+- aiops-svc (W10 pass 5): /alerts + /metrics + /status sanitized
+- gateway (W6 pass 2 - esta iter): /api/status network map removed
+- vault-svc (W17 passes 4): DLP tok_len oracle removed
+- auth-svc (W17 pass 10-11): rate-limits em 7 endpoints
+- TOTAL: 4 svcs com DLP hardening
+
+PROXIMA ITER:
+- W6 pass 3: gateway pathRewrite audit (validacao prefix strip)
+- W6 pass 4: GATEWAY_RATE_LIMIT por path (auth/payment higher than products)
+- W4 pass 9: /admin/alerts page consumir aiops/alerts admin-only
