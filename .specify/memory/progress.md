@@ -2830,3 +2830,48 @@ DEPLOY: commit 979480c pushed,
 GAP RESTANTE proxima iter:
 - /products page ainda nao tem opcao "Vendendo agora" no dropdown sort UI
 - Email marketing automatico "10 produtos vendendo agora" semanal
+
+## WORKER 10 pass 2 (SEARCH) - 3 edge cases retornando 500/404
+Re-auditoria search-svc /api/search apos recentes additions (sort=recent_sales,
+filter recently_sold). Encontrados 3 edge cases ate hoje invisiveis:
+
+BUG 1 (500 + SQL injection vector): sort=invalid_value
+- ORDER BY undefined_expression -> PG syntax error -> 500 database_error
+- Pior: vetor potencial para SQL injection se atacante consegue passar
+  string literal apos sort=... (apesar de protegido pelo template literal
+  do JS, comportamento confuso)
+
+BUG 2 (500 + DoS): limit=-5
+- Math.min(parseInt('-5'), 60) = -5 (negativo passa)
+- LIMIT -5 OFFSET ... -> PG error -> 500
+- Atacante pode forcar 500s automaticos com curl loop
+
+BUG 3 (404 misleading): max_price=abc
+- parseInt('abc') = NaN -> WHERE p.price_cents <= NaN -> PG ignora
+- Mas alguma cadeia de erros transforma em 404 not_found generico
+- Cliente acha que recurso nao existe quando na verdade query e invalida
+
+FIX services/search-svc/src/server.js:
+1. SORT_OPTIONS dict + sortKey lookup + fallback para relevance
+2. Math.max(1, Math.min(parseInt(limit)||24, 60)) barra negativos + zero
+3. min/max_price: Number.isFinite + >= 0 -> null caso contrario (filtro
+   silenciosamente ignorado, em vez de 404)
+
+VALIDACAO PUBLICA (7 cenarios):
+- sort=invalid_sort_value -> HTTP 200 com results (fallback) OK
+- limit=-5 -> HTTP 200 OK (era 500)
+- max_price=abc -> HTTP 200 OK (era 404)
+- SQL injection attempt sort=...%27%3B%20DROP%20TABLE -> HTTP 200 OK
+  (whitelist sortKey lookup nao deixa string atingir o SQL)
+- Regression all valid sorts: relevance, newest, sales, recent_sales OK
+
+DEPLOY: commit bd2942b pushed, search-svc rebuilt via Dockerfile.node
+SVC=search-svc, service updated --force, converged OK.
+
+OBSERVACAO sobre SQL injection:
+- O codigo original do template literal NUNCA estaria vulneravel mesmo sem
+  whitelist porque a string vinha de um dict lookup (Object.keys never
+  contains user input). Mas o fallback explicito + sortKey = String(...) +
+  whitelist torna isso EXPLICITO + auditavel.
+- params parameterized ($1, $2 etc) sempre foram seguros - o risco era
+  apenas no ORDER BY clause que nao aceita parametros.
