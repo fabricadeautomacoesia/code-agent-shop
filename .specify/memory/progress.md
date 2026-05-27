@@ -17297,7 +17297,36 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc /recommendations/for-me (pass 77) - 5 bugs + cold-start
 - ✅ product-svc /recently-viewed + /:slug/related (pass 78) - 7 bugs
 - ✅ product-svc /:slug/also-bought (pass 79) - 3 bugs UX consistency
-- ✅ product-svc wishlist.js (pass 80 esta iter) - 8 bugs GET + POST
+- ✅ product-svc wishlist.js (pass 80) - 8 bugs GET + POST
+- ✅ product-svc price-alerts.js (pass 81 esta iter) - 8 bugs GET + POST
+
+W7 PASS 81 RESUMO:
+- product-svc/src/routes/price-alerts.js 2 endpoints refactor (8 bugs):
+  * GET / (6 bugs):
+    - Regra A MISSING: + p.status IN ('approved','platform_owned')
+      + p.deleted_at IS NULL
+      (PRE-FIX: alertas "fantasmas" - product deletado mas alert ainda aparecia)
+    - Regra D: + a.id DESC tiebreaker (bulk script burst created_at identicos)
+    - Regra E: ?limit (1-200) + ?offset (antes hardcoded LIMIT 100)
+    - Regra I: + p.currency (frontend assumia BRL hardcoded)
+    - Total + has_more UX paginacao
+    - NEW is_triggered_now boolean derivativo
+      (Centraliza logica server-side - frontend nao precisa calcular client)
+  * POST / (2 bugs):
+    - Regra A pre-check: status IN ('approved','platform_owned') + deleted_at NULL
+      (PRE-FIX: alerta criado para product fantasma - storage waste)
+    - Threshold validation: 400 se threshold_cents > current_price_cents
+      (PRE-FIX: alerta dispara imediatamente apos criacao = UX FAIL)
+      (Mensagem clara com current_price + threshold_cents fornecidos)
+- Pattern W7 em 87 endpoints + 23 regras (A-W) - 81 micro-iters
+- product-svc 100% W7 em 4 rotas: public.js (11) + wishlist.js (4)
+  + price-alerts.js (4) + seller-mgmt /products/me (1 pass 69)
+
+PROXIMA ITER:
+- W7 pass 82: product-svc seller-mgmt.js POST/PATCH/POST /submit mutations
+- W7 pass 83: product-svc upload.js endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 80 RESUMO:
 - product-svc/src/routes/wishlist.js 2 endpoints refactor (8 bugs):
