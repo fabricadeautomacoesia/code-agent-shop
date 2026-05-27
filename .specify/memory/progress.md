@@ -11199,3 +11199,64 @@ PROXIMA ITER:
 - W7 pass 10: /also-bought MLB-13 CTE refactor (mesmo pattern)
 - W3 PDP audit (related deveria diferenciar 404 do empty no UI agora)
 - W18 pass 6: idx_products_category_sales_rating partial p/ ORDER BY novo
+
+================================================================
+ITER W7 PASS 10 - /also-bought (MLB-13) CTE refactor (2026-05-27)
+================================================================
+ESCOPO: product-svc GET /products/:slug/also-bought
+FILE: services/product-svc/src/routes/public.js (linhas 150-220)
+
+PATTERN: mesmo CTE refactor pass 9 (/related) +
+parent existence + filtros INSIDE CTE.
+
+BUGS CORRIGIDOS (5):
+1. CTE src sem deleted_at IS NULL (info leak)
+- Produto deletado mas slug indexado retornava [] -> frontend nao
+  diferenciava de "ninguem comprou junto"
+- FIX: parent check upfront com deleted_at IS NULL
+
+2. CTE src so 'approved' (regra negocio incompleta)
+- Ignorava platform_owned (Clausula Master Revenda copy)
+- Co-occurrence quebrava em produtos da plataforma
+- FIX: status IN ('approved','platform_owned') em parent + CTE
+
+3. 404 indistinguivel de empty (UX/SEO)
+- Slug invalido retornava {products:[]} == produto sem co-buyers
+- Frontend renderizava secao vazia silenciosa em produto nao existente
+- FIX: errorHandler.notFound('product_not_found') (pattern pass 9)
+
+4. Subquery store_slug redundante (perf)
+- (SELECT store_slug FROM sellers WHERE id=p.seller_id) N scans
+- FIX: LEFT JOIN sellers s ON s.id=p.seller_id (1 scan) +
+  bonus s.reputation_tier (frontend ja consome)
+
+5. LIMIT na CTE ANTES do filtro p.status no outer (truncado)
+- Bug subtil: cache TTL 600s. Produto top-1 deletado durante TTL.
+- LIMIT $2 pegava 6 produtos na CTE, outer filtrava status -> 5 retornados.
+- SAME bug pattern pass 7 (/recently-viewed LIMIT truncado).
+- FIX: filtros DENTRO da CTE also_bought (JOIN p2 inline + WHERE)
+- Garantia: $2 = N produtos validos sempre (ou < N se realmente nao ha mais)
+
+BONUS:
+- buyer_user_id IS NOT NULL em co_buyers (anti-NULL aggregation)
+- ORDER BY ab.co_buyers DESC, p.sales_count DESC NULLS LAST (tiebreaker)
+- Response { products, limit } como pass 9
+
+PATTERN W7 CTE FILTER REUSABLE - 4 endpoints:
+- pass 7: /recently-viewed (CTE filter inside)
+- pass 8: /recommendations/for-me (CTE user_categories + viewed)
+- pass 9: /related (CTE related_pool + parent check + JOIN sellers)
+- pass 10: /also-bought (CTE co_buyers + filtros INSIDE + parent + JOIN)
+
+W7 PRODUCT-SVC PROGRESS:
+- pass 1-4: fixes diversos
+- pass 5: invalidateProductCache productId-specific
+- pass 6: validate UUID compare
+- pass 7-10: CTE filter pattern em 4 endpoints
+
+PROXIMA ITER:
+- W3 PDP UI: frontend differenciar 404 do empty em /related e /also-bought
+  (mostrar "produto nao encontrado" vs "sem recomendacoes")
+- W18 pass 6: idx parcial em order_items (status='paid'/'fulfilled')
+  p/ acelerar co_buyers CTE - currently scan completo orders+items
+- W7 pass 11: /recommendations/trending por categoria (MLB-5 nao feita)

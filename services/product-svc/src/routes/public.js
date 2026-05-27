@@ -156,44 +156,69 @@ router.get('/recently-viewed',
 //   3. Agrega por product_id + ORDER BY frequencia DESC
 //   4. Filtra approved, deleted_at NULL, ID != atual
 // Cache 600s (10min) - co-occurrences mudam devagar.
+// FIX-WORKER-7 pass 10: 5 bugs (mesmo refactor pattern pass 9 /related):
+// 1. CTE src sem deleted_at -> produto deletado, slug indexado, retornava []
+// 2. CTE src so 'approved' -> ignorava platform_owned (clausula master copy)
+// 3. 404 indistinguivel de empty -> parent check + errorHandler.notFound
+// 4. Subquery store_slug redundante (N scans) -> CTE final + LEFT JOIN sellers
+// 5. LIMIT na CTE also_bought antes do filtro p.status/deleted -> truncado
+//    se produto top-N foi removido SUPERVENIENTE durante TTL 600s cache.
+//    FIX: filtros DENTRO de also_bought (joina p2 inline + filtra)
 router.get('/:slug/also-bought',
-  cache.cacheMiddleware((req) => `products:also-bought:${req.params.slug}:lim=${req.query.limit || 6}`, 600),
-  asyncHandler(async (req, res) => {
+  cache.cacheMiddleware((req) => `products:also-bought:${req.params.slug}:lim=${Math.min(parseInt(req.query.limit) || 6, 12)}`, 600),
+  asyncHandler(async (req, res, next) => {
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 6, 12));
+
+  // FIX bug 3: parent check (diferencia 404 de empty)
+  // FIX bug 1,2: deleted_at IS NULL + status valido (approved OR platform_owned)
+  const parent = await query(
+    `SELECT id FROM products
+      WHERE slug = $1 AND deleted_at IS NULL
+        AND status IN ('approved','platform_owned')
+      LIMIT 1`, [req.params.slug]
+  );
+  if (!parent.rows.length) {
+    return next(errorHandler.notFound('product_not_found'));
+  }
+
   const r = await query(
-    `WITH src AS (
-       SELECT id FROM products WHERE slug = $1 AND status = 'approved'
-     ),
-     co_buyers AS (
+    `WITH co_buyers AS (
        SELECT DISTINCT o.buyer_user_id
          FROM order_items oi
          JOIN orders o ON o.id = oi.order_id
-         JOIN src ON src.id = oi.product_id
-        WHERE o.status IN ('paid','fulfilled')
+        WHERE oi.product_id = $1
+          AND o.status IN ('paid','fulfilled')
+          AND o.buyer_user_id IS NOT NULL
      ),
      also_bought AS (
+       -- FIX bug 5: filtros DENTRO da CTE (era WHERE no outer apos LIMIT - truncava)
        SELECT oi.product_id, COUNT(DISTINCT o.buyer_user_id) AS co_buyers
          FROM order_items oi
          JOIN orders o ON o.id = oi.order_id
          JOIN co_buyers cb ON cb.buyer_user_id = o.buyer_user_id
+         JOIN products p2 ON p2.id = oi.product_id
         WHERE o.status IN ('paid','fulfilled')
-          AND oi.product_id NOT IN (SELECT id FROM src)
+          AND oi.product_id <> $1
+          AND p2.status IN ('approved','platform_owned')
+          AND p2.deleted_at IS NULL
         GROUP BY oi.product_id
-        ORDER BY co_buyers DESC, oi.product_id LIMIT $2
+        ORDER BY co_buyers DESC, oi.product_id
+        LIMIT $2
      )
      SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
             p.cover_image_url, p.price_cents, p.currency, p.is_free,
             p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
             p.is_platform_owned, p.flash_promo_active,
             ab.co_buyers,
-            (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug
+            s.store_slug, s.reputation_tier
        FROM also_bought ab
        JOIN products p ON p.id = ab.product_id
-      WHERE p.status = 'approved' AND p.deleted_at IS NULL
-      ORDER BY ab.co_buyers DESC`,
-    [req.params.slug, lim]
+       -- FIX bug 4: JOIN sellers final (era subquery N scans)
+       LEFT JOIN sellers s ON s.id = p.seller_id
+      ORDER BY ab.co_buyers DESC, p.sales_count DESC NULLS LAST`,
+    [parent.rows[0].id, lim]
   );
-  res.json({ products: r.rows });
+  res.json({ products: r.rows, limit: lim });
 }));
 
 // GET /products/:slug/related - produtos relacionados (mesma categoria, exclui o atual)
