@@ -6,6 +6,20 @@ export const metadata = {
   description: 'Conheca a Code & Agent Shop, o maior marketplace de automacoes e agentes IA do Brasil.',
   // FIX-WORKER-9 pass 4: canonical explicito
   alternates: { canonical: '/sobre' },
+  // FIX-WORKER-9 pass 5: openGraph + twitter especifico (antes herdava root genérico)
+  // Quando user compartilha /sobre no WhatsApp/Twitter, preview mostrava
+  // "Code & Agent Shop" generico em vez de "Sobre a Code & Agent Shop" especifico.
+  openGraph: {
+    title: 'Sobre a Code & Agent Shop - Marketplace de Automacoes IA',
+    description: 'O maior marketplace B2B/B2C de automacoes, agentes IA e workflows n8n do Brasil. QA validado por IA.',
+    type: 'website',
+    url: '/sobre',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Sobre a Code & Agent Shop',
+    description: 'Conheca o marketplace B2B/B2C de automacoes e agentes IA do Brasil.',
+  },
 };
 
 export default function SobrePage() {

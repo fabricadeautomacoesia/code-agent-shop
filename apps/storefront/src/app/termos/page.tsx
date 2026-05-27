@@ -5,6 +5,18 @@ export const metadata = {
   description: 'Termos de uso da plataforma Code & Agent Shop. Regras para compradores e vendedores.',
   // FIX-WORKER-9 pass 4: canonical explicito
   alternates: { canonical: '/termos' },
+  // FIX-WORKER-9 pass 5: openGraph especifico
+  openGraph: {
+    title: 'Termos de Uso - Code & Agent Shop',
+    description: 'Regras da plataforma: compra, venda, QA, cobranca, take-rate.',
+    type: 'website',
+    url: '/termos',
+  },
+  twitter: {
+    card: 'summary',
+    title: 'Termos de Uso - Code & Agent Shop',
+    description: 'Regras para compradores e vendedores.',
+  },
 };
 
 export default function TermosPage() {

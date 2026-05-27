@@ -6,6 +6,18 @@ export const metadata = {
   description: 'Programa exclusivo para vendedores Classe B com API keys patrocinadas pela plataforma.',
   // FIX-WORKER-9 pass 4: canonical explicito
   alternates: { canonical: '/cloud-code-ilimitado' },
+  // FIX-WORKER-9 pass 5: openGraph + twitter especifico
+  openGraph: {
+    title: 'Cloud Code Ilimitado - API Keys Patrocinadas para Sellers',
+    description: 'Programa Classe B: OpenAI, Anthropic, Gemini com chaves patrocinadas pela plataforma. Sem limite de uso.',
+    type: 'website',
+    url: '/cloud-code-ilimitado',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Cloud Code Ilimitado - Code & Agent Shop',
+    description: 'API keys patrocinadas para vendedores aprovados Classe B.',
+  },
 };
 
 export default function CloudCodeIlimitadoPage() {

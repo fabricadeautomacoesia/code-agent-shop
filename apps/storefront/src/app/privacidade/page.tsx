@@ -5,6 +5,18 @@ export const metadata = {
   description: 'Politica de privacidade da Code & Agent Shop em conformidade com a LGPD (Lei 13.709/2018).',
   // FIX-WORKER-9 pass 4: canonical explicito
   alternates: { canonical: '/privacidade' },
+  // FIX-WORKER-9 pass 5: openGraph especifico
+  openGraph: {
+    title: 'Politica de Privacidade - Code & Agent Shop',
+    description: 'Conformidade LGPD: como tratamos seus dados pessoais.',
+    type: 'website',
+    url: '/privacidade',
+  },
+  twitter: {
+    card: 'summary',
+    title: 'Politica de Privacidade - Code & Agent Shop',
+    description: 'Conformidade LGPD.',
+  },
 };
 
 export default function PrivacidadePage() {
