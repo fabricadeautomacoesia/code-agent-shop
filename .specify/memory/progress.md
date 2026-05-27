@@ -9678,3 +9678,113 @@ PROXIMA ITER:
 - W17 pass 13: POST /keys/:id/rotate (swap chave 1-click sem revogar+provisionar separados)
 - W4 pass 12: /admin/products audit (validar existencia ou criar)
 - W18 pass 4: image optimization audit
+
+## WORKER 17 PASS 13 - POST /keys/:id/rotate (swap atomico) ENCERRA CICLO VAULT
+
+INTEGRACAO 7 PASSES ENCADEADOS - SECRETS MANAGEMENT FULL CYCLE:
+- W14 pass 7: indice partial monitoring
+- W17 pass 9: INSERT fantasma removido (data integrity)
+- W4 pass 9: currency display USD
+- W4 pass 10: Saude 7d cor-coded
+- W17 pass 12: rotation_due_at + cron + endpoint
+- W13 pass 7: email template + fan-out overdue
+- W4 pass 11: UI badges + alert banner + form
+- W17 pass 13 (esta iter): swap atomico 1-click
+
+BACKEND POST /api/vault/keys/:id/rotate:
+
+ANTES (workflow vulneravel 2 etapas):
+  1. POST /keys (provision nova)
+  2. POST /keys/:id/revoke (revoga antiga)
+  Janela entre 1 e 2: AMBAS chaves ativas. Risco esquecer step 2.
+
+DEPOIS (atomic 1 etapa):
+  POST /keys/:id/rotate { plain_key, reason, rotation_days }
+  TX block:
+   a. SELECT antiga FOR UPDATE (lock anti-race)
+   b. Valida not_found / already_revoked
+   c. INSERT nova: alias+provider+seller_id+quota mesmos
+      + rotation_due_at = NOW + rotation_days
+   d. UPDATE antiga: is_active=FALSE + revoked_reason="rotated: X (-> new_id)"
+   e. INSERT audit_log (action='vault.rotate', old_id, new_id, fp, reason)
+  Commit -> tudo OU nada (rollback se falhar)
+
+VALIDACOES:
+- invalid_uuid -> 400 (PG 22P02 prevention)
+- not_found -> 404
+- already_revoked -> 400 (nao rotaciona revogada)
+
+REUSO:
+- provisionRateLimit (5/min)
+- adminOnly (admin/staff)
+- AES-256-GCM encrypt
+- fingerprint sha256.slice(0,16)
+- rotation_days schema (default 90)
+
+IMPORT TX:
+- @cas/db-client { query, tx } - tx adicionado import (era so query)
+
+FRONTEND /admin/vault BOTAO Rotacionar:
+
+rotateKey(id, alias) workflow:
+- prompt: nova chave plain (min 10)
+- prompt: motivo (default "rotacao programada")
+- confirm: acao destrutiva
+- action.run('rotate-${id}', POST)
+- Disabled mutex com revoke
+- RefreshCw animate-spin durante
+- Success: "Chave X rotacionada. Nova fp: abc1234"
+
+USER FLOW E2E:
+1. Admin /admin/vault ve "1 chave em <=7d" + badge "Renova 5d"
+2. Painel OpenAI (outra aba): gera nova chave
+3. Click "Rotacionar" -> 3 prompts (chave+motivo+confirm)
+4. 1-2s spinner -> banner verde "Rotacionada. Nova fp: ..."
+5. Antiga revoked + nova active automatic
+6. Audit log auto
+7. Alert banner some (rotation_due_at NOW+90d)
+
+DEPLOY:
+- commit 85545e0 push main OK
+- 158 insertions, 8 deletions
+- vault-svc + dashboard-admin rebuild
+- Sem mudanca schema (todos campos existem)
+
+W17 SECURITY AUDIT (passes 1-13):
+- pass 1-2: JWT role enforcement
+- pass 3: fail2ban global
+- pass 4: DLP tok_len
+- pass 5: timing-safe compare
+- pass 6: rate-limit /use + /keys
+- pass 7-8: startup validate envs
+- pass 9: INSERT fantasma removido
+- pass 10: rate-limit auth register+forgot+reset
+- pass 11: rate-limit 2FA endpoints
+- pass 12: rotacao automatica cron + endpoint
+- pass 13: swap atomico 1-click (esta iter)
+
+VAULT MANAGEMENT FULL CYCLE COMPLETE:
+| Etapa | Pass | Tema |
+|---|---|---|
+| Index | W14-7 | Partial monitoring |
+| Data | W17-9 | INSERT correto |
+| Display | W4-9 | Currency USD |
+| Health | W4-10 | Error rate 7d |
+| Rotation | W17-12 | Cron + endpoint due |
+| Email | W13-7 | Template + fan-out |
+| UI | W4-11 | Badges + banner + form |
+| Action | W17-13 | Swap atomico (esta iter) |
+
+CICLO SECRETS MANAGEMENT 100% PRONTO:
+- Provision com prazo
+- Monitor health + rotation due
+- Alert proativo email + in_app
+- UI cor-coded com badges
+- 1-click rotation atomic
+- Audit log forensics completo
+- Reusavel template para outras tabelas (sessions, tokens, etc)
+
+PROXIMA ITER:
+- W14 pass 8: drop dead indices via pg_stat_user_indexes (2 semanas)
+- W4 pass 12: /admin/products audit
+- W18 pass 4: image optimization audit
