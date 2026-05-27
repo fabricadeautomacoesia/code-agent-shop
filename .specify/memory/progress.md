@@ -4509,3 +4509,59 @@ corretamente. DB load reduzido ~95% em endpoints publicos.
 PROXIMA ITER:
 - Audit order-svc (orders/cart/coupon-preview) - ainda sem cache
 - Considerar SSE para notificar storefront de cache invalidation em real-time
+
+## WORKER 12 pass 3 (QA + 4 SVCS) - alias /<prefix>/health para gateway
+
+VETOR DETECTADO (audit cross-service via curl):
+GET /api/qa/health -> 404 route_not_found
+Loop test em 8 services revelou padrao:
+- 6 svcs com 404: qa, auth, products, sellers, payments, review
+- 2 svcs funcionando: vault, aiops (gateway pathRewrite identidade p => p)
+
+ROOT CAUSE:
+Gateway server.js: app.use('/api/qa', proxy({pathRewrite: p => '/qa' + p}))
+/api/qa/health -> /qa/health no svc
+Mas qa-svc tinha app.get('/health') -> ENOENT (no match com /qa/health).
+
+Padrao herdado de design inicial - cada svc registrava /health raw.
+Quando gateway prefixou paths em prod, /health quebrou silenciosamente.
+Impact: monitoring tools (uptime-kuma, prometheus) reportavam svc DOWN
+mesmo svc estando UP. Storefront /status page (W18 pass 3) tambem afetado.
+
+FIX MINIMO (5 arquivos - alias sem refactor):
++ const _healthHandler = ... (extracted)
++ app.get('/health', _healthHandler)        // retrocompat (Docker healthcheck)
++ app.get('/<prefix>/health', _healthHandler) // gateway-compat
+
+Services afetados:
+- qa-svc -> /qa/health
+- auth-svc -> /auth/health (db check)
+- product-svc -> /products/health (db check)
+- seller-svc -> /sellers/health (db check)
+- payment-svc -> /payments/health (asaas config status)
+
+DEPLOY:
+- commit 60d986a pushed
+- 5 builds paralelos (~2-3s cada)
+- 5 services converged em <10s
+
+VALIDACAO PUBLICA (5 cenarios pos-fix):
+- /api/qa/health -> 200 + worker_url + threshold OK
+- /api/auth/health -> 200 + db.ok:true OK
+- /api/products/health -> 200 + db.ok:true OK
+- /api/sellers/health -> 200 + db.ok:true OK
+- /api/payments/health -> 200 + asaas.configured:true OK
+  (BONUS: confirma que ASAAS_API_KEY foi renovada em prod - W2 pass 2 gap fechado)
+
+IMPACTO:
+- Monitoring tools agora reportam status correto
+- /status page do storefront pode usar /api/<svc>/health
+- Padrao Blueprint V8 atualizado: SEMPRE registrar /<prefix>/health
+  em paralelo a /health para sobreviver pathRewrite gateway
+
+GAP DETECTADO (proxima iter):
+- review-svc tem /health raw e gateway usa pathRewrite identidade,
+  entao /api/reviews/health funcionaria... mas review-svc proxy e
+  /api/reviews (sem rewrite). Validar
+- order-svc tem global jwt.requireAuth -> /api/orders/health = 401
+  (correto - health interno nao deve ser publico para fail2ban scan)
