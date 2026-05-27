@@ -174,9 +174,10 @@ router.post('/:id/versions',
 
       // Subscribers = wishlist + buyers (UNION distinct para evitar dupe)
       // Exclui o proprio seller (que esta publicando)
+      // notifications.channel eh ENUM notification_channel - cast obrigatorio
       await query(
         `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
-         SELECT DISTINCT u.id, 'in_app', 'product_new_version', $1::text, $2::text, $3::JSONB, 0
+         SELECT DISTINCT u.id, 'in_app'::notification_channel, 'product_new_version', $1::text, $2::text, $3::JSONB, 0
            FROM (
              SELECT user_id FROM product_wishlist WHERE product_id = $4::UUID
              UNION
