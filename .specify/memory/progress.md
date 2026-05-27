@@ -17315,7 +17315,35 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ payment-svc /webhooks/:id/reset (pass 95) - 4 bugs admin race+DLP
 - ✅ qa-svc /qa/runs/:product_id + /qa/runs/stuck (pass 96) - 10 bugs DLP+tier-split
 - ✅ auth-svc PATCH /me (pass 97) - 8 bugs validation+race+audit
-- ✅ auth-svc /logout (pass 98 esta iter) - 4 bugs + MLB revoke_all
+- ✅ auth-svc /logout (pass 98) - 4 bugs + MLB revoke_all
+- ✅ seller-svc /:slug/stats + /:slug/products (pass 99 esta iter) - 9 bugs
+
+W7 PASS 99 RESUMO:
+- seller-svc/src/routes/sellers.js 2 endpoints refactor (9 bugs):
+  * /:slug/stats (3 bugs):
+    - Regra A products status check em 3 sub-queries
+      (PRE: archived/rejected products distorciam qa_approval_rate publica)
+    - NEW ?window_days (1-365, default 90) - MLB "ultimos 90 dias"
+      (PRE: vida-inteira preso seller novo com 50% em primeiras semanas)
+    - Promise.all() concurrent (era 3 await sequenciais)
+      Latency = max(3) ~33% reducao
+  * /:slug/products (6 bugs):
+    - Regra I: SELECT vp.* -> explicit fields whitelist (16 fields)
+    - Regra D: + vp.id ASC tiebreaker em TODOS 6 sorts
+    - Total + has_more UX paginacao
+    - NEW ?kind filter enum whitelist (10 kinds)
+    - NEW ?sort enum whitelist (relevance|newest|price_asc|price_desc|rating|sales)
+    - 404 seller_not_found pre-check (consistencia com /:slug)
+      PRE: slug inexistente -> 200 {products:[]} confuso vs /:slug 404
+- Pattern W7 em 108 endpoints + 23 regras (A-W) - 99 micro-iters
+- seller-svc 100% W7 public endpoints:
+  / (72) + /:slug + /:slug/stats (99) + /:slug/products (99)
+
+PROXIMA ITER:
+- W7 pass 100: marco - documentar consolidacao + roadmap
+- W7 pass 101: review-svc remaining endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 98 RESUMO:
 - auth-svc/src/routes/auth.js POST /logout refactor (4 bugs):
