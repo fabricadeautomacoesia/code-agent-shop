@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Save, Send, Trash2 } from 'lucide-react';
 import { sellerFetch, sellerUpload } from '@/lib/seller-api';
+import { useSellerAction } from '@/lib/use-seller-action';
 
 const KINDS = ['automation','ai_agent','n8n_workflow','node_script','python_script','php_script','prompt_pack','template','dataset','other'];
 
@@ -14,28 +15,31 @@ export default function EditProductPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [form, setForm] = useState<any>(null);
   const [uploading, setUploading] = useState({ cover: false, pkg: false });
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState('');
-  const [msg, setMsg] = useState('');
+  const [loadError, setLoadError] = useState('');
 
-  useEffect(() => {
-    sellerFetch<{ products: any[] }>('/products/me')
-      .then((r) => {
-        setProducts(r.products);
-        const p = r.products.find((x: any) => x.id === id);
-        if (p) setForm({
-          title: p.title || '', subtitle: p.subtitle || '',
-          description: p.description || '', short_description: p.short_description || '',
-          price_cents: p.price_cents || 0, kind: p.kind || 'automation',
-          tech_stack: (p.tech_stack || []).join(','),
-          requirements: p.requirements || '', install_instructions: p.install_instructions || '',
-          api_keys_required: (p.api_keys_required || []).join(','),
-          estimated_install_min: p.estimated_install_min || 5,
-          cover_image_url: p.cover_image_url || '', package_url: p.package_url || '',
-        });
-      })
-      .catch((e) => setErr(e.message));
-  }, [id]);
+  async function load() {
+    try {
+      const r = await sellerFetch<{ products: any[] }>('/products/me');
+      setProducts(r.products);
+      const p = r.products.find((x: any) => x.id === id);
+      if (p) setForm({
+        title: p.title || '', subtitle: p.subtitle || '',
+        description: p.description || '', short_description: p.short_description || '',
+        price_cents: p.price_cents || 0, kind: p.kind || 'automation',
+        tech_stack: (p.tech_stack || []).join(','),
+        requirements: p.requirements || '', install_instructions: p.install_instructions || '',
+        api_keys_required: (p.api_keys_required || []).join(','),
+        estimated_install_min: p.estimated_install_min || 5,
+        cover_image_url: p.cover_image_url || '', package_url: p.package_url || '',
+      });
+      setLoadError('');
+    } catch (e: any) { setLoadError(e.message); }
+  }
+
+  useEffect(() => { load(); }, [id]);
+
+  // FIX-WORKER-5 pass 4: useSellerAction substitui saving + err + msg states ad-hoc
+  const action = useSellerAction(load);
 
   async function handleFile(field: 'cover' | 'pkg', e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return;
@@ -44,14 +48,13 @@ export default function EditProductPage() {
       const endpoint = field === 'cover' ? '/products/upload/media' : '/products/upload/package';
       const r = await sellerUpload(endpoint, file);
       setForm({ ...form, [field === 'cover' ? 'cover_image_url' : 'package_url']: r.url });
-    } catch (e: any) { setErr('Upload falhou: ' + e.message); }
+    } catch (e: any) { setLoadError('Upload falhou: ' + e.message); }
     finally { setUploading({ ...uploading, [field]: false }); }
   }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    setSaving(true); setErr(''); setMsg('');
-    try {
+    action.run('save', async () => {
       const payload = {
         ...form,
         price_cents: Number(form.price_cents),
@@ -60,17 +63,17 @@ export default function EditProductPage() {
         api_keys_required: form.api_keys_required.split(',').map((t: string) => t.trim()).filter(Boolean),
       };
       await sellerFetch(`/products/me/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
-      setMsg('Salvo!');
-    } catch (e: any) { setErr(e.message); }
-    finally { setSaving(false); }
+      return 'Produto atualizado com sucesso';
+    });
   }
 
   async function submit() {
     if (!confirm('Enviar para QA automatizado? Voce nao podera editar ate o resultado.')) return;
-    try {
+    action.run('submit', async () => {
       await sellerFetch(`/products/me/${id}/submit`, { method: 'POST' });
       router.push('/products');
-    } catch (e: any) { setErr(e.message); }
+      return 'Enviado para QA pipeline';
+    });
   }
 
   if (!form) return <div className="text-white/60">Carregando...</div>;
@@ -87,8 +90,9 @@ export default function EditProductPage() {
           <p className="text-white/60 text-sm">Status: <span className="px-2 py-0.5 rounded bg-white/10 text-xs">{product?.status}</span></p>
         </div>
         {isEditable && (
-          <button onClick={submit} className="btn-primary flex items-center gap-2">
-            <Send className="w-4 h-4" /> Enviar para QA
+          <button onClick={submit} disabled={action.busyKey === 'submit' || action.busyKey === 'save'}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait">
+            <Send className="w-4 h-4" /> {action.busyKey === 'submit' ? 'Enviando QA...' : 'Enviar para QA'}
           </button>
         )}
       </div>
@@ -96,6 +100,21 @@ export default function EditProductPage() {
       {!isEditable && (
         <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 p-3 rounded mb-4 text-sm">
           Produto em status &quot;{product?.status}&quot; nao pode ser editado.
+        </div>
+      )}
+
+      {/* FIX-WORKER-5 pass 4: banners via useSellerAction (substituem err+msg ad-hoc) */}
+      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro: {loadError}</div>}
+      {action.error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.error}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.success}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
         </div>
       )}
 
@@ -149,12 +168,11 @@ export default function EditProductPage() {
           </div>
         </div>
 
-        {err && <div className="text-red-400 text-sm bg-red-500/10 p-3 rounded">{err}</div>}
-        {msg && <div className="text-green-400 text-sm bg-green-500/10 p-3 rounded">{msg}</div>}
-
+        {/* FIX-WORKER-5 pass 4: banners err+msg removidos (movidos para topo via action hook) */}
         {isEditable && (
-          <button type="submit" disabled={saving} className="btn-primary flex items-center gap-2 disabled:opacity-50">
-            <Save className="w-4 h-4" /> {saving ? 'Salvando...' : 'Salvar alteracoes'}
+          <button type="submit" disabled={action.busyKey === 'save' || action.busyKey === 'submit'}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait">
+            <Save className="w-4 h-4" /> {action.busyKey === 'save' ? 'Salvando...' : 'Salvar alteracoes'}
           </button>
         )}
       </form>
