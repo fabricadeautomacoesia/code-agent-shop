@@ -13,6 +13,24 @@ const router = express.Router();
 // Invalidacao via cache.del em mutations (seller-svc/me.js update profile).
 
 // GET /sellers - listagem publica (storefront)
+// FIX-WORKER-7 pass 72: 3 BUGS aplicando Pattern W7 (Regras D + tier enum + UX).
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING *** ORDER BY reputation_score DESC
+//   2 sellers reputation_score identicos (caso comum em bronze tier inicial)
+//   -> ordem indefinida. UX pagination salta + cache key colide ordens.
+//   FIX: + s.id ASC tiebreaker para TODOS sorts.
+//
+// BUG 2 *** TIER WHITELIST MISSING *** SQL error vaza internals
+//   PRE-FIX: ?tier=anything aceita -> PG cast a enum reputation_tier_enum
+//   falha 22P02 -> 500 generico ou response com 'invalid_text_representation'
+//   Atacante usa pra fingerprinting schema (enum existe? cast pattern?).
+//   FIX: tier enum whitelist (bronze|silver|gold|platinum).
+//
+// BUG 3 *** TOTAL MISSING ***
+//   Frontend pagination UI sem total não sabe quantos pages tem.
+//   FIX: COUNT(*) p/ pagination meta.
+const SELLER_TIER_ENUM = new Set(['bronze','silver','gold','platinum']);
+
 router.get('/',
   cache.cacheMiddleware((req) => {
     const q = req.query;
@@ -24,18 +42,24 @@ router.get('/',
   const lim = Math.max(1, Math.min(parseInt(limit, 10) || 24, 100));
   const off = (Math.max(parseInt(page, 10) || 1, 1) - 1) * lim;
 
+  // FIX-WORKER-7 pass 72 BUG 2: tier enum whitelist
+  if (tier && !SELLER_TIER_ENUM.has(tier)) {
+    return res.status(400).json({ error: 'invalid_tier', allowed: Array.from(SELLER_TIER_ENUM) });
+  }
+
   const where = [`s.status = 'active'`, `s.deleted_at IS NULL`];
   const params = [];
   let i = 1;
   if (tier)   { where.push(`s.reputation_tier = $${i++}`); params.push(tier); }
   if (search) { where.push(`s.store_name ILIKE $${i++}`);  params.push(`%${search}%`); }
 
+  // FIX-WORKER-7 pass 72 BUG 1: + s.id ASC tiebreaker
   const order = ({
-    rep_desc:   's.reputation_score DESC',
-    rep_asc:    's.reputation_score ASC',
-    sales_desc: 's.total_sales DESC',
-    newest:     's.created_at DESC',
-  })[sort] || 's.reputation_score DESC';
+    rep_desc:   's.reputation_score DESC, s.id ASC',
+    rep_asc:    's.reputation_score ASC, s.id ASC',
+    sales_desc: 's.total_sales DESC, s.id ASC',
+    newest:     's.created_at DESC, s.id ASC',
+  })[sort] || 's.reputation_score DESC, s.id ASC';
 
   params.push(lim, off);
   const r = await query(
@@ -48,7 +72,22 @@ router.get('/',
       LIMIT $${i++} OFFSET $${i++}`,
     params
   );
-  res.json({ sellers: r.rows, page: Number(page), limit: lim });
+
+  // Total count UX paginacao
+  const countParams = params.slice(0, -2);
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM sellers s WHERE ${where.join(' AND ')}`,
+    countParams
+  );
+  const total = totalRes.rows[0].total;
+
+  res.json({
+    sellers: r.rows,
+    page: Number(page),
+    limit: lim,
+    total,
+    has_more: (off + r.rows.length) < total,
+  });
 }));
 
 // GET /sellers/:slug - perfil publico

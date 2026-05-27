@@ -17288,7 +17288,31 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ gateway middleware audit (pass 68) - DLP logs + fail2ban
 - ✅ product-svc GET /products/me (pass 69) - admin bypass + Regra D+E+I + filters
 - ✅ seller-svc /sla-history + /payouts (pass 70) - Regra D+E+I + DLP + filter
-- ✅ order-svc POST /:id/dispute rate-limit (pass 71 esta iter) - anti-spam
+- ✅ order-svc POST /:id/dispute rate-limit (pass 71) - anti-spam
+- ✅ seller-svc /kpi + sellers.js GET / (pass 72 esta iter) - Regra D+I + enum + UX
+
+W7 PASS 72 RESUMO:
+- seller-svc /sellers/me/kpi refactor (3 bugs):
+  * Regra I: SELECT k.* -> explicit fields documentados (15 fields)
+    - mv_seller_kpi evolui com migrations - SELECT k.* contrato fragil
+    - Removeu vazamento internal: refresh_count/computed_at/internal_risk_score
+  * Cache 300s per-user (mv refresh diario, KPI nao muda intraday)
+  * Regra H NULL guard: seller novo sem mv entry -> default zeros object
+    (frontend kpi.field nao crash em empty state)
+- seller-svc GET /sellers/ public listing refactor (3 bugs):
+  * Regra D: + s.id ASC tiebreaker em TODOS 4 sorts
+    - Sellers reputation_score identico (bronze inicial) ordem indefinida
+  * Tier enum whitelist NEW: bronze|silver|gold|platinum
+    - PRE-FIX: ?tier=anything -> PG cast falha 22P02 -> 500 leak
+    - POS-FIX: 400 invalid_tier com allowed[] (UX claro)
+  * Total + has_more UX paginacao
+- Pattern W7 em 74 endpoints + 23 regras (A-W) - 72 micro-iters
+
+PROXIMA ITER:
+- W7 pass 73: product-svc public.js endpoints (search list/detail)
+- W7 pass 74: seller-svc /:slug/products audit (Regra D+E)
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 71 RESUMO:
 - order-svc/src/routes/orders.js POST /:id/dispute refactor:

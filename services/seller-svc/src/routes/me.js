@@ -619,14 +619,58 @@ router.get('/payouts', asyncHandler(async (req, res, next) => {
   });
 }));
 
-// GET /sellers/me/kpi
-router.get('/kpi', asyncHandler(async (req, res) => {
-  const r = await query(
-    `SELECT k.* FROM mv_seller_kpi k
-       JOIN sellers s ON s.id = k.seller_id
-      WHERE s.user_id = $1`, [req.user.sub]
-  );
-  res.json({ kpi: r.rows[0] || null });
-}));
+// GET /sellers/me/kpi - dashboard KPIs do seller (mv_seller_kpi)
+// FIX-WORKER-7 pass 72: 3 BUGS aplicando Pattern W7.
+//
+// BUG 1 *** Regra I SELECT k.* *** mv expoe internals
+//   mv_seller_kpi.* pode ter colunas calculated internals:
+//   - refresh_count (cron metadata)
+//   - computed_at (debugging metadata)
+//   - internal_risk_score (algo proprietary)
+//   - admin_flags (compliance markers)
+//   Materialized view evolui com migrations - SELECT k.* eh contrato fragil.
+//   FIX: explicit fields documentados consumed by frontend.
+//
+// BUG 2 *** CACHE MISSING ***
+//   mv_seller_kpi atualiza via REFRESH MATERIALIZED VIEW (cron diario).
+//   Cache 5min eh seguro - kpi nao muda intraday.
+//   Frontend /seller/dashboard refresh = hot path.
+//   FIX: cache.cacheMiddleware 300s per-user.
+//
+// BUG 3 *** Regra H NULL guard *** kpi.rows[0] || null
+//   Seller novo sem mv_seller_kpi entry retorna NULL.
+//   Frontend kpi.field expects object - precisa fallback structure.
+//   FIX: default zeros object (idiomatica empty state).
+const kpiCacheKey = (req) => `seller:kpi:${req.user?.sub || 'anon'}`;
+
+router.get('/kpi',
+  cache.cacheMiddleware(kpiCacheKey, 300),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `SELECT k.seller_id,
+              k.total_sales, k.total_revenue_cents,
+              k.avg_rating, k.review_count,
+              k.refund_rate, k.on_time_qa_rate, k.response_rate,
+              k.products_active_count, k.products_pending_count,
+              k.reputation_tier, k.reputation_score,
+              k.last_updated_at
+         FROM mv_seller_kpi k
+         JOIN sellers s ON s.id = k.seller_id
+        WHERE s.user_id = $1`, [req.user.sub]
+    );
+
+    // Default empty state p/ seller novo sem mv entry
+    const kpi = r.rows[0] || {
+      seller_id: null,
+      total_sales: 0, total_revenue_cents: 0,
+      avg_rating: 0, review_count: 0,
+      refund_rate: 0, on_time_qa_rate: 0, response_rate: 0,
+      products_active_count: 0, products_pending_count: 0,
+      reputation_tier: 'bronze', reputation_score: 0,
+      last_updated_at: null,
+    };
+    res.json({ kpi });
+  })
+);
 
 module.exports = router;
