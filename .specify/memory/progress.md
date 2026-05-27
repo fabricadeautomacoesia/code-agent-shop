@@ -9882,3 +9882,83 @@ PROXIMA ITER:
 - W11 pass 10: testes E2E checkout cupom smoke prod
 - W2 pass 7: /cart UI "Seller recebe R$X" transparencia
 - W14 pass 9: indice composto orders(buyer_user_id, payment_status, created_at)
+
+## WORKER 14 PASS 9 - Migration 037: audit_log composto (action, created_at)
+
+AUDIT db schema apos passes 1-8 - hotpath 47 tabelas bem coberto. Gap
+identificado em audit_log queries admin dashboard (W11 pass 8 + W17 pass 13
+adicionaram actions novas: webhook.reset, vault.rotate).
+
+QUERY ALVO (admin dashboard):
+  SELECT * FROM audit_log WHERE action = $1 ORDER BY created_at DESC LIMIT 50;
+
+INDICES EXISTENTES audit_log:
+- idx_audit_action (action) simples
+- idx_audit_created (created_at DESC) simples
+- idx_audit_target (target_type, target_id)
+- idx_audit_severity (severity) WHERE error/critical
+- idx_audit_payload_gin (payload_after) GIN
+- idx_audit_actor (actor_user_id)
+
+GAP: Para "ultimas N por action", planner:
+1. Bitmap Index Scan idx_audit_action
+2. SORT EXTERNO por created_at DESC
+3. LIMIT 50
+
+VOLUME:
+- Cleanup 90d retention -> ~450k rows totais
+- Action 'login_success' ~10k rows/90d
+- Sort 10k rows ~50ms (memoria)
+- Multiplas queries concorrentes = lag visivel admin
+
+FIX migration 037:
+  CREATE INDEX idx_audit_action_created
+    ON audit_log (action, created_at DESC);
+- 1 scan ordenado, LIMIT 50 le so 50 sem sort
+- ~50ms -> <1ms (50x improvement)
+
+PADRAO REUSAVEL (3a aplicacao consolidada):
+- W14-5: seller_payouts (status, requested_at)
+- W14-6: qa_runs (product_id, started_at)
+- W14-9: audit_log (action, created_at)
+Pattern: WHERE col1 = X ORDER BY col2 DESC -> idx (col1, col2 DESC)
+
+NOTA SOBRE idx_audit_action SIMPLES:
+- Composto cobre WHERE action=X tambem
+- idx_audit_action virou tecnicamente redundante
+- W14-10 roadmap: drop via pg_stat_user_indexes audit (2 semanas)
+
+DEPLOY:
+- commit 3067a47 push main OK
+- 55 insertions
+- VPS init aplica auto
+- Sem rebuild svc
+
+W14 DB AUDIT (passes 1-9):
+- pass 1: 16 hotpath (016)
+- pass 2: notifications outbox unlocked (022)
+- pass 3: drop redundant outbox (023)
+- pass 4: carts expires (031)
+- pass 5: seller_payouts composto (032)
+- pass 6: qa_runs started_at composto (034)
+- pass 7: vault + asaas_evt partial (035)
+- pass 8: drop dead (pendente 2 semanas)
+- pass 9: audit_log action composto (esta iter)
+
+TOTAL: ~52 indices estrategicos em 47 tabelas
+
+CASES IDENTIFICADOS sem gaps adicionais:
+- orders/buyer_user_id: idx_orders_buyer (W14 pass 1) cobre
+- password_resets/token_hash: UNIQUE constraint cria idx automatic
+- coupon_uses: idx por coupon/user/order (mig 006 + 011)
+- product_qna: idx por product/seller/asked_by (mig 007 + 011)
+- spike_events: idx por tenant + block_expires (mig 008)
+- user_sessions: idx por user + expires + revoked (mig 002)
+- audit_log: hoje (esta iter) + outros 5 idx ja existentes
+- product_views: composto user_id + created_at (W14 pass 6 idx_pviews_user_recent)
+
+PROXIMA ITER:
+- W14 pass 10: pg_stat_user_indexes audit + drop redundantes idx_audit_action,
+  idx_payouts_status (mantidos 2 semanas em modo conservador)
+- W4 pass 12: /admin/audit-log UI (filter por action + paginated)
+- W18 pass 4: image optimization audit (next/image consistency cross-pages)
