@@ -23,6 +23,11 @@ const config: Config = {
         'glow-pulse': 'glow-pulse 2.5s ease-in-out infinite',
         'grid-shift': 'grid-shift 20s linear infinite',
         'float':      'float 6s ease-in-out infinite',
+        // FIX-WORKER-8 pass 2: animate-pulse-slow usado em flash-promo-timer.tsx
+        // mas faltava no config storefront (so existia em dashboard-seller).
+        // Resultado: classe nao existia -> animacao silenciosa nao rodava.
+        // Flash promo deveria pulsar para chamar atencao - agora pulsa.
+        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
       },
       keyframes: {
         'glow-pulse': {
