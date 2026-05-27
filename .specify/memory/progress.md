@@ -2360,3 +2360,57 @@ IMPACTO ESPERADO:
 - Trigger overhead negligivel (~0.1ms por wishlist INSERT/DELETE)
 - Index idx_products_wishlist DESC permite "sort by popularidade":
   SELECT * FROM products ORDER BY wishlist_count DESC -> Index Only Scan
+
+## WORKER 16 (MLB-NEW) - Heart icon overlay no ProductCard (1-click favoritar)
+Mercado Livre exibe heart icon em cada card permitindo favoritar SEM clicar
+no PDP - reduz friction + aumenta engajamento. CAS so tinha botao no PDP
+ate agora.
+
+DESAFIO TECNICO: N+1 problem.
+- Cada card chamar /products/wishlist/<id>/check = 24 requests por catalog page.
+- Solucao: zustand store global useWishlist com Set<id> + fetch once.
+
+NOVO STORE: apps/storefront/src/lib/store.ts
+- useWishlist {ids: Set, loaded, loadedToken, has(id), add, remove, load(token)}
+- load() fetcha /products/wishlist UMA vez por token, depois reads sincronos.
+- has(id) -> O(1) Set lookup, ideal pra grids de N cards.
+- Dynamic import para evitar circular dep (api.ts -> store -> api.ts).
+
+REFAC WishlistButton: variant='pdp' | 'card'
+- pdp (default): mantem comportamento legacy (per-product /check) para preservar
+  fluxo W7 idempotency + acessibilidade existente.
+- card: usa useWishlist store, top-right absolute overlay rounded-full
+  bg-magenta/90 quando favorited, bg-black/40 quando nao, com Heart icon w-3.5.
+- e.preventDefault + stopPropagation no toggle (esta dentro de <Link>).
+
+REPOSITIONING: official-badge.tsx variant=card "Oficial" standalone
+- Movido de top-right -> top-left (libera top-right para Heart).
+- Combo "Oficial mais vendido" ja era top-left, mantido.
+- Top-seller standalone NAO conflita (ja era top-left separado).
+
+INTEGRACAO ProductCard: <WishlistButton productId variant='card'/> apos
+OfficialBadge no container relative do cover.
+
+VALIDACAO PUBLICA (QUAD):
+1) HTML SSR /products contem 10 botoes com
+   'absolute top-3 right-3 z-10 p-2 rounded-full backdrop-blur' OK
+2) aria-label='Adicionar aos favoritos' em 10+ cards OK
+3) Chunk JS contem: useWishlist, loadedToken, product_id, Adicionar aos
+   favoritos OK
+4) Oficial badge movido para top-left (8 cards) - sem visual collision OK
+
+DEPLOY: commit 93d52eb pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
+
+IMPACTO:
+- Engagement: usuario pode favoritar produtos navegando o catalogo sem
+  abrir PDP individual (reducao de friction tipico MLB)
+- wishlist_count (W14) agora vai crescer mais rapido = signal social proof
+  mais forte no PDP "X+ favoritaram"
+- Perf: 1 fetch /products/wishlist (max 200 ids) vs 24 checks individuais
+  = -23 requests por catalog page load
+
+PROXIMOS GAPS MLB (remanescentes):
+- Notificacoes push browser (Service Worker)
+- Reorder cart drag-and-drop
+- Mercado Pago Carteira Digital (jah ja temos Asaas)
