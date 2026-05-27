@@ -3278,3 +3278,61 @@ GAP RESTANTE (proxima iter):
 - /conta/* private pages (ja tem noindex - canonical nice-to-have apenas)
 - /seller/[slug] pages (paginas de loja - validar se ja tem canonical OG)
 - /product/[slug] PDP (verificar SEO completeness - JSON-LD + canonical)
+
+## WORKER 7 pass 1 (PRODUCT-SVC/INFRA) - bug critico /api/* retornando 500
+
+VETOR DETECTADO (durante auditoria SEO /seller/[slug]):
+curl publico mostrava /seller/inovare com canonical = HOME (root layout
+fallback) ao inves do canonical especifico. Auditando, descobriu-se que
+metadata fallback estava em uso porque /api/sellers/* retornava 500.
+
+Audit profunda:
+- /api/sellers/X -> 500 (Internal Server Error)
+- /api/products -> 500
+- /api/search -> 500
+- /api/status -> 500 (rota local do gateway!)
+- TODOS /api/* via cas.inovareinteligenciaartificial.com retornavam 500.
+
+Gateway logs: SEM logs novos (requests nao chegavam la).
+Storefront logs: "Failed to proxy http://127.0.0.1:3002/api/sellers/...
+                  Error: connect ECONNREFUSED 127.0.0.1:3002"
+
+ROOT CAUSE:
+Next.js congela rewrites no .next/routes-manifest.json no build time.
+next.config.mjs tinha:
+  const gw = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';
+  rewrites: '/api/:path*' -> `${gw}/api/:path*`
+
+Build executou sem GATEWAY_URL (Dockerfile.next nao injeta) -> fallback
+127.0.0.1:3002 foi CACHEADO no manifest. Dentro do container Swarm,
+127.0.0.1:3002 nao tem gateway -> ECONNREFUSED -> 500.
+
+Traefik so roteia api.cas.* (subdominio) para gateway. cas.*/api/* passa
+por storefront via rewrite -> nesse caminho que estava quebrado.
+
+FIX (1 arquivo):
+apps/storefront/next.config.mjs:
+- const gw = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';
++ const gw = process.env.GATEWAY_URL || 'http://gateway:3002';
+
+Defesa: 'gateway' e service DNS alias na rede 'minha_rede' Swarm,
+resolve sem GATEWAY_URL env var. Mesmo se env falhar, agora funciona.
+
+VALIDACAO PUBLICA (3 cenarios pos-fix):
+- /api/sellers/vendedor-demo-um-9470 -> 200 + JSON seller OK
+- /api/products?limit=1 -> 200 + JSON produtos OK
+- /api/search?q=agente -> 200 + JSON results OK
+
+DEPLOY: commit 9e779e0, build via deploy/Dockerfile.next, service update
+--force converged. Storefront agora proxia /api/* corretamente.
+
+IMPACTO:
+- Metadata dinamica /seller/[slug] volta a funcionar (canonical, og:title)
+- Calls client-side da storefront (cart, wishlist, qna) deixam de falhar
+- SEO restaurado: pages dinamicas agora indexam com metadata correta
+- Bug presente desde deploy inicial (8h+) - silencioso porque caia em
+  fallbacks 'Vendedor - Code & Agent Shop' generico no metadata
+
+GAP DETECTADO PROXIMA ITER:
+- Outros frontends (dashboard-admin, dashboard-seller) podem ter mesmo bug
+- Auditar todos os next.config.mjs com fallback 127.0.0.1
