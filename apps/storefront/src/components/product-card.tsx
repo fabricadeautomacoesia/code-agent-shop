@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import Image from 'next/image';
-import { Star, ShoppingCart, Award } from 'lucide-react';
+import { Star, ShoppingCart, Award, TrendingUp } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { Installments } from './installments';
 import { CompareButton } from './compare-button';
@@ -60,6 +60,13 @@ export function ProductCard({ product }: { product: any }) {
           <h3 className="font-display font-semibold text-lg leading-tight mb-2 line-clamp-2 group-hover:text-magenta transition-colors">
             {product.title}
           </h3>
+          {/* MLB-NEW WORKER 16: badge "+N vendidos" prominente (MLB psychology: arredonda p/ 10) */}
+          {Number(product.sales_count) > 50 && (
+            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-green-500/15 text-green-300 text-[11px] font-semibold mb-2 border border-green-500/20">
+              <TrendingUp className="w-3 h-3" />
+              +{Math.floor(Number(product.sales_count) / 10) * 10} vendidos
+            </div>
+          )}
           {product.subtitle && <p className="text-sm text-white/60 line-clamp-2 mb-3">{product.subtitle}</p>}
           {product.tech_stack && product.tech_stack.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-3">
@@ -75,7 +82,10 @@ export function ProductCard({ product }: { product: any }) {
               <span className="text-xs text-white/40">({product.review_count || 0})</span>
             </div>
             <div className="text-right">
-              <div className="text-xs text-white/40">{product.sales_count || 0} vendas</div>
+              {/* MLB-NEW WORKER 16: so mostra contagem aqui se < 50 (acima de 50 ja tem badge verde no topo) */}
+              {Number(product.sales_count) > 0 && Number(product.sales_count) <= 50 && (
+                <div className="text-xs text-white/40">{product.sales_count} vendas</div>
+              )}
               <div className="font-display font-bold text-magenta-glow text-lg">
                 {product.is_free ? 'Gratis' : Api.formatBRL(product.price_cents)}
               </div>
