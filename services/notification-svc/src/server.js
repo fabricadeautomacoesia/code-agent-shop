@@ -5,9 +5,23 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../../.env'
 const express = require('express');
 const cron = require('node-cron');
 const nodemailer = require('nodemailer');
+const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
 const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, mask } = require('@cas/shared');
+
+// FIX-WORKER-13 pass 6: rate-limit em /test - era endpoint admin sem QUALQUER limit.
+// Admin compromised (XSS/session hijack) pode disparar emails ilimitados para
+// qualquer destino -> built-in email-bombing facility + spam relay anonymous-ish.
+// 10 emails de teste/hora/admin = uso legitimo (debugging templates novos).
+const testEmailLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1h
+  max: 10,
+  message: { error: 'rate_limit_exceeded', message: 'Limite de 10 emails de teste por hora.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.sub || req.ip,
+});
 
 const log = logger.child({ svc: 'notification-svc' });
 const app = express();
@@ -186,10 +200,35 @@ app.post('/read-all', jwt.requireAuth(), asyncHandler(async (req, res) => {
 }));
 
 // POST /api/notifications/test - admin envia teste
-app.post('/test', jwt.requireAuth({ roles: ['admin'] }),
-  validate({ body: z.object({ to: z.string().email(), subject: z.string(), body: z.string() }) }),
+// FIX-WORKER-13 pass 6: 3 hardening em endpoint sensitivo:
+// 1. rate-limit 10/h/admin (anti-spam-relay quando admin compromised)
+// 2. Schema max lengths: subject 200, body 50KB (anti-spam quota waste)
+// 3. Audit log toda /test send para forensics futuro
+app.post('/test',
+  jwt.requireAuth({ roles: ['admin'] }),
+  testEmailLimiter,
+  validate({ body: z.object({
+    to: z.string().email().max(180),
+    subject: z.string().min(1).max(200),
+    body: z.string().min(1).max(50000),
+  }) }),
   asyncHandler(async (req, res) => {
     const info = await sendEmail(req.body.to, req.body.subject, req.body.body);
+    // Audit log async (nao bloqueia response)
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::JSONB)`,
+      [
+        req.user.sub, req.user.role, 'notification.test_email_sent',
+        'email', null, 'info',
+        JSON.stringify({
+          to_masked: mask.text(req.body.to),
+          subject: req.body.subject.slice(0, 100),
+          message_id: info.messageId,
+          ip: req.ip,
+        })
+      ]
+    ).catch((e) => log.warn({ err: e.message }, '[audit.fail]'));
     res.json({ ok: true, messageId: info.messageId });
   })
 );
