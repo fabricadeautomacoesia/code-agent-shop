@@ -32,8 +32,17 @@ const FROM = process.env.SMTP_FROM || 'Code & Agent Shop <no-reply@code-agent-sh
 // FIX-WORKER-13: Mustache-like render simples. Substitui {{var}} ou {{nested.path}}.
 // Suporta nested via dot notation (ex {{user.email}}).
 // Var ausente vira string vazia (evita 'undefined' literal no email).
-// Anti-XSS minimo - se contexto contem HTML, escapa em body text (mantem em body_html).
-function renderMustache(template, ctx) {
+// FIX-WORKER-13 pass 2 (XSS): isHtml=true escapa < > & " ' / antes de injetar.
+// Antes: comment dizia "Anti-XSS minimo" mas codigo NAO escapava nada.
+// Vetor real: seller cria produto title="X<script>alert(1)</script>" -> notification
+// payload.title -> renderMustache body_html -> <script> raw no email -> XSS no Gmail
+// preview (alguns clients render <script>; outros so img/iframe mas o vetor existe).
+function _htmlEscape(s) {
+  return String(s).replace(/[&<>"'/]/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '/': '&#x2F;',
+  })[c]);
+}
+function renderMustache(template, ctx, isHtml = false) {
   if (!template || typeof template !== 'string') return template;
   return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path) => {
     const parts = path.split('.');
@@ -42,7 +51,9 @@ function renderMustache(template, ctx) {
       if (cur == null) return '';
       cur = cur[p];
     }
-    return cur == null ? '' : String(cur);
+    if (cur == null) return '';
+    const s = String(cur);
+    return isHtml ? _htmlEscape(s) : s;
   });
 }
 
@@ -206,7 +217,8 @@ async function processOutbox() {
         };
         title = renderMustache(title || '', ctx);
         body  = renderMustache(body  || '', ctx);
-        bodyHtml = bodyHtml ? renderMustache(bodyHtml, ctx) : null;
+        // FIX-WORKER-13 pass 2 (XSS): isHtml=true escapa HTML antes de injetar no body_html
+        bodyHtml = bodyHtml ? renderMustache(bodyHtml, ctx, true) : null;
       }
       // Defense: nunca enviar com title vazio (anti-spam-filter)
       if (!title || !title.trim()) title = '(sem assunto - revise template)';
