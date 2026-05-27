@@ -7,8 +7,13 @@ const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const bcrypt = require('bcrypt');
 const crypto = require('node:crypto');
-const { query } = require('@cas/db-client');
+const { query, tx } = require('@cas/db-client');
 const { jwt, validate, asyncHandler, errorHandler, crypto: cryp } = require('@cas/shared');
+
+// FIX-WORKER-7 pass 54: REFRESH_COOKIE constante p/ clearCookie em /disable.
+// Mesmo valor de auth.js linha 65 - duplicado por design (modulo standalone).
+// TODO refactor: extrair p/ @cas/shared.authConstants OU passar via req.app.locals
+const REFRESH_COOKIE = 'cas_rt';
 
 const router = express.Router();
 router.use(jwt.requireAuth());
@@ -109,22 +114,40 @@ router.post('/setup', totpSetupLimiter, asyncHandler(async (req, res) => {
 }));
 
 // POST /auth/2fa/activate -> ativa apos primeiro token correto
+// FIX-WORKER-7 pass 54: 2 BUGS aplicando Pattern W7 (consistencia pass 49).
+//
+// BUG 1 *** authenticator.check sem window *** (mesmo bug /login pass 49)
+//   PRE-FIX: default window=0 - false-reject por clock drift -> UX "codigo errado"
+//   FIX: { window: 1 } = ±1 step (90s tolerance)
+//
+// BUG 2 *** AUDIT_LOG missing *** enrollment 2FA = SEC EVENT critical
+//   FIX: INSERT audit_log atomic
 router.post('/activate',
   totpVerifyLimiter,
   validate({ body: z.object({ token: z.string().length(6) }) }),
   asyncHandler(async (req, res, next) => {
     const r = await query('SELECT secret_encrypted, secret_iv, secret_tag FROM user_two_factor WHERE user_id = $1', [req.user.sub]);
     if (!r.rows.length || !r.rows[0].secret_tag) return next(errorHandler.notFound('not_set_up'));
-    // FIX SEG-2FA: passa tag real (BYTEA 16 bytes) para setAuthTag validar GCM
     const secret = cryp.decrypt({ encrypted: r.rows[0].secret_encrypted, iv: r.rows[0].secret_iv, tag: r.rows[0].secret_tag });
-    if (!authenticator.check(req.body.token, secret)) return next(errorHandler.badRequest('invalid_token'));
+    // FIX bug 1: window=1 (consistencia pass 49 /login)
+    if (!authenticator.check(req.body.token, secret, { window: 1 })) {
+      return next(errorHandler.badRequest('invalid_token'));
+    }
 
     const recovery = Array.from({ length: 10 }, () => crypto.randomBytes(5).toString('hex'));
     const hashed = await Promise.all(recovery.map((r) => bcrypt.hash(r, 10)));
-    await query(
-      `UPDATE user_two_factor SET is_enabled = TRUE, enabled_at = NOW(), recovery_codes_hash = $1::JSONB WHERE user_id = $2`,
-      [JSON.stringify(hashed), req.user.sub]
-    );
+    // FIX bug 2: tx() atomic UPDATE + audit_log
+    await tx(async (c) => {
+      await c.query(
+        `UPDATE user_two_factor SET is_enabled = TRUE, enabled_at = NOW(), recovery_codes_hash = $1::JSONB WHERE user_id = $2`,
+        [JSON.stringify(hashed), req.user.sub]
+      );
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'user', '2fa.activate', 'user', $1, 'warn', $2::JSONB)`,
+        [req.user.sub, JSON.stringify({ ip: req.ip, ua_prefix: (req.headers['user-agent'] || '').slice(0, 60), recovery_codes_count: 10 })]
+      );
+    });
     res.json({ enabled: true, recovery_codes: recovery, warn: 'Guarde estes codigos. Nao serao mostrados novamente.' });
   })
 );
@@ -164,6 +187,24 @@ router.post('/recovery',
 // auth pra nao vazar estado) e retorna 200 enabled:false. Antes retornava 404
 // "2fa_not_enabled" que confundia o frontend (UI mostrava erro generico).
 // Token TOTP nao e exigido nesse caso porque nao ha secret valido.
+// POST /auth/2fa/disable
+// FIX-WORKER-7 pass 54: 3 BUGS CRITICOS - 2FA disable = SEC EVENT MAXIMO.
+//
+// BUG 1 *** SESSIONS NAO REVOGADAS *** apos disable 2FA
+//   PRE-FIX: UPDATE is_enabled=FALSE + return (sessions ativas mantidas)
+//   Cenario: user com 2FA ativo + sessao device A (autenticou COM 2FA)
+//   User disable 2FA device B (autenticou COM password+token)
+//   Device A: sessao continua valida MAS conta agora SEM 2FA
+//   Pattern industry (GitHub/AWS/Google): disable 2FA = revoke ALL sessions
+//   Force re-login -> user re-prove identidade pre-2FA-off
+//   FIX: revoga todas user_sessions ativas + clearCookie (forca re-login)
+//
+// BUG 2 *** AUDIT_LOG missing *** disable 2FA = SEC EVENT CRITICAL
+//   Pattern W7 high-impact: account takeover risk se atacante consegue disable
+//   FIX: INSERT audit_log severity 'critical' (admin alert)
+//
+// BUG 3 *** authenticator.check sem window *** (mesmo bug /login + /activate)
+//   FIX: { window: 1 }
 router.post('/disable',
   totpVerifyLimiter,
   validate({ body: z.object({ password: z.string(), token: z.string().length(6).optional() }) }),
@@ -179,12 +220,51 @@ router.post('/disable',
     }
     // Path normal: 2FA ativo -> exige token TOTP valido
     if (!req.body.token) return next(errorHandler.badRequest('token_required'));
-    // FIX SEG-2FA: tag real do GCM
     const secret = cryp.decrypt({ encrypted: r.rows[0].secret_encrypted, iv: r.rows[0].secret_iv, tag: r.rows[0].secret_tag });
-    if (!authenticator.check(req.body.token, secret)) return next(errorHandler.unauthorized('invalid_token'));
+    // FIX bug 3: window=1 (consistencia /login + /activate)
+    if (!authenticator.check(req.body.token, secret, { window: 1 })) {
+      return next(errorHandler.unauthorized('invalid_token'));
+    }
 
-    await query('UPDATE user_two_factor SET is_enabled = FALSE, disabled_at = NOW() WHERE user_id = $1', [req.user.sub]);
-    res.json({ enabled: false });
+    // FIX bug 1+2: tx() atomic - disable + revoke sessions + audit_log
+    let revokedCount = 0;
+    await tx(async (c) => {
+      await c.query(
+        `UPDATE user_two_factor SET is_enabled = FALSE, disabled_at = NOW() WHERE user_id = $1`,
+        [req.user.sub]
+      );
+      // BUG 1 FIX: revoga TODAS sessions ativas (force re-login pos-2FA-off)
+      const revoked = await c.query(
+        `UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(),
+                                   revoked_reason = '2fa_disabled'
+          WHERE user_id = $1 AND is_revoked = FALSE
+          RETURNING id`,
+        [req.user.sub]
+      );
+      revokedCount = revoked.rows.length;
+      // BUG 2 FIX: audit_log atomic severity critical (sec event maximo)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'user', '2fa.disable', 'user', $1, 'critical', $2::JSONB)`,
+        [req.user.sub, JSON.stringify({
+          ip: req.ip,
+          ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+          sessions_revoked: revokedCount,
+        })]
+      );
+      // Notification user (alta prioridade - sec event)
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
+         VALUES ($1, 'in_app', '2fa_disabled',
+                 '2FA desativado em sua conta',
+                 'A autenticacao de dois fatores foi desativada. Se nao foi voce, troque sua senha imediatamente. Todas as suas sessoes foram encerradas.',
+                 3)`,
+        [req.user.sub]
+      );
+    });
+    // Clear cookie current session (force re-login)
+    res.clearCookie(REFRESH_COOKIE, { path: '/' });
+    res.json({ enabled: false, sessions_revoked: revokedCount, warn: 'Todas suas sessoes foram encerradas. Faca login novamente.' });
   })
 );
 

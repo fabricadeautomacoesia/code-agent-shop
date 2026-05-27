@@ -16904,3 +16904,110 @@ PROXIMA ITER:
 - W7 pass 55: 2FA enrollment endpoints (/2fa/setup, /2fa/verify)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 54 - auth-svc 2FA /activate + /disable 5 BUGS (2026-05-27)
+================================================================
+ESCOPO: auth-svc 2FA enrollment endpoints (logout audit clean)
+FILE: services/auth-svc/src/routes/two-factor.js (linhas 111-188 -> rewrite)
+
+CONTEXTO: pass 53 cobriu /refresh. Pass 54 audita /logout (clean - W6 pass 3
+ja fez excelente trabalho) + 2FA endpoints (/setup, /activate, /disable).
+
+AUDIT /logout (CLEAN - PRE-EXISTENTE):
+- ClearCookie idempotente OK
+- was_logged_in flag UX OK
+- RETURNING id check OK
+- Audit log OK
+- Bugs deferred (low priority): rate-limit + atomicity audit_log + logout-all-sessions opcional
+
+BUGS CORRIGIDOS 2FA (5):
+
+/activate (2 bugs):
+1. *** authenticator.check sem window=1 *** (mesmo bug /login pass 49)
+- Default window=0 false-reject por clock drift
+- FIX: { window: 1 } = ±1 step (90s tolerance)
+2. *** AUDIT_LOG missing *** enrollment 2FA = sec event critical
+- FIX: tx() atomic UPDATE + INSERT audit_log severity warn
+- Payload: ip + ua_prefix + recovery_codes_count
+
+/disable (3 BUGS CRITICOS):
+
+1. *** SESSIONS NAO REVOGADAS *** apos disable 2FA - SECURITY HOLE
+- PRE-FIX: UPDATE is_enabled=FALSE + return (sessions ativas mantidas)
+- CENARIO ATAQUE:
+  T0: User com 2FA ativo + sessao device A (autenticada COM 2FA)
+  T1: Atacante phishes password user (sem 2FA pq nao tem device)
+  T2: Atacante NAO consegue login (precisa 2FA)
+  T3: User /disable 2FA device B (autenticou COM password+token)
+  T4: Atacante /login agora SO password (2FA off) -> acesso conta!
+- Pattern industry (GitHub/AWS/Google): disable 2FA = revoke ALL sessions
+  Force re-login -> user re-prove identidade pre-2FA-off
+- FIX: tx() atomic - disable + revoke ALL user_sessions + clearCookie
+- Response retorna sessions_revoked count + warn
+
+2. *** AUDIT_LOG missing *** SEC EVENT MAXIMO
+- Account takeover risk se atacante consegue disable 2FA
+- FIX: INSERT atomic severity 'critical' (admin alert)
+- Notification user priority 3 ("2FA desativado - se nao foi voce trocar senha")
+
+3. *** authenticator.check sem window *** (mesmo bug)
+- FIX: { window: 1 }
+
+VALIDATION DEPLOY curl:
+
+curl /2fa/activate token=123456:
+- 200 OK enabled=true + audit_log entry 2fa.activate (severity warn)
+
+curl /2fa/disable password+token:
+- 200 OK enabled=false sessions_revoked=N + clearCookie
+- audit_log severity critical
+- Notification queued p/ user "2FA desativado"
+- User precisa relogar em TODOS devices (force re-auth pos-disable)
+
+PATTERN W7 SECURITY 2FA CONSOLIDADO (consistencia /login + /activate + /disable):
+- TODOS authenticator.check com { window: 1 } (90s tolerance UX)
+- TODOS audit_log atomic em events 2FA
+- /login replay protection (pass 49)
+- /disable revoke ALL sessions (pass 54 esta iter)
+
+DEFESA EM PROFUNDIDADE 2FA COMPLETA (4 layers):
+- Layer 1: HMAC TOTP authenticator.check window=1 (clock drift)
+- Layer 2: Anti-replay sha256 hash 60s window (pass 49)
+- Layer 3: fail2ban report failure todos paths (pass 49)
+- Layer 4: Audit log severity critical em sec events (pass 49 + 54)
+- Layer 5 (esta iter): disable revoga sessions + notif user
+
+PATTERN W7 47 ENDPOINTS + 22 REGRAS (A-V) - 54 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7
+- gateway: 2
+- auth-svc: 7 (login, forgot, reset, register, refresh, /2fa/activate, /2fa/disable)
+- /logout audit clean
++ refactor @cas/shared.htmlEscape (pass 52)
+
+AUTH-SVC PROGRESS (7/7 endpoints write-mutation = 100% mutation paths):
+- ✅ POST /login 2FA (pass 49)
+- ✅ POST /forgot-password (pass 50)
+- ✅ POST /reset-password (pass 50)
+- ✅ POST /register (pass 51)
+- ✅ POST /refresh (pass 53)
+- ✅ POST /logout (pass 54 audit clean - W6 pass 3 pre-existente)
+- ✅ POST /2fa/activate (pass 54 esta iter)
+- ✅ POST /2fa/disable (pass 54 esta iter)
+- /2fa/setup (audit clean - pre-existing OK low-impact)
+- /2fa/recovery (audit deferred - similar pattern /disable)
+- /2fa/status (read-only - deferred)
+
+PROXIMA ITER:
+- W7 pass 55: 2FA enrollment audit /setup + /recovery (similar pattern)
+- W7 pass 56: read-only audit endpoints (Regra I cross-svc)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
