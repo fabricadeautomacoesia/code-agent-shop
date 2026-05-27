@@ -17289,7 +17289,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc GET /products/me (pass 69) - admin bypass + Regra D+E+I + filters
 - ✅ seller-svc /sla-history + /payouts (pass 70) - Regra D+E+I + DLP + filter
 - ✅ order-svc POST /:id/dispute rate-limit (pass 71) - anti-spam
-- ✅ seller-svc /kpi + sellers.js GET / (pass 72 esta iter) - Regra D+I + enum + UX
+- ✅ seller-svc /kpi + sellers.js GET / (pass 72) - Regra D+I + enum + UX
+- ✅ product-svc GET / public listing (pass 73 esta iter) - 8 bugs major
+
+W7 PASS 73 RESUMO:
+- product-svc/src/routes/public.js GET / refactor (8 bugs):
+  * Regra D: + p.id ASC tiebreaker em TODOS 6 sorts
+  * Regra A FIX: status IN ('approved','platform_owned')
+    - PRE-FIX: status = 'approved' (platform_owned NUNCA aparecia publico)
+    - MLB platform_owned feature ficava invisivel - bug critico storefront
+  * NEW kind enum whitelist (400 invalid_kind allowed[])
+  * NEW sort enum whitelist (400 explicit em vez de default silencioso)
+  * NaN guard parseInt: ?min_price=abc -> 400 invalid_min_price (era PG 500)
+  * BUG 7: ?seller=store_slug filter IMPLEMENTADO (estava em cache key mas WHERE missing)
+  * BUG 8: 3 subqueries correlacionadas -> LEFT JOIN explicit
+    - Antes: 60 products * 3 subqueries = 180 sub-statements
+    - Pos: 1 plan node previsivel + idx_products_seller/category
+  * NEW ?include_total=true opt-in p/ paginacao UI (COUNT pesado em 100k+ rows)
+- Pattern W7 em 75 endpoints + 23 regras (A-W) - 73 micro-iters
+
+PROXIMA ITER:
+- W7 pass 74: product-svc /:slug detail audit
+- W7 pass 75: product-svc /:slug/reviews + /:slug/qna audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 72 RESUMO:
 - seller-svc /sellers/me/kpi refactor (3 bugs):

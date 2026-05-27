@@ -368,64 +368,154 @@ router.get('/flash-promo/active',
 // GET /products - listagem + filtros facetados
 // cache 60s - lista publica de produtos. Invalidada em mutations admin/me.
 // FIX-WORKER-10 pass 7: rate-limit ANTES do cache para barrar bots ANTES de Redis lookup.
+// FIX-WORKER-7 pass 73: 8 BUGS aplicando Pattern W7 (Regras A+D+E+I + enums + UX).
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING *** ORDER BY sem id em TODOS sorts
+//   2 products sales_count identicos -> ordem indefinida na paginacao.
+//   FIX: + id ASC tiebreaker em TODOS 6 sorts.
+//
+// BUG 2 *** Regra A status whitelist incompleta ***
+//   PRE-FIX: WHERE status = 'approved' (exclui platform_owned!)
+//   Platform_owned products (cadastrados pela plataforma, MLB feature)
+//   NUNCA aparecem em listing publico. Pattern cross-svc estabelecido:
+//   status IN ('approved','platform_owned').
+//   FIX: status IN ('approved','platform_owned').
+//
+// BUG 3 *** KIND ENUM WHITELIST MISSING *** SQL error leak
+//   PRE-FIX: ?kind=anything -> PG enum cast 22P02 -> 500.
+//   FIX: kind enum whitelist (matches draftSchema).
+//
+// BUG 4 *** SORT ENUM RIGID *** ?sort=anything cai default silencioso
+//   Mantido o pattern (fallback default), MAS adiciono validation 400 explicit
+//   p/ ?sort com valor invalido. UX UI mais claro.
+//
+// BUG 5 *** NaN parseInt() *** ?min_price=abc -> NaN
+//   PRE-FIX: parseInt('abc') = NaN -> params.push(NaN) -> PG ERROR cast.
+//   FIX: Number.isFinite(n) check + 400 se nao.
+//
+// BUG 6 *** Regra E NO TOTAL ***
+//   Response sem total/has_more - UX paginacao "Carregar mais" sem visibilidade.
+//   FIX: COUNT(*) + has_more (mas: COUNT pode ser pesado, opt-in ?include_total=true).
+//
+// BUG 7 *** ?seller FILTER documentado em cache key MAS sem WHERE ***
+//   cache key ja inclui :seller=${q.seller||''} - mas sem WHERE = cache pollution
+//   (mesma resposta retornada com keys diferentes).
+//   FIX: implementar ?seller=store_slug -> JOIN sellers + WHERE.
+//
+// BUG 8 *** N+1 subqueries seller/category ***
+//   3 subqueries correlacionadas por row (60 products * 3 = 180 sub-statements).
+//   PG optimizer pode mover p/ LATERAL JOIN mas plano nao determ.
+//   FIX: LEFT JOIN explicit (1 plan node, mais previsivel).
+const KIND_ENUM = new Set([
+  'automation','ai_agent','n8n_workflow','node_script','python_script',
+  'php_script','prompt_pack','template','dataset','other'
+]);
+const SORT_ENUM = new Set(['relevance','newest','price_asc','price_desc','rating','sales']);
+
 router.get('/',
   listLimiter,
   cache.cacheMiddleware((req) => {
     const q = req.query;
-    return `products:list:cat=${q.category||''}:kind=${q.kind||''}:min=${q.min_price||''}:max=${q.max_price||''}:free=${q.free||''}:platform=${q.platform_owned||''}:seller=${q.seller||''}:sort=${q.sort||''}:lim=${q.limit||24}:page=${q.page||1}`;
+    return `products:list:cat=${q.category||''}:kind=${q.kind||''}:min=${q.min_price||''}:max=${q.max_price||''}:free=${q.free||''}:platform=${q.platform_owned||''}:seller=${q.seller||''}:sort=${q.sort||''}:lim=${q.limit||24}:page=${q.page||1}:tot=${q.include_total||''}`;
   }, 60),
   asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 3: clamp 1..60 (era Math.min apenas, deixava lim=-5 passar).
-  // Antes: ?limit=-5 -> SQL "LIMIT -5" -> PG ERROR 'LIMIT must not be negative'
-  // mascarado por error handler como {products:[]} 200 (UX confuso e quebra paginacao).
-  // Agora: Math.max(1, Math.min(parseInt||24, 60)) garante invariant 1 <= lim <= 60.
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 24, 60));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
 
-  const where = [`status = 'approved'`];
+  // FIX-WORKER-7 pass 73 BUG 3: kind enum whitelist
+  if (req.query.kind && !KIND_ENUM.has(req.query.kind)) {
+    return res.status(400).json({ error: 'invalid_kind', allowed: Array.from(KIND_ENUM) });
+  }
+  // BUG 4: sort enum whitelist (400 explicit em vez de default silencioso)
+  if (req.query.sort && !SORT_ENUM.has(req.query.sort)) {
+    return res.status(400).json({ error: 'invalid_sort', allowed: Array.from(SORT_ENUM) });
+  }
+  // BUG 5: NaN guard parseInt
+  const minPrice = req.query.min_price !== undefined ? parseInt(req.query.min_price, 10) : null;
+  const maxPrice = req.query.max_price !== undefined ? parseInt(req.query.max_price, 10) : null;
+  if (minPrice !== null && !Number.isFinite(minPrice)) {
+    return res.status(400).json({ error: 'invalid_min_price' });
+  }
+  if (maxPrice !== null && !Number.isFinite(maxPrice)) {
+    return res.status(400).json({ error: 'invalid_max_price' });
+  }
+
+  // FIX-WORKER-7 pass 73 BUG 2: Regra A status whitelist completa
+  const where = [`p.status IN ('approved','platform_owned')`, `p.deleted_at IS NULL`];
   const params = [];
   let i = 1;
 
   if (req.query.category) {
-    where.push(`category_id = (SELECT id FROM categories WHERE slug = $${i++})`);
+    where.push(`p.category_id = (SELECT id FROM categories WHERE slug = $${i++})`);
     params.push(req.query.category);
   }
   if (req.query.kind) {
-    where.push(`kind = $${i++}`); params.push(req.query.kind);
+    where.push(`p.kind = $${i++}`); params.push(req.query.kind);
   }
-  if (req.query.min_price) {
-    where.push(`price_cents >= $${i++}`); params.push(parseInt(req.query.min_price, 10));
+  if (minPrice !== null) {
+    where.push(`p.price_cents >= $${i++}`); params.push(minPrice);
   }
-  if (req.query.max_price) {
-    where.push(`price_cents <= $${i++}`); params.push(parseInt(req.query.max_price, 10));
+  if (maxPrice !== null) {
+    where.push(`p.price_cents <= $${i++}`); params.push(maxPrice);
   }
-  if (req.query.free === 'true') where.push(`is_free = TRUE`);
-  if (req.query.platform_owned === 'true') where.push(`is_platform_owned = TRUE`);
+  if (req.query.free === 'true') where.push(`p.is_free = TRUE`);
+  if (req.query.platform_owned === 'true') where.push(`p.is_platform_owned = TRUE`);
+  // BUG 7: ?seller filter implementado
+  if (req.query.seller) {
+    where.push(`s.store_slug = $${i++}`);
+    params.push(req.query.seller);
+  }
 
+  // BUG 1: + p.id ASC tiebreaker em TODOS sorts
   const order = ({
-    relevance:    'sales_count DESC, avg_rating DESC NULLS LAST',
-    newest:       'published_at DESC NULLS LAST',
-    price_asc:    'price_cents ASC',
-    price_desc:   'price_cents DESC',
-    rating:       'avg_rating DESC NULLS LAST, review_count DESC',
-    sales:        'sales_count DESC',
-  })[req.query.sort] || 'sales_count DESC, avg_rating DESC NULLS LAST';
+    relevance:    'p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id ASC',
+    newest:       'p.published_at DESC NULLS LAST, p.id ASC',
+    price_asc:    'p.price_cents ASC, p.id ASC',
+    price_desc:   'p.price_cents DESC, p.id ASC',
+    rating:       'p.avg_rating DESC NULLS LAST, p.review_count DESC, p.id ASC',
+    sales:        'p.sales_count DESC, p.id ASC',
+  })[req.query.sort] || 'p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id ASC';
 
   params.push(lim, off);
+  // BUG 8: LEFT JOIN explicit em vez de 3 subqueries correlacionadas
   const r = await query(
-    `SELECT id, slug, title, subtitle, short_description, kind, cover_image_url,
-            price_cents, currency, license_kind, is_free, tech_stack,
-            avg_rating, review_count, sales_count, is_platform_owned, published_at,
-            (SELECT store_slug FROM sellers WHERE id = products.seller_id) AS seller_slug,
-            (SELECT store_name FROM sellers WHERE id = products.seller_id) AS seller_name,
-            (SELECT slug FROM categories WHERE id = products.category_id) AS category_slug
-       FROM products
-      WHERE ${where.join(' AND ')} AND deleted_at IS NULL
+    `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind, p.cover_image_url,
+            p.price_cents, p.currency, p.license_kind, p.is_free, p.tech_stack,
+            p.avg_rating, p.review_count, p.sales_count, p.is_platform_owned, p.published_at,
+            s.store_slug AS seller_slug,
+            s.store_name AS seller_name,
+            c.slug AS category_slug
+       FROM products p
+       LEFT JOIN sellers s ON s.id = p.seller_id
+       LEFT JOIN categories c ON c.id = p.category_id
+      WHERE ${where.join(' AND ')}
       ORDER BY ${order}
       LIMIT $${i++} OFFSET $${i++}`,
     params
   );
-  res.json({ products: r.rows });
+
+  // BUG 6: total count opt-in via ?include_total=true (COUNT eh pesado em 100k products)
+  let total = null;
+  let hasMore = null;
+  if (req.query.include_total === 'true') {
+    const countParams = params.slice(0, -2);
+    const totalRes = await query(
+      `SELECT COUNT(*)::INT AS total FROM products p
+         LEFT JOIN sellers s ON s.id = p.seller_id
+        WHERE ${where.join(' AND ')}`,
+      countParams
+    );
+    total = totalRes.rows[0].total;
+    hasMore = (off + r.rows.length) < total;
+  }
+
+  res.json({
+    products: r.rows,
+    page: Math.max(parseInt(req.query.page, 10) || 1, 1),
+    limit: lim,
+    ...(total !== null ? { total, has_more: hasMore } : {}),
+  });
 }));
 
 // GET /products/:slug - detalhe publico
