@@ -213,44 +213,56 @@ router.get('/',
 }));
 
 // GET /products/:slug - detalhe publico
+// FIX-WORKER-18 pass 4: cacheia query result (60s) mas mantem analytics writes
+// FORA do cache (toda request continua loggar product_views + view_count).
+// PDP eh o endpoint mais hit do site (search/home/share -> click). Antes:
+// cada request = SELECT pesado com 4 subqueries + 2 LEFT JOINs. Agora 1 query
+// a cada 60s por slug, demais sao Redis GET (<1ms).
 router.get('/:slug', asyncHandler(async (req, res, next) => {
   // MLB-NEW WORKER 16 / FIX-WORKER-18 pass 2: is_top_seller via subquery correlacionada
-  // (usa idx_products_cat_sales partial Index Only Scan, ~140x mais rapido que WindowAgg).
-  // Combo "OFICIAL MAIS VENDIDO" = is_platform_owned AND is_top_seller.
-  // Threshold min 5 vendas para evitar promover produtos novos sem trafego.
-  const r = await query(
-    `SELECT p.*,
-            s.id AS seller_id, s.store_slug, s.store_name, s.store_logo_url,
-            s.reputation_tier, s.reputation_score, s.avg_rating AS seller_rating,
-            c.slug AS category_slug, c.name AS category_name,
-            (SELECT json_agg(t.*) FROM tags t JOIN product_tags pt ON pt.tag_id = t.id WHERE pt.product_id = p.id) AS tags,
-            (SELECT json_agg(pv.* ORDER BY pv.created_at DESC) FROM product_versions pv WHERE pv.product_id = p.id) AS versions,
-            (SELECT json_agg(pm.* ORDER BY pm.sort_order) FROM product_media pm WHERE pm.product_id = p.id) AS media,
-            (p.sales_count >= 5 AND p.sales_count = (
-               SELECT MAX(p2.sales_count) FROM products p2
-                WHERE p2.category_id = p.category_id
-                  AND p2.status = 'approved' AND p2.deleted_at IS NULL
-            )) AS is_top_seller
-       FROM products p
-       LEFT JOIN sellers s ON s.id = p.seller_id
-       LEFT JOIN categories c ON c.id = p.category_id
-      WHERE p.slug = $1 AND p.status = 'approved' AND p.deleted_at IS NULL`,
-    [req.params.slug]
-  );
-  if (!r.rows.length) return next(errorHandler.notFound('product_not_found'));
-  delete r.rows[0].search_tsv;
-  // log de visualizacao assincrono
+  // Threshold min 5 vendas. Combo "OFICIAL MAIS VENDIDO" = is_platform_owned AND is_top_seller.
+  const cacheKey = `products:detail:${req.params.slug}`;
+  const product = await cache.withCache(cacheKey, 60, async () => {
+    const r = await query(
+      `SELECT p.*,
+              s.id AS seller_id, s.store_slug, s.store_name, s.store_logo_url,
+              s.reputation_tier, s.reputation_score, s.avg_rating AS seller_rating,
+              c.slug AS category_slug, c.name AS category_name,
+              (SELECT json_agg(t.*) FROM tags t JOIN product_tags pt ON pt.tag_id = t.id WHERE pt.product_id = p.id) AS tags,
+              (SELECT json_agg(pv.* ORDER BY pv.created_at DESC) FROM product_versions pv WHERE pv.product_id = p.id) AS versions,
+              (SELECT json_agg(pm.* ORDER BY pm.sort_order) FROM product_media pm WHERE pm.product_id = p.id) AS media,
+              (p.sales_count >= 5 AND p.sales_count = (
+                 SELECT MAX(p2.sales_count) FROM products p2
+                  WHERE p2.category_id = p.category_id
+                    AND p2.status = 'approved' AND p2.deleted_at IS NULL
+              )) AS is_top_seller
+         FROM products p
+         LEFT JOIN sellers s ON s.id = p.seller_id
+         LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.slug = $1 AND p.status = 'approved' AND p.deleted_at IS NULL`,
+      [req.params.slug]
+    );
+    if (!r.rows.length) return null;
+    delete r.rows[0].search_tsv;
+    return r.rows[0];
+  });
+  if (!product) return next(errorHandler.notFound('product_not_found'));
+  // analytics SEMPRE rodam (fora do cache) - mesmo em cache HIT contam view
   query(
     `INSERT INTO product_views (product_id, ip_address, referrer, user_agent)
      VALUES ($1, $2, $3, $4)`,
-    [r.rows[0].id, req.ip, req.headers.referer || null, req.headers['user-agent'] || null]
+    [product.id, req.ip, req.headers.referer || null, req.headers['user-agent'] || null]
   ).catch(() => {});
-  query('UPDATE products SET view_count = view_count + 1 WHERE id = $1', [r.rows[0].id]).catch(() => {});
-  res.json({ product: r.rows[0] });
+  query('UPDATE products SET view_count = view_count + 1 WHERE id = $1', [product.id]).catch(() => {});
+  res.json({ product });
 }));
 
 // GET /products/:slug/reviews
-router.get('/:slug/reviews', asyncHandler(async (req, res) => {
+// FIX-WORKER-18 pass 4: cache 60s (reviews mudam pouco, novas reviews populam
+// em background). Invalidated on POST /reviews via cache.del em review-svc.
+router.get('/:slug/reviews',
+  cache.cacheMiddleware((req) => `products:reviews:${req.params.slug}:lim=${req.query.limit||20}:p=${req.query.page||1}`, 60),
+  asyncHandler(async (req, res) => {
   const lim = Math.min(parseInt(req.query.limit, 10) || 20, 100);
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
   const r = await query(
@@ -268,7 +280,10 @@ router.get('/:slug/reviews', asyncHandler(async (req, res) => {
 }));
 
 // GET /products/:slug/qna
-router.get('/:slug/qna', asyncHandler(async (req, res) => {
+// FIX-WORKER-18 pass 4: cache 60s (qna upvotes mudam mas hot path eh leitura)
+router.get('/:slug/qna',
+  cache.cacheMiddleware((req) => `products:qna:${req.params.slug}`, 60),
+  asyncHandler(async (req, res) => {
   const r = await query(
     `SELECT q.id, q.question, q.answer, q.is_pinned, q.upvote_count,
             q.asked_at, q.answered_at,
