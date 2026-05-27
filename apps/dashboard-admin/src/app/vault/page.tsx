@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
-import { Plus, Trash2, KeyRound } from 'lucide-react';
+import { Plus, Trash2, KeyRound, RefreshCw } from 'lucide-react';
 
 // FIX-WORKER-4 pass 9: usage_this_month_cents e monthly_quota_usd_cents
 // sao em USD CENTS (vault tracks LLM cost - OpenAI/Anthropic em USD), NAO em BRL.
@@ -63,6 +63,21 @@ export default function VaultPage() {
     action.run(`revoke-${id}`, async () => {
       await adminFetch(`/vault/keys/${id}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) });
       return `Chave ${id.slice(0, 8)}... revogada`;
+    });
+  }
+
+  // FIX-WORKER-17 pass 13: rotate 1-click - cria nova + revoga atomic
+  async function rotateKey(id: string, alias: string) {
+    const plain_key = prompt(`Rotacionar chave "${alias}"\n\nCole AQUI a NOVA chave plain (sera criptografada e a antiga revogada atomicamente):`);
+    if (!plain_key || plain_key.length < 10) return;
+    const reason = prompt('Motivo da rotacao (audit log):') || 'rotacao programada';
+    if (!confirm(`Confirma rotacao de "${alias}"?\n\nNova chave sera ATIVADA e antiga REVOGADA na mesma transacao.`)) return;
+    action.run(`rotate-${id}`, async () => {
+      const r = await adminFetch<{ new_fingerprint: string; new_key_id: string }>(
+        `/vault/keys/${id}/rotate`,
+        { method: 'POST', body: JSON.stringify({ plain_key, reason, rotation_days: 90 }) }
+      );
+      return `Chave "${alias}" rotacionada. Nova fp: ${r.new_fingerprint}`;
     });
   }
 
@@ -264,13 +279,24 @@ export default function VaultPage() {
                     </div>
                   </td>
                   <td className="text-xs text-white/40">{fmtDate(k.created_at)}</td>
-                  <td className="text-right">
+                  <td className="text-right space-x-2">
                     {k.is_active && (
-                      <button onClick={() => revoke(k.id)} disabled={busy}
-                        aria-label={`Revogar chave ${k.key_alias}`}
-                        className="text-red-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
-                        <Trash2 className="w-3 h-3" aria-hidden="true" /> {busy ? '...' : 'Revogar'}
-                      </button>
+                      <>
+                        {/* FIX-WORKER-17 pass 13: botao Rotacionar (swap atomico) */}
+                        <button onClick={() => rotateKey(k.id, k.key_alias)}
+                          disabled={busy || action.busyKey === `rotate-${k.id}`}
+                          aria-label={`Rotacionar chave ${k.key_alias}`}
+                          className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                          <RefreshCw className={`w-3 h-3 ${action.busyKey === `rotate-${k.id}` ? 'animate-spin' : ''}`} aria-hidden="true" />
+                          {action.busyKey === `rotate-${k.id}` ? '...' : 'Rotacionar'}
+                        </button>
+                        <button onClick={() => revoke(k.id)}
+                          disabled={busy || action.busyKey === `rotate-${k.id}`}
+                          aria-label={`Revogar chave ${k.key_alias}`}
+                          className="text-red-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                          <Trash2 className="w-3 h-3" aria-hidden="true" /> {busy ? '...' : 'Revogar'}
+                        </button>
+                      </>
                     )}
                   </td>
                 </tr>

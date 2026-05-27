@@ -6,7 +6,7 @@ const express = require('express');
 const nodeCrypto = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
-const { query } = require('@cas/db-client');
+const { query, tx } = require('@cas/db-client');
 const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp, fail2ban, startup } = require('@cas/shared');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
@@ -323,6 +323,130 @@ app.post('/keys/:id/revoke', adminOnly,
       [req.body.reason, req.params.id]
     );
     res.json({ ok: true });
+  })
+);
+
+// FIX-WORKER-17 pass 13: POST /api/vault/keys/:id/rotate (swap 1-click).
+//
+// CONTEXTO:
+// W17 pass 12 introduziu rotation_due_at + cron alerta. W4 pass 11 adicionou
+// UI badge mas workflow manual: admin provisiona nova chave + revoga antiga
+// em 2 etapas separadas. Janela vulneravel entre etapas se admin esquece de
+// revogar = chave velha continua usavel.
+//
+// ESTE ENDPOINT: 1 click = swap atomico em tx() block:
+// 1. SELECT antiga + lock (FOR UPDATE) - evita race com /use ou /revoke concorrente
+// 2. INSERT nova com mesmo alias+provider+seller_id+is_platform_pool+quota
+// 3. UPDATE antiga: is_active=FALSE, revoked_at=NOW, revoked_reason
+// 4. Audit log INSERT (action='vault.rotate', old_key_id, new_key_id)
+// 5. Commit
+//
+// REUSO contract /keys provision: novo registro tem rotation_due_at = NOW+90d
+// (default), prazo fresh para nova chave.
+//
+// USE CASES:
+// - Token expirando em 1d -> rotate antes do upstream revogar
+// - Suspeita de leak (logs, ex-funcionario) -> rotate imediato
+// - PCI rotation schedule -> rotate trimestral programado
+const rotateSchema = z.object({
+  plain_key: z.string().min(10),  // nova chave
+  reason: z.string().min(3).max(200),  // motivo (audit)
+  rotation_days: z.number().int().min(1).max(365).optional(),  // novo prazo
+});
+
+app.post('/keys/:id/rotate',
+  provisionRateLimit,
+  adminOnly,
+  validate({ body: rotateSchema }),
+  asyncHandler(async (req, res, next) => {
+    // PAYMENT_UUID_RE reusable para qualquer UUID
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+    const { plain_key, reason, rotation_days } = req.body;
+    const rotDays = rotation_days || 90;
+
+    // Tx atomico: lock antiga + insert nova + revoke antiga + audit
+    const result = await tx(async (c) => {
+      const old = await c.query(
+        `SELECT id, seller_id, provider, key_alias, is_platform_pool,
+                monthly_quota_usd_cents, is_active
+           FROM vault_api_keys
+          WHERE id = $1::UUID
+          FOR UPDATE`,
+        [req.params.id]
+      );
+      if (!old.rows.length) return { error: 'not_found' };
+      const o = old.rows[0];
+      if (!o.is_active) return { error: 'already_revoked' };
+
+      // Encripta nova chave (mesma logica de provision)
+      const { encrypted, iv, tag } = cryp.encrypt(plain_key);
+      const fp = cryp.sha256(plain_key).slice(0, 16);
+
+      // INSERT nova com mesmos atributos (exceto encrypted_key+iv+tag+fp+rotation)
+      const inserted = await c.query(
+        `INSERT INTO vault_api_keys
+           (seller_id, provider, key_alias, encrypted_key, iv, auth_tag, key_fingerprint,
+            monthly_quota_usd_cents, is_platform_pool, rotation_due_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                 NOW() + ($10 || ' days')::INTERVAL)
+         RETURNING id, key_fingerprint, rotation_due_at`,
+        [o.seller_id, o.provider, o.key_alias, encrypted, iv, tag, fp,
+         o.monthly_quota_usd_cents, o.is_platform_pool, String(rotDays)]
+      );
+      const newKey = inserted.rows[0];
+
+      // Revoga antiga
+      await c.query(
+        `UPDATE vault_api_keys
+            SET is_active = FALSE,
+                revoked_at = NOW(),
+                revoked_reason = $1
+          WHERE id = $2`,
+        [`rotated: ${reason} (-> ${newKey.id})`, o.id]
+      );
+
+      // Audit log
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'vault.rotate', 'vault_api_key', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, o.id,
+         JSON.stringify({
+           old_key_id: o.id,
+           new_key_id: newKey.id,
+           old_fingerprint: '<not_returned>',
+           new_fingerprint: newKey.key_fingerprint,
+           provider: o.provider,
+           key_alias: o.key_alias,
+           reason,
+           rotation_days: rotDays,
+           ip: req.ip,
+         })]
+      );
+
+      return {
+        ok: true,
+        old_key_id: o.id,
+        new_key_id: newKey.id,
+        new_fingerprint: newKey.key_fingerprint,
+        rotation_due_at: newKey.rotation_due_at,
+      };
+    });
+
+    if (result.error === 'not_found') return next(errorHandler.notFound('key_not_found'));
+    if (result.error === 'already_revoked') {
+      return next(errorHandler.badRequest('already_revoked',
+        'Chave ja foi revogada. Provisione uma nova via POST /keys (sem swap).'));
+    }
+
+    log.info({
+      rotated_by: req.user.sub,
+      old_key_id: result.old_key_id,
+      new_key_id: result.new_key_id,
+    }, '[vault.rotate]');
+    res.json(result);
   })
 );
 
