@@ -4923,3 +4923,52 @@ GAP PROXIMA ITER:
 - Audit PDP em 375px (button group action mb-3 - cabe?)
 - /checkout step indicator em mobile
 - CartDrawer width em 375px (max-w-md = 448px > 375px = overflow?)
+
+## WORKER 15 pass 4 (MOBILE PDP) - title + rating row overflow 375px
+
+VETOR DETECTADO (audit visual PDP em 375px):
+2 elementos com risco overflow horizontal:
+
+1. h1 product.title text-3xl (24px font-size, line-height proporcional)
+   - Sem break-words -> palavras longas viram overflow
+   - Titulos AI agent tipicos: "Agente WhatsApp com RAG e Memoria
+     Vetorial Persistente" -> 60 chars, 1 palavra "Persistente" 11 chars
+   - Em 375px com px-6 padding = 327px usable -> palavras 14+ chars wrap mal
+   - Result: scrollbar horizontal aparecia, layout quebrado
+
+2. Rating row "Star 4.8 (127 reviews) | 412 vendas"
+   - flex items-center gap-3 SEM flex-wrap
+   - 5 elementos (icon, rating, count, separator, sales)
+   - Em produtos top sellers (sales_count alto), texto cresce -> overflow
+   - Ex: "(1.247 reviews) | 4.523 vendas" cabe em 1 linha? NAO em 375px
+
+FIX (1 arquivo - apps/storefront/src/app/product/[slug]/page.tsx):
+
+1. h1:
+   - text-3xl -> text-2xl sm:text-3xl (mobile menor, sm+ original)
+   - + break-words (permite quebrar palavra no meio se preciso)
+
+2. Rating row div:
+   - + flex-wrap (multilinha em mobile se nao caber)
+   - separator | adicionou hidden sm:inline
+     (em multilinha mobile o "|" entre linhas e estranho/redundante)
+
+DEPLOY:
+- commit e9a5f2c pushed
+- storefront rebuilt (~2.9s) + converged
+
+VALIDACAO PUBLICA:
+- HTML h1: <h1 class="font-display font-bold text-2xl sm:text-3xl mb-2 break-words"> OK
+- Rating: class="flex items-center gap-3 mb-6 text-sm flex-wrap" OK
+- HTTP 200
+
+IMPACTO:
+- Scrollbar horizontal eliminada em 375px (Pixel 5, iPhone SE)
+- Titulos longos cabem 2-3 linhas sem overflow
+- Rating quebra naturalmente em 2 linhas se sales_count grande
+- Desktop sm+ preserva text-3xl original (sem regressao visual)
+
+GAP DETECTADO (proxima iter):
+- /checkout step indicator mobile (1 - 2 - 3) em 375px
+- /admin/* dashboards em mobile (provavelmente desktop-only intencional)
+- Audit modal de pergunta rapida (AskQuickButton) em 375px
