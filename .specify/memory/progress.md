@@ -10674,3 +10674,70 @@ PROXIMA ITER:
 - W13 pass 8: templates email qa_run_timeout + qa_dispatch_failed
 - W18 pass 6: cache /qa/runs/:product_id history
 - W3: PDP audit continuado
+
+## WORKER 7 PASS 7 - /recently-viewed limit truncado por filtro post-CTE
+
+AUDIT product-svc encontrou bug "limit truncado":
+
+CENARIO REPRO:
+- User visitou 12 PDPs nos ultimos 14d
+- 5 produtos depois foram deletados/archived/nao-approved
+- GET /products/recently-viewed?limit=12
+
+PRE-FIX (CTE LIMIT antes do filtro):
+  WITH last_views AS (
+    SELECT product_id, MAX(created_at)
+      FROM product_views WHERE user_id=$1 GROUP BY ... LIMIT 12
+  )
+  SELECT ... FROM last_views lv
+   JOIN products p WHERE p.status='approved' AND p.deleted_at IS NULL
+- CTE retorna 12 IDs (com deletados)
+- Filtro WHERE elimina 5 -> retorna 7
+- Frontend pede 12, recebe 7 -> "vi mais produtos, cade?"
+
+POS-FIX (filtro DENTRO CTE):
+  WITH last_views AS (
+    SELECT pv.product_id, MAX(pv.created_at)
+      FROM product_views pv
+      JOIN products p ON p.id = pv.product_id
+     WHERE pv.user_id=$1
+       AND p.status='approved' AND p.deleted_at IS NULL
+     GROUP BY ... LIMIT 12
+  )
+- CTE ja produz so validos LIMIT 12
+- Garantia: ate 12 produtos retornados consistentes
+
+PERFORMANCE:
+- Mesmas tabelas, mesmos conditions, mesmas indices
+- idx_pviews_user_recent (W14-6) + idx_products_status partial
+- Cost similar, ordem reorganizada
+
+EDGE CASES:
+- Zero views -> []
+- Todos deletados -> []
+- Mix -> retorna validos ate LIMIT
+
+CACHE:
+- W18 pass 3 key mantido `products:recently-viewed:${user.sub}:lim=${limit}` TTL 30s
+- Invalidacao automatica em 30s para refletir delecoes
+
+DEPLOY:
+- commit 6d313ec push main OK
+- 16 insertions, 7 deletions
+- product-svc rebuild via VPS cron
+- Sem schema change
+- Backward compat: API identica
+
+W7 PRODUCT-SVC AUDIT (passes 1-7):
+- pass 1: /me CRUD baseline
+- pass 2: admin force-approve guards
+- pass 3: wishlist toggle idempotency
+- pass 4: clamp negative params
+- pass 5: /:slug/reviews+/qna 404 inconsistencia
+- pass 6: /compare 3 bugs validation
+- pass 7: /recently-viewed limit truncado (esta iter)
+
+PROXIMA ITER:
+- W7 pass 8: /recommendations/for-me mesmo padrao (filtro pre-CTE)
+- W18 pass 7: cache /orders/me historico per-user
+- W3 PDP audit continuado
