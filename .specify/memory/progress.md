@@ -4340,3 +4340,57 @@ PROXIMA ITER:
 - product_wishlist add/remove tem cache? Atual nao tem (POST direto)
 - Auditar order-svc para mesmo pattern (orders cache)
 - Considerar cache.purge('products:*') em mass mutations
+
+## WORKER 9 pass 5 (SEO) - openGraph + twitter especifico em 5 pages
+
+VETOR DETECTADO (audit curl meta tags):
+5 pages publicas indexaveis com og:title="Code & Agent Shop" (generico
+root layout, identico para TODAS) ao inves de titulo especifico:
+- /sobre
+- /cloud-code-ilimitado
+- /privacidade
+- /termos
+- /status
+
+Impact em social shares (WhatsApp, Twitter, LinkedIn, Slack):
+- Preview do site mostrava sempre "Code & Agent Shop" generico
+- Description sempre "Marketplace B2B/B2C de automacoes e agentes IA"
+- Click-through-rate destruido (todos os links parecem iguais)
+- Quebra contexto: usuario compartilha /privacidade -> preview generico
+
+FIX (5 arquivos em paralelo):
++ openGraph: { title, description, type: 'website', url } por page
++ twitter: { card, title, description }
++ Twitter card type respeitando conteudo:
+  - summary_large_image: pages com hero/visual (sobre, cloud-code, status)
+  - summary: pages text-heavy legal (privacidade, termos)
+
+Mensagens PT-BR especificas por contexto:
+- sobre: "Sobre a Code & Agent Shop - Marketplace de Automacoes IA"
+- cloud-code-ilimitado: "Cloud Code Ilimitado - API Keys Patrocinadas para Sellers"
+- privacidade: "Politica de Privacidade - Code & Agent Shop"
+- termos: "Termos de Uso - Code & Agent Shop"
+- status: "Status do Sistema - Code & Agent Shop"
+
+DEPLOY:
+- commit 4137619 pushed
+- storefront rebuilt + deployed (~3.1s)
+- Service converged
+
+VALIDACAO PUBLICA (5 cenarios):
+- /sobre og:title -> "Sobre a Code & Agent Shop - Marketplace de Automacoes IA" OK
+- /cloud-code-ilimitado og:title -> "Cloud Code Ilimitado - API Keys Patrocinadas para Sellers" OK
+- /privacidade og:title -> "Politica de Privacidade - Code & Agent Shop" OK
+- /termos og:title -> "Termos de Uso - Code & Agent Shop" OK
+- /status og:title -> "Status do Sistema - Code & Agent Shop" OK
+
+IMPACTO:
+- Social shares agora com previews especificos por pagina
+- CTR melhor em links compartilhados (contexto preservado)
+- LinkedIn/Slack/WhatsApp preview agora informativo
+- SEO secundario: og:title eh sinal de qualidade pro Google ranking
+
+GAP RESTANTE (proxima iter):
+- /seller/[slug] e /product/[slug] ja tem dinamico (W9 pass 1)
+- /categoria/[slug] tem canonical mas verificar og:title dinamico
+- Considerar og:image especifico por pagina (atualmente herdam opengraph-image.tsx)
