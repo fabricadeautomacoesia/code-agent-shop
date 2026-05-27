@@ -168,12 +168,31 @@ app.post('/payments/asaas/create',
 );
 
 // POST /payments/asaas/webhook - recebe eventos Asaas
+// FIX SEG-PAY-1 (CRITICAL): bug anterior permitia bypass total da assinatura quando
+// ASAAS_WEBHOOK_SECRET nao estava configurado (valid=true por default).
+// Atacante podia forjar PAYMENT_RECEIVED para qualquer order pending e desbloquear downloads.
+//
+// AGORA:
+// - Se ASAAS_WEBHOOK_SECRET nao esta setado, REJEITA 503 (fail-closed, sem aceitar fraude).
+// - Compara via crypto.timingSafeEqual para evitar timing attacks.
+// - Header invalido -> 401 + audita o evento ainda no banco como signature_valid=false
+//   (NAO processa) para investigacao posterior.
 app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
-  const raw = req.body.toString('utf8');
-  // Assinatura: header asaas-access-token (configurar igual ASAAS_WEBHOOK_SECRET)
-  const sig = req.headers['asaas-access-token'];
   const secret = process.env.ASAAS_WEBHOOK_SECRET;
-  const valid = !secret || sig === secret;
+  if (!secret) {
+    log.error('[webhook.misconfigured] ASAAS_WEBHOOK_SECRET nao definido - rejeitando');
+    return res.status(503).json({ error: 'webhook_not_configured' });
+  }
+
+  const raw = req.body.toString('utf8');
+  const sig = req.headers['asaas-access-token'] || '';
+  // timing-safe compare (precisa mesmo length)
+  let valid = false;
+  try {
+    const a = Buffer.from(sig);
+    const b = Buffer.from(secret);
+    valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch { valid = false; }
 
   let data;
   try { data = JSON.parse(raw); } catch { return res.status(400).json({ error: 'invalid_json' }); }
@@ -182,15 +201,22 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
   const exists = await query('SELECT 1 FROM asaas_webhook_events WHERE asaas_event_id = $1', [data.id]);
   if (exists.rows.length) return res.json({ ok: true, duplicate: true });
 
+  // Audita SEMPRE (mesmo invalido) para investigacao de tentativas de fraude
   await query(
     `INSERT INTO asaas_webhook_events (event_type, asaas_event_id, asaas_payment_id, payload, signature_valid)
      VALUES ($1, $2, $3, $4::JSONB, $5)`,
     [data.event, data.id || null, data.payment?.id || null, JSON.stringify(data), valid]
   );
 
+  // Se invalido, NUNCA processa - retorna 401
+  if (!valid) {
+    log.warn({ event: data.event, ip: req.ip, ua: req.headers['user-agent'] }, '[webhook.invalid_signature]');
+    return res.status(401).json({ error: 'invalid_signature' });
+  }
+
   res.json({ ok: true });
 
-  // Processa assincrono
+  // Processa assincrono apenas se valido
   setImmediate(() => processWebhookEvent(data).catch((e) => log.error({ err: e.message }, '[webhook.process.fail]')));
 }));
 
