@@ -5458,3 +5458,66 @@ PROXIMA ITER:
   W1 pass 2 ja faz length-only check
 - Adicionar campo edit CPF em /conta (verificar se ja existe form)
 - Considerar form CPF inline no /checkout (sem redirect /conta)
+
+## WORKER 2 pass 5 (AUTH/ME) - CPF/CNPJ E2E: GET + PATCH + validate algorithm
+
+GAP DETECTADO (proxima iter do W2 pass 4):
+"Validar algoritmo CPF/CNPJ no frontend; adicionar form CPF inline /checkout"
+
+AUDITORIA revelou 3 bugs encadeados em services/auth-svc/src/routes/me.js:
+
+BUG 1 (showstopper): GET /me NAO retornava cpf_cnpj
+- W2 pass 4 frontend checa user.cpf_cnpj para banner CPF /checkout
+- Backend nao mandava -> hasCpf=undefined -> banner persistia sempre
+- W2 pass 4 estava INUTIL por causa deste bug!
+
+BUG 2: PATCH /me whitelist NAO incluia cpf_cnpj
+- User registra SEM CPF (campo opcional p/ buyer)
+- Nunca pode atualizar cpf depois - era impossivel completar perfil
+- Frontend mostra banner "complete cadastro" mas user nao tem forma de fazer
+- Unica forma: SQL admin direto (impraticavel para production)
+
+BUG 3: Sem validacao algoritmo CPF/CNPJ
+- registerSchema so length-check (min 11 max 20)
+- User pode setar "11111111111" ou "12345678901" -> aceito
+- Asaas valida no checkout -> 400 -> 500 generico
+- Defesa em depth requer validacao em todas camadas
+
+FIX (3 changes em services/auth-svc/src/routes/me.js):
+
+1. GET /me adiciona u.cpf_cnpj + u.phone_e164 no SELECT
+2. PATCH /me adiciona 'cpf_cnpj' na whitelist 'allowed'
+3. Validacao algoritmo COMPLETA:
+   + isValidCpf(s): mod 11 com 2 digitos verificadores
+     - Rejeita formato (length != 11)
+     - Rejeita "11111111111" (regex /^(\d)\1+$/)
+     - Calcula dv1 e dv2 segundo Receita Federal
+   + isValidCnpj(s): mod 11 com pesos circulares para 14 digits
+   + 11 digits -> CPF, 14 digits -> CNPJ, outro -> 400
+4. Normalizacao: armazena APENAS digitos (.replace(/\D/g,''))
+   - User pode digitar "111.444.777-35" e fica "11144477735"
+
+DEPLOY:
+- commit a0ecb51 pushed
+- auth-svc rebuilt (~3.8s) + deployed converged
+
+VALIDACAO PUBLICA (4/4 cenarios E2E):
+1. GET /me -> retorna "cpf_cnpj":null OK (antes era omitido)
+2. PATCH CPF invalido "12345678901" -> 400 "CPF invalido (digitos verificadores nao conferem)" OK
+3. PATCH CPF valido "111.444.777-35" -> 200 ok:true OK (CPF teste real)
+4. GET /me apos -> "cpf_cnpj":"11144477735" (normalizado digits-only) OK
+
+IMPACTO:
+- W2 pass 4 banner CPF FINALMENTE funciona (sumira apos user preencher)
+- User pode completar cadastro (era impossivel antes!)
+- 3 camadas defesa em depth CPF/CNPJ:
+  * Frontend register (length only - W1 pass 2)
+  * Backend PATCH /me (algoritmo - este pass)
+  * Backend payment-svc (length again - W11 pass 4)
+- Asaas API protected: invalid CPF nunca chega no createCustomer
+
+PROXIMA ITER:
+- Adicionar mapping de invalid_cpf/invalid_cnpj/invalid_cpf_cnpj_length
+  em auth-errors.ts (UX PT-BR final)
+- Form de edicao CPF na page /conta (verificar se ja existe form de profile)
+- Considerar mascara automatica CPF no input (UX MLB-style)
