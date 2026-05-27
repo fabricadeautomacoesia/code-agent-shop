@@ -102,6 +102,23 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## SECURITY HARDENING (WORKER 11 - PAYMENT-SVC WEBHOOK BYPASS CRITICO)
+Audit em services/payment-svc/src/server.js linha 176 revelou:
+- valid = !secret || sig === secret  -> fail-OPEN se secret nao configurado.
+- Atacante podia POSTar PAYMENT_RECEIVED forjado e flipar order -> paid sem pagar.
+- Resultado: download_token + license_key validos por 365d emitidos sem cobranca.
+- Tambem vulneravel a timing attack (sig === secret).
+
+CORRECAO commitada local (f3e09b2):
+- Sem ASAAS_WEBHOOK_SECRET -> 503 fail-CLOSED + log.error
+- crypto.timingSafeEqual com Buffer (constante)
+- Audita SEMPRE em asaas_webhook_events (signature_valid=false) para forensics
+- Invalido -> 401 invalid_signature + log.warn{event,ip,ua}
+- processWebhookEvent so se valid=true
+
+DEPLOY: precisa configurar ASAAS_WEBHOOK_SECRET=<token> em .env Swarm +
+Asaas painel Settings/Webhooks/Access Token = mesmo valor.
+
 ## SECURITY HARDENING (WORKER 17 - VAULT-SVC CRITICAL FIX)
 Code audit em services/vault-svc/src/server.js revelou 2 falhas:
 
