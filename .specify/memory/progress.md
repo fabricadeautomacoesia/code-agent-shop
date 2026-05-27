@@ -1733,3 +1733,43 @@ OBSERVACOES adicionais (audit code review):
 - map de events Asaas->status interno (PAYMENT_RECEIVED/CONFIRMED -> captured/paid)
 - MLB-4 loyalty earn integrado no fluxo paid (Gold +20%, Platinum +50%)
 - Estes ja estavam saudaveis - nada a corrigir nesta iteracao.
+
+## WORKER 15 (MOBILE RESPONSIVE) - Grids tight em 375px (Pixel 5/iPhone SE)
+Auditoria estatica das classes Tailwind sem prefixo responsive em apps/storefront
+revelou 2 layouts apertados em 375px:
+
+BUG 1: /checkout linha 103 - 'Forma de pagamento'
+- grid grid-cols-3 gap-3 com 3 botoes (PIX, Cartao, Boleto)
+- Em 375px: ~80px por col -> textos "Aprovacao instantanea" e "Parcelamento
+  ate 12x" wrap em 2-3 linhas, layout quebrado.
+
+BUG 2: / (home) linha 53 - Hero stats trinity
+- grid grid-cols-3 gap-6 com 3 stats (QA Auto, Asaas, 2FA) em text-2xl
+- Em 375px com gap-6 (24px): ~95px por col, text-2xl (1.5rem) faz "QA Auto"
+  ficar quase touching as bordas, e "Validacao LLM" quebra em 2 linhas.
+
+FIX:
+- /checkout: grid-cols-1 sm:grid-cols-3 (1 botao por linha em mobile - full width,
+  legivel e tap-friendly). text-left em mobile + sm:text-center.
+- / (home): grid-cols-3 mantido (eh stats compactas), mas text-lg sm:text-2xl
+  (1.125rem em mobile), gap-4 sm:gap-6 (16px em mobile), text-xs sm:text-sm
+  no label - cabe sem wrap em 375px.
+
+VALIDACAO PUBLICA:
+- Checkout chunk page-a8da91b07ec577e9.js contem 'grid grid-cols-1 sm:grid-cols-3' OK
+- Home HTML SSR contem 'text-lg sm:text-2xl font-display font-bold text-magenta-glow' OK
+- Home HTML SSR contem 'grid grid-cols-3 gap-4 sm:gap-6 mt-12' OK (gap reduzido em mobile)
+- HTTP 200 para /checkout (carrega + redirect client-side OK)
+
+PADRAO ADOTADO (mobile-first Tailwind):
+- Tailwind eh mobile-first: classes sem prefixo aplicam sempre, prefixos sm:/md:/lg:
+  sao overrides em viewports maiores. Logo "grid-cols-3" e "text-2xl" sao mobile.
+- Correto: usar primeiro o que cabe em 375px, depois ampliar com sm: para 640px+.
+
+DEPLOY: commit 133a51d pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
+
+GAP RESTANTE (proxima iteracao W15):
+- Inspecionar drawers (cart-drawer, compare-drawer, search-autocomplete) em
+  375px width. Compare-drawer w-[min(380px,calc(100vw-2rem))] ja tem clamp OK.
+- /admin/* sao dashboards SaaS - mobile e secundario, deixar para depois.
