@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Star, Award, Download, Shield, Clock, Tag } from 'lucide-react';
+import { Star, Award, Download, Shield, Clock, Tag, RefreshCw, MessageCircle, CheckCircle2, Headphones } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { AddToCart } from '@/components/add-to-cart';
 import { WishlistButton } from '@/components/wishlist-button';
@@ -132,6 +132,46 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                 <AddToCart productId={product.id} isFree={product.is_free} />
               </div>
               <WishlistButton productId={product.id} />
+            </div>
+
+            {/* MLB-NEW WORKER 16: Trust Signals badges (Garantia + Suporte + Updates) */}
+            <div className="mt-5 space-y-2.5 text-xs">
+              {(product.warranty_days ?? 30) > 0 && (
+                <div className="flex items-start gap-2.5 text-white/80">
+                  <RefreshCw className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold">Garantia de {product.warranty_days ?? 30} dias</div>
+                    <div className="text-white/50 text-[11px]">Reembolso integral se nao funcionar conforme descrito</div>
+                  </div>
+                </div>
+              )}
+              {(product.support_response_hours ?? 48) > 0 && (
+                <div className="flex items-start gap-2.5 text-white/80">
+                  <Headphones className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold">Suporte em ate {product.support_response_hours ?? 48}h</div>
+                    <div className="text-white/50 text-[11px]">Via Q&A do produto ou email do vendedor</div>
+                  </div>
+                </div>
+              )}
+              {(product.includes_updates ?? true) && (
+                <div className="flex items-start gap-2.5 text-white/80">
+                  <CheckCircle2 className="w-4 h-4 text-magenta flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold">Atualizacoes gratuitas</div>
+                    <div className="text-white/50 text-[11px]">Receba novas versoes sem custo adicional</div>
+                  </div>
+                </div>
+              )}
+              {product.includes_install_support && (
+                <div className="flex items-start gap-2.5 text-white/80">
+                  <MessageCircle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold">Suporte na instalacao</div>
+                    <div className="text-white/50 text-[11px]">Vendedor ajuda voce a configurar</div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {product.tech_stack?.length > 0 && (
