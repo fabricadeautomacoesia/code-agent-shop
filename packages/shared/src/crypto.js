@@ -10,12 +10,24 @@ const ALG = 'aes-256-gcm';
 const IV_LEN = 16;
 const TAG_LEN = 16;
 
+// FIX-WORKER-17 pass 5: validacao mais estrita + cache + DLP error message.
+// Antes:
+// 1. Validava so length===64, nao verificava se eh hex valido (Buffer.from
+//    aceita "GGGG..." e retorna bytes zerados -> key fraca aceita).
+// 2. Mensagem de erro revelava env var name e formato esperado.
+// 3. Chamava process.env + Buffer.from em CADA encrypt/decrypt (microopt).
+const HEX_RE = /^[0-9a-fA-F]{64}$/;
+let _cachedKey = null;
 function getKey() {
+  if (_cachedKey) return _cachedKey;
   const hex = process.env.VAULT_AES_KEY;
-  if (!hex || hex.length !== 64) {
-    throw new Error('[crypto] VAULT_AES_KEY ausente ou invalida (precisa 64 chars hex = 32 bytes).');
+  if (!hex || !HEX_RE.test(hex)) {
+    // DLP: mensagem opaca. Operador ve em logs e investiga env config.
+    // requestId no errorHandler ja correlaciona com a stack server-side.
+    throw new Error('[crypto] encryption key misconfigured');
   }
-  return Buffer.from(hex, 'hex');
+  _cachedKey = Buffer.from(hex, 'hex');
+  return _cachedKey;
 }
 
 function encrypt(plaintext) {
