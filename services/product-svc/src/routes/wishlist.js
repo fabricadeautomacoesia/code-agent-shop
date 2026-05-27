@@ -8,6 +8,9 @@ const { jwt, asyncHandler, validate, errorHandler } = require('@cas/shared');
 const router = express.Router();
 router.use(jwt.requireAuth());
 
+// FIX-WORKER-7: regex de UUID para validar params antes do query (evita PG 22P02 -> 404 generico)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // GET /products/wishlist - lista favoritos do user logado
 router.get('/', asyncHandler(async (req, res) => {
   const r = await query(
@@ -54,16 +57,28 @@ router.post('/',
 );
 
 // DELETE /products/wishlist/:product_id
-router.delete('/:product_id', asyncHandler(async (req, res) => {
-  await query(
-    `DELETE FROM product_wishlist WHERE user_id = $1 AND product_id = $2`,
+// FIX-WORKER-7:
+// - Antes: UUID malformado -> PG 22P02 -> 404 generico do global handler (confuso)
+// - Antes: UUID valido mas nao favoritado -> retornava {ok:true} silencioso (falha invisivel)
+// - Agora: 400 invalid_uuid + 404 not_in_wishlist com RETURNING
+router.delete('/:product_id', asyncHandler(async (req, res, next) => {
+  if (!UUID_RE.test(req.params.product_id)) {
+    return next(errorHandler.badRequest('invalid_uuid'));
+  }
+  const r = await query(
+    `DELETE FROM product_wishlist WHERE user_id = $1 AND product_id = $2 RETURNING product_id`,
     [req.user.sub, req.params.product_id]
   );
-  res.json({ ok: true });
+  if (!r.rows.length) return next(errorHandler.notFound('not_in_wishlist'));
+  res.json({ ok: true, removed: r.rows[0].product_id });
 }));
 
 // GET /products/wishlist/:product_id/check - retorna se esta favoritado
-router.get('/:product_id/check', asyncHandler(async (req, res) => {
+// FIX-WORKER-7: 400 invalid_uuid em vez de 404 generico do global handler
+router.get('/:product_id/check', asyncHandler(async (req, res, next) => {
+  if (!UUID_RE.test(req.params.product_id)) {
+    return next(errorHandler.badRequest('invalid_uuid'));
+  }
   const r = await query(
     `SELECT 1 FROM product_wishlist WHERE user_id = $1 AND product_id = $2`,
     [req.user.sub, req.params.product_id]

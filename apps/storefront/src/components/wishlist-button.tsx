@@ -32,7 +32,13 @@ export function WishlistButton({ productId }: { productId: string }) {
         setFavorited(true);
       }
     } catch (e: any) {
-      alert('Erro: ' + (e.data?.message || e.message));
+      // FIX-WORKER-7: 404 not_in_wishlist no DELETE -> ja foi removido por outro tab/device, sincroniza estado
+      if (e?.status === 404 && (e?.data?.error === 'not_in_wishlist' || favorited)) {
+        setFavorited(false);
+      } else {
+        // Erro real: log silencioso (sem alert() feio)
+        console.error('[Wishlist]', e?.data?.error || e?.message);
+      }
     } finally { setLoading(false); }
   }
 
