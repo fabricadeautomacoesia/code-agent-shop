@@ -104,6 +104,21 @@ app.get('/', jwt.requireAuth(), asyncHandler(async (req, res) => {
   res.json({ notifications: r.rows });
 }));
 
+// FIX-WORKER-13 pass 4: GET /api/notifications/unread-count
+// Frontend NotificationBell calculava `notifs.filter(!is_read).length` no client,
+// obrigando fetch de TODAS as 30 notifs (~15kb payload) so para mostrar badge "5+".
+// Endpoint dedicado retorna SO o numero (16 bytes) -> permite poll 30s sem custo.
+// Idx idx_notif_user_channel_created (mig 020) garante <2ms query.
+app.get('/unread-count', jwt.requireAuth(), asyncHandler(async (req, res) => {
+  const r = await query(
+    `SELECT COUNT(*)::INT AS count
+       FROM notifications
+      WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE`,
+    [req.user.sub]
+  );
+  res.json({ count: r.rows[0]?.count || 0 });
+}));
+
 // POST /api/notifications/:id/read
 // FIX-WORKER-13: regex UUID antes do query evita PG 22P02 -> 500 quando id malformado.
 // Antes: silencioso ok:true mesmo se nenhuma row foi afetada (notif inexistente

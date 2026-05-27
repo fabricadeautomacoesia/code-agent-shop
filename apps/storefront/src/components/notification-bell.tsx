@@ -50,8 +50,22 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [notifs, setNotifs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  // FIX-WORKER-13 pass 4: count separado do payload completo. Poll 30s baixo custo
+  // (16 bytes) vs 60s pesado (~15kb com 20 notifs). Notifs carregadas SO ao abrir.
+  const [unreadCount, setUnreadCount] = useState(0);
 
-  const unread = notifs.filter((n) => !n.is_read).length;
+  // Unread total: count separado (poll 30s) OU recalcula a partir das notifs ja carregadas
+  const unread = notifs.length > 0
+    ? notifs.filter((n) => !n.is_read).length
+    : unreadCount;
+
+  async function loadCount() {
+    if (!token) return;
+    try {
+      const r = await Api.api<{ count: number }>('/notifications/unread-count', { auth: token });
+      setUnreadCount(r.count || 0);
+    } catch { /* silent */ }
+  }
 
   async function load() {
     if (!token) return;
@@ -64,16 +78,23 @@ export function NotificationBell() {
   }
 
   useEffect(() => {
-    if (!token) { setNotifs([]); return; }
-    load();
-    const i = setInterval(load, 60000);
+    if (!token) { setNotifs([]); setUnreadCount(0); return; }
+    // FIX-WORKER-13 pass 4: so chama /unread-count no poll (16 bytes vs 15kb)
+    loadCount();
+    const i = setInterval(loadCount, 30000);  // poll mais frequente, custo baixo
     return () => clearInterval(i);
   }, [token]);
+
+  // Quando abre o dropdown, ai sim carrega lista completa
+  useEffect(() => {
+    if (open && notifs.length === 0) load();
+  }, [open]);
 
   async function markRead(id: string) {
     try {
       await Api.api(`/notifications/${id}/read`, { method: 'POST', auth: token! });
       setNotifs((p) => p.map((n) => n.id === id ? { ...n, is_read: true } : n));
+      setUnreadCount((c) => Math.max(0, c - 1));
     } catch {}
   }
 
@@ -82,6 +103,7 @@ export function NotificationBell() {
     try {
       await Api.api(`/notifications/read-all`, { method: 'POST', auth: token! });
       setNotifs((p) => p.map((n) => ({ ...n, is_read: true })));
+      setUnreadCount(0);
     } catch {}
   }
 
