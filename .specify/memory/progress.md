@@ -2698,3 +2698,53 @@ IMPACTO ESPERADO:
 GAP RESTANTE proxima iter:
 - Adicionar mesmo strip em /cart (apos checkout submit) para upsell
 - /conta/page.tsx (account dashboard) podia ter strip dos ultimos 4-6 vistos
+
+## WORKER 14 pass 2 (DB SCHEMA) - products.last_sale_at era NULL sempre
+Audit DB revelou bug silencioso: products.last_sale_at existia desde migration
+inicial mas ZERO code path escrevia. Produtos com 500+ sales reais (em
+seed/historico) tinham last_sale_at = NULL para todos.
+
+IMPACTO sem o fix (features inviabilizadas):
+- "Hot deals" sort by recency (Mercado Livre exibe "Vendidos esta semana")
+- Trending products distinguir "538 vendas em 2024 antiga" de "538 vendas
+  em 2025 ativa"
+- Stale product detection (rejeitar produtos sem venda em 90 dias)
+- Seller dashboard "produto mais recente vendido"
+
+ROOT CAUSE:
+- payment-svc/server.js linha 346 UPDATE products SET sales_count = ... +
+  revenue_cents_total = ... esquece de tocar last_sale_at
+- Migration inicial criou a coluna mas zero seed/update path popula
+
+FIX BACKEND: services/payment-svc/src/server.js linha 346-350
+- Adicionado last_sale_at = NOW() no UPDATE em order_paid handler
+- Agora cada order paid -> sales_count++, revenue+=, last_sale_at=NOW
+
+FIX BACKFILL: migration 024_products_last_sale_at_backfill.sql
+- Step 1: SELECT MAX(orders.paid_at) GROUP BY product_id -> UPDATE products
+- Step 2 (manual, nao no .sql pois dependia de data seed): fallback
+  para published_at em produtos com sales_count > 0 mas sem paid_at (seed)
+
+INDEX: idx_products_last_sale partial WHERE status=approved AND
+deleted_at IS NULL AND last_sale_at IS NOT NULL
+ON products(last_sale_at DESC NULLS LAST)
+- Suporta ORDER BY last_sale_at DESC eficiente para "trending recents"
+
+VALIDACAO:
+- Migration aplicada via psql -f
+- Backfill manual fallback aplicado (9 produtos com sales_count > 0)
+- Confirmado: 10/10 produtos com sales_count > 0 agora tem last_sale_at
+  populated (0 missing)
+- EXPLAIN ANALYZE: 'Index Scan using idx_products_last_sale on products'
+  - Execution Time: 0.469ms
+- payment-svc rebuilt + service updated --force, converged OK
+
+DEPLOY:
+- commit 326242e pushed
+- migration 024 aplicada
+- payment-svc rebuilt via Dockerfile.node SVC=payment-svc
+
+UNLOCK proximas features:
+- Filtro /products?sort=recent_sales (usa idx_products_last_sale)
+- Badge "Vendido recentemente" em PDP se last_sale_at > NOW() - 7 days
+- Admin alert: produtos sem vendas em 90+ dias
