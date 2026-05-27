@@ -19,5 +19,9 @@ module.exports = {
   // FIX-WORKER-7 pass 52: HTML escape DRY cross-svc (consolida 3 implementations
   // duplicadas em notification-svc renderMustache + auth-svc forgot/register).
   htmlEscape:   require('./html-escape').htmlEscape,
+  // FIX-WORKER-7 pass 58: LGPD PII display masking DRY cross-svc (consolida
+  // maskEmail/maskName duplicados em review-svc pass 56/57. Semantica DIFFERENT
+  // de ./mask.js (que é DLP secrets em logs - sk-/Bearer/JWT regex).
+  maskPII:      require('./mask-pii'),
   sleep:        (ms) => new Promise((r) => setTimeout(r, ms)),
 };

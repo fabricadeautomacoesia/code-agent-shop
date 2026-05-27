@@ -6,7 +6,7 @@ const express = require('express');
 const cron = require('node-cron');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache, rateLimiter } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache, rateLimiter, maskPII } = require('@cas/shared');
 
 const log = logger.child({ svc: 'review-svc' });
 const app = express();
@@ -1037,15 +1037,11 @@ app.get('/seller/received',
     const r = await query(sql, params);
 
     // BUG 2 FIX: PII masking buyer_email (LGPD minimization)
-    // 'joao.silva@email.com' -> 'jo***@email.com' (admin path tem visibilidade full)
-    // Seller path: nunca ve email completo
+    // FIX-WORKER-7 pass 58: inline mask refactored -> @cas/shared.maskPII.email
+    // (DRY cross-svc + null-safe + format consistente 'jo***@email.com')
     const reviews = r.rows.map((row) => {
       if (!isAdmin && row.buyer_email) {
-        const [local, domain] = row.buyer_email.split('@');
-        if (local && domain) {
-          // mask: 2 first chars + *** + @domain
-          row.buyer_email = `${local.slice(0, 2)}***@${domain}`;
-        }
+        row.buyer_email = maskPII.email(row.buyer_email);
       }
       return row;
     });
@@ -1093,16 +1089,10 @@ app.get('/seller/received',
 //   Pattern pass 56 estabeleceu cache.cacheMiddleware 60s p/ listings.
 //   FIX: cache 30s (admin precisa freshness mais alta que seller).
 const ADMIN_REPORTS_STATUS = new Set(['open','under_review','resolved','dismissed']);
-function maskEmail(email) {
-  if (!email || typeof email !== 'string') return null;
-  const at = email.indexOf('@');
-  if (at < 2) return '***' + (at >= 0 ? email.slice(at) : '');
-  return email.slice(0, 2) + '***' + email.slice(at);
-}
-function maskName(name) {
-  if (!name || typeof name !== 'string') return null;
-  return name.length <= 2 ? name[0] + '***' : name.slice(0, 2) + '***';
-}
+// FIX-WORKER-7 pass 58: maskEmail/maskName extracted to @cas/shared.maskPII
+// (LGPD data minimization DRY cross-svc). Helpers locais REMOVIDOS.
+const maskEmail = maskPII.email;
+const maskName = maskPII.name;
 
 app.get('/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
   cache.cacheMiddleware({ ttl: 30, keyPrefix: 'admin-reports', varyByUser: false }),
