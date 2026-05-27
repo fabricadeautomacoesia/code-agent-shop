@@ -207,6 +207,17 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
 }));
 
 // POST /auth/refresh
+// FIX-WORKER-17 pass 14: logout-cascade detection (OWASP refresh token best practice).
+// Quando refresh token JA REVOGADO eh re-apresentado, isso e SINAL FORTE de
+// token compromise (atacante usou o token roubado, agora legitimate user tenta).
+// Fluxo:
+// 1. Atacante rouba refresh via XSS/MITM
+// 2. Atacante /refresh -> recebe novo access+refresh, antigo revogado
+// 3. Legitimate user (mesma sessao) tenta /refresh com token antigo
+// 4. Backend detecta is_revoked=TRUE + reuso -> CASCADE LOGOUT
+//    Revoga TODAS sessoes do user + audit log security event
+// 5. Atacante perde acesso (sessao roubada tambem revogada)
+// 6. User obrigado a fazer login fresh (sabe que houve incidente via notif)
 router.post('/refresh', asyncHandler(async (req, res, next) => {
   const rt = req.cookies?.[REFRESH_COOKIE];
   if (!rt) return next(errorHandler.unauthorized('missing_refresh', 'Cookie refresh ausente'));
@@ -219,8 +230,60 @@ router.post('/refresh', asyncHandler(async (req, res, next) => {
     `SELECT id, user_id, is_revoked, expires_at FROM user_sessions
       WHERE refresh_token_hash = $1`, [hash]
   );
-  if (!s.rows.length || s.rows[0].is_revoked || new Date(s.rows[0].expires_at) < new Date()) {
+  // Token nao encontrado: invalid (talvez forgado, talvez DB cleanup)
+  if (!s.rows.length) {
     return next(errorHandler.unauthorized('refresh_revoked', 'Refresh revogado/expirado'));
+  }
+  // FIX-WORKER-17 pass 14: REUSO de token JA REVOGADO = SECURITY BREACH
+  // Cascade logout: revoga TODAS sessoes do user (incluindo a roubada)
+  if (s.rows[0].is_revoked) {
+    const userId = s.rows[0].user_id;
+    log.warn({
+      user_id: userId,
+      ip: req.ip,
+      ua: req.headers['user-agent']?.slice(0, 200),
+      session_id: s.rows[0].id,
+    }, '[refresh.reuse.detected]');
+    // Cascade revoke + audit
+    await tx(async (c) => {
+      const cascaded = await c.query(
+        `UPDATE user_sessions
+            SET is_revoked = TRUE, revoked_at = NOW(),
+                revoked_reason = 'refresh_reuse_breach_cascade'
+          WHERE user_id = $1 AND is_revoked = FALSE
+          RETURNING id`,
+        [userId]
+      );
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'user', 'auth.refresh_reuse_breach', 'user_session', $2, 'critical', $3::JSONB)`,
+        [
+          userId, s.rows[0].id,
+          JSON.stringify({
+            ip: req.ip,
+            ua: req.headers['user-agent']?.slice(0, 200),
+            cascaded_sessions: cascaded.rowCount,
+            original_session_id: s.rows[0].id,
+          })
+        ]
+      );
+      // Notify user (priority 3 = critical security alert)
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+         VALUES ($1, 'in_app', 'security_refresh_reuse',
+                 'Atividade suspeita detectada - todas as sessoes encerradas',
+                 'Foi detectada uma tentativa de reuso de token de autenticacao. Por seguranca, todas suas sessoes foram encerradas. Faca login novamente. Se nao reconhece esta atividade, troque sua senha imediatamente.',
+                 3, $2::JSONB)`,
+        [userId, JSON.stringify({ ip: req.ip, cascaded_sessions: cascaded.rowCount })]
+      );
+    });
+    res.clearCookie(REFRESH_COOKIE, { path: '/' });
+    return next(errorHandler.unauthorized('refresh_reuse_breach',
+      'Token compromise detectado. Todas sessoes revogadas. Faca login novamente.'));
+  }
+  // Expired
+  if (new Date(s.rows[0].expires_at) < new Date()) {
+    return next(errorHandler.unauthorized('refresh_expired', 'Refresh expirado'));
   }
 
   const u = await query('SELECT id, email, role FROM users WHERE id = $1 AND deleted_at IS NULL', [payload.sub]);
