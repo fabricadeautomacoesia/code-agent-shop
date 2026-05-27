@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt } = require('@cas/shared');
 
 const log = logger.child({ svc: 'qa-svc' });
 const app = express();
@@ -20,6 +20,10 @@ const WORKER_URL   = process.env.QA_WORKER_URL || `http://tasks.cas_qa-worker:${
 // Sem isso, qualquer endpoint da internet podia forjar confidence_score=1.0
 // e aprovar QUALQUER produto sem QA real.
 const QA_CALLBACK_SECRET = process.env.QA_CALLBACK_SECRET || '';
+// FIX-WORKER-12 pass 2: token interno para o product-svc disparar /qa/run.
+// Sem isso, qualquer um na internet podia POST /qa/run -> trocar status de
+// produto para qa_running (DoS de listagem) + spawnar LLM call (denial-of-wallet).
+const QA_RUN_INTERNAL_TOKEN = process.env.QA_RUN_INTERNAL_TOKEN || '';
 // Para Swarm, callback URL precisa ser o service name (worker isolado nao conhece localhost do qa-svc)
 const CALLBACK_BASE = process.env.QA_CALLBACK_BASE_URL || `http://tasks.cas_qa-svc:${PORT}`;
 
@@ -39,8 +43,29 @@ function signPayload(body) {
 /**
  * POST /qa/run - disparado pelo product-svc apos submit.
  * Cria product_qa_run + dispara n8n (se configurado) OU chama worker direto.
+ *
+ * FIX-WORKER-12 pass 2 (CRITICAL): aceita x-internal-token=QA_RUN_INTERNAL_TOKEN
+ * (mesh service-to-service do product-svc) OU role admin/staff/service via JWT.
+ * Sem isso, antes qualquer um podia POST -> mover produto para status=qa_running
+ * (DoS de listagem) + invocar LLM (denial-of-wallet).
  */
+function qaRunGuard(req, res, next) {
+  const tok = req.headers['x-internal-token'];
+  if (QA_RUN_INTERNAL_TOKEN && tok) {
+    let valid = false;
+    try {
+      const a = Buffer.from(String(tok));
+      const b = Buffer.from(QA_RUN_INTERNAL_TOKEN);
+      valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+    } catch { valid = false; }
+    if (valid) return next();
+    log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[qa.run.invalid_internal_token]');
+  }
+  return jwt.requireAuth({ roles: ['admin', 'staff', 'service'] })(req, res, next);
+}
+
 app.post('/qa/run',
+  qaRunGuard,
   validate({ body: z.object({
     product_id: z.string().uuid(),
     product_version_id: z.string().uuid().optional(),
@@ -301,9 +326,31 @@ app.post('/qa/callback',
 );
 
 // GET /qa/runs/:product_id - historico de QA runs
-app.get('/qa/runs/:product_id', asyncHandler(async (req, res) => {
+// FIX-WORKER-12 pass 2 (DLP): antes era public -> qualquer um podia listar
+// confidence_score, raw_response (codigo do produto!), tokens/cost LLM, reasons,
+// llm_provider/model. Agora exige role admin/staff OU ser o seller dono do produto.
+// Tambem valida UUID antes do query (evita PG 22P02 -> 404 generico).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+app.get('/qa/runs/:product_id', jwt.requireAuth(), asyncHandler(async (req, res, next) => {
+  if (!UUID_RE.test(req.params.product_id)) {
+    return next(errorHandler.badRequest('invalid_uuid'));
+  }
+  // Authz: admin/staff OU seller dono do produto
+  const role = req.user?.role;
+  if (role !== 'admin' && role !== 'staff') {
+    const own = await query(
+      `SELECT 1 FROM products p JOIN sellers s ON s.id = p.seller_id
+        WHERE p.id = $1 AND s.user_id = $2::UUID`,
+      [req.params.product_id, req.user.sub]
+    );
+    if (!own.rows.length) return next(errorHandler.forbidden('not_product_owner'));
+  }
   const r = await query(
-    `SELECT * FROM product_qa_runs WHERE product_id = $1 ORDER BY started_at DESC LIMIT 50`,
+    `SELECT id, product_id, product_version_id, verdict, confidence_score,
+            sintaxe_ok, resolves_problem, is_functional, reasons, suggestions,
+            llm_provider, llm_model, tokens_input, tokens_output, cost_usd_cents,
+            duration_ms, started_at, finished_at
+       FROM product_qa_runs WHERE product_id = $1 ORDER BY started_at DESC LIMIT 50`,
     [req.params.product_id]
   );
   res.json({ runs: r.rows });

@@ -126,10 +126,14 @@ router.post('/:id/submit', asyncHandler(async (req, res, next) => {
   if (!r.rows.length) return next(errorHandler.badRequest('cannot_submit', 'Produto nao esta em draft/rejected'));
 
   // dispara webhook QA (assincrono, nao bloqueia)
-  const qaUrl = `http://127.0.0.1:${process.env.PORT_QA || 3013}/qa/run`;
+  // FIX-WORKER-12 pass 2: usa service mesh URL + x-internal-token (qa-svc agora exige auth)
+  const qaUrl = `${process.env.UPSTREAM_QA || `http://tasks.cas_qa-svc:${process.env.PORT_QA || 3013}`}/qa/run`;
   fetch(qaUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(process.env.QA_RUN_INTERNAL_TOKEN ? { 'x-internal-token': process.env.QA_RUN_INTERNAL_TOKEN } : {}),
+    },
     body: JSON.stringify({ product_id: r.rows[0].id, triggered_by: req.user.sub })
   }).catch((e) => log.warn({ err: e.message }, '[qa.dispatch_failed]'));
 
