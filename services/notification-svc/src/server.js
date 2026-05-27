@@ -86,41 +86,83 @@ app.post('/test', jwt.requireAuth({ roles: ['admin'] }),
 );
 
 // ============================================================
-// PROCESSOR (worker cron)
+// PROCESSOR (worker cron) - WORKER 13 FIX
 // ============================================================
+const WORKER_ID = `${process.env.HOSTNAME || 'notif'}-${process.pid}`;
+
+// Recupera locks orfaos (worker crashou): a cada minuto, libera linhas locked > 5min.
+async function reclaimOrphanLocks() {
+  await query(
+    `UPDATE notifications SET locked_by = NULL, locked_at = NULL
+      WHERE locked_at IS NOT NULL AND locked_at < NOW() - INTERVAL '5 minutes'`
+  );
+}
+
 async function processOutbox() {
+  // FIX-13-1 (race condition): claim atomico via UPDATE ... RETURNING.
+  // Apenas um worker (entre varias replicas) consegue setar locked_by.
+  const claimed = await query(
+    `UPDATE notifications
+        SET locked_by = $1, locked_at = NOW()
+      WHERE id IN (
+        SELECT id FROM notifications
+         WHERE sent_status = 'pending'
+           AND channel IN ('email','telegram')
+           AND retry_count < 5
+           AND next_retry_at <= NOW()
+           AND locked_by IS NULL
+         ORDER BY priority DESC, created_at ASC
+         LIMIT 25
+         FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id`,
+    [WORKER_ID]
+  );
+
+  if (!claimed.rows.length) return;
+  const ids = claimed.rows.map((r) => r.id);
+
+  // Carrega payload completo das linhas claimed
   const pending = await query(
     `SELECT n.id, n.user_id, n.channel, n.template_code, n.title, n.body, n.body_html,
-            n.priority, n.payload, u.email, u.full_name, u.locale
+            n.priority, n.payload, n.retry_count, u.email, u.full_name, u.locale
        FROM notifications n
        JOIN users u ON u.id = n.user_id
-      WHERE n.sent_status = 'pending'
-        AND n.channel IN ('email','telegram')
-        AND n.retry_count < 5
-      ORDER BY n.priority DESC, n.created_at ASC LIMIT 50`
+      WHERE n.id = ANY($1::uuid[])`,
+    [ids]
   );
 
   for (const n of pending.rows) {
     try {
-      let info;
       if (n.channel === 'email') {
-        info = await sendEmail(n.email, n.title, n.body, n.body_html);
+        await sendEmail(n.email, n.title, n.body, n.body_html);
       } else if (n.channel === 'telegram') {
-        info = await sendTelegram(`*${n.title}*\n${n.body}`);
+        await sendTelegram(`*${n.title}*\n${n.body}`);
       }
       await query(
-        `UPDATE notifications SET sent_status = 'sent', sent_at = NOW() WHERE id = $1`,
+        `UPDATE notifications
+            SET sent_status = 'sent', sent_at = NOW(),
+                locked_by = NULL, locked_at = NULL
+          WHERE id = $1`,
         [n.id]
       );
       log.info({ id: n.id, channel: n.channel, to: mask.text(n.email || '') }, '[notif.sent]');
     } catch (e) {
-      log.warn({ id: n.id, err: e.message }, '[notif.fail]');
+      // FIX-13-2 (backoff): proxima tentativa com delay exponencial.
+      // 1->30s, 2->2min, 3->10min, 4->1h, 5->terminal failed
+      const nextRetry = n.retry_count + 1;
+      const backoffSeconds = [30, 120, 600, 3600][n.retry_count] || 3600;
+      log.warn({ id: n.id, err: e.message, attempt: nextRetry, backoffSeconds }, '[notif.fail]');
       await query(
-        `UPDATE notifications SET retry_count = retry_count + 1,
-                                  failed_reason = $1,
-                                  sent_status = CASE WHEN retry_count + 1 >= 5 THEN 'failed' ELSE 'pending' END
-          WHERE id = $2`,
-        [e.message.slice(0, 500), n.id]
+        `UPDATE notifications
+            SET retry_count = retry_count + 1,
+                failed_reason = $1,
+                sent_status = CASE WHEN retry_count + 1 >= 5 THEN 'failed' ELSE 'pending' END,
+                next_retry_at = NOW() + ($2 || ' seconds')::INTERVAL,
+                locked_by = NULL,
+                locked_at = NULL
+          WHERE id = $3`,
+        [e.message.slice(0, 500), String(backoffSeconds), n.id]
       );
     }
   }
@@ -128,6 +170,8 @@ async function processOutbox() {
 
 // Cron: a cada 30s processa outbox
 cron.schedule('*/30 * * * * *', () => processOutbox().catch((e) => log.error({ err: e.message }, '[outbox.err]')));
+// Cron: a cada minuto recupera locks orfaos
+cron.schedule('* * * * *', () => reclaimOrphanLocks().catch((e) => log.error({ err: e.message }, '[outbox.reclaim_err]')));
 
 // Cron diario: limpeza de notifications antigas (60d)
 cron.schedule('0 4 * * *', async () => {
