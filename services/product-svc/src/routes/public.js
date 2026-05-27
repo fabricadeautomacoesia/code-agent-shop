@@ -251,6 +251,23 @@ router.get('/:slug/also-bought',
     return next(errorHandler.notFound('product_not_found'));
   }
 
+  // FIX-WORKER-7 pass 79: 3 BUGS aplicando Pattern W7 (Regra D + UX + store_name).
+  //
+  // BUG 1 *** Regra D outer ORDER BY MISSING TIEBREAKER ***
+  //   ORDER BY ab.co_buyers DESC, p.sales_count DESC NULLS LAST sem id.
+  //   Produtos co_buyers=1 + sales_count=0 (caso new product cohort):
+  //   ordem indefinida entre refreshes.
+  //   FIX: + p.id ASC final tiebreaker.
+  //
+  // BUG 2 *** store_name MISSING *** UX inconsistente cross-endpoint
+  //   PRE-FIX: SELECT s.store_slug, s.reputation_tier (sem store_name).
+  //   Pattern cross-svc: /compare /flash-promo /related (apos pass 78) /reco
+  //   /recently-viewed TODOS retornam store_name.
+  //   Frontend "Por ${store_name}" recebia undefined.
+  //   FIX: + s.store_name no SELECT.
+  //
+  // BUG 3 *** UX count MISSING *** response shape inconsistente
+  //   Outros endpoints retornam count/has_more. Adicionar count.
   const r = await query(
     `WITH co_buyers AS (
        SELECT DISTINCT o.buyer_user_id
@@ -280,15 +297,15 @@ router.get('/:slug/also-bought',
             p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
             p.is_platform_owned, p.flash_promo_active,
             ab.co_buyers,
-            s.store_slug, s.reputation_tier
+            s.store_slug, s.store_name, s.reputation_tier
        FROM also_bought ab
        JOIN products p ON p.id = ab.product_id
        -- FIX bug 4: JOIN sellers final (era subquery N scans)
        LEFT JOIN sellers s ON s.id = p.seller_id
-      ORDER BY ab.co_buyers DESC, p.sales_count DESC NULLS LAST`,
+      ORDER BY ab.co_buyers DESC, p.sales_count DESC NULLS LAST, p.id ASC`,
     [parent.rows[0].id, lim]
   );
-  res.json({ products: r.rows, limit: lim });
+  res.json({ products: r.rows, count: r.rows.length, limit: lim });
 }));
 
 // GET /products/:slug/related - produtos relacionados (mesma categoria, exclui o atual)

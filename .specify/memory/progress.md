@@ -17295,7 +17295,28 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc /:slug/reviews + /:slug/qna (pass 75) - 10 bugs filters + UX
 - ✅ product-svc /compare + /flash-promo/active (pass 76) - 9 bugs
 - ✅ product-svc /recommendations/for-me (pass 77) - 5 bugs + cold-start
-- ✅ product-svc /recently-viewed + /:slug/related (pass 78 esta iter) - 7 bugs
+- ✅ product-svc /recently-viewed + /:slug/related (pass 78) - 7 bugs
+- ✅ product-svc /:slug/also-bought (pass 79 esta iter) - 3 bugs UX consistency
+
+W7 PASS 79 RESUMO:
+- product-svc/src/routes/public.js /:slug/also-bought refactor (3 bugs):
+  * Regra D outer ORDER BY: + p.id ASC final tiebreaker
+    - Products co_buyers=1 + sales_count=0 (new product cohort): ordem indef
+  * store_name MISSING no SELECT (UX inconsistente cross-endpoint)
+    - Pattern cross-svc: /compare /flash-promo /related /reco /recently-viewed
+      TODOS retornam store_name - also-bought era unico sem
+    - Frontend "Por ${store_name}" recebia undefined
+  * UX count MISSING no response shape (consistency)
+- Pattern W7 em 84 endpoints + 23 regras (A-W) - 79 micro-iters
+- product-svc public.js 100% W7 nos 11 endpoints listing-style:
+  GET / + /:slug + reviews + qna + compare + flash-promo + reco
+  + recently-viewed + related + also-bought + (categories/facets via search-svc)
+
+PROXIMA ITER:
+- W7 pass 80: product-svc wishlist.js endpoints audit
+- W7 pass 81: product-svc price-alerts.js endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 78 RESUMO:
 - product-svc/src/routes/public.js 2 personalized endpoints (7 bugs):
