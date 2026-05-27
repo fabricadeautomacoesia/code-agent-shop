@@ -67,12 +67,30 @@ app.get('/', jwt.requireAuth(), asyncHandler(async (req, res) => {
 }));
 
 // POST /api/notifications/:id/read
-app.post('/:id/read', jwt.requireAuth(), asyncHandler(async (req, res) => {
-  await query(
+// FIX-WORKER-13: regex UUID antes do query evita PG 22P02 -> 500 quando id malformado.
+// Antes: silencioso ok:true mesmo se nenhuma row foi afetada (notif inexistente
+// ou de outro user). Agora retorna 404 se UPDATE 0 rows.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+app.post('/:id/read', jwt.requireAuth(), asyncHandler(async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) {
+    return next(errorHandler.notFound('notification_not_found'));
+  }
+  const r = await query(
     `UPDATE notifications SET is_read = TRUE, read_at = NOW()
-      WHERE id = $1 AND user_id = $2`,
+      WHERE id = $1::UUID AND user_id = $2::UUID AND is_read = FALSE
+      RETURNING id`,
     [req.params.id, req.user.sub]
   );
+  if (!r.rows.length) {
+    // Verifica se notif existe mas ja estava lida (idempotent OK)
+    const check = await query(
+      `SELECT is_read FROM notifications WHERE id = $1::UUID AND user_id = $2::UUID`,
+      [req.params.id, req.user.sub]
+    );
+    if (!check.rows.length) return next(errorHandler.notFound('notification_not_found'));
+    // Ja estava lida - idempotent
+    return res.json({ ok: true, already_read: true });
+  }
   res.json({ ok: true });
 }));
 
