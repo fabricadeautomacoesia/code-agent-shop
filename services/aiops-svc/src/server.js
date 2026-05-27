@@ -260,6 +260,38 @@ cron.schedule('*/10 * * * * *', async () => { // a cada 10s
 cron.schedule('*/5 * * * *', () => releaseSpikeBlocks().catch(() => {})); // a cada 5min
 cron.schedule('17 2 * * *', () => cleanupMetrics().catch(() => {}));      // diario 02:17
 
+// FIX-WORKER-14 pass 5: cleanup de time-series tables documentado na
+// /privacidade page (LGPD retention). Roda diario 03:30 (offset cleanupMetrics).
+// Cada DELETE independente - se 1 falha, outros tentam (Promise.allSettled).
+//
+// Retention windows (documentado em /privacidade):
+// - search_log: 30 dias (analytics behavior)
+// - audit_log: 90 dias (compliance + investigacao)
+// - vault_key_usage: 90 dias (cost tracking + audit)
+// - product_views: 30 dias (analytics + recommendations - W6 MLB6)
+// - token_blacklist: ate expires_at (JWT lifetime - cleanup obvio)
+async function cleanupTimeSeriesData() {
+  const cleanups = [
+    { name: 'search_log',      days: 30, sql: `DELETE FROM search_log WHERE created_at < NOW() - INTERVAL '30 days'` },
+    { name: 'audit_log',       days: 90, sql: `DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL '90 days'` },
+    { name: 'vault_key_usage', days: 90, sql: `DELETE FROM vault_key_usage WHERE created_at < NOW() - INTERVAL '90 days'` },
+    { name: 'product_views',   days: 30, sql: `DELETE FROM product_views WHERE created_at < NOW() - INTERVAL '30 days'` },
+    { name: 'token_blacklist', days: 0,  sql: `DELETE FROM token_blacklist WHERE expires_at < NOW()` },
+  ];
+  const results = await Promise.allSettled(cleanups.map(async (c) => {
+    const r = await query(c.sql);
+    return { name: c.name, deleted: r.rowCount };
+  }));
+  for (const [i, r] of results.entries()) {
+    if (r.status === 'fulfilled' && r.value.deleted > 0) {
+      log.info({ table: cleanups[i].name, days: cleanups[i].days, deleted: r.value.deleted }, '[cleanup.ok]');
+    } else if (r.status === 'rejected') {
+      log.error({ table: cleanups[i].name, err: r.reason?.message }, '[cleanup.fail]');
+    }
+  }
+}
+cron.schedule('30 3 * * *', () => cleanupTimeSeriesData().catch(() => {})); // diario 03:30
+
 const server = app.listen(PORT, () => log.info({
   port: PORT, host: HOST,
   collect_interval_s: 10,
