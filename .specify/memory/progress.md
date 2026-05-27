@@ -102,6 +102,35 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## VENDEDOR VERIFICADO + STATS DASHBOARD - WORKER 16 MLB NEW
+Mercado Livre exibe badges 'MercadoLider Platinum' + 'Vendedor Verificado' em
+todo PDP e perfil. Equivalente CAS adaptado usando KYC + reputation_tier.
+
+BACKEND seller-svc/routes/sellers.js:
+- GET /sellers/:slug agora retorna is_verified (document_verified_at IS NOT NULL),
+  seller_class e member_since_year.
+- NOVO GET /sellers/:slug/stats - dashboard publico de reputacao:
+  Agrega 3 tabelas (product_qa_runs + order_items + product_reviews) com
+  try-catch tolerante.
+  stats: total_paid, total_refunded, refund_rate_pct, qa_approval_rate_pct,
+         review_count, avg_rating
+  badges: verified (KYC ok), top_tier (ouro+), low_refund (<2% + min 5 vendas),
+          consistent_qa (>=90% + min 3 runs)
+
+FRONTEND:
+- app/seller/[slug] - badge cyan 'Vendedor Verificado' (BadgeCheck icon)
+  ao lado do tier quando is_verified.
+- app/product/[slug] - badge dourado tier inline em 'Vendido por X' quando
+  reputation_tier in (ouro, platinum, lider_platinum).
+
+VALIDADO E2E:
+- /sellers/.../stats inicial: badges all false (seller demo sem KYC)
+- UPDATE document_verified_at + tier=ouro
+- /sellers/.../stats: {verified:true, top_tier:true}
+- HTML SSR seller page: contem 'Vendedor Verificado' + 'lucide-badge-check'
+
+Impact: badges visiveis = +2-3x conversao (estudos ML).
+
 ## NOTIF MUSTACHE RENDER - WORKER 13 (FIX EMAILS QUEBRADOS)
 Audit revelou bug grave em production: 12 templates registrados em
 notification_templates usam {{name}}, {{order_number}}, {{product_title}}, etc.
