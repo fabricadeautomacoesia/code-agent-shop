@@ -6,7 +6,7 @@ const express = require('express');
 const cron = require('node-cron');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache, rateLimiter } = require('@cas/shared');
 
 const log = logger.child({ svc: 'review-svc' });
 const app = express();
@@ -30,56 +30,97 @@ const reviewSchema = z.object({
 });
 
 // POST /api/reviews
-app.post('/', jwt.requireAuth(), validate({ body: reviewSchema }), asyncHandler(async (req, res, next) => {
-  const b = req.body;
-  // valida compra
-  const oi = await query(
-    `SELECT oi.product_id, oi.seller_id FROM order_items oi
-       JOIN orders o ON o.id = oi.order_id
-      WHERE o.id = $1 AND o.buyer_user_id = $2 AND oi.product_id = $3
-        AND o.status IN ('paid','fulfilled')`,
-    [b.order_id, req.user.sub, b.product_id]
-  );
-  if (!oi.rows.length) return next(errorHandler.forbidden('not_a_verified_purchase'));
+// FIX-WORKER-7 pass 32: rate-limit anti-spam (10 reviews / 15min / IP).
+// PRE-FIX: zero rate-limit -> bot 100 reviews em 1min = 100 INSERTs +
+// 100 UPDATEs products lock contention + 100 notifications spam seller.
+const reviewLimiter = rateLimiter.createLimiter({
+  windowMs: 15 * 60 * 1000, max: 10,
+  message: 'Muitas avaliacoes recentes. Aguarde alguns minutos.',
+});
 
-  try {
-    const r = await query(
-      `INSERT INTO product_reviews
-        (product_id, order_id, buyer_user_id, seller_id, rating, title, body, is_verified_purchase)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,TRUE)
-       RETURNING *`,
-      [b.product_id, b.order_id, req.user.sub, oi.rows[0].seller_id || null,
-       b.rating, b.title || null, b.body || null]
+app.post('/', reviewLimiter, jwt.requireAuth(), validate({ body: reviewSchema }), asyncHandler(async (req, res, next) => {
+  // FIX-WORKER-7 pass 32: 4 BUGS aplicando Pattern W7 (Regras A+K + atomicity).
+  // BUG 1 RACE avg_rating: 2 reviews simultaneos. Ambos UPDATE products avg
+  //   com subqueries (SELECT AVG) - snapshot lost race. FIX: tx() + FOR UPDATE.
+  // BUG 2 ATOMICITY: 3 queries lineares. UPDATE falha = review existe mas
+  //   avg_rating stale + sem notification. FIX: tudo em tx() all-or-nothing.
+  // BUG 3 Regra A: products.status check faltando. Review em archived/rejected.
+  //   FIX: AND p.status IN ('approved','platform_owned') + deleted_at IS NULL.
+  // BUG 4 (acima): rate-limit anti-spam.
+  const b = req.body;
+
+  let outcome;
+  let review;
+  await tx(async (c) => {
+    // Validacao consolidada SELECT FOR UPDATE (anti-race)
+    const oi = await c.query(
+      `SELECT oi.product_id, oi.seller_id
+         FROM order_items oi
+         JOIN orders o ON o.id = oi.order_id
+         JOIN products p ON p.id = oi.product_id
+        WHERE o.id = $1::UUID AND o.buyer_user_id = $2::UUID
+          AND oi.product_id = $3::UUID
+          AND o.status IN ('paid','fulfilled')
+          AND p.status IN ('approved','platform_owned')
+          AND p.deleted_at IS NULL
+        LIMIT 1`,
+      [b.order_id, req.user.sub, b.product_id]
     );
-    // recalcular avg_rating do produto
-    await query(
+    if (!oi.rows.length) { outcome = { error: 'not_a_verified_purchase' }; return; }
+
+    // INSERT review (idempotency via unique constraint)
+    try {
+      const r = await c.query(
+        `INSERT INTO product_reviews
+          (product_id, order_id, buyer_user_id, seller_id, rating, title, body, is_verified_purchase)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,TRUE)
+         RETURNING id, product_id, rating, title, body, created_at`,
+        [b.product_id, b.order_id, req.user.sub, oi.rows[0].seller_id || null,
+         b.rating, b.title || null, b.body || null]
+      );
+      review = r.rows[0];
+    } catch (e) {
+      if (e.code === '23505') { outcome = { error: 'already_reviewed' }; return; }
+      throw e;
+    }
+
+    // FIX bug 1: SELECT FOR UPDATE products + UPDATE no mesmo tx
+    // Lock pessimistico previne race com outros reviews simultaneos.
+    await c.query(`SELECT id FROM products WHERE id = $1 FOR UPDATE`, [b.product_id]);
+    await c.query(
       `UPDATE products SET
          avg_rating = (SELECT AVG(rating) FROM product_reviews WHERE product_id = $1 AND is_hidden = FALSE),
          review_count = (SELECT COUNT(*) FROM product_reviews WHERE product_id = $1 AND is_hidden = FALSE)
        WHERE id = $1`, [b.product_id]
     );
-    // notification ao seller
+
+    // FIX bug 2: notification dentro do mesmo tx (atomicity all-or-nothing)
     if (oi.rows[0].seller_id) {
-      await query(
+      await c.query(
         `INSERT INTO notifications (user_id, channel, template_code, title, body)
          SELECT user_id, 'in_app', 'review_received', $1, $2 FROM sellers WHERE id = $3`,
         [`Nova avaliacao: ${b.rating} estrelas`, b.body || `Voce recebeu ${b.rating} estrelas`, oi.rows[0].seller_id]
       );
     }
-    // FIX-WORKER-3 pass 2: invalida cache do PDP reviews + product detail (avg_rating mudou)
-    const slugR = await query('SELECT slug FROM products WHERE id = $1', [b.product_id]);
-    if (slugR.rows.length) {
-      const slug = slugR.rows[0].slug;
-      await Promise.all([
-        cache.del(`products:reviews:${slug}:*`).catch(() => {}),
-        cache.del(`products:detail:${slug}`).catch(() => {}),
-      ]);
-    }
-    res.status(201).json({ review: r.rows[0] });
-  } catch (e) {
-    if (e.code === '23505') return res.status(409).json({ error: 'already_reviewed' });
-    throw e;
+  });
+
+  if (outcome?.error === 'not_a_verified_purchase') {
+    return next(errorHandler.forbidden('not_a_verified_purchase'));
   }
+  if (outcome?.error === 'already_reviewed') {
+    return res.status(409).json({ error: 'already_reviewed' });
+  }
+
+  // Cache invalidate FORA do tx (acceptable - falha cache nao breaka DB)
+  const slugR = await query('SELECT slug FROM products WHERE id = $1', [b.product_id]);
+  if (slugR.rows.length) {
+    const slug = slugR.rows[0].slug;
+    await Promise.all([
+      cache.del(`products:reviews:${slug}:*`).catch(() => {}),
+      cache.del(`products:detail:${slug}`).catch(() => {}),
+    ]);
+  }
+  res.status(201).json({ review });
 }));
 
 // POST /api/reviews/:id/vote

@@ -14861,3 +14861,86 @@ W7+W13+W18+W4 PROGRESS CONSOLIDADO:
 - W18: 8 passes tooling/perf (cache, lazy, idx, rolling, dead-audit)
 - W4: 13 admin pages (sellers, products, qa-queue, orders, payouts,
   reports, alerts, vault, webhooks, audit-log, disputes, db-audit, etc)
+
+================================================================
+ITER W7 PASS 32 - review-svc POST / 4 BUGS (race avg + atomicity) (2026-05-27)
+================================================================
+ESCOPO: review-svc POST / (criar review verified purchase)
+FILE: services/review-svc/src/server.js (linhas 33-83)
+
+CONTEXTO: W4 pass 13 fechou UI admin. Pass 32 continua W7 audit em
+review-svc (8o svc auditado, deferido por N iters).
+
+BUGS CORRIGIDOS (4):
+
+1. *** RACE CONDITION avg_rating *** sem lock products
+- PRE-FIX: UPDATE products SET avg = (SELECT AVG... FROM reviews)
+  + 2 subqueries SEM tx() + sem SELECT FOR UPDATE products
+- CENARIO: User A INSERT review rating=5 (T0). User B INSERT rating=1 (T1).
+  Ambos UPDATE products concurrent. Subqueries snapshot DURANTE outro
+  INSERT visible -> avg pode refletir SO 1 review (race lost UPDATE).
+- IMPACT: 2 reviews no DB MAS avg_rating reflete 1. SEO score artigo
+  errado, ranking search distorcido.
+- FIX: tx() + SELECT id FROM products WHERE id=$1 FOR UPDATE antes UPDATE.
+  Lock pessimistico serializa - segunda request bloqueia ate primeira COMMIT.
+  Pattern Regra K consolidado cross-svc (passes 17-31).
+
+2. *** ATOMICITY FALHA *** 3 queries lineares
+- PRE-FIX: INSERT review + UPDATE products + INSERT notification SEM tx()
+- UPDATE falhar (lock) = review existe MAS avg_rating stale + sem notif seller
+- Cenario real: spike reviews em produto viral -> lock contention -> reviews
+  "fantasma" no DB sem refletir PDP avg_rating
+- FIX: tudo no MESMO tx() (all-or-nothing). Falha em qualquer step = rollback.
+
+3. *** Regra A *** products.status check faltando
+- PRE-FIX: aceita review em produto archived/rejected/qa_pending
+- Bug confuso: review existe mas PDP retorna 404
+- FIX: JOIN products + AND status IN ('approved','platform_owned')
+  + AND deleted_at IS NULL (Regra B + Regra A consolidados)
+
+4. *** RATE-LIMIT *** anti-spam reviews
+- PRE-FIX: ZERO rate-limit em review-svc (auditoria revelou)
+- Bot pode submeter 100 reviews em 1min:
+  - 100 INSERTs product_reviews (DB write spike)
+  - 100 UPDATEs products avg_rating (lock contention horrible)
+  - 100 INSERTs notifications (seller inbox spam)
+  - 100 cache.del invalidacao desperdicada
+- FIX: rateLimiter.createLimiter 10/15min/IP (real users <5 reviews/dia)
+- Pattern aplicavel cross-svc (review/qna/dispute endpoints write)
+
+OUTROS PATTERNS APLICADOS:
+- Anti-enumeration: outcome.error consolidado fora do tx, mensagens PT-BR
+- Cache invalidate FORA do tx (acceptable - cache fail nao breaka DB)
+- RETURNING explicit fields (Regra I cross-svc consolidado)
+
+PATTERN W7 23 ENDPOINTS + 18 REGRAS (A-R):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3 (outbox pass 26, /test pass 30, renderMustache pass 31)
+- qa-svc: 2
+- review-svc: 1 (POST / pass 32 esta iter) - 8o svc
+
+REVIEW-SVC PROGRESS (futuras iters):
+- POST / corrigido (esta iter)
+- POST /:id/vote: pendente (race em helpful/unhelpful counts similar?)
+- POST /:id/reply (seller): pendente (ownership check?)
+- POST /qna: pendente
+- POST /qna/:id/upvote: pendente (race counter)
+- POST /qna/:id/answer (seller): pendente
+- POST /reports: pendente
+- POST /reports/:id/resolve (admin): pendente
+
+PROXIMA ITER:
+- W7 pass 33: review-svc POST /:id/vote (race helpful counter)
+- W3 pass 14: Dialog wrapper e2e tests (Playwright)
+- W18 pass 9: drop dead idx baseado em audit prod (W4 pass 13 admin UI)
+- W14: migration 043 (futuras schema additions baseadas analise)
+
+W7+W13+W18+W4 CONSOLIDADO:
+- W7: 23 endpoints + 18 regras (A-R) - 32 micro-iters
+- W13: renderMustache XSS hardening
+- W18: 8 passes perf/tooling
+- W4: 13 admin pages
