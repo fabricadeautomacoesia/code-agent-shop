@@ -31,12 +31,18 @@ function isPgError(err) {
 }
 
 function errorMiddleware(err, req, res, _next) {
-  const status = err.status || (isPgError(err) ? 500 : 500);
-  const code   = err.code   || 'internal_error';
+  // FIX-WORKER-4: PG 22P02 (invalid text repr - UUID malformado) deve virar 404,
+  // nao 500. Sintoma classico: GET /resource/string caindo em /:id e o param
+  // string nao-UUID dispara o cast no Postgres.
+  let status = err.status || 500;
+  let code   = err.code   || 'internal_error';
+  if (isPgError(err) && err.code === '22P02') {
+    status = 404;
+    code = 'not_found';
+  }
   const requestId = req.requestId || req.headers['x-request-id'];
 
   if (status >= 500) {
-    // log COMPLETO server-side (com nomes de tabela/constraint para debug)
     logger.error({ err: { code: err.code, msg: err.message, stack: err.stack, detail: err.detail, table: err.table, constraint: err.constraint }, requestId, path: req.originalUrl }, '[error]');
   } else {
     logger.warn({ code, msg: err.message, requestId, path: req.originalUrl }, '[warn]');
@@ -46,8 +52,12 @@ function errorMiddleware(err, req, res, _next) {
   let outCode = code;
   let outMessage = err.message;
   if (isPgError(err) || status >= 500) {
-    outCode = isPgError(err) ? 'database_error' : (code === 'internal_error' ? 'internal_error' : code);
-    outMessage = 'Erro interno do servidor. Tente novamente em instantes.';
+    outCode = (err.code === '22P02') ? 'not_found'
+            : isPgError(err) ? 'database_error'
+            : (code === 'internal_error' ? 'internal_error' : code);
+    outMessage = (err.code === '22P02')
+      ? 'Recurso nao encontrado'
+      : 'Erro interno do servidor. Tente novamente em instantes.';
   }
 
   res.status(status).json({

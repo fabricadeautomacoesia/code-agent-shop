@@ -145,7 +145,12 @@ router.get('/admin/recent',
   })
 );
 
+// FIX-WORKER-4: valida UUID antes do query para evitar PG 22P02 -> 500.
+// Antes: GET /orders/admin (ou qualquer slug) caia aqui e o param 'admin' era passado
+// como UUID ao Postgres, gerando 500 generico. Agora retorna 404 limpo.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 router.get('/:id', asyncHandler(async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next(errorHandler.notFound('order_not_found'));
   const r = await query(
     `SELECT o.*,
        (SELECT json_agg(oi.*) FROM order_items oi WHERE oi.order_id = o.id) AS items
