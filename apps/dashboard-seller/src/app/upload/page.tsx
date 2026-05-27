@@ -27,15 +27,19 @@ export default function UploadPage() {
   async function handleFile(field: 'cover' | 'pkg', e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploading({ ...uploading, [field]: true });
+    // FIX-WORKER-5: stale closure bug - antes setUploading({...uploading,[field]:true})
+    // capturava o estado antigo. Uploads paralelos (cover+pkg) faziam um sobrescrever
+    // o flag do outro. Functional setState resolve.
+    setUploading((p) => ({ ...p, [field]: true }));
     try {
       const endpoint = field === 'cover' ? '/products/upload/media' : '/products/upload/package';
       const r = await sellerUpload(endpoint, file);
-      setForm({ ...form, [field === 'cover' ? 'cover_image_url' : 'package_url']: r.url });
+      const targetField = field === 'cover' ? 'cover_image_url' : 'package_url';
+      setForm((p) => ({ ...p, [targetField]: r.url }));
     } catch (e: any) {
       setError(`Upload falhou: ${e.message}`);
     } finally {
-      setUploading({ ...uploading, [field]: false });
+      setUploading((p) => ({ ...p, [field]: false }));
     }
   }
 
