@@ -6305,3 +6305,48 @@ PROXIMA ITER:
 - W4: admin dash audit (sellers, qa-queue, orders, payouts)
 - W14: indices SQL faltando em queries sellers x3 subqueries
 - W17: vault-svc encrypt/decrypt AES-256-GCM E2E
+
+## WORKER 9 PASS 6 - Enriquecer metadata 3 auth layouts
+
+AUDIT storefront/src/app:
+- 19 pages SEM metadata diretamente em page.tsx, mas com layout.tsx separado
+- TODAS as 19 ja tinham metadata via layout (W9 passes 1-5)
+- GAP encontrado: 5 layouts com metadata MINIMA (so title+description+robots)
+  Sem canonical (duplicate URL risk com query strings)
+  Sem openGraph (compartilhamento em WhatsApp/Slack sem preview)
+
+PAGES MELHORADAS (3 de 5 selecionadas - auth flow):
+1. /login (alto trafego, link compartilhado)
+2. /esqueci-senha (links de campanha podem ter ?source=)
+3. /redefinir-senha (CRITICAL - URL com ?token=xyz secret)
+
+MUDANCAS PADRAO EM CADA:
+- alternates.canonical: '/path' sem query strings
+- openGraph: { title, description, type:'website', url, locale:'pt_BR', siteName }
+- twitter card (so /login): summary com title+description
+- robots: index:false + follow:false (era so index:false)
+- /redefinir-senha BONUS: nocache:true (trinca seguranca p/ token URL)
+
+JUSTIFICATIVA SEGURANCA:
+- follow:false impede crawler de seguir links DENTRO da page
+- nocache:true em redefinir-senha = bot nunca cacheia URL com secret
+- canonical sem query string = Google nao indexa /login?return=...
+
+PAGES NAO MELHORADAS (deixadas para proximas passes):
+- /cart, /checkout (next pass - precisam og especifico)
+- /register ja tem canonical, falta og
+
+DEPLOY:
+- commit 5f58b61 push main OK
+- 3 files changed, 47 insertions, 3 deletions
+- storefront rebuild via VPS cron auto-pull
+- HTML em prod mostra version antiga (pre-deploy) - rebuild pendente
+
+VALIDACAO:
+- curl /login HTML atual: title OK, mas og:url + canonical novos ainda nao visiveis
+- Apos rebuild: og:url + alternates.canonical aparecerao no <head>
+
+PROXIMA ITER:
+- W9 pass 7: melhorar /cart + /checkout layouts (mesmo padrao)
+- W2: E2E checkout flow audit
+- W8: visual consistency audit
