@@ -15818,3 +15818,93 @@ PROXIMA ITER:
 - W7 pass 44: seller-svc /admin/:id/suspend|reactivate (Regra Q terminal)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 43 - seller-svc PATCH /sellers/me 6 BUGS (SQL injection-like + PII audit) (2026-05-27)
+================================================================
+ESCOPO: seller-svc PATCH /sellers/me (profile update)
+FILE: services/seller-svc/src/routes/me.js (linhas 58-69 -> rewrite)
+
+CONTEXTO: W7 pass 40-42 cobriram payout + KYC flow (3 layers).
+Pass 43 audita endpoint MAIS USADO seller-svc (profile edits diarias).
+
+BUGS CORRIGIDOS (6 confirmados, 1 falso positivo descobre durante audit):
+
+1. *** SQL INJECTION-LIKE column name interpolation ***
+- PRE-FIX (linha 61): cols.push(`${k} = $${i++}`) com k de req.body
+- Defense: Zod whitelist garante 6 fields HOJE
+- FRAGIL: se Zod .passthrough() adicionado futuro = SQL injection real
+- Pattern defense-in-depth: NUNCA confiar em Zod isolado para SQL safety
+- FIX: ALLOWED_PATCH_FIELDS Set explicit + filter Object.entries antes SQL
+  Defense dupla (Zod + Set) - impossivel arbitrary column
+
+2. *** FALSO POSITIVO durante audit *** invalidateSellerCache args
+- Inicialmente reportei bug "passa user_id, funcao espera seller_id"
+- DESCOBERTA durante implementacao: me.js linha 15 ja TEM funcao local
+  invalidateSellerCache(userId) que usa WHERE user_id = $1 (correto)
+- A funcao em admin.js linha 13 eh DIFERENTE (usa WHERE id = $1 = seller_id)
+- Dois svcs com mesma funcao MAS assinaturas different - documentar
+- Lesson: SEMPRE verificar function scope antes assumir bug cross-file
+- FIX: codigo mantido com req.user.sub (correto para função me.js local)
+
+3. *** Regra A *** status check missing
+- Suspended/banned podia atualizar perfil silenciosamente
+- FIX: SELECT FOR UPDATE + check status IN
+  ('active','kyc_submitted','kyc_rejected','pending_kyc')
+  Suspended/banned -> 403 'seller_status_blocks_update' + current_status
+
+4. *** Regra K *** FOR UPDATE seller anti-race PATCH simultaneos
+- 2 patches paralelos = race UPDATE concorrente
+- FIX: SELECT FOR UPDATE
+
+5. *** SILENT 404 *** UPDATE rowcount=0 + ok:true
+- User sem entry sellers -> 0 rows -> 200 OK falso positivo
+- FIX: SELECT FOR UPDATE upfront + 404 explicit
+
+6. *** AUDIT_LOG missing *** sensitive fields PII
+- asaas_pix_key + allow_platform_resale = mutacoes IMPACT financeiro
+- Forense compliance: rastrear mudancas pix_key (anti-fraud takeover)
+- LGPD: PII deve ser auditavel quando mutada
+- FIX: INSERT audit_log atomic + payload JSON com fields_changed
+- PII MASKING: pix_key prefix-3 + suffix-3 chars apenas (LGPD privacy)
+  Exemplo: "joao@email.com" -> "joa...com" no audit_log
+- allow_platform_resale = boolean explicit (no masking - flag publico)
+
+7. *** RATE-LIMIT *** profile spam
+- Bot/UI bug spam PATCH = stress DB + cache invalidation
+- FIX: rateLimiter 20/15min/IP (real users <5 edits/dia)
+
+LESSON LEARNED FALSO POSITIVO:
+Bug #2 inicialmente reportado foi falso positivo. me.js + admin.js TEM
+funcoes invalidateSellerCache DIFERENTES (mesmo nome, diferentes lookups):
+- me.js linha 15: invalidateSellerCache(userId) -> WHERE user_id=$1
+- admin.js linha 13: invalidateSellerCache(sellerId) -> WHERE id=$1
+Ambas validas - cada svc usa o que precisa. Mas same name eh confuso.
+PATTERN W7 NOVA REGRA (potencial): names cross-svc devem ser distintos
+OR documentar explicitly args. Aplicar em refactor futuro.
+
+PATTERN W7 34 ENDPOINTS + 18 REGRAS (A-R) - 43 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 4 (pass 40, 41, 42, 43)
+
+SELLER-SVC PROGRESS (4/8+ endpoints):
+- ✅ POST /sellers/me/payout (pass 40)
+- ✅ POST /sellers/me/kyc (pass 41)
+- ✅ POST /sellers/admin/:id/kyc/approve|reject (pass 42)
+- ✅ PATCH /sellers/me (pass 43 esta iter)
+- ✅ GET /sellers/admin/pending-kyc (pass 42 fix)
+- GET /sellers/me + read-onlys SLA/payouts/kpi (pendente W7 pass 44+)
+- POST /sellers/admin/:id/suspend|reactivate (pendente Regra Q)
+
+PROXIMA ITER:
+- W7 pass 44: seller-svc /admin/:id/suspend|reactivate (Regra Q terminal)
+- W7 pass 45: GET /sellers/me read audit (Regra I explicit)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
