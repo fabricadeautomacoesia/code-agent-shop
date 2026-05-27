@@ -72,10 +72,16 @@ router.post('/register', validate({ body: registerSchema }), asyncHandler(async 
 }));
 
 // POST /auth/login
+// FIX-WORKER-17 pass 4: lockout por user (complementa fail2ban per-IP) - protege
+// contra botnet/proxies que bypassa IP-ban. Configurable via env.
+const LOGIN_MAX_FAILURES = parseInt(process.env.LOGIN_MAX_FAILURES || '10', 10);
+const LOGIN_LOCK_MINUTES = parseInt(process.env.LOGIN_LOCK_MINUTES || '15', 10);
+
 router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), asyncHandler(async (req, res, next) => {
   const { email, password, totp } = req.body;
   const r = await query(
     `SELECT u.id, u.email, u.password_hash, u.full_name, u.role, u.is_active, u.is_banned,
+            u.failed_login_count, u.locked_until,
             u2.is_enabled AS twofa_enabled, u2.secret_encrypted,
             u2.secret_iv AS twofa_iv, u2.secret_tag AS twofa_tag
        FROM users u
@@ -90,10 +96,31 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
   if (user.is_banned) return next(errorHandler.forbidden('user_banned', 'Conta banida'));
   if (!user.is_active) return next(errorHandler.forbidden('user_inactive', 'Conta inativa'));
 
+  // FIX-WORKER-17 pass 4: account-level lockout (per-user, bypass-bypass de fail2ban per-IP)
+  if (user.locked_until && new Date(user.locked_until) > new Date()) {
+    const minLeft = Math.ceil((new Date(user.locked_until).getTime() - Date.now()) / 60000);
+    req.fail2ban?.reportFailure();
+    log.warn({ userId: user.id, email: user.email, ip: req.ip }, '[login.account_locked]');
+    return next(errorHandler.forbidden('account_locked',
+      `Conta temporariamente bloqueada. Tente novamente em ${minLeft} minuto(s).`));
+  }
+
   const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) {
     req.fail2ban?.reportFailure();
-    await query('UPDATE users SET failed_login_count = failed_login_count + 1 WHERE id = $1', [user.id]);
+    const newCount = (user.failed_login_count || 0) + 1;
+    // Auto-lock apos LOGIN_MAX_FAILURES atingido
+    if (newCount >= LOGIN_MAX_FAILURES) {
+      const lockUntil = new Date(Date.now() + LOGIN_LOCK_MINUTES * 60000);
+      await query(
+        'UPDATE users SET failed_login_count = $1, locked_until = $2 WHERE id = $3',
+        [newCount, lockUntil, user.id]
+      );
+      log.warn({ userId: user.id, email: user.email, count: newCount, lockUntil }, '[login.account_locked_now]');
+      return next(errorHandler.forbidden('account_locked',
+        `Muitas tentativas falhas. Conta bloqueada por ${LOGIN_LOCK_MINUTES} minutos.`));
+    }
+    await query('UPDATE users SET failed_login_count = $1 WHERE id = $2', [newCount, user.id]);
     return next(errorHandler.unauthorized('invalid_credentials', 'Email ou senha invalidos'));
   }
 
@@ -131,7 +158,8 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
     [user.id, jwt.hashToken(refresh.token), req.headers['user-agent'] || null, req.ip]
   );
 
-  await query('UPDATE users SET last_login_at = NOW(), last_login_ip = $1, failed_login_count = 0 WHERE id = $2',
+  // FIX-WORKER-17 pass 4: tambem reset locked_until em sucesso (clear lock state)
+  await query('UPDATE users SET last_login_at = NOW(), last_login_ip = $1, failed_login_count = 0, locked_until = NULL WHERE id = $2',
     [req.ip, user.id]);
 
   setRefreshCookie(res, refresh.token);
