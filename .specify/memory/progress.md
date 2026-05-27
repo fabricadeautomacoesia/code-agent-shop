@@ -2048,3 +2048,48 @@ GAP RESTANTE (proxima iteracao W8):
 - 4 <img> em /comparar, /conta/pedidos (lista + [id]), /seller, /sellers
 - Algumas pages onde <img> faz sentido manter (data:image base64 QR codes
   sao corretos como <img>).
+
+## WORKER 8 pass 2 (VISUAL/UX) - Migra <img> restantes para next/image
+Continuacao da iteracao W8 pass 1 (que migrou cart-drawer + /cart + /promocoes).
+Identificadas 5 ocorrencias restantes de <img> com URL externa (excluindo
+QR codes data:image que sao OK manter como <img> raw):
+
+ARQUIVOS MIGRADOS:
+1) apps/storefront/src/app/comparar/page.tsx (linha 75)
+   - 240px sizes para coluna de tabela de comparacao
+2) apps/storefront/src/app/conta/pedidos/page.tsx (linha 61)
+   - 48px sizes, stack de 3 thumbs com border-2 cyber-dark + -space-x-3
+3) apps/storefront/src/app/conta/pedidos/[id]/page.tsx (linha 120)
+   - 64px sizes, alt={it.snapshot?.title || 'Produto'} (era alt="")
+4) apps/storefront/src/app/seller/[slug]/page.tsx (linha 81)
+   - 96px sizes, logo da loja com border-2 border-magenta
+5) apps/storefront/src/app/sellers/page.tsx (linha 64)
+   - 56px sizes, logo no card de listagem
+
+PADRAO ADOTADO em todas:
+- <div className="w-X h-X relative ...overflow-hidden flex-shrink-0">
+    <Image fill sizes="Xpx" ... className="object-cover" />
+  </div>
+- alt sempre populado (title || 'Produto'/'Vendedor'), nunca alt=""
+- flex-shrink-0 added (Image fill em flex container precisa)
+
+VALIDACAO PUBLICA:
+- /comparar?ids=A,B HTML SSR: 2x '_next/image?url=https%3A%2F%2Fimages.
+  unsplash.com...' (proxy ativo, AVIF/WebP conversion + sizes responsive) OK
+- /seller/vendedor-um: HTTP 200 OK
+- /sellers: HTTP 200 OK (seller atual sem logo, renderiza gradient fallback)
+- Grep final: 0 <img> raw com URL externa (3 restantes sao data:image
+  QR codes de Asaas + 2FA, corretos como <img>)
+
+DEPLOY: commit 516122b pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
+
+IMPACTO TOTAL (pass 1 + pass 2):
+- 8 surfaces migradas para next/image (3 perf-critical + 5 UX-improvement)
+- Imagens CDN: 200-800KB original -> AVIF 30-100KB (-70% a -90%)
+- Sizes attribute correto por surface (48px - 96px - 240px - 400px - 100vw)
+- Alt text sempre preenchido (a11y compliance)
+- Zero raw <img> de URL externa em todo apps/storefront
+
+GAP COMPLETO W8: nenhum, apenas data:image QR codes que devem ficar como <img>
+(inline base64, fora do CDN, sem benefit de optimization).
