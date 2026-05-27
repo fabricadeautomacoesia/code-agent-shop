@@ -6261,3 +6261,47 @@ PROXIMA ITER:
 - W2: /cart -> /checkout -> /conta/pedidos E2E audit
 - W13: notification-svc retry logic + outbox processor
 - Considerar React Query/SWR cache global em vez de poll manual
+
+## WORKER 6 PASS 1 - Register quebrado quando cpf_cnpj/phone vazios
+
+BUG CRITICO encontrado via audit curl:
+- Frontend register/page.tsx linha 53 sempre envia cpf_cnpj:'' (string vazia)
+- Backend zod schema: cpf_cnpj: z.string().min(11).max(20).optional()
+- .optional() libera apenas undefined, mas "" passa por .optional() e
+  falha .min(11) -> HTTP 400 "must contain at least 11 character(s)"
+- Mesmo bug em phone_e164 (regex falha em "")
+
+REPRO via curl --resolve:
+  curl -X POST /api/auth/register -d '{"email":"x@y.com","password":"Teste123",
+       "full_name":"X","role":"buyer","cpf_cnpj":""}'
+  -> HTTP 400 "String must contain at least 11 character(s)"
+
+CONSEQUENCIA EM PRODUCAO:
+- BUYER sem CPF nao conseguia se registrar (label UI diz "(opcional)" mas API rejeita)
+- USER sem telefone tambem nao registrava
+- Apenas users com AMBOS preenchidos passavam -> bug silencioso de conversao
+- friendlyAuthError exibia mensagem confusa "CPF/CNPJ: minimo 11 caracteres"
+
+FIX (backend only):
+  const emptyToUndef = (v) => (v === '' || v === null ? undefined : v);
+  cpf_cnpj: z.preprocess(emptyToUndef, z.string().min(11).max(20).optional()),
+  phone_e164: z.preprocess(emptyToUndef, z.string().regex(...).optional()),
+
+z.preprocess normaliza "" -> undefined ANTES de aplicar min/regex.
+Zero mudanca no frontend (decisao deliberada: solucao backend e mais robusta
+vs futuros clientes - mobile app, terceiros, API publica eventual, etc).
+
+DEPLOY:
+- commit 7365313 push main OK
+- auth-svc rebuild via VPS cron auto-pull
+- 8 insertions, 2 deletions
+
+POS-DEPLOY VALIDATION:
+- Registrar buyer sem CPF/phone deve retornar 201 (era 400)
+- Existing users com CPF preenchido nao afetados (backwards compat OK)
+- Email duplicado ainda rejeita normalmente (testa unicidade DB)
+
+PROXIMA ITER:
+- W4: admin dash audit (sellers, qa-queue, orders, payouts)
+- W14: indices SQL faltando em queries sellers x3 subqueries
+- W17: vault-svc encrypt/decrypt AES-256-GCM E2E
