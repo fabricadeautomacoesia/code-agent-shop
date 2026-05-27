@@ -7961,3 +7961,67 @@ PROXIMA ITER:
 - W3 pass 6: WishlistButton.tsx audit (heart toggle)
 - W3 pass 7: AskQuickButton modal audit
 - DRY: mover friendly mappers para lib/friendly-errors.ts (cross-component)
+
+## WORKER 14 PASS 6 - Migration 034 product_qa_runs(product_id, started_at)
+
+AUDIT db schema encontrou MISMATCH entre query e indice:
+
+QUERY (qa-svc server.js linha 395):
+  SELECT ... FROM product_qa_runs WHERE product_id = $1
+   ORDER BY started_at DESC LIMIT 50;
+
+INDICE EXISTENTE:
+  idx_qa_runs_product (product_id, created_at DESC)
+                              ^^^^^^^^^^ NAO started_at
+
+PROBLEMA:
+- Tabela tem AMBOS started_at + created_at (DEFAULT NOW() iguais em insert)
+- Planner Postgres nao infere semanticidade
+- Plano: idx_qa_runs_product seleciona product_id, mas SORT EXTERNO p/ started_at
+- LIMIT 50 ajuda mas produto popular (100+ runs) vira gargalo
+
+SEMANTICA:
+- started_at = quando QA iniciou (canonical p/ historico)
+- created_at = quando row inserida (DB internal)
+- Em retry/replay manual divergem
+- Query usa started_at CORRETAMENTE; indice esta errado
+
+MIGRATION 034:
+  CREATE INDEX IF NOT EXISTS idx_qa_runs_product_started
+    ON product_qa_runs (product_id, started_at DESC);
+
+ESTIMATE PERFORMANCE:
+- Antes: ~12-25ms (sort externo)
+- Depois: ~0.5ms (index-only scan ja ordenado)
+- ~25x melhor em produtos com 100+ runs historico
+
+idx_qa_runs_product (created_at) MANTIDO:
+- Outras queries internas usam created_at
+- Pattern em audit_log cleanup tambem
+- Conservador: 2 indices x small table != concern
+- Drop futuro se pg_stat_user_indexes confirmar zero scans
+
+DEPLOY:
+- commit 878c78d push main OK
+- 51 insertions
+- VPS init aplica auto
+- Sem rebuild svc
+
+VALIDACAO POS-APPLY:
+  EXPLAIN ANALYZE SELECT * FROM product_qa_runs
+   WHERE product_id = '<uuid>' ORDER BY started_at DESC LIMIT 50;
+  -- Esperado: Index Scan using idx_qa_runs_product_started
+  -- (sem Sort node, cost < 5.0)
+
+W14 DB AUDIT PROGRESS (passes 1-6):
+- pass 1: 16 hotpath indexes (migration 016)
+- pass 2: notifications outbox unlocked (022)
+- pass 3: drop redundant outbox (023)
+- pass 4: carts expires (031)
+- pass 5: seller_payouts composto (032)
+- pass 6: qa_runs started_at composto (034 - esta iter)
+
+PROXIMA ITER:
+- W14 pass 7: partition vault_key_usage mensal
+- W14 pass 8: drop dead indices (pg_stat_user_indexes audit)
+- W18 pass 4: image optimization audit (next/image consistency)
