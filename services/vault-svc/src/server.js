@@ -7,7 +7,7 @@ const nodeCrypto = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp, fail2ban } = require('@cas/shared');
 
 const log = logger.child({ svc: 'vault-svc' });
 const app = express();
@@ -18,6 +18,10 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '64kb' }));
 app.use(sanitize.middleware());
+// FIX-WORKER-17 pass 3: fail2ban global - bane IP apos 5 tentativas falhas em 15min.
+// Antes: brute-force de x-internal-token nao tinha limite (timing-safe so previne timing
+// attacks, nao taxa de tentativas). Combinado com rate-limit, defese em profundidade.
+app.use(fail2ban.middleware());
 
 app.get('/health', (_req, res) => res.json({ ok: true, svc: 'vault-svc' }));
 
@@ -35,7 +39,13 @@ function vaultUseGuard(req, res, next) {
       const b = Buffer.from(expected);
       valid = a.length === b.length && nodeCrypto.timingSafeEqual(a, b);
     } catch { valid = false; }
-    if (valid) return next();
+    if (valid) {
+      // FIX-WORKER-17 pass 3: limpa contador de falhas em sucesso
+      if (req.fail2ban) req.fail2ban.reportSuccess();
+      return next();
+    }
+    // FIX-WORKER-17 pass 3: incrementa contador fail2ban
+    if (req.fail2ban) req.fail2ban.reportFailure();
     log.warn({
       ip: req.ip,
       ua: req.headers['user-agent'],

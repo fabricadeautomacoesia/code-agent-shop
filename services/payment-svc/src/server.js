@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban } = require('@cas/shared');
 const asaas = require('./asaas');
 
 const log = logger.child({ svc: 'payment-svc' });
@@ -19,6 +19,9 @@ app.disable('x-powered-by');
 app.use('/payments/asaas/webhook', express.raw({ type: '*/*', limit: '2mb' }));
 app.use(express.json({ limit: '512kb' }));
 app.use(sanitize.middleware());
+// FIX-WORKER-17 pass 3: fail2ban global - bane IPs apos brute-force de tokens internos
+app.set('trust proxy', 1);
+app.use(fail2ban.middleware());
 
 // FIX-WORKER-11 pass 2 (CRITICAL SEC): asaas/create nao tinha auth.
 // Antes: qualquer um na internet podia POST com order_id UUID e:
@@ -35,7 +38,13 @@ function asaasCreateGuard(req, res, next) {
       const b = Buffer.from(PAYMENT_INTERNAL_TOKEN);
       valid = a.length === b.length && crypto.timingSafeEqual(a, b);
     } catch { valid = false; }
-    if (valid) return next();
+    if (valid) {
+      // FIX-WORKER-17 pass 3: fail2ban reportSuccess clear counter
+      if (req.fail2ban) req.fail2ban.reportSuccess();
+      return next();
+    }
+    // FIX-WORKER-17 pass 3: fail2ban reportFailure - ban after 5 attempts/15min
+    if (req.fail2ban) req.fail2ban.reportFailure();
     log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[payment.create.invalid_internal_token]');
   }
   return jwt.requireAuth({ roles: ['admin','staff','service'] })(req, res, next);
