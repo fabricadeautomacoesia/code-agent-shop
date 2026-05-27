@@ -9188,3 +9188,73 @@ PROXIMA ITER:
 - W3 pass 12: AddToCart enhancement ("+N produtos no carrinho")
 - W3 pass 13: official-badge.tsx audit (selo OFICIAL MAIS VENDIDO)
 - W8: visual polish entre compare/wishlist/price-alert (consistencia size)
+
+## WORKER 4 PASS 9 - /admin/vault 6 bugs (CURRENCY MISMATCH critico + 5 UX)
+
+AUDIT /admin/vault encontrou bug GRAVE de currency + 5 fixes UX/a11y/DLP:
+
+BUG 1 (CRITICAL currency mismatch):
+  fmtBRL(k.usage_this_month_cents) -> "R$ 1.234,56"
+- Schema coluna eh cost_usd_cents (W17 - LLM em USD)
+- OpenAI/Anthropic cobram em USD nativo
+- fmtBRL formatava como Real -> admin via VALORES ERRADOS
+- $2.00 USD aparecia "R$ 2,00" (mas 5x menor que o real BRL ~R$10)
+- Decisao financeira (revogar chave, mudar quota) baseada em dado errado
+FIX:
+- Novo helper fmtUSD(cents):
+  Number(cents/100).toLocaleString('en-US', {style:'currency', currency:'USD'})
+- Format: "$1,234.56" (locale en-US correto)
+- Aplicado em usage_this_month + monthly_quota_usd_cents
+
+BUG 2 (loadError sem retry):
+- Pattern W4 6, 7, 8 ja tinha retry button
+FIX: botao retry inline
+
+BUG 3 (empty state ausente):
+- keys.length=0 = tabela vazia silenciosa
+- Admin nao sabia se erro de carga ou primeira config
+FIX: KeyRound icon + msg condicional (loadError vs vazio real)
+
+BUG 4 (header coluna sem label):
+  <th></th> ultima coluna
+FIX: <th className="text-right">Acoes</th>
+
+BUG 5 (units ambiguidade):
+- Header "Uso/mes" e "Quota" sem moeda
+FIX: "Uso mes (USD)" e "Quota (USD)" explicit
+
+BUG 6 (DLP fingerprint plain):
+- fp: 16 chars hex visivel screenshot/screen-share
+FIX: mascarar "abc1...ef23" (4+4)
+- title attribute fingerprint completa (admin desktop legitimo)
+
+BONUS:
+- aria-label "Revogar chave <alias>" dinamico
+- aria-hidden em KeyRound + Trash2
+
+NOTA W14 PASS 7 (idx_vault_usage_failures):
+- Indice criado p/ dashboard error rate por chave
+- Esta iter NAO consome (foco em currency fix critico)
+- Pass 10 roadmap: coluna "Error rate 7d" usando indice
+
+DEPLOY:
+- commit 64e579e push main OK
+- 56 insertions, 8 deletions
+- dashboard-admin rebuild via VPS cron
+- Backend ja retornava USD cents (mudanca puramente apresentacional)
+
+W4 ADMIN AUDIT TOTAL (passes 1-9):
+| Pass | Page | Tema |
+|---|---|---|
+| 1-3 | hook + sellers/qa-queue | useAdminAction |
+| 4 | /admin/payouts | Transferir Asaas |
+| 5 | /admin/qa-queue | 4 bugs UX |
+| 6 | /admin/orders | poll + status |
+| 7 | /admin/reports | 6 fixes |
+| 8 | /admin/webhooks | dead letter UI |
+| 9 | /admin/vault | currency + 5 (esta iter) |
+
+PROXIMA ITER:
+- W4 pass 10: /admin/vault error rate column usando W14-7 indice
+- W11 pass 8: POST /payments/webhooks/:id/reset (sem psql)
+- W3 pass 12: AddToCart enhancement
