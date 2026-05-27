@@ -102,6 +102,27 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## PDP TABS - WORKER 3 (TABS DECORATIVAS -> FUNCIONAIS)
+Audit em /product/[slug] revelou bug critico:
+- 5 tabs (Visao Geral, Pre-requisitos, Changelog, Reviews, Q&A) eram <button> SEM onClick.
+- Apenas i===0 era marcado como ativo (hardcoded), restante so visual.
+- Conteudo de install_instructions + api_keys aparecia abaixo da tab Visao Geral.
+- Reviews e Q&A apareciam como 2 secoes separadas embaixo, FORA das tabs.
+- 4 das 5 tabs eram mentira visual ao usuario.
+
+FIX commitado + deployed (0158938):
+- Novo Client Component apps/storefront/src/components/product-tabs.tsx.
+- useState<Tab> alterna 5 secoes condicionalmente:
+  - Overview: description + tech_stack badges
+  - Requirements: install_instructions + api_keys_required + estimated_install_min
+  - Changelog: product.versions com breaking_changes marker
+  - Reviews: lista + estrelas + compra-verificada (msg se vazio)
+  - Q&A: lista + QnaUpvote + QnaForm
+- Badges count nas tabs: Reviews(N) e Q&A(N).
+- PDP page agora delega para <ProductTabs />, removendo 65 linhas de codigo duplicado.
+
+VALIDADO: HTML SSR contem ProductTabs + 'Visao Geral' + 'Pre-requisitos' + 'Reviews'.
+
 ## MLB-4 LOYALTY REDEEM - WORKER 16 (POINTS AS DISCOUNT)
 Antes apenas ganhar pontos estava implementado (welcome bonus + earn em order paid).
 Agora resgate completo de pontos como desconto no cart.
