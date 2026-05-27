@@ -1999,3 +1999,52 @@ Reviews tab eh content de Client Component que renderiza apos hydration
 
 DEPLOY: commit e6ff02e pushed, storefront rebuilt via Dockerfile.next,
 service updated --force, converged OK.
+
+## WORKER 8 (VISUAL/UX) - Raw <img> -> next/image em 3 surfaces
+Auditoria de tags <img> em apps/storefront revelou 8 ocorrencias:
+- 5 sao QR codes data:image/png (inline, sem otimizacao necessaria, OK)
+- 3 sao cover_image_url externos CDN - SHOULD usar next/image:
+  * components/cart-drawer.tsx linha 92 (thumb 16x16 mas carregava fullsize)
+  * app/cart/page.tsx linha 120 (thumb 24x24 mas carregava fullsize)
+  * app/promocoes/page.tsx linha 52 (cover 192h)
+
+PROBLEMAS:
+1) Performance: CDN entrega imagem original (~200-800kb) para renderizar
+   em 64x64 ou 96x96 -> 90%+ desperdicio bandwidth + slow LCP.
+2) A11y: alt="" em conteudo (decorativo) ou alt=undefined.
+3) Sem srcset responsivo -> mobile recebe mesma resolucao desktop.
+
+FIX (3 arquivos):
+- components/cart-drawer.tsx: <img alt=""> -> <Image fill sizes="64px"
+  alt={it.product.title || 'Produto'}>
+- app/cart/page.tsx: <img> -> <Image fill sizes="96px" alt={title}>
+- app/promocoes/page.tsx: <img> -> <Image fill sizes="(max-width:768px)
+  100vw, 400px" alt={p.title}>
+
+Next.js config ja whitelisting wildcard hostname '**' (W18 pass 3 setup com
+AVIF + WebP auto-conversion + 24h cache TTL).
+
+BUG SECUNDARIO encontrado: JSX comment {/* */} INSIDE `{cond && (...)}`
+expression causa parse error. Movido comment para fora do && expression.
+
+VALIDACAO PUBLICA:
+- /cart chunk page-16ff125fecab8aac.js contem 'next/image' + 'cover_image_url' OK
+- /promocoes HTML SSR processa imagens via Next image proxy:
+  '_next/image?url=' presente OK
+- Layout chunk (cart-drawer mounted global) contem sizes:"64" config OK
+- HTTP 200 em /cart e /promocoes (deploy OK)
+
+DEPLOY:
+- commit 38b088e (fix initial + 1 syntax error)
+- commit 6ce12b5 (syntax fix do JSX comment)
+- storefront rebuilt via Dockerfile.next, service updated --force, converged OK.
+
+IMPACTO ESTIMADO (proximos LCP scores):
+- /promocoes: cover_image_url tipico 600kb -> AVIF 100kb (-83%)
+- /cart drawer: thumb 64px usava 800kb full -> sizes 64px ~5kb (-99%)
+- Composito: -1MB+ por sessao de checkout em primeira visita.
+
+GAP RESTANTE (proxima iteracao W8):
+- 4 <img> em /comparar, /conta/pedidos (lista + [id]), /seller, /sellers
+- Algumas pages onde <img> faz sentido manter (data:image base64 QR codes
+  sao corretos como <img>).
