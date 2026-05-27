@@ -5583,3 +5583,61 @@ PROXIMA ITER:
 - Considerar verificacao CPF/CNPJ via Receita Federal API (anti-fraud)
 - Implementar verificacao email apos PATCH (se trocou email - hoje email locked)
 - Audit /admin/users edit perfil (admin pode setar CPF p/ qualquer user?)
+
+## WORKER 4 pass 1 (ADMIN PAYOUTS) - error handling + busy state + success toast
+
+VETOR DETECTADO (audit code review /admin/payouts):
+3 actions assincronas SEM try/catch:
+- approve(id) -> linha 17-20
+- reject(id) -> linha 21-26
+- processTransfer(id) -> linha 27-31
+
+Pattern problematico:
+  async function approve(id) {
+    await adminFetch(...);  // sem try/catch
+    load();
+  }
+
+Se adminFetch falha (401 token expirado, 500 svc, network):
+- Promise rejected
+- await throw exception
+- Funcao retorna rejected Promise
+- React swallow silenciosamente (event handler)
+- USER VE NADA = "tela travou"
+
+FIX (1 arquivo apps/dashboard-admin/src/app/payouts/page.tsx):
++ NOVO busyId state - rastreia operacao em flight (1 por vez)
++ NOVO success state - feedback positivo apos action
++ try/catch/finally em cada action:
+  - reset error/success antes
+  - setBusyId(id) durante
+  - setSuccess() ou setError() apos com mensagem clara
+  - setBusyId(null) sempre no finally (mesmo error)
++ UI:
+  - 2 banners (red error + green success) com botao fechar individual
+  - Buttons disabled durante busyId === p.id
+  - Texto dinamico: "..." durante approve, "Enviando..." em transfer
+  - cursor-wait visual cue + opacity-50
+
+DEPLOY:
+- commit cb98dc4 pushed
+- dashboard-admin rebuilt (~3.3s) + converged
+
+VALIDACAO PUBLICA:
+- admin /payouts HTML 200 OK
+- Bundle JS contem: "Enviando", "Falha ao" (codigo deployado)
+- Renderizacao client-side (depende de state)
+
+IMPACTO:
+- Admin operations NUNCA silenciosas
+- Reduce double-click (busy state)
+- Clear error feedback (logs + UI)
+- Success confirmation - admin sabe que action completou
+- Padrao reaplicavel: outras admin pages (qa-queue, sellers, orders)
+  podem usar mesmo pattern
+
+GAP PROXIMA ITER:
+- Aplicar mesmo pattern em /admin/qa-queue (force-approve actions)
+- /admin/sellers (suspend, reactivate, promote-class-b)
+- /admin/orders (refund, dispute resolve)
+- Considerar helper hook useAdminAction() para reuso
