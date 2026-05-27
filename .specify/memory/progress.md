@@ -58,16 +58,25 @@
 - SSL Lets Encrypt R13 + Backup cron 6h
 - 20 cron workers paralelos para auto-fix continuo
 
-## SEO HARDENING (WORKER 9 - PASS 1)
-- /product/[slug] agora tem generateMetadata dinamica:
-  title "Nome do produto - R$X | Code & Agent Shop"
-  description short_description/description strip HTML 160 chars
-  canonical + openGraph type=website + twitter summary_large_image + robots index/follow
-- /seller/[slug] generateMetadata:
-  title "Loja - Vendedor | Code & Agent Shop"
-  description "Loja oficial X. N vendas - M produtos. Tier Y."
-  canonical + openGraph type=profile + twitter card + robots index/follow
-- VALIDADO HTML servido publicamente contem og:title, og:image, og:type, canonical e twitter:card corretos
+## SEO HARDENING (WORKER 9)
+
+### Pass 1: Metadata dinamica por entidade
+- /product/[slug] generateMetadata: title + description + canonical + og + twitter + robots
+- /seller/[slug] generateMetadata: title + description + canonical + og (type=profile)
+- VALIDADO HTML servido contem og:title, og:image, canonical, twitter:card
+
+### Pass 2: Sitemap expandido + robots hardened (NOVO)
+- sitemap.xml de 16 -> 37 URLs (+131%):
+  - 12 estaticas (incluindo /promocoes, /comparar, /cloud-code-ilimitado, /sobre, /termos, /privacidade)
+  - 7 categorias /categoria/[slug] (fetch dinamico)
+  - 7 kind facets /products?kind=X
+  - 10 produtos + sellers existentes
+  - lastModified usa updated_at (mais preciso para crawl incremental)
+- robots.txt:
+  - Allow explicito para /categoria/, /promocoes, /comparar, /sobre, /termos, /privacidade
+  - Disallow estendido: /login, /register, /esqueci-senha, /redefinir-senha, /seller/dashboard, /seller/upload
+  - Bloqueio total de crawlers agressivos: SemrushBot, AhrefsBot, DotBot, PetalBot, MJ12bot
+- VALIDADO 37 <loc> entries publicamente em https://cas.../sitemap.xml
 
 ## PENDENCIA UNICA: DNS A pelo usuario
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
