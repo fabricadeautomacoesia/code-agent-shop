@@ -9436,3 +9436,90 @@ PROXIMA ITER:
 - W4 pass 11: /admin/products (validar existencia ou criar)
 - W17 pass 12: rotacao automatica keys (rotation_due_at)
 - W14 pass 8: drop dead indices apos 2 semanas
+
+## WORKER 17 PASS 12 - Rotacao automatica vault keys + cron alerta
+
+CONTEXTO:
+- Tabela vault_api_keys tinha coluna rotation_due_at + idx_vault_rotation
+  desde migration 003 mas NUNCA usadas
+- Provision sempre INSERT NULL
+- Sem cron checando vencimento
+- Admin sem visibilidade -> chave revogada upstream chega SURPRESA em prod
+
+3 ENTREGUES:
+
+1. POST /keys popula rotation_due_at:
+   - Schema novo campo rotation_days opcional (default 90d)
+   - INSERT ... rotation_due_at = NOW() + ($11 || ' days')::INTERVAL
+   - 90d alinhado PCI/SOC2 best practices
+   - Override { rotation_days: 30 } para chaves criticas
+   - Response inclui rotation_due_at
+
+2. rotationAlertCron() diario:
+   - SELECT keys is_active WHERE rotation_due_at < NOW() + 7d
+   - Usa idx_vault_rotation (WHERE is_active=TRUE) barato
+   - Cria notification in_app para TODOS admins/staff
+   - Idempotente: skip se ja ha notif <24h para a key
+   - Priority dinamico: overdue=3 vs proximo=1
+   - Title: "Chave X VENCIDA (ha 5d)" vs "vence em 3d"
+   - Payload JSONB { key_id, alias, provider, days } p/ deep-link
+
+3. GET /keys/rotation-due endpoint:
+   - jwt admin/staff
+   - WHERE rotation_due_at < NOW() + 30d
+   - ORDER BY rotation_due_at ASC LIMIT 100
+   - Pronto para UI W4 pass 11
+
+SCHEDULE:
+- setTimeout 60s warmup + setInterval 24h
+- Sem hammer DB (vencimentos sao lentos)
+
+NOTIFICATION:
+- template_code='vault_rotation_due' (in_app text-only, sem DB template)
+- Aparece NotificationBell admin
+- Pass futuro: email para admins offline
+
+PADRAO REUSAVEL:
+- coluna *_due_at + idx partial WHERE is_active
+- cron diario detecta vencimentos
+- notification idempotente 1/dia/entity
+- endpoint REST p/ UI
+
+VALOR OPERACIONAL:
+ANTES: token rotacionado upstream = panic em prod (100% errors surpresa)
+DEPOIS: admin avisado 7 dias antes + lista priorizada -> rotacao planejada
+
+DEPLOY:
+- commit 9c6c65d push main OK
+- 93 insertions, 6 deletions
+- vault-svc rebuild via VPS cron
+- DB schema ja tem campo + indice + notifications table
+
+VALIDACAO POS-DEPLOY:
+- POST /keys { rotation_days: 7 } -> rotation_due_at = NOW+7d
+- Log [vault.rotation.cron] daily rotation alert cron started
+- 60s depois log [vault.rotation.alert] count=N
+- Admin NotificationBell -> "Chave X vence em Yd"
+- GET /keys/rotation-due retorna lista priorizada
+
+W17 SECURITY AUDIT (passes 1-12):
+- pass 1-2: JWT role enforcement /use
+- pass 3: fail2ban global
+- pass 4: DLP tok_len
+- pass 5: timing-safe compare
+- pass 6: rate-limit /use + /keys
+- pass 7: startup validate envs
+- pass 8: VAULT_INTERNAL_TOKEN enforce
+- pass 9: INSERT fantasma removido
+- pass 10: rate-limit register+forgot+reset
+- pass 11: rate-limit 2FA endpoints
+- pass 12: rotacao keys cron + endpoint (esta iter)
+
+PADRAO MONITORING+ROTATION ESTABELECIDO:
+W14 partial idx + Backend cron + Notif idempotente + UI endpoint
+Aplicavel a: sessions, tokens, refresh_tokens, asaas_subscriptions, etc.
+
+PROXIMA ITER:
+- W4 pass 11: /admin/vault badge "Renova Xd" usando rotation_due_at
+- W17 pass 13: POST /keys/:id/rotate (swap chave UI workflow)
+- W13: template email vault_rotation_due (admins offline)
