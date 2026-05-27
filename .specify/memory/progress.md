@@ -102,6 +102,26 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## VISUAL+PWA OFFLINE (WORKERS 8+9 - PUSH PENDENTE)
+
+WORKER 8 pass 2 (commit local 17e2d2e):
+- animate-pulse-slow usado em flash-promo-timer.tsx + dashboard-seller mas
+  storefront/tailwind.config.ts nao tinha definicao. Tailwind purga classes
+  nao mapeadas -> animacao silenciosa nao rodava.
+- FIX: 'pulse-slow': 'pulse 3s cubic-bezier(.4,0,.6,1) infinite' adicionado.
+
+WORKER 9 pass 4 (commit local 661ca87):
+- Storefront sem manifest.json, sem favicon, sem opengraph-image dinamico.
+- WhatsApp/Twitter share da homepage mostrava preview vazio.
+- Sem 'Install app' no Chrome mobile (PWA).
+- Sem apple-touch-icon (iOS home screen sem icon decente).
+
+ADICIONADO via Next.js App Router file conventions:
+- src/app/manifest.ts: nome, theme_color, background, display standalone, icons
+- src/app/icon.tsx: 32x32 favicon (ImageResponse com gradient + 'C&')
+- src/app/apple-icon.tsx: 180x180 iOS home screen
+- src/app/opengraph-image.tsx: 1200x630 social share rich preview
+
 ## QA PARSER + FAIL2BAN CRITICAL (WORKERS 12+6 - PUSH PENDENTE)
 
 WORKER 12 pass 2 (commit local 95bfbbd):
