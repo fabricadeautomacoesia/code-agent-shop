@@ -9,7 +9,7 @@ const fs = require('node:fs/promises');
 const { exec } = require('node:child_process');
 const { promisify } = require('node:util');
 const { query, healthcheck } = require('@cas/db-client');
-const { logger, errorHandler, asyncHandler, jwt } = require('@cas/shared');
+const { logger, errorHandler, asyncHandler, jwt, cache } = require('@cas/shared');
 
 const execP = promisify(exec);
 const log = logger.child({ svc: 'aiops-svc' });
@@ -198,7 +198,19 @@ app.get('/health', (_req, res) => res.json({
 //
 // FIX: /status publica retorna so summary sanitizado (cpu/ram/disk apenas - status page legitima)
 // /metrics e /alerts viram admin-only (raw data sensivel).
-app.get('/status', asyncHandler(async (_req, res) => {
+//
+// FIX-WORKER-18 pass 2: cache 5s no /status. Endpoint mais quente do svc:
+// - Storefront /status page faz fetch a cada 10s (refresh ativo)
+// - Cada call faz collectMetrics() executando shell commands (top/free/df) ~50-200ms
+// - + healthcheck() ping Postgres + query alerts aggregate
+// - Multiplicado por N users abertos = N x (shell + 2 DB calls) cada 10s
+//
+// Cache 5s alinhado com client refresh: 1 colaborador "shared" por janela de 5s.
+// 2 users abrindo /status simultaneo dividem 1 backend call.
+// Trade-off: dados ate 5s antigos, aceitavel para status page (nao real-time).
+app.get('/status',
+  cache.cacheMiddleware(() => 'aiops:status:public:v2', 5),
+  asyncHandler(async (_req, res) => {
   const db = await healthcheck();
   const m = await collectMetrics();
   // Sanitiza metrics: so cpu/ram/disk percent + load. SEM hostname, uptime, extras (platform)
