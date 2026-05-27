@@ -1209,3 +1209,42 @@ VALIDACAO PUBLICA HTML SSR:
 - Tags HTML div presentes (SSR direto, nao precisa hydration)
 
 DEPLOY: commit 748799a pushed, build via Dockerfile.next, service updated --force, OK.
+
+## WORKER 16 (MLB-NEW) - Loyalty extrato com icones + paginacao Ver mais
+Pagina /conta/pontos ja existia mas exibia transacoes com label generico
+"welcome bonus" (snake_case substituido por espaco). MLB exibe extrato com:
+1) Icone por categoria de transacao
+2) Label legivel em portugues
+3) Cor semantica (verde = ganhou, vermelho = gastou)
+4) Paginacao "Ver mais" para historico longo
+
+BACKEND: services/seller-svc/src/routes/loyalty.js
+- GET /loyalty/me agora aceita ?limit=N (default 20, max 200)
+- Bug fix paralelo: bloco welcome_bonus refazia SELECT com LIMIT 20 hardcoded.
+
+UI: apps/storefront/src/app/conta/pontos/page.tsx
+- Mapa REASON_INFO { welcome_bonus, order_paid, order_redeem,
+  order_refunded, order_refund_restore } -> { icon, label, color }
+- Fallback gracioso para reason desconhecido (Gift + raw label)
+- useState limit + loadMore (+20) com botao "Ver mais transacoes"
+- Lista refatorada com divide-y, w-9 round icon avatar, ref:uuidshort
+
+VALIDACAO PUBLICA (DUAL):
+1) Backend GET /api/loyalty/me?limit=5 (auth teste1@cas.io):
+   loyalty: gold tier 10100 pts lifetime, 10000 balance
+   transactions: [{welcome_bonus, +100}] -> OK limit aplicado
+2) Chunk _next/static/chunks/app/conta/pontos/page-630035effaad8338.js:
+   Extrato de pontos, Bonus de boas-vindas, Compra paga,
+   Pontos resgatados, Pontos estornados, Pontos devolvidos,
+   Ver mais transacoes -> TUDO OK
+
+DEPLOY: commit 5470ebb pushed,
+- seller-svc rebuilt via Dockerfile.node com SVC=seller-svc (contexto root)
+- storefront rebuilt via Dockerfile.next (contexto apps/storefront)
+- ambos --force update, converged OK.
+
+OBSERVACAO: primeiro build seller-svc falhou com contexto errado (svc dir),
+corrigido para contexto monorepo root /opt/cas. Documentar no proximo
+docker-deploy-cheatsheet:
+  - Dockerfile.next: contexto apps/<APP>
+  - Dockerfile.node: contexto /opt/cas + --build-arg SVC=<svc>
