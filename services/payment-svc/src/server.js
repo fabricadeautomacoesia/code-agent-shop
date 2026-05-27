@@ -443,9 +443,20 @@ async function processWebhookEvent(evt) {
 }
 
 // POST /payments/payouts/:id/process - admin manda processar transfer
+// FIX-WORKER-4: regex UUID antes do DB para evitar PG 22P02 -> 404 generico do global handler
+const PAYOUT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 app.post('/payments/payouts/:id/process',
   jwt.requireAuth({ roles: ['admin','staff'] }),
   asyncHandler(async (req, res, next) => {
+    if (!PAYOUT_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+    // FIX-WORKER-4: distingue 'inexistente' de 'existe mas nao-aprovado'
+    const exists = await query(`SELECT status FROM seller_payouts WHERE id = $1`, [req.params.id]);
+    if (!exists.rows.length) return next(errorHandler.notFound('payout_not_found'));
+    if (exists.rows[0].status !== 'approved') {
+      return next(errorHandler.badRequest('payout_not_approved', `status atual: ${exists.rows[0].status}`));
+    }
     const p = await query(
       `SELECT p.*, s.asaas_wallet_id FROM seller_payouts p
         JOIN sellers s ON s.id = p.seller_id WHERE p.id = $1 AND p.status = 'approved'`,

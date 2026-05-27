@@ -143,27 +143,42 @@ router.get('/payouts/pending', asyncHandler(async (req, res) => {
   res.json({ payouts: r.rows });
 }));
 
+// FIX-WORKER-4: regex UUID antes de bater no DB
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // POST /sellers/admin/payouts/:id/approve
-router.post('/payouts/:id/approve', asyncHandler(async (req, res) => {
-  await query(
+// FIX-WORKER-4: antes silenciava ok:true mesmo com UPDATE 0 rows (UUID inexistente ou nao-pending).
+// Admin clicava aprovar -> mensagem de sucesso falsa, mas nada havia acontecido.
+// Agora: 400 invalid_uuid / 404 payout_not_pending com RETURNING id.
+router.post('/payouts/:id/approve', asyncHandler(async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) {
+    return next(errorHandler.badRequest('invalid_uuid'));
+  }
+  const r = await query(
     `UPDATE seller_payouts SET status = 'approved', approved_at = NOW(), approved_by = $1
-      WHERE id = $2 AND status = 'pending'`,
+      WHERE id = $2 AND status = 'pending' RETURNING id`,
     [req.user.sub, req.params.id]
   );
+  if (!r.rows.length) return next(errorHandler.notFound('payout_not_pending'));
   // payment-svc disparara Asaas transfer
-  res.json({ ok: true });
+  res.json({ ok: true, approved: r.rows[0].id });
 }));
 
 // POST /sellers/admin/payouts/:id/reject
+// FIX-WORKER-4: mesma logica de RETURNING + UUID guard
 router.post('/payouts/:id/reject',
   validate({ body: z.object({ reason: z.string().min(3) }) }),
-  asyncHandler(async (req, res) => {
-    await query(
+  asyncHandler(async (req, res, next) => {
+    if (!UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+    const r = await query(
       `UPDATE seller_payouts SET status = 'rejected', rejected_reason = $1
-       WHERE id = $2 AND status = 'pending'`,
+       WHERE id = $2 AND status = 'pending' RETURNING id`,
       [req.body.reason, req.params.id]
     );
-    res.json({ ok: true });
+    if (!r.rows.length) return next(errorHandler.notFound('payout_not_pending'));
+    res.json({ ok: true, rejected: r.rows[0].id });
   })
 );
 
