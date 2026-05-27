@@ -6124,3 +6124,41 @@ PROXIMA ITER:
 - Toast component centralizado (opcional, banners ja funcionais)
 - W14 audit DB indices faltantes
 - W16 MLB-14 feature nova (price drop email, wishlist sharing, etc)
+
+## WORKER 3 PASS 2 - PDP breadcrumb slash orfao fix
+
+BUG IDENTIFICADO em /product/[slug]/page.tsx (linhas 89-90):
+  <div className="text-sm text-white/40 mb-4">
+    <Link href="/products">Catalogo</Link> /{' '}
+    {product.category_slug && <Link>{category_name}</Link>}
+  </div>
+
+Quando product.category_slug=null (sem categoria atribuida):
+  Renderizava "Catalogo / " com slash orfao trailing.
+  Visualmente broken + degrada UX + SEO breadcrumb inconsistente
+  com o JSON-LD breadcrumbLd ja gerado em linha 86.
+
+CORRECAO (3 mudancas):
+1. <div> -> <nav aria-label="breadcrumb"> (a11y semantico)
+2. Separador "/" so renderiza dentro do conditional (linhas validas only)
+3. BONUS: titulo do produto adicionado como ultima entry
+   -> consistente com breadcrumbLd JSON-LD (3 niveis: Catalogo > Cat > Produto)
+
+OUTPUT:
+- Sem categoria: "Catalogo / Titulo do produto" (2 niveis)
+- Com categoria: "Catalogo / Categoria / Titulo do produto" (3 niveis)
+
+Cores:
+- Entries: text-white/40 hover:text-white (links)
+- Separadores: text-white/30 (mx-1.5 spacing uniforme)
+- Titulo atual: text-white/60 (destacado)
+
+DEPLOY:
+- commit 95885ac pushed main
+- VPS auto-pull cron aplicara mudanca
+- storefront rebuild necessario para refletir publicamente
+
+VALIDACAO:
+- Source verificado: 14 insertions, 4 deletions
+- Estrutura HTML: <nav> > Link + (span+Link)? + span + <span>
+- Consistencia com breadcrumbLd JSON-LD: OK
