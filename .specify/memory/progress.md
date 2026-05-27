@@ -2604,3 +2604,50 @@ LICAO CAPTURADA:
 - Se planner ja faz "Index Cond + cheap Filter recheck", criar novo indice
   com Filter no WHERE parcial e provavelmente redundante.
 - Honest retrospective > deploy de codigo inutil.
+
+## WORKER 15 pass 2 (MOBILE) - /conta/pontos hero card stacking
+Audit estatico encontrou 20+ ocorrencias de text-3xl/4xl/5xl sem prefixo
+responsive. Mais critico: /conta/pontos hero card.
+
+PROBLEMA EM 375px:
+- glass-strong p-8 (32px padding all around) -> conteudo util = 280px
+- flex items-center justify-between com 2 colunas:
+  * Esquerda: text-3xl tier + icon w-7 = ~120-180px
+  * Direita: text-5xl saldo (48px font) = 100k = "100.000" -> ~168px
+- Total >= 288px > 280px disponivel
+- Saldo grande (>= 10000) com tier ativo (Gold/Platinum + icon)
+  causaria OVERFLOW + clipping ou wrapping inconsistente
+
+FIX: apps/storefront/src/app/conta/pontos/page.tsx
+- h1 "CAS Pontos": text-3xl sm:text-4xl (era text-4xl absoluto)
+- p subtitle: text-sm sm:text-base
+- hero card: p-6 sm:p-8 (menos padding em mobile = +16px width util)
+- flex container: flex-col sm:flex-row + gap-4 sm:gap-2
+- tier name: text-2xl sm:text-3xl + icon w-6 h-6 sm:w-7
+- saldo container: text-left em mobile (proximo do tier) sm:text-right
+- saldo value: text-4xl sm:text-5xl (era text-5xl absoluto)
+
+EM 375px AGORA:
+- Cabecalho h1 em uma linha (text-3xl ~ 24px x 11 chars = 264px OK)
+- Hero card stacked verticalmente: tier no topo, saldo abaixo
+- Cada bloco ocupa width total da card sem competir por espaco
+- Em sm+ (640px+) volta para layout side-by-side original
+
+VALIDACAO PUBLICA:
+- Chunk /conta/pontos/page-608d1ff35d3cde7d.js contem 7 classes responsive:
+  flex-col sm:flex-row, p-6 sm:p-8, text-2xl sm:text-3xl,
+  text-3xl sm:text-4xl, text-4xl sm:text-5xl, text-left sm:text-right,
+  w-6 h-6 sm:w-7 -> TODAS OK
+
+DEPLOY: commit ad86d96 pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
+
+LICAO mobile-first:
+- text-Nxl sem prefixo SEMPRE = mobile-first (aplica em qualquer viewport)
+- Padding p-8 (32px) consome ~21% da largura 375px - reduzir em mobile
+- 2-col flex layouts sempre devem ser flex-col em mobile se cada coluna
+  tem conteudo de tamanho variavel ou grande
+
+GAP RESTANTE proxima iter:
+- 18 outras h1 com text-4xl absoluto em pages varias (mas menores risco
+  pois sao headers SEM conteudo competing side-by-side)
