@@ -3139,3 +3139,52 @@ DEPLOY:
 - commit c25811e (fix cache.js retry)
 - commit 5c859de (fix withCache destructuring)
 - product-svc + search-svc rebuilt e convergidos
+
+## WORKER 16 (MLB-NEW) / SEO - JSON-LD productLd enriquecido (Google Shopping ready)
+Mercado Livre tem rich snippets completos no Google (preco, estrelas,
+disponibilidade, retorno, frete). Auditoria do productLd CAS revelou 4
+campos obrigatorios faltando que Google Merchant Center exige para listar
+produtos em Google Shopping:
+
+CAMPOS ADICIONADOS em apps/storefront/src/components/json-ld.tsx:
+
+1. itemCondition: 'https://schema.org/NewCondition'
+   - Produtos digitais sao sempre 'novos'. Obrigatorio Google Shopping.
+
+2. priceValidUntil: NOW + 365 dias (ISO date)
+   - Google sugere validade explicita do preco para evitar 'expired' status
+     em snippets.
+
+3. shippingDetails: OfferShippingDetails
+   - Para produto digital: shippingRate 0.00 BRL + deliveryTime 0h/0h
+   - Comunica explicitamente "entrega instantanea, sem frete"
+
+4. hasMerchantReturnPolicy: MerchantReturnPolicy
+   - applicableCountry: BR
+   - returnPolicyCategory: MerchantReturnFiniteReturnWindow
+   - merchantReturnDays: usa product.warranty_days (default 30)
+   - returnMethod: ReturnByMail (logica para produtos digitais e via
+     suporte, mas schema.org so tem options fisicas)
+   - returnFees: FreeReturn (politica padrao da plataforma)
+
+VALIDACAO PUBLICA:
+- PDP /product/agente-rag-documentos-cas-004 HTML SSR contem:
+  shippingDetails (OfferShippingDetails + 0.00 BRL + 0h delivery) OK
+  hasMerchantReturnPolicy (BR + FiniteReturnWindow + 30 dias + FreeReturn) OK
+  itemCondition: NewCondition OK
+  priceValidUntil: 2027-05-27 (365 dias) OK
+  merchantReturnDays: 30 (do warranty_days do produto) OK
+
+DEPLOY: commit b7f36dd pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
+
+IMPACTO ESPERADO:
+- Google Shopping pode listar produtos do CAS (rich snippets + price ticker)
+- Snippets na SERP ganham botao "Comprar" + price + rating + return policy
+- Aumento esperado CTR vs snippets text-only: +30-50%
+- Trust signals visiveis ANTES do click (retorno garantido, sem frete)
+
+PADRAO ARQUITETURAL:
+- productLd usa data dinamica do produto (warranty_days), nao hardcoded
+- Sellers podem customizar warranty_days no upload -> reflete no JSON-LD
+- Quando schema.org adicionar 'digital delivery' methods, atualizar
