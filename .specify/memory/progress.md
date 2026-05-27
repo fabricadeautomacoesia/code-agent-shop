@@ -5859,3 +5859,52 @@ PROXIMA ITER (W4 fechado, abrir outros tracks):
 - Toast component global (vs banners inline) - opcional UX upgrade
 - Aplicar mesma logica em dashboard-seller (W5 territory)
 - Audit que actions storefront podem se beneficiar (checkout, wishlist toggles)
+
+## WORKER 5 pass 1 (SELLER DASH) - useSellerAction hook + /products refactor
+
+VETOR DETECTADO (audit dashboard-seller):
+apps/dashboard-seller/src/app/products/page.tsx linha 32:
+  catch (e: any) { alert(e.message); }
+
+alert() browser-blocking eh feio + ininterruptivel + sem success feedback.
+Padrao incompativel com dashboard-admin (useAdminAction W4 passes 1-5).
+
+FIX em 2 arquivos:
+
+1. apps/dashboard-seller/src/lib/use-seller-action.ts (NOVO):
++ Mirror EXATO de useAdminAction (mesma interface TypeScript)
++ busyKey opaco + error/success messages + clear() callback
++ run(key, fn) wrapper try/catch + reload automatico
++ Dedup: skip if busyKey ja setado
++ Hook ID propria (UseSellerActionReturn) - permite tipos distintos
+  futuramente se admin/seller divergirem
+
+2. apps/dashboard-seller/src/app/products/page.tsx:
+- alert(e.message) -> action.run() com banners inline
++ submitQA(id) via hook + texto dinamico ("Enviando...")
++ loadError separado (lista falha) vs action.error (acao falha)
++ 2 banners (error red + success green) com clear callback
+
+PADRAO UX agora consistente entre dashboard-admin e dashboard-seller.
+
+DEPLOY:
+- commit 81fc78b pushed
+- dashboard-seller rebuilt (~3.3s) + converged
+
+VALIDACAO PUBLICA:
+- /products HTTP 200 OK
+- Bundle JS contem: "Enviando", "Falha:", "busyKey", "submit-"
+  -> hook deployado + textos corretos
+
+IMPACTO:
+- Zero alert() browser-blocking em seller dash
+- Feedback success agora visivel (era invisivel antes)
+- Pattern preparado para 5 outras seller pages que precisam refactor
+
+GAP DETECTADO (proxima iter):
+- Refactor /qna (answer button - linha 27)
+- Refactor /products/[id] edit (PATCH + submit)
+- Refactor /upload (POST create draft)
+- Refactor /loja (PATCH profile + KYC)
+- Refactor /financeiro (POST payout request)
+- Considerar mover hook para packages/shared-ui (DRY entre admin+seller)
