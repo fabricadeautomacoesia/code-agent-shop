@@ -2,37 +2,44 @@
 
 import { useEffect, useState } from 'react';
 import { adminFetch, fmtDate, fmtBRL } from '@/lib/admin-api';
+import { useAdminAction } from '@/lib/use-admin-action';
 import { Plus, Trash2 } from 'lucide-react';
 
 export default function VaultPage() {
   const [keys, setKeys] = useState<any[]>([]);
   const [form, setForm] = useState({ provider: 'openai', key_alias: '', plain_key: '', is_platform_pool: true, seller_id: '' });
   const [show, setShow] = useState(false);
-  const [err, setErr] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   async function load() {
-    try { const r = await adminFetch<{ keys: any[] }>('/vault/keys'); setKeys(r.keys); }
-    catch (e: any) { setErr(e.message); }
+    try { const r = await adminFetch<{ keys: any[] }>('/vault/keys'); setKeys(r.keys); setLoadError(''); }
+    catch (e: any) { setLoadError(e.message); }
   }
   useEffect(() => { load(); }, []);
 
+  // FIX-WORKER-4 pass 4: useAdminAction hook substitui try/catch ad-hoc
+  const action = useAdminAction(load);
+
   async function create(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    action.run('create-key', async () => {
       await adminFetch('/vault/keys', { method: 'POST', body: JSON.stringify({
         ...form,
         seller_id: form.seller_id || null,
       })});
-      setShow(false); setForm({ provider:'openai', key_alias:'', plain_key:'', is_platform_pool: true, seller_id:'' });
-      load();
-    } catch (e: any) { setErr(e.message); }
+      setShow(false);
+      setForm({ provider:'openai', key_alias:'', plain_key:'', is_platform_pool: true, seller_id:'' });
+      return `Chave ${form.key_alias} provisionada (${form.provider})`;
+    });
   }
 
   async function revoke(id: string) {
     const reason = prompt('Motivo da revogacao:');
     if (!reason) return;
-    await adminFetch(`/vault/keys/${id}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) });
-    load();
+    action.run(`revoke-${id}`, async () => {
+      await adminFetch(`/vault/keys/${id}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) });
+      return `Chave ${id.slice(0, 8)}... revogada`;
+    });
   }
 
   return (
@@ -44,6 +51,22 @@ export default function VaultPage() {
         </div>
         <button onClick={() => setShow(true)} className="btn-primary flex items-center gap-2"><Plus className="w-4 h-4" /> Provisionar chave</button>
       </div>
+
+      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+
+      {/* FIX-WORKER-4 pass 4: banners via useAdminAction (DRY com payouts/qa-queue/sellers/products) */}
+      {action.error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.error}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.success}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
 
       {show && (
         <form onSubmit={create} className="glass p-6 mb-6 space-y-3">
@@ -79,10 +102,12 @@ export default function VaultPage() {
             Pool da plataforma (Classe B usa fallback)
           </label>
           <div className="flex gap-2">
-            <button type="submit" className="btn-primary">Provisionar</button>
+            <button type="submit" disabled={action.busyKey === 'create-key'}
+              className="btn-primary disabled:opacity-50 disabled:cursor-wait">
+              {action.busyKey === 'create-key' ? 'Provisionando...' : 'Provisionar'}
+            </button>
             <button type="button" onClick={() => setShow(false)} className="px-5 py-2.5 rounded-lg border border-white/10">Cancelar</button>
           </div>
-          {err && <div className="text-red-400 text-sm">{err}</div>}
         </form>
       )}
 
@@ -92,31 +117,35 @@ export default function VaultPage() {
             <tr><th className="py-2">Alias</th><th>Provider</th><th>Pool</th><th>Uso/mes</th><th>Quota</th><th>Status</th><th>Criado</th><th></th></tr>
           </thead>
           <tbody>
-            {keys.map((k) => (
-              <tr key={k.id} className="border-b border-white/5 hover:bg-white/5">
-                <td className="py-3">
-                  <div className="font-mono text-xs">{k.key_alias}</div>
-                  <div className="text-[10px] text-white/40">fp: {k.key_fingerprint}</div>
-                </td>
-                <td>{k.provider}</td>
-                <td>{k.is_platform_pool ? <span className="text-magenta">platform</span> : <span className="text-white/60">seller</span>}</td>
-                <td className="font-mono text-xs">{fmtBRL(k.usage_this_month_cents)}</td>
-                <td className="font-mono text-xs">{k.monthly_quota_usd_cents ? fmtBRL(k.monthly_quota_usd_cents) : '-'}</td>
-                <td>
-                  {k.is_active
-                    ? <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs">active</span>
-                    : <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 text-xs">revoked</span>}
-                </td>
-                <td className="text-xs text-white/40">{fmtDate(k.created_at)}</td>
-                <td className="text-right">
-                  {k.is_active && (
-                    <button onClick={() => revoke(k.id)} className="text-red-400 hover:underline text-xs inline-flex items-center gap-1">
-                      <Trash2 className="w-3 h-3" /> Revogar
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {keys.map((k) => {
+              const busy = action.busyKey === `revoke-${k.id}`;
+              return (
+                <tr key={k.id} className="border-b border-white/5 hover:bg-white/5">
+                  <td className="py-3">
+                    <div className="font-mono text-xs">{k.key_alias}</div>
+                    <div className="text-[10px] text-white/40">fp: {k.key_fingerprint}</div>
+                  </td>
+                  <td>{k.provider}</td>
+                  <td>{k.is_platform_pool ? <span className="text-magenta">platform</span> : <span className="text-white/60">seller</span>}</td>
+                  <td className="font-mono text-xs">{fmtBRL(k.usage_this_month_cents)}</td>
+                  <td className="font-mono text-xs">{k.monthly_quota_usd_cents ? fmtBRL(k.monthly_quota_usd_cents) : '-'}</td>
+                  <td>
+                    {k.is_active
+                      ? <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs">active</span>
+                      : <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 text-xs">revoked</span>}
+                  </td>
+                  <td className="text-xs text-white/40">{fmtDate(k.created_at)}</td>
+                  <td className="text-right">
+                    {k.is_active && (
+                      <button onClick={() => revoke(k.id)} disabled={busy}
+                        className="text-red-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                        <Trash2 className="w-3 h-3" /> {busy ? '...' : 'Revogar'}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
