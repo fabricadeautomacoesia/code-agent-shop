@@ -2144,3 +2144,65 @@ VALIDACAO FUNCIONAL:
 
 DEPLOY: commit 139f38c pushed, search-svc rebuilt via Dockerfile.node
 SVC=search-svc, service updated --force, converged OK.
+
+## WORKER 11 pass 2 (PAYMENT/ASAAS) - CRITICAL auth bypass em /asaas/create
+Re-auditoria payment-svc descobriu bug critico nao detectado em pass 1
+(que focou em webhook + installments preview):
+
+BUG CRITICAL (denial-of-wallet + PII leak):
+POST /payments/asaas/create nao tinha NENHUM auth gate (apenas Zod validation).
+Qualquer um na internet podia:
+1) POST com order_id valido (UUIDs sao previsiveis ou enumeraveis):
+   - Disparar Asaas API call REAL (cobrancao de criar payment + rate limit)
+   - Receber em response: invoice_url, pix_qrcode, pix_copy_paste, boleto_url
+     do pedido de OUTRO buyer (PII leak)
+   - Side effect: UPDATE orders SET payment_status='authorized'
+2) Spam ataque: criar centenas de payments Asaas para inflar conta + esgotar
+   rate limit + interromper checkout real.
+
+CONFIRMADO em producao:
+- curl SEM auth + order_id existente -> HTTP 401 retornado mas do ASAAS API
+  (asaas_401 propagado), nao do gateway. Provando que request chegou ate Asaas.
+- ORDER_ID enumeravel via /orders/admin/recent (era publico antes W4, agora
+  authed) ou via response da propria /asaas/create do proprio pedido.
+
+PADRAO IDENTICO a W12 qa-svc/qa/run e W17 vault/usage. CAS V8 service-mesh
+deve usar SEMPRE x-internal-token OU role admin/staff/service para
+endpoints internos.
+
+FIX 1: services/payment-svc/src/server.js linha 23-37
+- Novo asaasCreateGuard middleware:
+  * Aceita x-internal-token = PAYMENT_INTERNAL_TOKEN (service mesh)
+  * OU jwt.requireAuth({roles: ['admin','staff','service']})
+  * timing-safe comparison no token
+  * Buyer/seller -> 403 forbidden_role
+- Aplicado em POST /payments/asaas/create linha 92
+
+FIX 2: services/order-svc/src/routes/orders.js linha 130-138
+- Dispatcher legitimo (apos checkout) agora envia:
+  'x-internal-token': process.env.PAYMENT_INTERNAL_TOKEN
+
+VALIDACAO PUBLICA (5 cenarios):
+1) EXPLOIT sem auth -> 401 OK (era 401 do Asaas API com side effects)
+2) EXPLOIT buyer token -> 403 forbidden_role OK
+3) Regression webhook sem sig -> 401 invalid_signature OK (W11 pass 1)
+4) Regression /installments/preview?amount=19900 -> 200 OK
+5) Regression /payouts/process UUID malformado -> 400 invalid_uuid OK (W4)
+
+DEPLOY:
+- commit ca551f9 pushed
+- payment-svc rebuilt via Dockerfile.node SVC=payment-svc, converged OK
+- order-svc rebuilt via Dockerfile.node SVC=order-svc, converged OK
+
+NOTA OPERACIONAL CRITICA:
+PAYMENT_INTERNAL_TOKEN PRECISA ser configurado em .env Swarm para AMBOS
+order-svc e payment-svc, mesmo valor. Senao checkout REAL falha porque
+dispatcher legitimo cai no JWT path e nao tem token de service.
+Padrao Inovare: gerar uma vez por env, injetar como secret Swarm em todos
+services que precisem chamar payment-svc /asaas/create.
+
+GAP RESTANTE: Outros endpoints internal-only que devem usar pattern:
+- /payments/payouts/:id/process (admin auth OK ja existe via jwt.requireAuth roles)
+- /payments/asaas/webhook (HMAC signature, padrao diferente OK)
+- /notifications/test (admin role OK)
+- Nenhum mais critico identificado.
