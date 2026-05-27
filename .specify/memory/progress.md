@@ -1248,3 +1248,39 @@ corrigido para contexto monorepo root /opt/cas. Documentar no proximo
 docker-deploy-cheatsheet:
   - Dockerfile.next: contexto apps/<APP>
   - Dockerfile.node: contexto /opt/cas + --build-arg SVC=<svc>
+
+## WORKER 9 (SEO) - Metadata para 6 paginas /conta/* privadas
+Audit identificou 6 paginas sem metadata especifica (herdavam root generico
+"Code & Agent Shop"). Audit corrigido considera layout.tsx irmao (pattern
+Next.js para client components que nao podem exportar metadata diretamente).
+
+CRIADO: 6 layout.tsx wrappers com metadata + robots:noindex,nofollow:
+1) apps/storefront/src/app/conta/favoritos/layout.tsx
+   -> title "Meus favoritos - Code & Agent Shop"
+2) apps/storefront/src/app/conta/pedidos/layout.tsx
+   -> title "Meus pedidos - Code & Agent Shop"
+3) apps/storefront/src/app/conta/pedidos/[id]/layout.tsx (DINAMICO via generateMetadata)
+   -> title "Pedido {id.slice(0,8)} - Code & Agent Shop"
+4) apps/storefront/src/app/conta/pontos/layout.tsx
+   -> title "CAS Pontos - Loyalty Program"
+5) apps/storefront/src/app/conta/seguranca/layout.tsx
+   -> title "Seguranca da conta - Code & Agent Shop"
+6) apps/storefront/src/app/conta/downloads/[token]/layout.tsx
+   -> title "Download - Code & Agent Shop"
+   -> robots adiciona nocache (token sensitivo)
+
+VALIDACAO PUBLICA (6 paths via curl --resolve):
+- /conta/favoritos: title + description + robots noindex,nofollow OK
+- /conta/pedidos: idem OK
+- /conta/pontos: idem OK (title diferenciado CAS Pontos - Loyalty Program)
+- /conta/seguranca: idem OK
+- /conta/pedidos/abc12345-test-...: title dinamico "Pedido abc12345" OK
+- /conta/downloads/sometoken123: robots inclui nocache OK
+
+RE-AUDIT FINAL: 0 paginas sem metadata em apps/storefront/src/app/.
+
+DEPLOY: commit 11b3539 pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
+
+LICAO: audit anterior so checava page.tsx, ignorando layout.tsx que e o
+pattern Next.js App Router para client components.
