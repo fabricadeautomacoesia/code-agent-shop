@@ -72,10 +72,17 @@ app.get('/health', (_req, res) => res.json({
 }));
 
 // GET /api/notifications - bandeja in-app do user
+// FIX-WORKER-13: SELECT explicit nao expoe campos internos do outbox processor:
+// - locked_by/locked_at (worker mutex), next_retry_at/retry_count/failed_reason
+//   (state machine), sent_status/sent_at (irrelevante para in_app), template_code
+//   (interno), user_id (redundante, ja eh do user authed)
+// Reduz tambem payload size por notif (de ~1.3kb para ~0.5kb).
 app.get('/', jwt.requireAuth(), asyncHandler(async (req, res) => {
   const lim = Math.min(parseInt(req.query.limit, 10) || 30, 100);
   const r = await query(
-    `SELECT * FROM notifications
+    `SELECT id, channel, title, body, body_html, cta_label, cta_url, icon,
+            priority, payload, is_read, read_at, created_at
+       FROM notifications
       WHERE user_id = $1 AND channel = 'in_app'
       ORDER BY created_at DESC LIMIT $2`,
     [req.user.sub, lim]
