@@ -12935,3 +12935,98 @@ PROXIMA ITER:
 - W7 pass 20: download.js audit (download_token consumption)
 - W18 pass 7: idx parcial product_views > 90d
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
+
+================================================================
+ITER W7 PASS 19 - cart.js loyalty/redeem RACE CONDITION (2026-05-27)
+================================================================
+ESCOPO: order-svc routes/cart.js POST /loyalty/redeem
+FILE: services/order-svc/src/routes/cart.js (linhas 246-285)
+
+CONTEXTO: W7 pass 18 completou orders.js. Pass 19 audita loyalty/redeem
+(MLB-4 feature). Audit revelou RACE CONDITION CRITICA + error handling gap.
+
+BUGS CORRIGIDOS (2):
+
+1. *** RACE CONDITION CRITICAL *** SELECT sem FOR UPDATE
+- PRE-FIX (linhas 254 + 261):
+  - SELECT points_balance FROM user_loyalty WHERE user_id = $1
+  - SELECT id, subtotal_cents FROM carts WHERE user_id = $1
+  - Ambos SEM FOR UPDATE em tx()
+- CENARIO REAL:
+  T0: User dispara 2 requests /loyalty/redeem simultaneas (UI bug
+      double-click OU bot abuso)
+  T1: Request A: balance=1500 (read)
+  T2: Request B: balance=1500 (read) - mesmo valor!
+  T3: Request A: subtotal=10000 -> cap=3000 -> effectivePoints=1000
+      UPDATE carts SET loyalty_points_redeemed = 1000
+  T4: Request B: subtotal=10000 (cart UPDATE A nao commitado ainda em B view)
+      effectivePoints=1000 -> UPDATE carts SET loyalty_points_redeemed=1000
+  T5: tx() COMMIT ambos serializado mas updates idempotentes
+- IMPACTO:
+  - cart.loyalty_points_redeemed = 1000 (so ultimo update)
+  - Usuario espera 1000 + 1000 = 2000 pontos aplicados (UX response 2x ok)
+  - Checkout (orders.js linha 49 com FOR UPDATE corretamente) debita SO 1000
+  - DIFERENCA 1000 pontos perdida pelo user
+  - Pior cenario: bot abuse com cap stack -> user descobre discrepancia
+- COMPARACAO orders.js checkout: linha 49 JA tinha FOR UPDATE no balance
+  (consistencia interna entre 2 endpoints write-path)
+- FIX: FOR UPDATE em ambas queries user_loyalty + carts
+  - Pessimistic locks dentro de tx() - liberados ao COMMIT
+  - Segunda request blocked ate primeira terminar -> serializacao real
+  - Pattern checkout consolidado cross-endpoint
+
+2. ERROR HANDLING fallback faltando
+- PRE-FIX: 3 if encadeados (insufficient_points/cart_not_found/cart_too_small)
+- Se result.error contiver NOVA string futuro (ex: 'cart_locked'),
+  nenhum if match -> cai linha 283 res.json(result) com STATUS 200
+- Frontend recebe 200 com { error: 'xxx' } - confuso (esperado 4xx/5xx)
+- FIX: fallback final return res.status(500).json({error: 'loyalty_redeem_failed', detail})
+  - Anti-novel-error defensive
+  - Mantem 200 reservado para success path puro
+
+BUGS NAO CORRIGIDOS (deliberado):
+
+3. CAP CALC inconsistente com coupon_code aplicado
+- Pre-fix: cap = subtotal * 0.30 (subtotal PRE-coupon)
+- Se cart tem cupom 20%, total real ja eh subtotal*0.80
+- Cap 30% sobre subtotal pre-coupon pode somar > 50% desconto total
+- Politica de negocio decidir: admin pode querer permitir stack OU nao
+- DEFERIDO: business decision pendente
+
+4. CART STATUS check (carts.expires_at < NOW())
+- Pre-fix: nao valida cart expirado
+- Cart expirado deveria rejeitar mutate (incluindo loyalty redeem)
+- Pequeno impact: recalcCart provavelmente revalida downstream
+- DEFERIDO: low priority
+
+PATTERN W7 RACE CONDITION FOR UPDATE CONSOLIDADO:
+- orders.js checkout (linha 31 cart, linha 49 user_loyalty): pre-existente OK
+- cart.js loyalty/redeem (linhas 254, 261): FIX esta iter
+- cart.js outros endpoints (POST /items, POST /coupon): provavelmente OK
+  (single SELECT + UPDATE em mesma tx OK contra serializable race)
+- LESSON: ENDPOINTS WRITE em RESOURCES MUTAVEIS (cart, user_loyalty, balance)
+  precisam FOR UPDATE explicito. Inferred lock NAO suficiente.
+
+NOVA REGRA K (W7 pass 19):
+K. FOR UPDATE em WRITE paths que tocam recursos mutaveis (cart, balance,
+   stock, etc). Mesmo dentro de tx(), SELECT padrao NAO bloqueia outras
+   transacoes lendo o mesmo recurso. Pessimistic lock garante serializacao.
+- Aplica a: cart, user_loyalty, user balances, stock counters, etc.
+- Tradeoff: latencia +5-10ms (lock acquire) vs correctness garantida
+
+PATTERN W7 12 ENDPOINTS + 11 REGRAS (A-K):
+- product-svc: 4 endpoints
+- search-svc: 5 endpoints
+- order-svc: cart.js (POST /items pass 16, /coupon pass 16, /loyalty/redeem
+             pass 19), orders.js (checkout pass 17, READ x3 pass 18)
+
+W7 PROGRESS:
+- product-svc: passes 1-10
+- search-svc: passes 11-15
+- order-svc: passes 16-19 (cart.js + orders.js coverage completo)
+
+PROXIMA ITER:
+- W7 pass 20: download.js audit (download_token consumption + security)
+- W18 pass 7: idx parcial product_views > 90d
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W14: migration outras tabelas (vault, qa_runs idx)

@@ -250,15 +250,33 @@ router.post('/loyalty/redeem',
   asyncHandler(async (req, res, next) => {
     let result;
     await tx(async (c) => {
-      // saldo atual de pontos
-      const bal = await c.query(`SELECT points_balance FROM user_loyalty WHERE user_id = $1::UUID`, [req.user.sub]);
+      // FIX-WORKER-7 pass 19 (RACE CONDITION CRITICAL):
+      // PRE-FIX: SELECT points_balance SEM FOR UPDATE -> 2 requests simultaneas
+      // viam mesmo balance, ambas validavam points<balance, ambas UPDATEs.
+      // Cenario: user dispara 2 redeem 1000pts simultaneo. Balance=1500.
+      // Ambos veem 1500, ambos passam validacao, mas UPDATE carts grava
+      // apenas o ULTIMO valor (cart eh row unica por user). MAS usuario
+      // espera 2000 pontos consumidos no checkout - so registra 1000.
+      // Race tambem nas 2 queries SELECT (balance + cart) - ler stale entre elas.
+      // FIX: FOR UPDATE em user_loyalty + carts (locks pessimistic)
+      // - Inside tx() PG transacao - lock liberado apos COMMIT
+      // - Segunda request bloqueia ate primeira terminar
+      // - Mesmo pattern checkout (orders.js linha 31 + 49) consolidado
+      const bal = await c.query(
+        `SELECT points_balance FROM user_loyalty WHERE user_id = $1::UUID FOR UPDATE`,
+        [req.user.sub]
+      );
       const balance = parseInt(bal.rows[0]?.points_balance || 0, 10);
       if (req.body.points > balance) {
         result = { error: 'insufficient_points', balance };
         return;
       }
-      // subtotal atual do cart
-      const cart = await c.query(`SELECT id, subtotal_cents FROM carts WHERE user_id = $1::UUID`, [req.user.sub]);
+      // FIX-WORKER-7 pass 19: cart SELECT tambem com FOR UPDATE.
+      // Previne race com /coupon, /items mutate, OU outra /loyalty/redeem.
+      const cart = await c.query(
+        `SELECT id, subtotal_cents FROM carts WHERE user_id = $1::UUID FOR UPDATE`,
+        [req.user.sub]
+      );
       if (!cart.rows.length) { result = { error: 'cart_not_found' }; return; }
       const subtotal = parseInt(cart.rows[0].subtotal_cents || 0, 10);
       if (subtotal < 500) { result = { error: 'cart_too_small', min_subtotal_cents: 500 }; return; }
@@ -275,10 +293,16 @@ router.post('/loyalty/redeem',
       await recalcCart(c, cart.rows[0].id);
       result = { ok: true, applied_points: effectivePoints, discount_cents: effectivePoints, cap_cents: cap, balance };
     });
-    if (result.error) {
+    // FIX-WORKER-7 pass 19: error handling defensive fallback.
+    // PRE-FIX: if result.error encadeados - novo error string futuro caia em
+    // res.json(result) STATUS 200 com error field. Frontend confuso.
+    // Pos-FIX: fallback final 500 para errors nao reconhecidos (anti-novel-error).
+    if (result?.error) {
       if (result.error === 'insufficient_points') return res.status(400).json(result);
       if (result.error === 'cart_not_found') return next(errorHandler.notFound('cart_not_found'));
       if (result.error === 'cart_too_small') return res.status(400).json(result);
+      // NOVO: fallback para errors futuros nao mapeados (defensive)
+      return res.status(500).json({ error: 'loyalty_redeem_failed', detail: result.error });
     }
     res.json(result);
   })
