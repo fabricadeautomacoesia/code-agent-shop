@@ -3430,3 +3430,52 @@ IMPACTO:
 GAP DETECTADO (proxima iter):
 - /auth/2fa/recovery (regenera recovery codes) nao existe - useful UX
 - /auth/2fa/disable nao verifica se ja esta enabled (poderia retornar 404)
+
+## WORKER 6 pass 2 (AUTH-SVC) - POST /auth/2fa/recovery regenera codigos
+
+GAP DETECTADO (proxima iter do W6 pass 1):
+"/auth/2fa/recovery (regenera recovery codes) nao existe - useful UX"
+
+Caso real: user com 2FA ativado perde os 10 codigos de recuperacao
+(papel extraviado, laptop roubado, etc). Antes desse fix, unica opcao:
+- POST /disable (perde TOTP)
+- POST /setup (gera novo segredo)
+- POST /activate (re-cadastra no app authenticator)
+Workflow horrivel: user perde TOTP/QR atual sem necessidade.
+
+FIX (2 arquivos):
+1. services/auth-svc/src/routes/two-factor.js:
+   + POST /2fa/recovery body={password, token}
+   + Mesmo gate de seguranca do /disable: senha + token TOTP atual (V8 4.2)
+   + UPDATE recovery_codes_hash com 10 novos codigos bcrypt
+   + Retorna { recovery_codes: [10x], warn: codigos antigos invalidados }
+   + NAO toca em is_enabled / secret_encrypted -> TOTP mantido intacto
+
+2. apps/storefront/src/app/conta/seguranca/page.tsx:
+   + regenerateRecovery() handler (refactor: senha + token2fa shared state)
+   + Novo <details> "Gerar novos codigos de recuperacao" no painel ativado
+   + UI distinct color: text-magenta-glow (acao positiva) vs text-red-400
+     (disable - acao destrutiva)
+   + Reutiliza recoveryCodes state -> mostra os 10 novos imediatamente
+
+DEPLOY:
+- commit 3a05558 pushed
+- auth-svc rebuilt + deployed (converged)
+- storefront rebuilt + deployed (converged)
+- builds paralelos: ambos < 3s
+
+VALIDACAO PUBLICA (2 negative paths):
+- POST /api/auth/2fa/recovery sem 2FA ativado -> 404 "2fa_not_enabled" OK
+- POST /api/auth/2fa/recovery com senha errada -> 401 "invalid_password" OK
+- Happy path nao validado via curl (requer otplib client - frontend faz isso)
+
+IMPACTO:
+- UX completa de gerenciamento 2FA: status + setup + activate + recovery + disable
+- Reduz support tickets de users que perderam recovery codes
+- Reduz risco de disable acidental (= perda total de 2FA por erro de UX)
+- Aderencia ao padrao SaaS (Google, GitHub, AWS todos tem regenerate)
+
+GAP RESTANTE (proxima iter):
+- /2fa/disable retorna "404 2fa_not_enabled" se ja desabilitado - poderia
+  ser idempotente (200 + enabled:false) para UX mais previsivel
+- Auditar outros services pra ver se ha endpoints faltando similar pattern
