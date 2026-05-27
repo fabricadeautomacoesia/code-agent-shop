@@ -222,7 +222,8 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
   // MLB-NEW WORKER 16 / FIX-WORKER-18 pass 2: is_top_seller via subquery correlacionada
   // Threshold min 5 vendas. Combo "OFICIAL MAIS VENDIDO" = is_platform_owned AND is_top_seller.
   const cacheKey = `products:detail:${req.params.slug}`;
-  const product = await cache.withCache(cacheKey, 60, async () => {
+  // FIX-WORKER-18 pass 5: withCache retorna {value, hit} - destructuring necessario
+  const { value: product } = await cache.withCache(cacheKey, 60, async () => {
     const r = await query(
       `SELECT p.*,
               s.id AS seller_id, s.store_slug, s.store_name, s.store_logo_url,
