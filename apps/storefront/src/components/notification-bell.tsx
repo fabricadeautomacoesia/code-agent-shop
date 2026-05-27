@@ -72,7 +72,11 @@ export function NotificationBell() {
     setLoading(true);
     try {
       const r = await Api.api<{ notifications: any[] }>('/notifications?limit=20', { auth: token });
-      setNotifs(r.notifications || []);
+      const list = r.notifications || [];
+      setNotifs(list);
+      // FIX-WORKER-1 pass 2: sincronizar count com payload real ao abrir.
+      // Evita drift quando poll /unread-count fica desatualizado vs lista.
+      setUnreadCount(list.filter((n: any) => !n.is_read).length);
     } catch { /* silent */ }
     finally { setLoading(false); }
   }
@@ -86,9 +90,17 @@ export function NotificationBell() {
   }, [token]);
 
   // Quando abre o dropdown, ai sim carrega lista completa
+  // FIX-WORKER-1 pass 2: bug stale notifs - guarda `notifs.length === 0`
+  // impedia refetch ao reabrir. Cenario quebrado:
+  // 1. User abre sino, ve 5 notifs (load roda)
+  // 2. Fecha sem marcar nenhuma como lida
+  // 3. Backend cria 2 novas notifs (welcome_bonus + product_approved)
+  // 4. unread badge atualiza para 7 (via loadCount poll 30s) - OK
+  // 5. Mas reabrir o sino mostra so as 5 antigas (notifs.length>0 -> skip load)
+  // Agora: refetch sempre que open=true. token nos deps p/ eslint correctness.
   useEffect(() => {
-    if (open && notifs.length === 0) load();
-  }, [open]);
+    if (open) load();
+  }, [open, token]);
 
   async function markRead(id: string) {
     try {
