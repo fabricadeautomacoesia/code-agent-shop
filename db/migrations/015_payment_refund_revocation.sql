@@ -10,10 +10,10 @@ DO $$ BEGIN
   ALTER TABLE order_items ADD COLUMN revoked_reason VARCHAR(80);
 EXCEPTION WHEN duplicate_column THEN NULL; WHEN undefined_table THEN NULL; END $$;
 
--- Index para query de license validation incluir revoked filter
+-- Index para query de license validation (NOW() nao pode estar em index predicate - PG erro IMMUTABLE)
 DO $$ BEGIN
   CREATE INDEX IF NOT EXISTS idx_oi_active_license ON order_items(license_key)
-    WHERE revoked_at IS NULL AND download_expires_at > NOW();
+    WHERE revoked_at IS NULL;
 EXCEPTION WHEN undefined_table OR undefined_column THEN NULL; END $$;
 
 DO $$ BEGIN
