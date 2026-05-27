@@ -7885,3 +7885,79 @@ PROXIMA ITER:
 - W12 pass 6: archived branch (manual via admin) tambem decrementa counter
 - W14 pass 6: indices product_views user_id + created_at DESC
 - W4 pass 7: /admin/reports KPI dashboard
+
+## WORKER 3 PASS 5 - ProductTabs WAI-ARIA tabs + a11y/UX
+
+AUDIT components/product-tabs.tsx encontrou 4 problemas:
+
+BUG 1 (CRITICAL a11y - WAI-ARIA tabs incompleto):
+- <div><button> sem role tablist/tab/tabpanel
+- Sem aria-selected -> SR nao sabe tab ativa
+- WCAG 2.1 Level A nao conforme
+
+BUG 2 (keyboard nav incompleta):
+- So Tab key passava foco linear
+- Padrao WAI-ARIA requer Arrow Left/Right + Home/End
+- Keyboard user preso em navegacao limitada
+
+BUG 3 (semantica Star decorativas):
+- 5 <Star> sem aria-hidden -> SR podia ler 5x
+- Container tinha aria-label mas filhos competiam
+
+BUG 4 (ordem changelog):
+- product.versions.map sem sort
+- Backend pode retornar qualquer ordem
+- Visual confuso v1 acima de v5
+
+FIX (4 + 2 bonus):
+
+1. WAI-ARIA tabs completo:
+   - role="tablist" aria-label no container
+   - role="tab" aria-selected aria-controls id em cada button
+   - role="tabpanel" id aria-labelledby em cada panel
+   - tabIndex roving (0 ativo, -1 outros)
+   - NVDA/JAWS: "Tab 1 de 5 selecionado, Visao Geral"
+
+2. Keyboard nav handleKeyDown:
+   - ArrowRight/Left: circular + focus shift
+   - Home/End: primeira/ultima tab
+   - tabRefs Record<Tab, HTMLButtonElement> p/ focus programatico
+   - focus-visible:outline-2 outline-magenta
+
+3. Star aria-hidden:
+   - role="img" + aria-label no container
+   - aria-hidden="true" nas 5 Star individuais
+
+4. Changelog DESC:
+   - [...product.versions].sort((a,b) => b.created_at - a.created_at)
+   - Spread evita mutate prop
+   - Mais recente sempre primeiro
+
+BONUS:
+- Badge counter com aria-label dedicado ("3 avaliacoes" vs "3")
+- focus-visible outline magenta (afford keyboard visual)
+- useEffect import removido (unused)
+
+WCAG 2.1 LEVEL AA: tabs interface agora compliant.
+
+DEPLOY:
+- commit 344a5aa push main OK
+- 49 insertions, 14 deletions
+- storefront rebuild via VPS cron
+
+W3 PDP AUDIT PROGRESS (passes 1-5):
+- pass 1: AddToCart funcional + friendly errors
+- pass 2: breadcrumb slash orfao
+- pass 3: QnaForm 6 bugs UX
+- pass 4: ReviewForm 8 bugs UX + a11y
+- pass 5: ProductTabs WAI-ARIA + 4 fixes (esta iter)
+
+CICLO PDP a11y consolidado:
+- Forms (qna + review): aria-label + role=alert + focus-visible + counter
+- Tabs: WAI-ARIA completo + keyboard nav
+- Decorative SVG: aria-hidden em Star/icons
+
+PROXIMA ITER:
+- W3 pass 6: WishlistButton.tsx audit (heart toggle)
+- W3 pass 7: AskQuickButton modal audit
+- DRY: mover friendly mappers para lib/friendly-errors.ts (cross-component)
