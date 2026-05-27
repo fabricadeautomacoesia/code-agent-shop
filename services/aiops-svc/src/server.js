@@ -256,6 +256,72 @@ const alertsHandler = asyncHandler(async (req, res) => {
 app.get('/alerts', jwt.requireAuth({ roles: ['admin','staff'] }), alertsHandler);
 app.get('/alerts/recent', jwt.requireAuth({ roles: ['admin','staff'] }), alertsHandler);
 
+// FIX-WORKER-4 pass 12: GET /audit-log - admin lista acoes auditadas
+// Consume W14 pass 9 idx_audit_action_created (action, created_at DESC) para
+// filtros por action sem sort externo. Filtros opcionais:
+//   ?action=vault.rotate (exact match)
+//   ?severity=warn|error|critical
+//   ?days=7 (default 7d, max 90)
+//   ?limit=50 (default 50, max 200)
+//   ?offset=0 (paginacao)
+// Retorna actor_user_id + role + action + target + payload + severity + created_at
+// Admin-only via jwt.requireAuth (audit log e DLP-sensitive - actor PII)
+const auditLogHandler = asyncHandler(async (req, res) => {
+  const days = Math.min(Math.max(1, parseInt(req.query.days || '7', 10)), 90);
+  const lim = Math.min(Math.max(1, parseInt(req.query.limit || '50', 10)), 200);
+  const off = Math.max(0, parseInt(req.query.offset || '0', 10));
+  const action = (req.query.action || '').toString().trim();
+  const severity = (req.query.severity || '').toString().trim();
+  // Whitelist severities (anti SQL injection via param) - validates against enum
+  const VALID_SEV = new Set(['info','warn','error','critical']);
+  const sevFilter = VALID_SEV.has(severity) ? severity : null;
+  const where = [`created_at > NOW() - ($1 || ' days')::INTERVAL`];
+  const params = [String(days)];
+  let i = 2;
+  if (action) { where.push(`action = $${i++}`); params.push(action); }
+  if (sevFilter) { where.push(`severity = $${i++}`); params.push(sevFilter); }
+  params.push(lim);
+  params.push(off);
+  // Note: usa idx_audit_action_created quando action presente, idx_audit_created caso contrario
+  const r = await query(
+    `SELECT id, actor_user_id, actor_role, action, target_type, target_id,
+            severity, payload_after, created_at
+       FROM audit_log
+      WHERE ${where.join(' AND ')}
+      ORDER BY created_at DESC
+      LIMIT $${i++} OFFSET $${i++}`,
+    params
+  );
+  const totalRow = await query(
+    `SELECT COUNT(*)::INT AS n FROM audit_log
+      WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
+        ${action ? 'AND action = $2' : ''}
+        ${sevFilter ? `AND severity = $${action ? 3 : 2}` : ''}`,
+    [String(days), ...(action ? [action] : []), ...(sevFilter ? [sevFilter] : [])]
+  );
+  res.json({
+    entries: r.rows,
+    total: totalRow.rows[0]?.n || 0,
+    limit: lim,
+    offset: off,
+    filter: { days, action: action || null, severity: sevFilter },
+  });
+});
+app.get('/audit-log', jwt.requireAuth({ roles: ['admin','staff'] }), auditLogHandler);
+
+// GET /audit-log/actions - lista actions distintas para popular dropdown filter
+const auditActionsHandler = asyncHandler(async (_req, res) => {
+  const r = await query(
+    `SELECT action, COUNT(*)::INT AS count
+       FROM audit_log
+      WHERE created_at > NOW() - INTERVAL '30 days'
+      GROUP BY action
+      ORDER BY count DESC LIMIT 50`
+  );
+  res.json({ actions: r.rows });
+});
+app.get('/audit-log/actions', jwt.requireAuth({ roles: ['admin','staff'] }), auditActionsHandler);
+
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
 
