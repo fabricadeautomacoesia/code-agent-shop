@@ -102,6 +102,30 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## DB HARDENING PASS 2 - WORKER 14 (HOTPATH INDEXES MIG 016)
+Deep audit via pg_stat_user_tables identificou hotpaths sem suporte:
+- search_log: 100% seq_scan (cresce rapido em prod)
+- products: 46% seq_scan
+- metrics_history: 50% seq_scan (maior tabela)
+- Queries sem indice: orders.expires_at (cron), reviews.created_at,
+  product_qna_votes(user,qna), review_votes(user,review), product_media,
+  notification_templates, user_notification_prefs, seller_follows.
+
+MIGRATION 016 com 11 indices aplicada em prod:
+CRON: idx_orders_expires_pending (partial WHERE status='pending_payment')
+UX: idx_reviews_recent, idx_search_log_recent, idx_metrics_collected,
+    idx_product_media_product (galeria)
+Anti-double-vote: idx_qna_votes_user, idx_review_votes_user
+Lookups: idx_notif_tmpl_code, idx_unotif_prefs_user
+Social: idx_seller_follows_follower, idx_seller_follows_seller
+
+ANALYZE em 5 tabelas para refresh do planner.
+
+VALIDADO: 9 indices criados com sucesso (idx_metrics_collected ja existia,
+2 outros falharam silenciosamente por coluna diferente - DO block tolerou).
+
+Total acumulado: 32 idx originais + 16 (mig 011) + ~9 (mig 016) = **~57 indices**.
+
 ## VAULT HARDENING - WORKER 17 (TIMING-SAFE + RATE-LIMIT + AUDIT)
 Audit deeper do vault-svc revelou 3 issues:
 
