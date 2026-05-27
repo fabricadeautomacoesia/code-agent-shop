@@ -132,14 +132,30 @@ router.post('/checkout',
           body.installment_count = req.body.installment_count;
         }
         // FIX-WORKER-11 pass 2: payment-svc agora exige x-internal-token (auth bypass fix)
-        await fetch(`${paymentUrl}/payments/asaas/create`, {
+        // FIX-WORKER-2 pass 3: log status real para detectar 401/500. fetch nao throw
+        // em status != 2xx -> antes falhava silenciosamente quando PAYMENT_INTERNAL_TOKEN
+        // estava unset (W17 pass 7 alertou no startup mas runtime ficava mudo).
+        const hasToken = !!process.env.PAYMENT_INTERNAL_TOKEN;
+        const r = await fetch(`${paymentUrl}/payments/asaas/create`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(process.env.PAYMENT_INTERNAL_TOKEN ? { 'x-internal-token': process.env.PAYMENT_INTERNAL_TOKEN } : {}),
+            ...(hasToken ? { 'x-internal-token': process.env.PAYMENT_INTERNAL_TOKEN } : {}),
           },
           body: JSON.stringify(body),
         });
+        if (!r.ok) {
+          let detail = '';
+          try { detail = (await r.text()).slice(0, 200); } catch {}
+          log.error({
+            order_id: result.id,
+            status: r.status,
+            has_token: hasToken,
+            detail,
+          }, '[payment.dispatch_non_2xx]');
+        } else {
+          log.info({ order_id: result.id, status: r.status }, '[payment.dispatch_ok]');
+        }
       } catch (e) {
         log.error({ err: e.message, order_id: result.id }, '[payment.dispatch_failed]');
       }
