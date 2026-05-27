@@ -369,17 +369,44 @@ const auditLogHandler = asyncHandler(async (req, res) => {
 app.get('/audit-log', jwt.requireAuth({ roles: ['admin','staff'] }), auditLogHandler);
 
 // GET /audit-log/actions - lista actions distintas para popular dropdown filter
-const auditActionsHandler = asyncHandler(async (_req, res) => {
+// FIX-WORKER-7 pass 64: 3 BUGS (Regras D + UX + cache).
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING *** ORDER BY count DESC sem action
+//   2 actions com count identico (raro mas possivel) -> ordem indefinida
+//   no dropdown. UX inconsistente entre refreshes.
+//   FIX: + action ASC tiebreaker (alfabetico p/ UX previsivel).
+//
+// BUG 2 *** ?days HARDCODED 30 *** UX inflexivel
+//   Dashboard "ultimas 24h" precisa days=1 - dropdown limitado a 30d.
+//   FIX: ?days (1-90 clamp, default 30).
+//
+// BUG 3 *** CACHE MISSING *** GROUP BY audit_log 30d eh pesado
+//   Audit log em produção tem 100k+ rows. SELECT COUNT(*) FROM audit_log
+//   WHERE created_at > NOW() - 30d eh full scan em idx_audit_created.
+//   UI dropdown disparado em CADA abertura da page /admin/audit -> ~200ms.
+//   Cache 5min = dropdown carrega em ms apos warm-up.
+//   FIX: cache.cacheMiddleware 300s (vary by ?days).
+const auditActionsCacheKey = (req) => {
+  const days = Math.min(90, Math.max(1, parseInt(req.query.days || '30', 10)));
+  return `aiops:audit_actions:days=${days}`;
+};
+const auditActionsHandler = asyncHandler(async (req, res) => {
+  const days = Math.min(90, Math.max(1, parseInt(req.query.days || '30', 10)));
   const r = await query(
     `SELECT action, COUNT(*)::INT AS count
        FROM audit_log
-      WHERE created_at > NOW() - INTERVAL '30 days'
+      WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
       GROUP BY action
-      ORDER BY count DESC LIMIT 50`
+      ORDER BY count DESC, action ASC LIMIT 50`,
+    [String(days)]
   );
-  res.json({ actions: r.rows });
+  res.json({ actions: r.rows, days, count: r.rows.length });
 });
-app.get('/audit-log/actions', jwt.requireAuth({ roles: ['admin','staff'] }), auditActionsHandler);
+app.get('/audit-log/actions',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware(auditActionsCacheKey, 300),
+  auditActionsHandler
+);
 
 // ============================================================
 // FIX-WORKER-18 pass 8: DB indexes audit - dead/redundant/bloated detection
@@ -390,8 +417,39 @@ app.get('/audit-log/actions', jwt.requireAuth({ roles: ['admin','staff'] }), aud
 //
 // USO TIPICO: admin acessa pos-2-weeks de prod stats, drop dead idx,
 // reduzir storage + acelerar INSERTs (cada idx = update extra per row).
+//
+// FIX-WORKER-7 pass 64: 4 BUGS (cache + Regra D + migration audit + summary fix).
+//
+// BUG 1 *** CACHE MISSING *** 3 sub-queries em pg_catalog cada hit
+//   pg_stat_user_indexes + pg_index JOIN + pg_relation_size eh CATALOG
+//   query (sem idx usuario - depende stats internal). Em DB com 100+ idx
+//   queries levam 200-800ms cada. Total endpoint hit = 600-2400ms.
+//   Admin abre db-audit page = 3 sub-queries serializadas.
+//   stats nao mudam intra-day (pg_stat acumulativo + reset manual). 60s cache
+//   eh seguro p/ UX.
+//   FIX: cache.cacheMiddleware 60s.
+//
+// BUG 2 *** Regra D TIEBREAKER MISSING *** ORDER BY idx_scan ASC sem tiebreaker
+//   Multiplas idx com idx_scan=0 (caso comum em DB nova) -> ordem
+//   indefinida na queue triagem. Admin nao consegue voltar mesma posicao.
+//   FIX: + indexname ASC tiebreaker (alphabetic stable).
+//
+// BUG 3 *** MIGRATION 047 STATUS MISSING ***
+//   Mig 047 dropa idx_pviews_user + idx_oi_product. Em prod, admin nao
+//   sabe se mig foi APLICADA (drops podem ter falhado silenciosamente
+//   se IF EXISTS rodou em DB sem o idx). Endpoint deve indicar quais
+//   targeted dropps recentes ainda existem (drift detection).
+//   FIX: SELECT FROM pg_indexes WHERE indexname IN (mig 047 targets)
+//   + flag migration_drops_applied no response.
+//
+// BUG 4 *** SUMMARY total_dead_size_bytes inconsistent ***
+//   PRE-FIX: total_dead_size_bytes parseInt(r.size_bytes) - mas size_bytes
+//   eh BigInt em PG (pg_relation_size retorna int8). parseInt() pode dar
+//   NaN p/ idx > 2GB. Edge case raro mas defensive.
+//   FIX: Number(r.size_bytes) + handle NaN.
 app.get('/db/dead-indexes',
   jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware('aiops:db_dead_indexes', 60),
   asyncHandler(async (_req, res) => {
     // 1. Indices ZERO scans (candidatos DROP, exclui PK/UNIQUE)
     const dead = await query(
@@ -408,7 +466,7 @@ app.get('/db/dead-indexes',
           AND NOT i.indisprimary
           AND schemaname NOT IN ('pg_catalog', 'information_schema')
           AND (SELECT n_tup_ins FROM pg_stat_user_tables t WHERE t.relid = ui.relid) > 100
-        ORDER BY idx_scan ASC, pg_relation_size(ui.indexrelid) DESC
+        ORDER BY idx_scan ASC, pg_relation_size(ui.indexrelid) DESC, indexname ASC
         LIMIT 50`
     );
 
@@ -435,10 +493,22 @@ app.get('/db/dead-indexes',
         ORDER BY idx_scan DESC LIMIT 10`
     );
 
-    // Resumo stats agregadas (UI dashboard quick view)
+    // FIX-WORKER-7 pass 64 BUG 3: Migration 047 drift detection
+    // Mig 047 droppou idx_pviews_user + idx_oi_product. Verifica se aplicada.
+    const migrationDrops = await query(
+      `SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname IN ('idx_pviews_user', 'idx_oi_product')`
+    );
+    const migration047Applied = migrationDrops.rows.length === 0;
+
+    // FIX-WORKER-7 pass 64 BUG 4: Number() safe (pg_relation_size = int8/BigInt)
     const totalDeadSize = dead.rows
       .filter((r) => r.recommendation === 'CANDIDATE_DROP')
-      .reduce((acc, r) => acc + parseInt(r.size_bytes, 10), 0);
+      .reduce((acc, r) => {
+        const n = Number(r.size_bytes);
+        return acc + (Number.isFinite(n) ? n : 0);
+      }, 0);
 
     res.json({
       summary: {
@@ -447,16 +517,22 @@ app.get('/db/dead-indexes',
         bloated_indices: bloated.rows.length,
         total_dead_size_bytes: totalDeadSize,
         total_dead_size_pretty: formatBytes(totalDeadSize),
+        migration_047_applied: migration047Applied,
+        migration_047_remaining: migrationDrops.rows.map((r) => r.indexname),
       },
       dead_indices: dead.rows,
       bloated_indices: bloated.rows,
       top_used: topUsed.rows,
       generated_at: new Date().toISOString(),
+      cache_ttl_seconds: 60,
       warnings: [
         'NUNCA dropar idx PK ou UNIQUE (PG usa para enforce constraint).',
         'Idx parciais (mig 011/031/038/041/042) podem ter 0 scans mas serem criticos futuros.',
         'Aguardar 2+ semanas de prod stats antes de drop (warm-up cycle).',
         'SEMPRE EXPLAIN ANALYZE em staging apos drop.',
+        migration047Applied
+          ? 'Migration 047 APPLIED em prod (idx_pviews_user + idx_oi_product droppadas).'
+          : `Migration 047 PENDING em prod. Remaining: ${migrationDrops.rows.map((r) => r.indexname).join(', ') || 'partial'}.`,
       ],
     });
   })

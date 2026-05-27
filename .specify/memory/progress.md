@@ -17280,7 +17280,33 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ seller-svc /sla-risk + /all + /pending-kyc (pass 60) - role-tier mask
 - ✅ payment-svc /payments/webhooks/dead (pass 61) - Regra D+E+I + DLP
 - ✅ notification-svc GET / (pass 62) - Regra D+E+I + DLP + UX
-- ✅ aiops-svc /metrics + /alerts + /audit-log (pass 63 esta iter) - Regra D+E+I + DLP CRITICAL
+- ✅ aiops-svc /metrics + /alerts + /audit-log (pass 63) - Regra D+E+I + DLP CRITICAL
+- ✅ aiops-svc /audit-log/actions + /db/dead-indexes (pass 64 esta iter) - cache + drift detection
+
+W7 PASS 64 RESUMO:
+- search-svc auditado: ZERO admin endpoints (público) - skip
+- aiops-svc/src/server.js 2 admin endpoints refactor:
+  * /audit-log/actions (3 bugs):
+    - Regra D: + action ASC tiebreaker (UX previsivel)
+    - NEW ?days configuravel (1-90, default 30)
+    - CACHE 300s vary by days (GROUP BY 100k+ audit_log é hot)
+  * /db/dead-indexes (4 bugs):
+    - CACHE 60s (3 sub-queries pg_catalog ~600-2400ms first hit)
+    - Regra D: + indexname ASC tiebreaker (multi-idx scan=0 estavel)
+    - NEW migration 047 drift detection
+      * Verifica se idx_pviews_user/idx_oi_product ainda existem em pg_indexes
+      * Flag migration_047_applied + remaining
+      * Warning dinamico mostra status migration aplicada/pending
+    - Number() safe p/ pg_relation_size BigInt (parseInt NaN edge >2GB)
+- Pattern W7 em 64 endpoints + 23 regras (A-W) - 64 micro-iters
+- aiops-svc 100% W7-aplicado: 5/5 admin endpoints auditados (metrics + alerts +
+  audit-log + audit-log/actions + db/dead-indexes)
+
+PROXIMA ITER:
+- W7 pass 65: vault-svc admin endpoints + DLP audit
+- W7 pass 66: order-svc /orders endpoint listagem buyer (Regra E)
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 63 RESUMO:
 - aiops-svc/src/server.js 3 admin endpoints refactor:
