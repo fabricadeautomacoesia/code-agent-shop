@@ -65,14 +65,19 @@ router.get('/:token', asyncHandler(async (req, res, next) => {
     // FIX bug 3: p.deleted_at IS NULL no JOIN (anti DMCA/legal leak)
     // FIX bug 2: SELECT FOR UPDATE em order_items - lock anti-race
     // Pattern Regra K: WRITE path em resource mutavel (download_count).
+    // FIX-WORKER-14: enrich com p.max_downloads + s.default_max_downloads
+    // (migration 039) p/ override hierarchy: product > seller > platform.
     const r = await c.query(
       `SELECT oi.id, oi.product_id, oi.license_key, oi.download_count,
               oi.download_expires_at, oi.order_id,
               o.status AS order_status,
-              p.package_url, p.title, p.deleted_at AS product_deleted_at
+              p.package_url, p.title, p.deleted_at AS product_deleted_at,
+              p.max_downloads AS product_max_downloads,
+              s.default_max_downloads AS seller_default_max_downloads
          FROM order_items oi
          JOIN orders o ON o.id = oi.order_id
          JOIN products p ON p.id = oi.product_id
+         LEFT JOIN sellers s ON s.id = p.seller_id
         WHERE oi.download_token = $1 AND o.buyer_user_id = $2
         FOR UPDATE OF oi`,
       [req.params.token, req.user.sub]
@@ -105,11 +110,23 @@ router.get('/:token', asyncHandler(async (req, res, next) => {
     }
 
     // FIX bug 1: cap download_count - rejeita pos-limit
+    // FIX-WORKER-14: override hierarchy (mais especifico vence):
+    //   1. product.max_downloads (set explicit no produto)
+    //   2. seller.default_max_downloads (seller plan default)
+    //   3. DEFAULT_DOWNLOAD_LIMIT (platform constant)
+    // Migration 039 cria as colunas (NULL = inherit proximo nivel).
+    // Constraint CHECK > 0 garante valores validos no DB - aqui defesa
+    // adicional Math.max(1, ...) anti-corrupcao schema.
+    const effectiveLimit = Math.max(1,
+      parseInt(item.product_max_downloads, 10) ||
+      parseInt(item.seller_default_max_downloads, 10) ||
+      DEFAULT_DOWNLOAD_LIMIT
+    );
     const currentCount = parseInt(item.download_count || 0, 10);
-    if (currentCount >= DEFAULT_DOWNLOAD_LIMIT) {
+    if (currentCount >= effectiveLimit) {
       response = {
         error: 'download_limit_exceeded',
-        limit: DEFAULT_DOWNLOAD_LIMIT,
+        limit: effectiveLimit,
         count: currentCount,
       };
       return;
@@ -148,7 +165,10 @@ router.get('/:token', asyncHandler(async (req, res, next) => {
       title: item.title,
       expires_at: item.download_expires_at,
       download_count: currentCount + 1,
-      downloads_remaining: DEFAULT_DOWNLOAD_LIMIT - (currentCount + 1),
+      // FIX-WORKER-14: usa effectiveLimit (override hierarchy) em vez do
+      // platform default. UI agora mostra cap real do produto.
+      download_limit: effectiveLimit,
+      downloads_remaining: effectiveLimit - (currentCount + 1),
     };
   });
 

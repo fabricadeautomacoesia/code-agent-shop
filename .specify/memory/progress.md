@@ -13140,3 +13140,86 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d (cron-based)
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W14: adicionar col products.max_downloads (override DEFAULT_DOWNLOAD_LIMIT)
+
+================================================================
+ITER W14 PASS 1 - migration 039 products.max_downloads override (2026-05-27)
+================================================================
+ESCOPO: DB schema + download.js consume override hierarchy
+FILES:
+- db/migrations/039_products_max_downloads.sql (NEW)
+- services/order-svc/src/routes/download.js (consume override)
+
+CONTEXTO: W7 pass 20 introduziu DEFAULT_DOWNLOAD_LIMIT=50 hardcoded
+constant. Gap doc identificado: politica nao se ajusta a casos diversos:
+- Produto pesado (modelo IA 50GB) -> 5 downloads suficiente
+- Prompt pack 100KB -> 100 downloads tolerable
+- Seller premium -> default mais generoso (UX/retencao)
+- Produto digital simples -> 50 padrao OK
+
+Migration 039 implementa OVERRIDE HIERARCHY (escalavel + future-proof):
+
+SCHEMA CHANGES (migration 039):
+
+1. products.max_downloads INT NULL
+- NULL = inherit seller default
+- > 0 = cap especifico para este produto
+- CHECK constraint: NULL OR > 0 (anti-corruption)
+- ALTER TABLE IF NOT EXISTS + DO $$ EXCEPTION = tolerante re-aplicacao
+
+2. sellers.default_max_downloads INT NULL
+- NULL = inherit platform DEFAULT_DOWNLOAD_LIMIT
+- > 0 = default para todos produtos deste seller (sem override product)
+- Same CHECK constraint pattern
+- Seller premium (gold/platinum) pode setar 100 via dashboard-seller futuro
+
+3. Backfill OPCIONAL comentado (admin decide):
+- Produtos R$500+ default 20 (politica conservadora anti-distribuicao
+  alto-valor mas suficient HD swap)
+- Comentado deliberadamente - admin aplica via console se desejar
+
+4. idx_products_max_downloads_set PARTIAL
+- Permite admin listar "produtos com cap custom" eficientemente
+- WHERE max_downloads IS NOT NULL excludes maioria (default)
+- Idx pequeno, cobre query admin/qa-queue review futuro
+
+OVERRIDE HIERARCHY (mais especifico vence):
+
+```
+effectiveLimit = product.max_downloads
+              || seller.default_max_downloads
+              || DEFAULT_DOWNLOAD_LIMIT (50)
+```
+
+CODE CHANGES (download.js):
+
+1. SELECT enriquecido com 2 fields novos via LEFT JOIN sellers
+2. effectiveLimit calculado in-place (3-tier fallback)
+3. Math.max(1, ...) anti-corruption (se schema CHECK falhar)
+4. parseInt() defensive contra NULL/undefined/strings
+5. Response inclui:
+   - download_limit (effectiveLimit) - UI mostra cap REAL
+   - downloads_remaining = effectiveLimit - (count+1)
+6. Mantem retrocompatibilidade: produto SEM override usa platform default
+
+DEPLOY ORDER:
+1. Apply migration 039 ao DB (cron migration runner auto-pickup)
+2. Deploy order-svc rebuild (consome novas cols)
+3. Schema changes ANTES de code que le -> safe rollout
+4. Code com COALESCE handle NULL gracefully (pre-migration funciona)
+
+PATTERN W14 SCHEMA EVOLUTION (passes 1):
+- IF NOT EXISTS sempre (re-applicabilidade)
+- DO $$ EXCEPTION para CHECK constraints (idempotent)
+- COMMENT ON COLUMN documenta semantica
+- Backfill scripts OPCIONAIS (admin aprova politica)
+- Partial idx para queries futuras admin
+
+W14 PROGRESS:
+- migrations 010-038 historicas
+- pass 1: 039 max_downloads (esta iter)
+
+PROXIMA ITER:
+- W7 pass 21: payment-svc Asaas integration audit
+- W18 pass 7: idx parcial product_views > 90d
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W5: dashboard-seller UI p/ editar max_downloads (consume schema 039)
