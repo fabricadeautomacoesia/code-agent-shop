@@ -2792,3 +2792,41 @@ SINERGIAS:
 GAP RESTANTE proxima iter:
 - ?sort=recent_sales filtro no /products (UI dropdown)
 - Banner home "Mais vendidos hoje" (last_sale_at <= 24h + sales_count > 5)
+
+## WORKER 16 (MLB-NEW) - Home "Vendendo agora" section (24h window)
+Mercado Livre exibe "Vendendo agora" no topo da home como social proof
+ativo. CAS agora tem infra completa para isso:
+- W14 pass 2 popular last_sale_at + idx_products_last_sale
+- W16 anterior: RecentSaleBadge "Vendido hoje" no PDP+card
+- Esta iter: dedicated home section com filtro 24h
+
+BACKEND services/search-svc/src/server.js:
+- Filter recently_sold=1: WHERE p.last_sale_at > NOW() - INTERVAL '24 hours'
+  Usa idx_products_last_sale partial automatically.
+- Sort recent_sales: ORDER BY p.last_sale_at DESC NULLS LAST, sales_count DESC
+- Compativel com query existente: pode combinar com category/kind/q filters.
+
+UI apps/storefront/src/app/page.tsx:
+- Nova fetchSafe /api/search?recently_sold=1&sort=recent_sales&limit=4
+- Nova section antes de "Mais vendidos":
+  * Badge "AGORA" pill orange-500/15 com Zap icon
+  * h2 "Vendendo agora" + subtitle "Produtos comprados nas ultimas 24 horas"
+  * Link "Ver todos" -> /products?sort=recent_sales
+  * Grid sm:2 lg:4 com ProductCard (reutiliza badges existentes
+    "Vendido hoje" + "OFICIAL MAIS VENDIDO" + Heart icon)
+- Skip render se hotNow.length === 0 (gracioso)
+
+VALIDACAO PUBLICA (TRIPLA):
+1) Backend recently_sold=1 retorna 4 produtos com last_sale_at < 24h
+   ordenados por recencia (NOW -> 10h atras) OK
+2) Backend sort=recent_sales (sem filter) ordena por last_sale_at DESC OK
+3) Home HTML SSR contem: "Vendendo agora", "AGORA", "Produtos comprados
+   nas ultimas 24" OK; 8 ProductCards renderizados (4 novos + 4 existentes)
+
+DEPLOY: commit 979480c pushed,
+- search-svc rebuilt via Dockerfile.node SVC=search-svc, converged OK
+- storefront rebuilt via Dockerfile.next, converged OK
+
+GAP RESTANTE proxima iter:
+- /products page ainda nao tem opcao "Vendendo agora" no dropdown sort UI
+- Email marketing automatico "10 produtos vendendo agora" semanal
