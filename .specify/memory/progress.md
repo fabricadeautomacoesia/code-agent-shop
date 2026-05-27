@@ -8866,3 +8866,88 @@ PROXIMA ITER:
 - W14 pass 8: drop dead indices via pg_stat_user_indexes (apos 2 semanas)
 - W11 pass 7: cron reconciliation webhooks stuck
 - W4 pass 8: /admin/vault dashboard error-rate UI
+
+## WORKER 4 PASS 7 - /admin/reports 6 fixes UX + security + a11y
+
+AUDIT /admin/reports (moderacao denuncias):
+
+BUG 1 (security tabnabbing):
+- <a target="_blank"> em evidence_urls sem rel="noopener noreferrer"
+- Links user-submitted (untrusted) abrir como target=_blank = vetor
+- Admin clica em evidencia maliciosa -> tabnabbing window.opener
+FIX: rel="noopener noreferrer" em evidencias + targetLink
+
+BUG 2 (a11y links indistinguiveis):
+- TODOS evidencias rotulados "link" (idx esquecido no original)
+- Screen reader: "link, link, link" sem contexto
+FIX: numerados "#1, #2, #3" + aria-label "Evidencia N da denuncia <tipo>"
+  + title=URL completo + visual bg-magenta/10
+
+BUG 3 (UX target_id texto morto):
+- {target_type}#{id.slice(0,8)} sem link funcional
+- Admin copiava UUID manualmente
+FIX: targetLink dinamico:
+- product -> /product/{slug}
+- seller -> /seller/{slug}
+- review/qna sem link (sem rota)
+- Setinha "->" + cor magenta afford
+
+BUG 4 (empty state generico enganoso):
+- "Sistema limpo" mesmo em filter resolved/dismissed
+- Sugere problema quando era estado normal
+FIX: mensagem condicional por filter:
+- open: "Sistema limpo"
+- under_review: "Nenhuma em analise"
+- resolved: "Nenhuma com esse filtro"
+- dismissed: "Nenhuma descartada"
+
+BUG 5 (forensics ausente):
+- Reports resolved/dismissed sem quem/quando
+- Auditoria pos-acao impossivel sem psql
+FIX: linha pos-resolution:
+- resolved_at + resolved_by_email (FROM joined backend)
+- resolution_notes em italico quote-style
+- So renderiza se status != open
+
+BUG 6 (loadError sem retry):
+- Pattern W4 pass 6 ja tinha retry
+FIX: botao "retry" inline
+
+BONUS:
+- Border colorida por status (resolved=green, dismissed=gray, etc)
+- aria-hidden em icons decorativos
+- break-words em description (textos longos)
+- Status badge ao lado de target
+- flex-shrink-0 botoes mobile
+
+NOTA BACKEND:
+- Espera target_slug + resolved_at + resolved_by_email + resolution_notes
+- Frontend renderiza graciosamente se ausente (?.notation)
+- Backend update opcional em pass 8
+
+DEPLOY:
+- commit 13b5367 push main OK
+- 71 insertions, 14 deletions
+- dashboard-admin rebuild via VPS cron
+- Sem backend obrigatorio
+
+W4 ADMIN AUDIT PROGRESS (passes 1-7):
+- pass 1-3: hook useAdminAction + sellers/qa-queue
+- pass 4: /admin/payouts feature morta (Transferir Asaas)
+- pass 5: /admin/qa-queue 4 bugs UX
+- pass 6: /admin/orders 4 bugs poll
+- pass 7: /admin/reports 6 fixes (esta iter)
+
+COBERTURA dashboard-admin TOTAL (5/7 + 2 future):
+- /admin/sellers ✓
+- /admin/qa-queue ✓
+- /admin/orders ✓
+- /admin/payouts ✓
+- /admin/reports ✓
+- /admin/alerts (W10-5 sanitized, sem UI dedicada ainda)
+- /admin/vault (futuro pass 8 W14-7 indices)
+
+PROXIMA ITER:
+- W4 pass 8: /admin/vault dashboard (consumir idx_vault_usage_failures)
+- W11 pass 7: cron reconciliation webhooks (idx_asaas_evt_retry)
+- W3 pass 11: CompareButton.tsx audit
