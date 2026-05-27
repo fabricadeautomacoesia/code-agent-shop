@@ -17279,7 +17279,35 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ order-svc /admin/recent + /admin/disputes (pass 59) - role-tier mask
 - ✅ seller-svc /sla-risk + /all + /pending-kyc (pass 60) - role-tier mask
 - ✅ payment-svc /payments/webhooks/dead (pass 61) - Regra D+E+I + DLP
-- ✅ notification-svc GET / (pass 62 esta iter) - Regra D+E+I + DLP + UX
+- ✅ notification-svc GET / (pass 62) - Regra D+E+I + DLP + UX
+- ✅ aiops-svc /metrics + /alerts + /audit-log (pass 63 esta iter) - Regra D+E+I + DLP CRITICAL
+
+W7 PASS 63 RESUMO:
+- aiops-svc/src/server.js 3 admin endpoints refactor:
+  * /metrics + /metrics/latest:
+    - Regra I: SELECT * -> explicit fields (id, cpu_pct, ram_pct, disk_pct, load_avg, host, collected_at)
+    - Regra D: + id DESC tiebreaker (multi-host metrics burst)
+    - Regra E: ?offset pagination
+  * /alerts + /alerts/recent:
+    - Regra I/D/E aplicadas
+    - DLP CRITICAL: mask.text(message) + mask.obj(payload)
+      Pattern pass 30 confirmou alerts.message contem "Reporter: $uuid..."
+      Plus payload pode ter stack traces/PG_PASS/Bearer
+    - Total count UX
+  * /audit-log:
+    - Regra D: + id DESC tiebreaker (burst webhook.reset/kyc.approve mass)
+    - DLP CRITICAL: mask.obj(payload_after) recursive
+      vault.rotate/webhook.reset/payment.create podem ter Asaas API key,
+      Bearer tokens, JWT raw nos payloads auditados
+- Pattern W7 em 62 endpoints + 23 regras (A-W) - 63 micro-iters
+- DLP cross-svc consolidado: 3 svcs aplicam mask DLP em texto livre
+  (payment-svc dead webhooks pass 61 + notification-svc pass 62 + aiops-svc pass 63)
+
+PROXIMA ITER:
+- W7 pass 64: search-svc /admin endpoints (se houver)
+- W7 pass 65: aiops-svc /db/dead-indexes Regra D+E
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 62 RESUMO:
 - notification-svc/src/server.js GET / refactor (6 bugs):

@@ -9,7 +9,7 @@ const fs = require('node:fs/promises');
 const { exec } = require('node:child_process');
 const { promisify } = require('node:util');
 const { query, healthcheck } = require('@cas/db-client');
-const { logger, errorHandler, asyncHandler, jwt, cache } = require('@cas/shared');
+const { logger, errorHandler, asyncHandler, jwt, cache, mask } = require('@cas/shared');
 
 const execP = promisify(exec);
 const log = logger.child({ svc: 'aiops-svc' });
@@ -237,21 +237,66 @@ app.get('/status',
 // FIX-WORKER-10 pass 5: /metrics agora admin-only (raw com hostname + extras)
 const metricsHandler = asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
-  const lim = Math.max(1, Math.min(parseInt(req.query.limit || '60', 10), 500));
-  const r = await query(`SELECT * FROM metrics_history ORDER BY collected_at DESC LIMIT $1`, [lim]);
-  res.json({ metrics: r.rows });
+  // FIX-WORKER-7 pass 63: 3 bugs (Regras D+E+I).
+  // BUG 1 *** Regra I SELECT * *** metrics_history pode ter host/container_id PII
+  // BUG 2 *** Regra D TIEBREAKER MISSING *** collected_at DESC sem id
+  //   Cron metrics 1min interval -> mesmo collected_at em multi-host scenario.
+  // BUG 3 *** Regra E OFFSET MISSING ***
+  const limit = Math.max(1, Math.min(parseInt(req.query.limit || '60', 10), 500));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const r = await query(
+    `SELECT id, cpu_pct, ram_pct, disk_pct, load_avg, host, collected_at
+       FROM metrics_history
+      ORDER BY collected_at DESC, id DESC
+      LIMIT $1 OFFSET $2`, [limit, offset]);
+  res.json({ metrics: r.rows, count: r.rows.length, limit, offset });
 });
 app.get('/metrics', jwt.requireAuth({ roles: ['admin','staff'] }), metricsHandler);
 app.get('/metrics/latest', jwt.requireAuth({ roles: ['admin','staff'] }), metricsHandler);
 
 // FIX-WORKER-10 pass 5: /alerts agora admin-only (vazava reporter UUIDs em payload + target_id)
+// FIX-WORKER-7 pass 63: 5 BUGS aplicando Pattern W7 (Regras D+E+I + DLP).
+//   BUG 1 Regra I SELECT * -> explicit fields
+//   BUG 2 Regra D tiebreaker created_at + id
+//   BUG 3 Regra E hardcoded LIMIT 100 -> ?limit/?offset
+//   BUG 4 DLP CRITICAL: payload JSONB -> mask.obj()
+//     Pattern pass 30 confirmed: alerts.message has "Reporter: $uuid, Motivo: ..."
+//     Plus payload may contain stack traces with PG_PASS/Bearer/JWT.
+//   BUG 5 Total count UX
 const alertsHandler = asyncHandler(async (req, res) => {
   const days = Math.min(parseInt(req.query.days || '7', 10), 90);
+  const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 100));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
   const r = await query(
-    `SELECT * FROM alerts WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
-      ORDER BY created_at DESC LIMIT 100`, [String(days)]
+    `SELECT id, severity, source, code, title, message, target_type, target_id,
+            payload, acknowledged_at, created_at
+       FROM alerts
+      WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
+      ORDER BY created_at DESC, id DESC
+      LIMIT $2 OFFSET $3`,
+    [String(days), limit, offset]
   );
-  res.json({ alerts: r.rows });
+
+  // DLP CRITICAL: payload + message podem conter secrets/PII
+  // mask.obj() recursivo (sk-/Bearer/JWT/CPF/CNPJ/creditcard auto-mask)
+  const alerts = r.rows.map((row) => ({
+    ...row,
+    message: row.message ? mask.text(row.message) : null,
+    payload: row.payload ? mask.obj(row.payload) : null,
+  }));
+
+  // Total count UX paginacao
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM alerts
+      WHERE created_at > NOW() - ($1 || ' days')::INTERVAL`,
+    [String(days)]
+  );
+
+  res.json({
+    alerts, count: alerts.length, total: totalRes.rows[0].total,
+    limit, offset, days,
+  });
 });
 app.get('/alerts', jwt.requireAuth({ roles: ['admin','staff'] }), alertsHandler);
 app.get('/alerts/recent', jwt.requireAuth({ roles: ['admin','staff'] }), alertsHandler);
@@ -282,13 +327,20 @@ const auditLogHandler = asyncHandler(async (req, res) => {
   if (sevFilter) { where.push(`severity = $${i++}`); params.push(sevFilter); }
   params.push(lim);
   params.push(off);
+  // FIX-WORKER-7 pass 63: 2 bugs (Regra D + DLP CRITICAL).
+  // BUG 1 Regra D TIEBREAKER MISSING: created_at DESC sem id DESC
+  //   Audit log mass-insert (bulk webhook.reset cron, mass kyc.approve)
+  //   -> mesmo created_at em UUID v4 burst.
+  // BUG 2 DLP CRITICAL: payload_after pode conter secrets em vault.rotate/
+  //   webhook.reset/payment.create -> Asaas API key, Bearer, JWT raw.
+  //   mask.obj() recursive aplicado pre-response.
   // Note: usa idx_audit_action_created quando action presente, idx_audit_created caso contrario
   const r = await query(
     `SELECT id, actor_user_id, actor_role, action, target_type, target_id,
             severity, payload_after, created_at
        FROM audit_log
       WHERE ${where.join(' AND ')}
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT $${i++} OFFSET $${i++}`,
     params
   );
@@ -299,8 +351,15 @@ const auditLogHandler = asyncHandler(async (req, res) => {
         ${sevFilter ? `AND severity = $${action ? 3 : 2}` : ''}`,
     [String(days), ...(action ? [action] : []), ...(sevFilter ? [sevFilter] : [])]
   );
+
+  // DLP CRITICAL: payload_after recursive mask
+  const entries = r.rows.map((row) => ({
+    ...row,
+    payload_after: row.payload_after ? mask.obj(row.payload_after) : null,
+  }));
+
   res.json({
-    entries: r.rows,
+    entries,
     total: totalRow.rows[0]?.n || 0,
     limit: lim,
     offset: off,
