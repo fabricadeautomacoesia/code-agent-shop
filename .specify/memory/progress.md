@@ -17298,7 +17298,37 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc /recently-viewed + /:slug/related (pass 78) - 7 bugs
 - ✅ product-svc /:slug/also-bought (pass 79) - 3 bugs UX consistency
 - ✅ product-svc wishlist.js (pass 80) - 8 bugs GET + POST
-- ✅ product-svc price-alerts.js (pass 81 esta iter) - 8 bugs GET + POST
+- ✅ product-svc price-alerts.js (pass 81) - 8 bugs GET + POST
+- ✅ product-svc seller-mgmt.js POST / draft (pass 82 esta iter) - 4 bugs DoS+race
+
+W7 PASS 82 RESUMO:
+- product-svc/src/routes/seller-mgmt.js POST / refactor (4 bugs):
+  * BUG 1 *** Regra L resource cap MISSING ***
+    - PRE-FIX: seller pode spawn 10.000 drafts ilimitado (DoS QA queue)
+    - FIX: MAX_PRODUCTS_PER_SELLER env-configurable (default 500)
+    - Conta products NAO archived/deleted (cap absoluto)
+    - 429 max_products_exceeded com current_count + max_allowed
+  * BUG 2 *** SLUG COLLISION RACE ***
+    - PRE-FIX: SELECT slug + INSERT separados (TOCTOU race)
+    - 2 sellers slugify mesmo title simultaneo = unique constraint 500 leak
+    - FIX: INSERT ON CONFLICT (slug) DO NOTHING + retry loop 5x sufixo random
+  * BUG 3 *** Regra K tx() ATOMICITY MISSING ***
+    - PRE-FIX: SELECT seller active + INSERT em statements separados
+    - Admin pode suspender seller entre 2 queries -> INSERT cria draft
+      em seller suspended (compliance break)
+    - FIX: tx() wrap + SELECT FOR UPDATE em sellers
+  * BUG 4 *** RATE-LIMIT MISSING ***
+    - NEW draftCreateLimiter 10/hr/seller
+    - Real users criam 1-2 drafts/dia - 10/hr permissivo para uso legitimo
+- Pattern W7 em 88 endpoints + 23 regras (A-W) - 82 micro-iters
+- Regra L cross-svc consolidado: cap recursos
+  (seller-svc /payout amount cap + product-svc max_products_per_seller)
+
+PROXIMA ITER:
+- W7 pass 83: product-svc PATCH /:id audit (Regra K + audit log)
+- W7 pass 84: product-svc upload.js endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 81 RESUMO:
 - product-svc/src/routes/price-alerts.js 2 endpoints refactor (8 bugs):

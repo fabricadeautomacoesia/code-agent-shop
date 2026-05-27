@@ -3,7 +3,26 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, rateLimiter } = require('@cas/shared');
+
+// FIX-WORKER-7 pass 82: rate-limit anti-spam drafts.
+// PRE-FIX: POST /products/me SEM rate-limit. Seller pwned/bot pode spawn
+// drafts ilimitados:
+//   - DoS QA queue (cron processa cada draft -> backlog)
+//   - Storage waste (cada draft ocupa ~5KB + media references)
+//   - Audit log spam
+// FIX: 10 drafts/hr/seller (real users criam ~1-2 drafts/dia)
+const draftCreateLimiter = rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 10,
+  message: 'Muitos produtos criados recentemente. Aguarde 1 hora.',
+});
+
+// FIX-WORKER-7 pass 82: cap absoluto produtos ativos por seller (Regra L).
+// PRE-FIX: seller pode ter MILHARES produtos drafts (cumulative spam).
+// Mesmo com rate-limit 10/hr -> 240/dia -> 7200/mes = inviavel manualmente
+// MAS script ataque sustentado quebra QA queue.
+// FIX: hard cap 500 products NOT archived/deleted por seller.
+const MAX_PRODUCTS_PER_SELLER = parseInt(process.env.MAX_PRODUCTS_PER_SELLER || '500', 10);
 
 const router = express.Router();
 const log = logger.child({ svc: 'product-svc', mod: 'seller-mgmt' });
@@ -199,32 +218,113 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 // POST /products/me - cria draft
-router.post('/', validate({ body: draftSchema }), asyncHandler(async (req, res, next) => {
-  const s = await query('SELECT id FROM sellers WHERE user_id = $1 AND status = $2', [req.user.sub, 'active']);
-  if (!s.rows.length) return next(errorHandler.forbidden('seller_not_active'));
+// FIX-WORKER-7 pass 82: 4 BUGS aplicando Pattern W7 (Regras L+K + race + rate-limit).
+//
+// BUG 1 *** Regra L resource cap MISSING *** seller cria drafts ilimitados
+//   PRE-FIX: zero check quantidade. Bot pwned spawn 10.000 drafts -> DoS:
+//   - QA queue cron processa cada -> backlog gigante
+//   - Storage 50MB+ apenas references inativas
+//   - Audit log explosion
+//   FIX: MAX_PRODUCTS_PER_SELLER cap (default 500, env-configurable).
+//
+// BUG 2 *** SLUG COLLISION RACE *** SELECT-THEN-INSERT
+//   PRE-FIX: linha 208-209 SELECT slug + INSERT separados (TOCTOU).
+//   2 sellers slugify mesmo title simultaneo -> ambos passam SELECT -> ambos
+//   INSERT -> SECOND falha unique constraint -> 500 leak.
+//   FIX: try INSERT + ON CONFLICT (slug) DO NOTHING + retry com suffix randomico.
+//
+// BUG 3 *** Regra K tx() ATOMICITY *** seller_active check + INSERT non-atomic
+//   PRE-FIX: SELECT seller status + INSERT em transactions diferentes.
+//   Entre as 2 queries, admin pode suspender seller -> INSERT cria draft
+//   em seller suspended (compliance break).
+//   FIX: tx() wrap + FOR UPDATE em sellers.
+//
+// BUG 4 *** RATE-LIMIT MISSING *** ja addressed acima via draftCreateLimiter.
+router.post('/',
+  draftCreateLimiter,
+  validate({ body: draftSchema }),
+  asyncHandler(async (req, res, next) => {
+    const b = req.body;
+    let outcome;
+    let product;
 
-  let slug = slugify(req.body.title);
-  // resolver colisao
-  const exists = await query('SELECT 1 FROM products WHERE slug = $1', [slug]);
-  if (exists.rows.length) slug = slug + '-' + Math.random().toString(36).slice(2, 7);
+    await tx(async (c) => {
+      // Regra K: SELECT FOR UPDATE seller (anti-race admin suspend during INSERT)
+      const s = await c.query(
+        `SELECT id FROM sellers WHERE user_id = $1 AND status = 'active' FOR UPDATE`,
+        [req.user.sub]
+      );
+      if (!s.rows.length) { outcome = { error: 'seller_not_active' }; return; }
+      const sellerId = s.rows[0].id;
 
-  const b = req.body;
-  const r = await query(
-    `INSERT INTO products
-      (seller_id, category_id, kind, status, slug, title, subtitle, description, short_description,
-       price_cents, currency, license_kind, tech_stack, requirements, install_instructions,
-       api_keys_required, estimated_install_min, cover_image_url, attributes, meta_keywords)
-     VALUES ($1,$2,$3,'draft',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::JSONB,$19)
-     RETURNING id, slug, status, created_at`,
-    [s.rows[0].id, b.category_id, b.kind, slug, b.title, b.subtitle || null, b.description, b.short_description || null,
-     b.price_cents, b.currency, b.license_kind, b.tech_stack || null, b.requirements || null,
-     b.install_instructions || null, b.api_keys_required || null, b.estimated_install_min || null,
-     b.cover_image_url || null, JSON.stringify(b.attributes || {}), b.meta_keywords || null]
-  );
-  log.info({ product_id: r.rows[0].id, seller_user: req.user.sub }, '[product.draft]');
-  await invalidate();
-  res.status(201).json({ product: r.rows[0] });
-}));
+      // BUG 1 Regra L: cap produtos ativos por seller
+      const countRow = await c.query(
+        `SELECT COUNT(*)::INT AS n FROM products
+          WHERE seller_id = $1
+            AND status NOT IN ('archived')
+            AND deleted_at IS NULL`,
+        [sellerId]
+      );
+      if (countRow.rows[0].n >= MAX_PRODUCTS_PER_SELLER) {
+        outcome = {
+          error: 'max_products_exceeded',
+          current_count: countRow.rows[0].n,
+          max_allowed: MAX_PRODUCTS_PER_SELLER,
+        };
+        return;
+      }
+
+      // BUG 2: slug com retry inteligente via ON CONFLICT
+      let slug = slugify(b.title);
+      // Tenta INSERT - se conflict, gera novo slug + retry
+      let attempt = 0;
+      const MAX_ATTEMPTS = 5;
+      while (attempt < MAX_ATTEMPTS) {
+        const ins = await c.query(
+          `INSERT INTO products
+            (seller_id, category_id, kind, status, slug, title, subtitle, description, short_description,
+             price_cents, currency, license_kind, tech_stack, requirements, install_instructions,
+             api_keys_required, estimated_install_min, cover_image_url, attributes, meta_keywords)
+           VALUES ($1,$2,$3,'draft',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::JSONB,$19)
+           ON CONFLICT (slug) DO NOTHING
+           RETURNING id, slug, status, created_at`,
+          [sellerId, b.category_id, b.kind, slug, b.title, b.subtitle || null, b.description, b.short_description || null,
+           b.price_cents, b.currency, b.license_kind, b.tech_stack || null, b.requirements || null,
+           b.install_instructions || null, b.api_keys_required || null, b.estimated_install_min || null,
+           b.cover_image_url || null, JSON.stringify(b.attributes || {}), b.meta_keywords || null]
+        );
+        if (ins.rows.length) {
+          product = ins.rows[0];
+          break;
+        }
+        // Conflict - tenta novo slug com sufixo randomico
+        slug = slugify(b.title) + '-' + Math.random().toString(36).slice(2, 7);
+        attempt++;
+      }
+      if (!product) {
+        outcome = { error: 'slug_collision_exhausted' };
+        return;
+      }
+    });
+
+    if (outcome?.error === 'seller_not_active') return next(errorHandler.forbidden('seller_not_active'));
+    if (outcome?.error === 'max_products_exceeded') {
+      return res.status(429).json({
+        error: 'max_products_exceeded',
+        message: `Limite de ${outcome.max_allowed} produtos ativos por seller atingido. Arquive produtos antigos.`,
+        current_count: outcome.current_count,
+        max_allowed: outcome.max_allowed,
+      });
+    }
+    if (outcome?.error === 'slug_collision_exhausted') {
+      return next(errorHandler.badRequest('slug_collision', 'Nao foi possivel gerar slug unico. Tente outro titulo.'));
+    }
+
+    log.info({ product_id: product.id, seller_user: req.user.sub }, '[product.draft]');
+    await invalidate();
+    res.status(201).json({ product });
+  })
+);
 
 // PATCH /products/me/:id
 router.patch('/:id', asyncHandler(async (req, res, next) => {
