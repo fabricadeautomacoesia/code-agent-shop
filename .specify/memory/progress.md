@@ -14786,3 +14786,78 @@ W7+W13+W18 PROGRESS:
 - W7: 22 endpoints + 18 regras (A-R)
 - W13: renderMustache XSS hardening (pass 1)
 - W18: 8 passes (cache, lazy, idx, rolling, audit tooling)
+
+================================================================
+ITER W4 PASS 13 - /admin/db-audit UI + sidebar nav (2026-05-27)
+================================================================
+ESCOPO: dashboard-admin UI consume audit endpoint W18 pass 8
++ adicionar /disputes (pass 31) + /db-audit (esta iter) ao sidebar
+FILES:
+- apps/dashboard-admin/src/app/db-audit/page.tsx (NEW)
+- apps/dashboard-admin/src/app/layout.tsx (sidebar nav +2 entries)
+
+CONTEXTO: W18 pass 8 criou endpoint /aiops/db/dead-indexes + script
+SQL standalone. Esta iter cria UI admin consume + adiciona /disputes
+(W7 pass 31) ao sidebar - ambos endpoints estavam SEM entry no nav.
+
+UI FEATURES /admin/db-audit:
+
+1. SUMMARY CARDS (4):
+   - Candidatos drop (red) - count + total_size_pretty liberados
+   - Low usage (yellow) - scans < 50 inspect
+   - Bloated (orange) - REINDEX recomendado
+   - Total dead size (magenta) - storage recuperavel
+
+2. WARNINGS BANNER yellow:
+   - 4 avisos do endpoint (NUNCA dropar PK/UNIQUE, idx parciais
+     potencialmente critical futuros, aguardar 2+ semanas, EXPLAIN ANALYZE)
+   - Pattern educacional admin antes de DROP manual
+
+3. TABS (3):
+   - Dead indices (50 max): tabela com schema/table/index/size/scans/recommendation
+   - Bloated (20 max): table/idx/sizes/% of table (red bold > 100%)
+   - Top usage (sanity): 10 idx MAIS usados em prod (deve ter idx criticos)
+
+4. UX BONUS:
+   - Refresh button com loading spinner (RefreshCw animate-spin)
+   - Generated_at timestamp footer
+   - Tabela com hover row + color-coded badges
+
+SIDEBAR NAV (layout.tsx):
+- Adicionado /disputes Icon=Scale label="Disputas" (pass 31 endpoint)
+- Adicionado /db-audit Icon=Database label="DB Audit" (esta iter)
+- Total nav itens: 13 -> 15 (visivel todos sellers, admin operacao)
+
+WORKFLOW ADMIN COMPLETO (cycle dead idx):
+1. Admin acessa /admin/db-audit
+2. Refresh executa GET /aiops/db/dead-indexes
+3. UI lista candidates CANDIDATE_DROP em red
+4. Admin LEITA warnings cuidadosamente
+5. Decisao manual: drop via psql OR ssh OR migration N+M
+6. Iter futura: W18 pass 9 cria migration DROP baseado em audit reportado
+7. Pattern industry: 2+ semanas warm-up antes de drop
+
+PATTERN W4 ENDPOINT CONSUMER UI consolidado:
+- Pass 7 /admin/disputes (W4 pass 11 endpoint pass 31 esta iter)
+- Pass 8 /admin/webhooks (W11 pass 7)
+- Pass 12 /admin/audit-log (W14 pass 9)
+- Pass 13 /admin/db-audit (W18 pass 8 endpoint, esta iter)
+- Pattern reusable: 3 tabs com data, summary cards top, refresh button,
+  warnings banner se aplicavel
+
+W4 PROGRESS (dashboard-admin UI):
+- pass 1-12: 12 admin pages diversas
+- pass 13: /db-audit UI (esta iter)
+
+PROXIMA ITER:
+- W3 pass 14: Dialog wrapper e2e tests (Playwright)
+- W7 pass 32: review-svc audit (mesmo pattern)
+- W14: migration 043 dependendo audit prod
+- W5: dashboard-seller similar audit /seller/* page (futuro)
+
+W7+W13+W18+W4 PROGRESS CONSOLIDADO:
+- W7: 22 endpoints + 18 regras (A-R)
+- W13: renderMustache XSS hardening (pass 1)
+- W18: 8 passes tooling/perf (cache, lazy, idx, rolling, dead-audit)
+- W4: 13 admin pages (sellers, products, qa-queue, orders, payouts,
+  reports, alerts, vault, webhooks, audit-log, disputes, db-audit, etc)

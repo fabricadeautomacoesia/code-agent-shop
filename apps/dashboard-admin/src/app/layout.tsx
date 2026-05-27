@@ -1,6 +1,6 @@
 import './globals.css';
 import Link from 'next/link';
-import { LayoutDashboard, Users, Package, ShoppingCart, AlertTriangle, DollarSign, Activity, KeyRound, Shield, Webhook, FileText } from 'lucide-react';
+import { LayoutDashboard, Users, Package, ShoppingCart, AlertTriangle, DollarSign, Activity, KeyRound, Shield, Webhook, FileText, Scale, Database } from 'lucide-react';
 
 export const metadata = { title: 'Admin - Code & Agent Shop' };
 
@@ -18,6 +18,10 @@ const NAV = [
   { href: '/webhooks',    Icon: Webhook,         label: 'Webhooks Asaas' },
   // FIX-WORKER-4 pass 12: audit log (consume /aiops/audit-log - W14 pass 9 idx)
   { href: '/audit-log',   Icon: FileText,        label: 'Audit Log' },
+  // FIX-WORKER-4 W7 pass 31: disputes management (consume /orders/admin/disputes + /resolve)
+  { href: '/disputes',    Icon: Scale,           label: 'Disputas' },
+  // FIX-WORKER-4 W18 pass 8: DB indices audit (consume /aiops/db/dead-indexes)
+  { href: '/db-audit',    Icon: Database,        label: 'DB Audit' },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
