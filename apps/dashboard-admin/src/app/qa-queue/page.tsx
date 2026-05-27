@@ -7,10 +7,22 @@ import { CheckCircle, XCircle, Award } from 'lucide-react';
 
 export default function QAQueuePage() {
   const [queue, setQueue] = useState<any[]>([]);
+  // FIX-WORKER-4 pass 5: loadError visivel ao admin.
+  // Antes: console.error silencioso + tabela "Fila vazia" enganosa quando havia
+  // erro real (backend down, token expirado, etc). Admin pensava sistema saudavel.
+  const [loadError, setLoadError] = useState('');
 
   async function load() {
-    try { const r = await adminFetch<{ queue: any[] }>('/products/admin/qa-queue'); setQueue(r.queue); }
-    catch (e: any) { console.error(e); }
+    try {
+      const r = await adminFetch<{ queue: any[] }>('/products/admin/qa-queue');
+      // FIX-WORKER-4 pass 5: guard contra r.queue null/undefined (edge case backend)
+      setQueue(r.queue || []);
+      setLoadError('');
+    } catch (e: any) {
+      console.error(e);
+      setLoadError(e?.message || 'Erro carregando fila QA');
+      setQueue([]); // limpa lista para nao mostrar dados stale
+    }
   }
   useEffect(() => { load(); }, []);
 
@@ -47,6 +59,15 @@ export default function QAQueuePage() {
       <h1 className="font-display font-bold text-4xl mb-2">QA Queue</h1>
       <p className="text-white/60 mb-8">Produtos aguardando ou rejeitados pelo pipeline LLM (threshold 0.80)</p>
 
+      {/* FIX-WORKER-4 pass 5: loadError banner. Antes silencioso em console
+          + "Fila vazia" enganosa. Agora admin ve falhas explicitas. */}
+      {loadError && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>Erro carregando fila: {loadError}</span>
+          <button onClick={() => { setLoadError(''); load(); }} className="text-xs hover:underline">retry</button>
+        </div>
+      )}
+
       {/* FIX-WORKER-4 pass 2: feedback banners via useAdminAction */}
       {action.error && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
@@ -63,7 +84,11 @@ export default function QAQueuePage() {
 
       <div className="glass p-6 overflow-x-auto">
         {queue.length === 0 ? (
-          <p className="text-white/60 text-center py-8">Fila vazia. Sistema saudavel.</p>
+          /* FIX-WORKER-4 pass 5: msg condicional baseada em loadError state.
+             Se erro -> mensagem ja exibida acima. Se sem erro -> realmente vazia. */
+          <p className="text-white/60 text-center py-8">
+            {loadError ? 'Nao foi possivel carregar a fila. Tente o retry acima.' : 'Fila vazia. Sistema saudavel.'}
+          </p>
         ) : (
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-white/40 uppercase border-b border-white/10">
@@ -72,13 +97,29 @@ export default function QAQueuePage() {
               </tr>
             </thead>
             <tbody>
-              {queue.map((p) => (
+              {queue.map((p) => {
+                // FIX-WORKER-4 pass 5: acoes condicionais ao status.
+                // - force-approve: so faz sentido se nao aprovado ainda
+                //   (approved -> noop / qa_running -> race condition)
+                // - platform-take: NAO em produtos ja platform-owned (loop)
+                //   nem em qa_running (estado transitorio)
+                const canApprove = ['qa_pending','rejected'].includes(p.status);
+                const canTake = ['qa_pending','rejected','approved'].includes(p.status) && !p.is_platform_owned;
+                return (
                 <tr key={p.id} className="border-b border-white/5 hover:bg-white/5">
                   <td className="py-3">
                     <div className="font-medium">{p.title}</div>
                     <div className="text-xs text-white/40 font-mono">{p.slug}</div>
                   </td>
-                  <td className="text-white/70">{p.store_name || '-'}</td>
+                  {/* FIX-WORKER-4 pass 5: produtos da plataforma exibem badge "Plataforma CAS"
+                      em vez de "-" enganoso (era ambiguo: faltou seller? bug? oficial?) */}
+                  <td className="text-white/70">
+                    {p.is_platform_owned ? (
+                      <span className="inline-flex items-center gap-1 text-magenta-glow text-xs">
+                        <Award className="w-3 h-3" /> Plataforma CAS
+                      </span>
+                    ) : (p.store_name || '-')}
+                  </td>
                   <td><span className={`px-2 py-0.5 rounded text-xs ${statusColor[p.status]}`}>{p.status}</span></td>
                   <td>
                     {p.qa_confidence_score !== null && (
@@ -89,17 +130,25 @@ export default function QAQueuePage() {
                   </td>
                   <td className="text-xs text-white/50">{p.submitted_at ? fmtDate(p.submitted_at) : '-'}</td>
                   <td className="text-right space-x-2">
-                    <button onClick={() => forceApprove(p.id)} disabled={action.busyKey === `approve-${p.id}`}
-                      className="text-green-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
-                      <CheckCircle className="w-3 h-3" /> {action.busyKey === `approve-${p.id}` ? '...' : 'Aprovar'}
-                    </button>
-                    <button onClick={() => platformTake(p.id)} disabled={action.busyKey === `take-${p.id}`}
-                      className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
-                      <Award className="w-3 h-3" /> {action.busyKey === `take-${p.id}` ? '...' : 'Take'}
-                    </button>
+                    {canApprove && (
+                      <button onClick={() => forceApprove(p.id)} disabled={action.busyKey === `approve-${p.id}`}
+                        className="text-green-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                        <CheckCircle className="w-3 h-3" /> {action.busyKey === `approve-${p.id}` ? '...' : 'Aprovar'}
+                      </button>
+                    )}
+                    {canTake && (
+                      <button onClick={() => platformTake(p.id)} disabled={action.busyKey === `take-${p.id}`}
+                        className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                        <Award className="w-3 h-3" /> {action.busyKey === `take-${p.id}` ? '...' : 'Take'}
+                      </button>
+                    )}
+                    {!canApprove && !canTake && (
+                      <span className="text-white/30 text-xs italic">sem acoes</span>
+                    )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
