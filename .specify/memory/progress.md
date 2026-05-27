@@ -102,6 +102,32 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## SEO PASS 3 - JSON-LD SCHEMA.ORG (WORKER 9)
+Novo apps/storefront/src/components/json-ld.tsx com 5 schemas helpers:
+
+PDP (/product/[slug]):
+- Product: name, image, sku, brand, category, description (strip HTML 500c)
+- Offer: priceCurrency BRL, price, availability (InStock/OutOfStock), seller
+- AggregateRating: ratingValue, reviewCount (so se review_count>0)
+- Review[]: top 5 com author + reviewRating + reviewBody + datePublished
+- BreadcrumbList: Catalogo > Categoria > Produto (3 niveis)
+
+Layout (todas pages):
+- Organization: CAS branding + alternateName + sameAs
+- WebSite + potentialAction SearchAction: sitelinks search box no Google
+  (busca direto no nosso site a partir do SERP)
+
+VALIDADO E2E publicamente em prod:
+- Homepage: Organization + WebSite + SearchAction presentes
+- PDP: Product + Offer + AggregateRating + BreadcrumbList + 3 ListItem + Organization + WebSite
+- JSON valido com todos campos obrigatorios schema.org
+
+Impacto SEO esperado:
+- Estrelas no SERP (+CTR 20-30%)
+- Preco visivel sem clique
+- Breadcrumb hierarchy em vez de URL fria
+- Sitelinks search box quando user pesquisa marca
+
 ## VISUAL+A11Y - WORKER 8 (BTN CONSISTENCY + FOCUS-VISIBLE)
 Audit em globals.css revelou 5 inconsistencias visuais:
 1. btn-primary (px-6 py-3) vs btn-ghost (px-5 py-2.5) - tamanhos diferentes
