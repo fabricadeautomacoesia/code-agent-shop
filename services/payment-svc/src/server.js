@@ -302,13 +302,13 @@ async function processWebhookEvent(evt) {
          VALUES ($1, 'email', 'order_paid', 'Pagamento confirmado', 'Seu pagamento foi confirmado. Acesse seus produtos.', 0)`,
         [order.buyer_user_id]
       );
-      // notification aos sellers
-      const sellers = await c.query(
+      // notification aos sellers (movido pra ca de baixo - estava em if (false) orphan)
+      const newSaleSellers = await c.query(
         `SELECT DISTINCT s.user_id, p.title, oi.seller_payout_cents
            FROM order_items oi JOIN sellers s ON s.id = oi.seller_id JOIN products p ON p.id = oi.product_id
           WHERE oi.order_id = $1 AND oi.seller_id IS NOT NULL`, [order.id]
       );
-      for (const seller of sellers.rows) {
+      for (const seller of newSaleSellers.rows) {
         await c.query(
           `INSERT INTO notifications (user_id, channel, template_code, title, body, payload)
            VALUES ($1, 'email', 'seller_new_sale', 'Nova venda', $2, $3::JSONB)`,
@@ -317,6 +317,102 @@ async function processWebhookEvent(evt) {
         );
       }
     }
+
+    // FIX-WORKER-11: PAYMENT_REFUNDED precisa reverter TUDO que paid criou
+    // Antes apenas seto status=refunded. Buyer continuava com license_key valida
+    // (download token ativo 365d) + loyalty pts ganhos + counters de seller inflados.
+    if (evt.event === 'PAYMENT_REFUNDED' || evt.event === 'PAYMENT_CHARGEBACK') {
+      // 1. Revoga downloads (expires_at=NOW() + revoked_at)
+      await c.query(
+        `UPDATE order_items
+            SET revoked_at = NOW(),
+                revoked_reason = $1,
+                download_expires_at = NOW()
+          WHERE order_id = $2`,
+        [evt.event === 'PAYMENT_CHARGEBACK' ? 'chargeback' : 'refund', order.id]
+      );
+      // 2. Estorna loyalty points (procura tx de earn deste order e cria reversa)
+      const earnTx = await c.query(
+        `SELECT user_id, points_delta FROM loyalty_transactions
+          WHERE reference_type = 'order' AND reference_id = $1::text AND reason = 'order_paid'`,
+        [order.id]
+      );
+      for (const tx of earnTx.rows) {
+        const reversal = -tx.points_delta;
+        await c.query(
+          `UPDATE user_loyalty SET points_balance = GREATEST(0, points_balance + $1::INT),
+                                    points_lifetime = GREATEST(0, points_lifetime + $1::INT),
+                                    updated_at = NOW()
+            WHERE user_id = $2::UUID`,
+          [reversal, tx.user_id]
+        );
+        await c.query(
+          `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
+           VALUES ($1::UUID, $2::INT, 'order_refunded', 'order', $3::text)`,
+          [tx.user_id, reversal, order.id]
+        );
+      }
+      // 3. Estorna pontos resgatados (devolve ao buyer o que foi gasto)
+      const refundRedeem = await c.query(
+        `SELECT loyalty_points_redeemed, buyer_user_id FROM orders WHERE id = $1 AND loyalty_points_redeemed > 0`,
+        [order.id]
+      );
+      if (refundRedeem.rows.length && refundRedeem.rows[0].loyalty_points_redeemed > 0) {
+        const pts = refundRedeem.rows[0].loyalty_points_redeemed;
+        await c.query(
+          `UPDATE user_loyalty SET points_balance = points_balance + $1::INT, updated_at = NOW()
+            WHERE user_id = $2::UUID`,
+          [pts, refundRedeem.rows[0].buyer_user_id]
+        );
+        await c.query(
+          `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
+           VALUES ($1::UUID, $2::INT, 'order_refund_restore', 'order', $3::text)`,
+          [refundRedeem.rows[0].buyer_user_id, pts, order.id]
+        );
+      }
+      // 4. Decrementa counters de produtos + sellers
+      await c.query(
+        `UPDATE products p SET sales_count = GREATEST(0, sales_count - oi.quantity),
+                                revenue_cents_total = GREATEST(0, revenue_cents_total - oi.line_total_cents)
+           FROM order_items oi WHERE oi.order_id = $1 AND oi.product_id = p.id`, [order.id]
+      );
+      await c.query(
+        `UPDATE sellers s SET total_sales = GREATEST(0, total_sales - 1),
+                              total_revenue_cents = GREATEST(0, total_revenue_cents - oi.seller_payout_cents)
+           FROM order_items oi WHERE oi.order_id = $1 AND oi.seller_id = s.id`, [order.id]
+      );
+      // 5. Marca splits como refunded (admin precisa estornar transfer manualmente no Asaas)
+      await c.query(
+        `UPDATE asaas_splits SET status = 'refunded' WHERE order_id = $1`,
+        [order.id]
+      );
+      // 6. Notifica buyer + sellers
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
+         VALUES ($1, 'email', $2, $3, $4, 2)`,
+        [order.buyer_user_id,
+         evt.event === 'PAYMENT_CHARGEBACK' ? 'order_chargeback' : 'order_refunded',
+         evt.event === 'PAYMENT_CHARGEBACK' ? 'Chargeback registrado' : 'Reembolso processado',
+         'Seu pedido foi estornado. Os produtos foram desativados e pontos resgatados serao devolvidos. Pontos ganhos foram subtraidos.']
+      );
+      const refundSellers = await c.query(
+        `SELECT DISTINCT s.user_id, p.title FROM order_items oi
+           JOIN sellers s ON s.id = oi.seller_id JOIN products p ON p.id = oi.product_id
+          WHERE oi.order_id = $1`, [order.id]
+      );
+      for (const seller of refundSellers.rows) {
+        await c.query(
+          `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
+           VALUES ($1, 'email', 'seller_sale_refunded', $2, $3, 2)`,
+          [seller.user_id,
+           `Venda estornada: ${seller.title}`,
+           `A venda do produto "${seller.title}" foi estornada. Seu saldo foi ajustado.`]
+        );
+      }
+      log.warn({ event: evt.event, order_id: order.id, revoked_items: earnTx.rows.length },
+        '[refund.processed]');
+    }
+
   });
   log.info({ event: evt.event, order_id: order.id }, '[webhook.processed]');
 }
