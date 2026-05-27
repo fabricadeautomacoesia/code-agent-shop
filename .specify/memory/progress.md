@@ -102,6 +102,24 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## NOTIFICATION UX - WORKER 13 (UUID 22P02 + IDEMPOTENT MARK-AS-READ)
+Audit em services/notification-svc revelou 2 bugs:
+- POST /:id/read com UUID malformado -> 500 database_error (notification-svc
+  ainda nao tinha shared atualizado pos-W4, era um catch-up pendente).
+- UPDATE silencioso: retornava ok:true mesmo se notification nao existia
+  ou pertencia a outro user. Cliente sem feedback.
+
+FIX commitado + deployed (11a36b6):
+- Regex UUID local antes do query (defesa em profundidade, mesmo padrao W4).
+- UPDATE com RETURNING id - se 0 rows, checa se notification existe.
+- Idempotente: se ja-foi-lida -> 200 {ok:true, already_read:true}.
+- Notif inexistente ou outro user -> 404 notification_not_found.
+
+VALIDADO E2E publicamente:
+- UUID malformado -> 404 (antes era 500)
+- UUID valido inexistente -> 404 (antes era 200 silencioso)
+- /read-all preservado -> 200 {marked:N}
+
 ## QA PIPELINE SECURITY - WORKER 12 (CALLBACK SIGNATURE BYPASS CRITICAL)
 Audit em services/qa-svc/src/server.js revelou bug critico:
 - POST /qa/callback aceitava qualquer body sem validar assinatura HMAC.
