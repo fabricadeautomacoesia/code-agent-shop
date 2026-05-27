@@ -7,6 +7,7 @@ import { useAuth, useUI } from '@/lib/store';
 import { SearchAutocomplete } from './search-autocomplete';
 import { NotificationBell } from './notification-bell';
 import { WishlistBadge } from './wishlist-badge';
+import { Dialog } from './dialog';
 
 const NAV_LINKS = [
   { href: '/products?kind=ai_agent',    label: 'Agentes IA',      Icon: Bot,      color: 'hover:text-magenta' },
@@ -29,19 +30,9 @@ export function Nav() {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  // Trava scroll quando drawer aberto
-  // FIX-WORKER-3 pass 8 (a11y): Escape key close mobile menu (pattern CartDrawer
-  // pass 8 + NotificationBell pass 7). WCAG 2.1.1 keyboard accessibility.
-  useEffect(() => {
-    if (mobileOpen) document.body.style.overflow = 'hidden';
-    else document.body.style.overflow = '';
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMobileOpen(false); };
-    if (mobileOpen) window.addEventListener('keydown', onKey);
-    return () => {
-      document.body.style.overflow = '';
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [mobileOpen]);
+  // FIX-WORKER-3 pass 13: useEffect body lock + Escape REMOVIDOS - <Dialog>
+  // wrapper (pass 9) agora gerencia ambos automaticamente via JSX declarativo.
+  // Ver mobile drawer JSX abaixo - <Dialog open={mobileOpen} ...>.
 
   return (
     <>
@@ -96,18 +87,21 @@ export function Nav() {
       </div>
     </nav>
 
-    {/* Mobile drawer */}
-    {mobileOpen && (
-      <>
-        {/* FIX-WORKER-3 pass 8 (a11y): backdrop button semantico em vez de div */}
-        <button type="button" aria-label="Fechar menu"
-          onClick={() => setMobileOpen(false)}
-          className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm lg:hidden cursor-default" />
-        {/* FIX-WORKER-3 pass 8 (a11y): aside vira role=dialog modal */}
-        <aside role="dialog" aria-modal="true" aria-labelledby="mobile-menu-title"
-          className="fixed top-0 right-0 z-[70] h-full w-80 max-w-[85vw] glass-strong shadow-2xl lg:hidden transform transition-transform">
+    {/* Mobile drawer - FIX-WORKER-3 pass 13: refatorado p/ <Dialog> wrapper.
+        lg:hidden no wrapper Dialog garante visibilidade so mobile.
+        hideCloseButton=true porque header custom tem botao X manual. */}
+    <Dialog
+      open={mobileOpen}
+      onClose={() => setMobileOpen(false)}
+      ariaLabel="Menu de navegacao"
+      variant="drawer-right"
+      zIndex={70}
+      closeLabel="Fechar menu"
+      hideCloseButton
+      className="relative top-0 right-0 h-full w-80 max-w-[85vw] glass-strong shadow-2xl lg:hidden transform transition-transform"
+    >
           <div className="flex items-center justify-between p-4 border-b border-white/10">
-            <span id="mobile-menu-title" className="font-display font-bold">Menu</span>
+            <span className="font-display font-bold">Menu</span>
             <button onClick={() => setMobileOpen(false)} aria-label="Fechar menu" className="p-1.5 rounded hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-magenta">
               <X className="w-5 h-5" aria-hidden="true" />
             </button>
@@ -156,9 +150,7 @@ export function Nav() {
               </>
             )}
           </nav>
-        </aside>
-      </>
-    )}
+    </Dialog>
     </>
   );
 }

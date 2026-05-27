@@ -14369,3 +14369,73 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d cron-based
 - W4: dashboard-admin /admin/disputes listar
 - W13: notification-svc templates XSS audit
+
+================================================================
+ITER W3 PASS 13 - Nav mobile menu refator <Dialog> (ULTIMO) (2026-05-27)
+================================================================
+ESCOPO: storefront Nav mobile drawer migra para <Dialog>
+FILE: apps/storefront/src/components/nav.tsx (linhas 35-44 + 99-160)
+
+CONTEXTO: W3 pass 12 (SearchAutocomplete) foi 3o consumer.
+Pass 13 = 4o e ULTIMO consumer planejado (Nav mobile drawer-right c/ nav links).
+
+REFATORACAO APLICADA:
+
+REMOVIDO (~10 linhas pre-fix):
+- useEffect body scroll lock + Escape listener (linhas 35-44)
+- {mobileOpen && (<>...</>)} conditional wrapper Fragment
+- <button backdrop> manual com lg:hidden cursor-default
+- <aside role=dialog aria-modal aria-labelledby> manual
+- aria-labelledby="mobile-menu-title" + span id (Dialog gerencia via ariaLabel)
+
+ADICIONADO declarativo:
+- import { Dialog } from './dialog'
+- <Dialog open={mobileOpen} onClose={() => setMobileOpen(false)}
+    ariaLabel="Menu de navegacao" variant='drawer-right' zIndex={70}
+    closeLabel='Fechar menu' hideCloseButton
+    className="relative top-0 right-0 h-full w-80 max-w-[85vw]
+              glass-strong shadow-2xl lg:hidden transform transition-transform">
+- hideCloseButton=true (header custom tem X manual no canto)
+- lg:hidden no className override garante mobile-only visibility
+
+VARIANT DIFERENCAS (4o consumer):
+- variant='drawer-right' (mesmo que CartDrawer pass 10)
+- zIndex={70} explicit (acima de cart-drawer z-60)
+- lg:hidden no className wrapper visibility constraint
+- ariaLabel "Menu de navegacao" cobre screen reader
+  (pre-fix usava aria-labelledby - omitido title prop = sem h2 sr-only)
+
+LESSON LEARNED FINAL:
+- 4 consumers refatorados, 4 padroes diferentes covered:
+  * CartDrawer: drawer-right + open-state externa + h-full
+  * AskQuickButton: centered modal + zIndex elevado + header rico
+  * SearchAutocomplete: centered + custom positioning (negative margin)
+  * Nav mobile: drawer-right + lg:hidden visibility + hideCloseButton
+- Dialog API canonica robusta: title + ariaLabel + variant + zIndex
+  + className override + hideCloseButton + closeLabel
+- 5 elementos chave a11y: dialog role + Escape + scroll lock +
+  focus management + backdrop semantico - TODOS gratuitos via wrapper
+
+PATTERN W3 DIALOG REFACTOR COMPLETO:
+- ✅ pass 10 CartDrawer (1o consumer)
+- ✅ pass 11 AskQuickButton (2o)
+- ✅ pass 12 SearchAutocomplete (3o)
+- ✅ pass 13 Nav mobile menu (4o - ULTIMO, esta iter)
+- NotificationBell: mantem custom (popover != dialog full screen)
+
+BENEFICIOS CUMULATIVOS FINAIS (4 consumers refatorados):
+- ~85 linhas removidas total (30+35+10+10)
+- A11Y BONUS UNIVERSAL: focus auto-mount + return-to-opener em TODOS
+  - Pre-fix: nenhum consumer tinha focus return-to-opener
+  - Pre-fix: AskQuick tinha manual via useRef (35 linhas)
+  - Pos-fix: GRATUITO via wrapper Dialog
+- WCAG 2.1.1 (keyboard) + 2.4.3 (focus order) + 4.1.2 (Name Role Value)
+  garantidos em TODOS 4 consumers
+- Manutencao centralizada: bug em dialog.tsx = fix universal
+- Type-safe DialogProps cross-component
+
+PROXIMA ITER:
+- W18 pass 7: idx parcial product_views > 90d cron-based (deferido N iters)
+- W4: dashboard-admin /admin/disputes listar
+- W13: notification-svc templates XSS audit
+- W3 pass 14: audit Dialog wrapper escolar testes (e2e Playwright?)
