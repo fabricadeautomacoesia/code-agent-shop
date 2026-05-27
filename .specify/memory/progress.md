@@ -1817,3 +1817,49 @@ VALIDACAO PUBLICA (6 cenarios, todos com admin token):
 DEPLOY: commit 685deee pushed,
 - seller-svc rebuilt via Dockerfile.node SVC=seller-svc, converged OK
 - payment-svc rebuilt via Dockerfile.node SVC=payment-svc, converged OK
+
+## WORKER 5 (SELLER DASH) - Historico de payouts ausente em /financeiro
+Auditoria publica como vendedor1@cas.io (role=seller):
+- /products/me -> 200 (lista produtos) OK
+- /sellers/me -> 200 (KYC) OK
+- /sellers/me/kpi -> 200 (receita bruta + comissao + liquido) OK
+- POST /sellers/me/payout (solicitar saque) -> 400 corretos (amount_below_min,
+  zod negativo) OK
+- /products/me/qna, /me/reviews -> 200 OK
+
+BUG: /financeiro tinha botao "Solicitar saque" funcional, mas ZERO visibilidade
+do que acontece apos: status pending/approved/paid/rejected, rejected_reason,
+asaas_transfer_id, data de aprovacao/pagamento. Seller solicitava, recebia
+toast verde "Aguardando aprovacao" e ficava no escuro.
+
+Backend nao tinha rota /sellers/me/payouts:
+- Admin tem /sellers/admin/payouts/pending (auditoria global)
+- Seller nao tinha /sellers/me/payouts -> tinha que perguntar suporte
+
+FIX BACKEND: services/seller-svc/src/routes/me.js
+- Nova rota GET /sellers/me/payouts?limit=N (default 50, max 200)
+- Resolve sellers.id pelo user_id, retorna seller_payouts da propria conta
+- Campos: id, amount_cents, status, asaas_transfer_id, requested_at,
+  approved_at, paid_at, rejected_reason
+- 404 seller_not_found se user nao tem perfil seller
+
+FIX UI: apps/dashboard-seller/src/app/financeiro/page.tsx
+- Promise.all([kpi, payouts]) no load (paraleliza fetch)
+- Novo bloco "Historico de saques" abaixo do form de solicitacao
+- Mapa PAYOUT_STATUS { pending(Clock yellow), approved(CheckCircle2 blue),
+  paid(Banknote green), rejected(XCircle red) }
+- divide-y com avatar circular + label + timestamps + asaas_transfer_id mascarado
+- rejected_reason visivel em vermelho se houver
+- Empty state "Nenhum saque solicitado ainda"
+
+VALIDACAO PUBLICA:
+- Backend GET /api/sellers/me/payouts (auth vendedor1@cas.io):
+  200 + payouts:[{R$100, pending, requested 2026-05-27}] OK
+- Backend sem auth -> 401 OK
+- UI chunk /financeiro/page-942e13ca3af98718.js contem:
+  Historico de saques, Nenhum saque, Aguardando aprovacao,
+  Aprovado processando, Pago, payouts OK
+
+DEPLOY: commit da24f0d pushed,
+- seller-svc rebuilt via Dockerfile.node SVC=seller-svc, converged OK
+- dashboard-seller rebuilt via Dockerfile.next, converged OK
