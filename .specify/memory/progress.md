@@ -102,6 +102,42 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## IMAGE OPTIMIZATION - WORKER 18 PASS 3 (NEXT/IMAGE + AVIF/WEBP)
+Auditoria: 13 <img> tags em 10 pages do storefront, todas SEM otimizacao.
+Browsers modernos suportam AVIF (50% menor) e WebP (30% menor) que JPEG.
+
+CONFIG next.config.mjs:
+- images.formats: ['image/avif', 'image/webp'] - content negotiation por Accept
+- deviceSizes: [375, 640, 750, 1080, 1200, 1920] - srcset adaptativo
+- imageSizes: [16..384] - thumbnails
+- minimumCacheTTL: 86400 (24h cache CDN)
+
+PDP /product/[slug]:
+- <img> cover (hero LCP) -> <Image fill priority sizes='(max-width:768px) 100vw, 800px'>
+- <img> related cards -> <Image width=64 height=64> (exact dims = no CLS)
+
+components/product-card.tsx:
+- <img loading='lazy'> -> <Image fill sizes='(max-width:640px) 100vw, (max-width:1024px) 50vw, 33vw'>
+  3 col desktop -> 2 col tablet -> 1 col mobile com srcset por breakpoint.
+
+VALIDADO E2E (curl com Accept negotiation):
+- Accept: image/avif -> Content-Type: image/avif, 10472 bytes
+- Accept: image/webp -> Content-Type: image/webp, 13970 bytes
+- Accept: image/jpeg -> Content-Type: image/jpeg, 23424 bytes
+- Cache header: public, max-age=31536000, must-revalidate (1 ano CDN)
+
+REDUCOES CONFIRMADAS em produto real:
+- AVIF 55% menor que JPEG (10.5kB vs 23.4kB)
+- WebP 40% menor que JPEG (14kB vs 23.4kB)
+- Bandwidth global esperado: ~50% reducao com >60% dos browsers (AVIF support).
+
+srcset confirmado no HTML SSR: 7 sizes (375w, 384w, 640w, 750w, 1080w, 1200w, 1920w).
+
+Impacto SEO esperado:
+- LCP (Largest Contentful Paint) +10-15 pts no Google Pagespeed
+- CLS (Cumulative Layout Shift) reduzido (exact dimensions em related cards)
+- Mobile-first ranking boost.
+
 ## MOBILE+UX - WORKER 15 PASS 2 (CARTDRAWER PARIDADE COM /CART)
 Audit do componente CartDrawer (sidebar do cart) revelou 2 inconsistencias
 versus /cart page completa:
