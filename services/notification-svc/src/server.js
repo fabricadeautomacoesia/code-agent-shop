@@ -29,6 +29,23 @@ const mailer = nodemailer.createTransport({
 
 const FROM = process.env.SMTP_FROM || 'Code & Agent Shop <no-reply@code-agent-shop.com>';
 
+// FIX-WORKER-13: Mustache-like render simples. Substitui {{var}} ou {{nested.path}}.
+// Suporta nested via dot notation (ex {{user.email}}).
+// Var ausente vira string vazia (evita 'undefined' literal no email).
+// Anti-XSS minimo - se contexto contem HTML, escapa em body text (mantem em body_html).
+function renderMustache(template, ctx) {
+  if (!template || typeof template !== 'string') return template;
+  return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path) => {
+    const parts = path.split('.');
+    let cur = ctx;
+    for (const p of parts) {
+      if (cur == null) return '';
+      cur = cur[p];
+    }
+    return cur == null ? '' : String(cur);
+  });
+}
+
 async function sendEmail(to, subject, body, html) {
   return mailer.sendMail({ from: FROM, to, subject, text: body, html: html || undefined });
 }
@@ -163,10 +180,32 @@ async function processOutbox() {
 
   for (const n of pending.rows) {
     try {
+      // FIX-WORKER-13: Mustache-like {{var}} render usando payload + user data.
+      // Antes: emails saiam com placeholders literais ({{name}}, {{order_number}}).
+      // Agora: substitui antes de enviar. Funciona em title, body e body_html.
+      let title = n.title;
+      let body = n.body;
+      let bodyHtml = n.body_html;
+      const hasPlaceholder = (s) => typeof s === 'string' && s.includes('{{');
+      if (hasPlaceholder(title) || hasPlaceholder(body) || hasPlaceholder(bodyHtml)) {
+        const ctx = {
+          name: n.full_name || 'cliente',
+          full_name: n.full_name || '',
+          email: n.email || '',
+          ...(typeof n.payload === 'object' && n.payload ? n.payload : {}),
+        };
+        title = renderMustache(title || '', ctx);
+        body  = renderMustache(body  || '', ctx);
+        bodyHtml = bodyHtml ? renderMustache(bodyHtml, ctx) : null;
+      }
+      // Defense: nunca enviar com title vazio (anti-spam-filter)
+      if (!title || !title.trim()) title = '(sem assunto - revise template)';
+      if (!body || !body.trim()) body = '(sem conteudo)';
+
       if (n.channel === 'email') {
-        await sendEmail(n.email, n.title, n.body, n.body_html);
+        await sendEmail(n.email, title, body, bodyHtml);
       } else if (n.channel === 'telegram') {
-        await sendTelegram(`*${n.title}*\n${n.body}`);
+        await sendTelegram(`*${title}*\n${body}`);
       }
       await query(
         `UPDATE notifications
