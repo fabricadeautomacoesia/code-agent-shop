@@ -52,7 +52,15 @@ function reportSuccess(ip) {
 
 function middleware() {
   return (req, res, next) => {
-    const ip = req.ip || req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
+    // FIX-WORKER-6: prioriza x-forwarded-for/x-real-ip do gateway (defesa em profundidade
+    // caso trust proxy esteja off em algum svc). req.ip eh fallback.
+    const xff = req.headers['x-forwarded-for'];
+    const realIp = req.headers['x-real-ip'];
+    const ip = (xff && String(xff).split(',')[0].trim())
+             || realIp
+             || req.ip
+             || req.socket.remoteAddress
+             || 'unknown';
     if (isBanned(ip)) {
       return res.status(403).json({ error: 'ip_banned', message: 'Muitas tentativas. Tente novamente em 15min.' });
     }

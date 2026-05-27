@@ -12,6 +12,10 @@ const app = express();
 const PORT = parseInt(process.env.PORT_AUTH || '3010', 10);
 
 app.disable('x-powered-by');
+// FIX-WORKER-6 (CRITICAL): trust proxy=1 para req.ip ler X-Forwarded-For do gateway.
+// SEM ISSO, fail2ban via req.ip recebia o IP do gateway (interno Swarm) em vez do
+// IP real do atacante. 5 logins falhos por DIA banhavam TODOS os usuarios da plataforma.
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
 app.use(sanitize.middleware());
