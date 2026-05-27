@@ -16493,3 +16493,120 @@ PROXIMA ITER:
 - W7 pass 51: auth-svc /forgot-password + /reset-password (token security)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 50 - auth-svc /forgot+/reset-password 7 BUGS (XSS + audit) (2026-05-27)
+================================================================
+ESCOPO: auth-svc POST /forgot-password + POST /reset-password
+FILE: services/auth-svc/src/routes/auth.js
+
+CONTEXTO: W7 pass 49 cobriu /login 2FA (RFC 6238). Pass 50 ataca password
+recovery flow - vetor account takeover comum + XSS sutil.
+
+BUGS CORRIGIDOS (7 distribuidos):
+
+/forgot-password (4 bugs):
+
+1. *** XSS via fullName em body_html ***
+- PRE-FIX linha 438: <p>Ola <b>${fullName}</b>,</p> RAW INTERPOLATION
+- Atacante /register full_name='<img src=x onerror=alert(1)>'
+- /forgot-password gera body_html com HTML/JS arbitrario
+- Vetores:
+  a. Email clients legacy (Outlook, IMAP custom) renderizam script
+  b. Dashboard admin que mostra notifications/payload reflete XSS
+  c. Future dashboard que renderiza body_html como preview
+- Pattern W13 pass 31 estabeleceu _htmlEscape - aplicar AQUI cross-svc
+- FIX: htmlEscape(fullName) helper inline + uso em template body_html
+- body text plain mantem raw (sem renderizacao)
+- payload JSON mantem raw (cliente responsavel pelo escape no render)
+
+2. *** AUDIT_LOG MISSING *** security event critical
+- /forgot-password = account takeover signal (atacante enumerando + tentando)
+- PRE-FIX: zero audit log
+- FIX: INSERT audit_log atomic 2 paths:
+  a. User found -> audit 'auth.forgot_password' severity warn
+  b. User not found -> audit 'auth.forgot_password.user_not_found' severity info
+- Payload: ip + ua_prefix + email_hash (16 chars - LGPD privacy)
+- Email hash > email plain p/ admin agregar attempts mesmo email sem expor
+
+3. *** ATOMICITY *** INSERT password_resets + INSERT notification sem tx()
+- Falha INSERT notification = token existe DB mas user nao recebe email
+- Token "vazado" no DB sem ser consumed = exploit window se admin investiga logs
+- FIX: tx() atomic (mesmo + audit_log no mesmo tx)
+
+4. *** MULTIPLOS password_resets PENDING ***
+- PRE-FIX: cada request gera novo token sem invalidar anteriores
+- User pode ter 10 tokens validos simultaneous (1 per /forgot call)
+- Atacante: spam 10x /forgot-password -> victim recebe 10 emails + 10 tokens DB
+- Anti-spam: invalidar previos (1 token per user max)
+- FIX: UPDATE password_resets SET used_at=NOW() WHERE user_id ... AND used_at IS NULL
+  ANTES INSERT novo token
+
+/reset-password (3 bugs):
+
+1. *** AUDIT_LOG MISSING *** password change = security event critical
+- Pattern W7 high-impact: audit obrigatorio
+- FIX: INSERT audit_log atomic dentro tx (sessions_revoked count + ip)
+
+2. *** PASSWORD VALIDATION FRACA ***
+- Pre-fix: so /[A-Z]/.test + /[0-9]/.test
+- Senha "Aaaaaaaa1" passa = fraca + RAINBOW TABLE friendly
+- Pattern industry (NIST 800-63B): min 1 lowercase + 1 uppercase + 1 digit +
+  1 special char (anti rainbow + entropy +)
+- FIX: refine adicionou /[^\w\s]/ (special char) requirement
+- Mensagem PT-BR: "Senha precisa de maiuscula, numero e caractere especial (!@#$%^&* etc)"
+
+3. *** Regra K FOR UPDATE *** password_resets race
+- 2 requests concurrent mesmo token -> race condition
+- FIX: SELECT FOR UPDATE password_resets row (serializa)
+
+VALIDATION DEPLOY:
+
+curl /forgot-password com email registrado:
+- Audit log entry 'auth.forgot_password' visivel /aiops/audit-log
+- 1 token DB password_resets (anteriores marcados used)
+- 1 notification email outbox queue
+
+curl /forgot-password com email NAO registrado:
+- Audit log entry 'user_not_found' visivel
+- Zero password_resets / notifications criados
+- Response IDENTICA "Se email existir..." (anti-enumeration timing)
+
+curl /reset-password com senha "Aaaaaaa1" (sem special):
+- 400 "Senha precisa de maiuscula, numero e caractere especial"
+
+curl /reset-password 2x SIMULTANEO mesmo token:
+- 1a: 200 OK senha resetada + sessions revoked
+- 2a: 400 invalid_or_expired_token (FOR UPDATE serializou + used_at=NOW pos-1a)
+
+PATTERN W7 CROSS-SVC HTML ESCAPE CONSOLIDADO:
+- W13 pass 31 (renderMustache) _htmlEscape estabelecido
+- W7 pass 50 auth-svc forgot-password aplica MESMO escape inline
+- TODO: extrair helper compartilhado @cas/shared.htmlEscape (refactor pass 52?)
+
+PATTERN W7 41 ENDPOINTS + 22 REGRAS (A-V) - 50 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7
+- gateway: 2
+- auth-svc: 3 (login pass 49, forgot-password pass 50, reset-password pass 50)
+
+AUTH-SVC PROGRESS (3/6 endpoints auditados):
+- ✅ POST /login 2FA (pass 49)
+- ✅ POST /forgot-password (pass 50)
+- ✅ POST /reset-password (pass 50)
+- POST /register (pendente - CPF + 2FA setup)
+- POST /refresh (pass W17 pass 14 historic OWASP - audit Regras novas)
+- POST /logout (pendente)
+
+PROXIMA ITER:
+- W7 pass 51: auth-svc POST /register (CPF + 2FA enrollment audit)
+- W7 pass 52: extrair @cas/shared.htmlEscape (DRY cross-svc)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod

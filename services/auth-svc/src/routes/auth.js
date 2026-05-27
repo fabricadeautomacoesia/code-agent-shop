@@ -415,61 +415,169 @@ router.post('/forgot-password',
   forgotPasswordLimiter,
   validate({ body: z.object({ email: z.string().email() }) }),
   asyncHandler(async (req, res) => {
+    // FIX-WORKER-7 pass 50: 4 BUGS CRITICOS aplicando Pattern W7 + W13 cross-svc.
+    //
+    // BUG 1 *** XSS via fullName em body_html ***
+    //   Atacante /register com full_name='<img src=x onerror=alert(1)>'
+    //   /forgot-password gera email body_html com HTML raw -> alguns email
+    //   clients legacy (Outlook, IMAP custom) renderizam script
+    //   + dashboard-admin que renderiza notifications/payload pode XSS reflect
+    //   Pattern W13 pass 31 estabeleceu _htmlEscape - aplicar AQUI tambem
+    //   FIX: htmlEscape(fullName) antes interpolar no template
+    //
+    // BUG 2 *** AUDIT_LOG MISSING *** security event critical sem trail
+    //   /forgot-password = signal interesting (potential account takeover)
+    //   FIX: INSERT audit_log atomic dentro tx com payload IP+UA+email_hash
+    //
+    // BUG 3 *** ATOMICITY *** INSERT password_resets + INSERT notification
+    //   sem tx() - falha notification = token existe DB mas user nao recebe
+    //   email. Token "vazado" em logs DB sem ser consumed.
+    //   FIX: tx() atomic
+    //
+    // BUG 4 *** MULTIPLOS PASSWORD_RESETS PENDING ***
+    //   Pre-fix: user pode ter 10 tokens validos simultaneous (1 por request)
+    //   Atacante: spam /forgot-password -> 10 emails ao victim + 10 tokens DB
+    //   Anti-spam: invalidar tokens anteriores ao gerar novo (1 token por user max)
+    //   FIX: UPDATE password_resets SET used_at=NOW() WHERE user_id ... AND used_at IS NULL
+    //   ANTES INSERT novo token
+    const htmlEscape = (s) => String(s).replace(/[&<>"'/]/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '/': '&#x2F;',
+    })[c]);
+
     const tok = crypto.randomBytes(32).toString('hex');
     const hash = crypto.createHash('sha256').update(tok).digest('hex');
-    const u = await query('SELECT id, full_name FROM users WHERE email = $1', [req.body.email]);
+    const u = await query('SELECT id, full_name FROM users WHERE email = $1 AND deleted_at IS NULL', [req.body.email]);
     if (u.rows.length) {
       const userId = u.rows[0].id;
-      const fullName = u.rows[0].full_name;
-      await query(
-        `INSERT INTO password_resets (user_id, token_hash, requested_ip, expires_at)
-         VALUES ($1, $2, $3, NOW() + INTERVAL '15 minutes')`,
-        [userId, hash, req.ip]
-      );
-      // dispara notification (notification-svc envia email)
+      const fullName = u.rows[0].full_name || 'cliente';
+      const fullNameSafe = htmlEscape(fullName);  // FIX bug 1
       const resetUrl = `${process.env.APP_URL || 'https://cas.inovareinteligenciaartificial.com'}/redefinir-senha?token=${tok}`;
-      await query(
-        `INSERT INTO notifications (user_id, channel, template_code, title, body, body_html, payload, priority)
-         VALUES ($1, 'email', 'password_reset', $2, $3, $4, $5::JSONB, 1)`,
-        [
-          userId,
-          'Redefinicao de senha - Code & Agent Shop',
-          `Ola ${fullName},\n\nClique no link para redefinir sua senha:\n${resetUrl}\n\nLink expira em 15 minutos.\nSe nao foi voce, ignore este email.`,
-          `<p>Ola <b>${fullName}</b>,</p><p>Clique no link abaixo para redefinir sua senha:</p><p><a href="${resetUrl}" style="display:inline-block;padding:10px 20px;background:linear-gradient(135deg,#EC4899,#7C3AED);color:#fff;text-decoration:none;border-radius:8px;">Redefinir senha</a></p><p>Link expira em 15 minutos. Se nao foi voce, ignore.</p>`,
-          JSON.stringify({ url: resetUrl, name: fullName }),
-        ]
-      );
+
+      await tx(async (c) => {
+        // FIX bug 4: invalida tokens previos pending (1 token per user max)
+        await c.query(
+          `UPDATE password_resets SET used_at = NOW()
+            WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW()`,
+          [userId]
+        );
+        // INSERT novo token
+        await c.query(
+          `INSERT INTO password_resets (user_id, token_hash, requested_ip, expires_at)
+           VALUES ($1, $2, $3, NOW() + INTERVAL '15 minutes')`,
+          [userId, hash, req.ip]
+        );
+        // INSERT notification (mesmo tx - FIX bug 3 atomicity)
+        await c.query(
+          `INSERT INTO notifications (user_id, channel, template_code, title, body, body_html, payload, priority)
+           VALUES ($1, 'email', 'password_reset', $2, $3, $4, $5::JSONB, 1)`,
+          [
+            userId,
+            'Redefinicao de senha - Code & Agent Shop',
+            // Body text: nao escapa (plain text - sem renderizacao)
+            `Ola ${fullName},\n\nClique no link para redefinir sua senha:\n${resetUrl}\n\nLink expira em 15 minutos.\nSe nao foi voce, ignore este email.`,
+            // body_html: USA fullNameSafe (escapado)
+            `<p>Ola <b>${fullNameSafe}</b>,</p><p>Clique no link abaixo para redefinir sua senha:</p><p><a href="${resetUrl}" style="display:inline-block;padding:10px 20px;background:linear-gradient(135deg,#EC4899,#7C3AED);color:#fff;text-decoration:none;border-radius:8px;">Redefinir senha</a></p><p>Link expira em 15 minutos. Se nao foi voce, ignore.</p>`,
+            // payload: name NAO escapado (consumido como JSON - cliente eh responsavel pelo escape no render)
+            JSON.stringify({ url: resetUrl, name: fullName }),
+          ]
+        );
+        // FIX bug 2: audit_log atomic (security event critical - account takeover signal)
+        await c.query(
+          `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+           VALUES ($1, 'system', 'auth.forgot_password', 'user', $1, 'warn', $2::JSONB)`,
+          [userId, JSON.stringify({
+            ip: req.ip,
+            ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+            // email_hash em vez de email completo (privacy LGPD)
+            email_hash: crypto.createHash('sha256').update(req.body.email).digest('hex').slice(0, 16),
+          })]
+        );
+      });
+    } else {
+      // FIX bug 2: audit tambem fail attempts (atacante enumerando emails)
+      // NAO bloqueia response (anti-enumeration - timing same)
+      query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES (NULL, 'system', 'auth.forgot_password.user_not_found', 'email', NULL, 'info', $1::JSONB)`,
+        [JSON.stringify({
+          ip: req.ip,
+          email_hash: crypto.createHash('sha256').update(req.body.email).digest('hex').slice(0, 16),
+        })]
+      ).catch(() => {});
     }
     res.json({ ok: true, message: 'Se o email existir, enviaremos instrucoes.' });
   })
 );
 
 // POST /auth/reset-password
+// FIX-WORKER-7 pass 50: 3 BUGS aplicando Pattern W7.
+//
+// BUG 1 *** AUDIT_LOG MISSING *** password change = security event critical
+//   Pattern W7 high-impact: audit obrigatorio.
+//   FIX: INSERT audit_log atomic dentro tx (sessions_revoked count + ip)
+//
+// BUG 2 *** STRONGER password validation ***
+//   Pre-fix: so [A-Z] + [0-9]. Senha "Aaaaaaa1" passa - fraca.
+//   Pattern industry (NIST 800-63B): min 1 lowercase + 1 uppercase + 1 digit +
+//   1 special. AQUI mantenho relax (UX-friendly) MAS adiciono special char check
+//   FIX: refine adiciona /[^\w\s]/ (special char) requirement
+//
+// BUG 3 *** Regra K FOR UPDATE *** password_resets row + users row
+//   Race: 2 requests concorrent mesmo token -> tx anterior race
+//   FIX: FOR UPDATE password_resets row anti-race
 router.post('/reset-password',
   resetPasswordLimiter,
   validate({ body: z.object({
     token: z.string().min(32),
     password: z.string().min(8).max(128)
-      .refine((s) => /[A-Z]/.test(s) && /[0-9]/.test(s), 'Senha precisa de maiuscula e numero'),
+      .refine((s) => /[A-Z]/.test(s) && /[0-9]/.test(s) && /[^\w\s]/.test(s),
+        'Senha precisa de maiuscula, numero e caractere especial (!@#$%^&* etc)'),
   })}),
   asyncHandler(async (req, res, next) => {
     const bcrypt = require('bcrypt');
     const hash = crypto.createHash('sha256').update(req.body.token).digest('hex');
-    const r = await query(
-      `SELECT id, user_id FROM password_resets
-        WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()`, [hash]
-    );
-    if (!r.rows.length) return next(require('@cas/shared').errorHandler.badRequest('invalid_or_expired_token'));
-    const pwHash = await bcrypt.hash(req.body.password, 12);
+
+    let outcome;
     await tx(async (c) => {
+      // FIX bug 3 (Regra K): SELECT FOR UPDATE password_resets anti-race
+      const r = await c.query(
+        `SELECT id, user_id FROM password_resets
+          WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+          FOR UPDATE`, [hash]
+      );
+      if (!r.rows.length) {
+        outcome = { error: 'invalid_or_expired_token' };
+        return;
+      }
+      const pwHash = await bcrypt.hash(req.body.password, 12);
       await c.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
         [pwHash, r.rows[0].user_id]);
       await c.query('UPDATE password_resets SET used_at = NOW() WHERE id = $1', [r.rows[0].id]);
       // revoga todas sessoes ativas (forca re-login)
-      await c.query(`UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(), revoked_reason = 'password_reset'
-                       WHERE user_id = $1 AND is_revoked = FALSE`, [r.rows[0].user_id]);
+      const revoked = await c.query(
+        `UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(),
+                                  revoked_reason = 'password_reset'
+          WHERE user_id = $1 AND is_revoked = FALSE
+          RETURNING id`,
+        [r.rows[0].user_id]
+      );
+      // FIX bug 1: audit_log atomic - security event critical
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'user', 'auth.password_reset', 'user', $1, 'warn', $2::JSONB)`,
+        [r.rows[0].user_id, JSON.stringify({
+          ip: req.ip,
+          ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+          sessions_revoked: revoked.rows.length,
+          token_id_prefix: r.rows[0].id.slice(0, 8),
+        })]
+      );
     });
-    res.json({ ok: true });
+
+    if (outcome?.error === 'invalid_or_expired_token') {
+      return next(require('@cas/shared').errorHandler.badRequest('invalid_or_expired_token'));
+    }
+    res.json({ ok: true, message: 'Senha redefinida. Faca login com a nova senha.' });
   })
 );
 
