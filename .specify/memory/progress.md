@@ -12166,3 +12166,92 @@ PROXIMA ITER:
 - W3 pass 10: refatorar CartDrawer usar <Dialog> (validate wrapper)
 - W18 pass 6: idx parcial order_items status='paid'
 - W7 pass 11: /recommendations/trending por categoria (MLB-5)
+
+================================================================
+ITER W18 PASS 6 - migration 038 indices CTE co_buyers (2026-05-27)
+================================================================
+ESCOPO: performance backend p/ /also-bought (W7 pass 10) CTE co_buyers
+FILE NEW: db/migrations/038_orders_co_buyers_partial_idx.sql
+
+CONTEXTO: W7 pass 10 implementou /also-bought collaborative filtering.
+Query rodava com idx broad existentes:
+- idx_orders_status (status) - mig 006:97 - cobre TODOS status (~70% non-paid)
+- idx_oi_product (product_id) - mig 006:148 - single col, heap fetch order_id
+
+Audit revelou 2 idx estrategicos faltando.
+
+INDICES CRIADOS (2):
+
+1. idx_orders_paid_fulfilled_buyer - PARTIAL INDEX
+   ON orders(id, buyer_user_id)
+   WHERE status IN ('paid','fulfilled') AND buyer_user_id IS NOT NULL
+   
+   PORQUE PARCIAL:
+   - status IN ('paid','fulfilled') eh ~30% das rows produto
+   - cancelled/pending/failed/refunded = ~70% NAO usado em recomendacao
+   - Idx parcial = ~30% do tamanho full (less RAM cache)
+   
+   COBERTURA:
+   - (id, buyer_user_id) no leaf -> JOIN orders.id = oi.order_id covering
+   - buyer_user_id direto sem heap fetch (CTE co_buyers DISTINCT)
+   - Filtros pre-aplicados no idx tree (status + buyer_user_id NOT NULL)
+
+2. idx_oi_product_order_covering - COVERING INDEX
+   ON order_items(product_id, order_id)
+   
+   PORQUE COVERING:
+   - idx_oi_product existente (single col product_id) forca heap fetch
+     order_id para JOIN orders.id = oi.order_id
+   - Composite (product_id, order_id) permite index-only scan
+   - JOIN ja resolvido no idx sem touch table heap
+   
+   NAO SUBSTITUI idx_oi_product (mantido p/ outros queries solo product_id).
+
+BUG DELIBERADAMENTE NAO ATACADO (limitacao PG):
+
+3. idx parcial product_views WHERE created_at > NOW() - INTERVAL '90d'
+   - /recommendations/for-me CTE viewed filtra > 90d
+   - Idx existente product_views(user_id) faz seq scan filtrando apos fetch
+   - PG REQUER imutabilidade no WHERE de CREATE INDEX
+   - NOW() / CURRENT_DATE / INTERVAL NAO IMMUTABLE
+   - Solucao requer cron periodico DROP + CREATE com data dinamica
+   - DEFERIDO: merece iter dedicada W18 pass 7 (complexity cron + race)
+
+BENEFICIO ESPERADO (segundo PG official + heuristicas indice covering):
+- 50k orders + 200k order_items: ~50-200ms -> ~5-20ms (~10x)
+- 1M orders (escala MLB futuro): ~2-10s -> ~50-200ms (~50x)
+- /also-bought caching 600s (W7 pass 10) ja amortiza, mas:
+  - First-hit pos-cache-expire melhor experience
+  - Backend load average diminui (menos CPU/IO PG)
+  - Headroom p/ scale-up
+
+VALIDACAO POS-APPLY (TODO na VPS):
+  EXPLAIN ANALYZE
+    WITH co_buyers AS (
+      SELECT DISTINCT o.buyer_user_id
+        FROM order_items oi
+        JOIN orders o ON o.id = oi.order_id
+       WHERE oi.product_id = '<uuid>'
+         AND o.status IN ('paid','fulfilled')
+         AND o.buyer_user_id IS NOT NULL
+    ) SELECT * FROM co_buyers;
+  
+  Esperado:
+  - "Index Only Scan using idx_oi_product_order_covering"
+  - "Index Only Scan using idx_orders_paid_fulfilled_buyer"
+  - Total runtime ~5-20ms em ~200k order_items
+
+COMMENT ON INDEX adicionado em ambos (auditavel pg_indexes).
+
+W18 PERFORMANCE PROGRESS:
+- pass 1-2: cache layer (Redis cacheMiddleware + withCache)
+- pass 3: lazy loading imagens below-fold
+- pass 4: image loading="lazy" cross-components
+- pass 5: webhook reconcile cron + cache TTL alignments
+- pass 6: idx parcial CTE co_buyers (esta iter)
+
+PROXIMA ITER:
+- W18 pass 7: idx parcial product_views > 90d (cron-based dynamic)
+- W18 pass 8: audit pg_stat_user_indexes -> drop dead indices (~2 weeks data)
+- W3 pass 10: refatorar CartDrawer usar <Dialog> (pass 9 wrapper)
+- W7 pass 11: /recommendations/trending por categoria (MLB-5 nao feita)
