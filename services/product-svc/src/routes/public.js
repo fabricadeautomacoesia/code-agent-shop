@@ -189,11 +189,31 @@ router.get('/:slug/related',
 }));
 
 // GET /products/compare?ids=uuid,uuid,uuid - comparar ate 4 produtos (MLB-7)
+// FIX-WORKER-7 pass 6: 3 bugs corrigidos:
+// 1. IDs nao-UUID (fake1,fake2) faziam Postgres throw 22P02 -> 404 generico
+//    "Recurso nao encontrado" do errorHandler. Agora valida UUID upfront -> 400.
+// 2. IDs validos mas todos inexistentes retornavam 200 {products:[]}, sem
+//    indicar que NENHUM foi encontrado. Frontend (comparar/page.tsx linha 47)
+//    tinha que verificar products.length < 2 manualmente, mensagem confusa.
+// 3. >4 IDs era silentemente truncado. Agora warn no response.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 router.get('/compare', asyncHandler(async (req, res) => {
   const idsRaw = (req.query.ids || '').toString();
-  const ids = idsRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 4);
-  if (ids.length < 2) {
+  const allIds = idsRaw.split(',').map(s => s.trim()).filter(Boolean);
+  const truncated = allIds.length > 4;
+  const limited = allIds.slice(0, 4);
+  if (limited.length < 2) {
     return res.status(400).json({ error: 'min_2_products', message: 'Selecione pelo menos 2 produtos para comparar' });
+  }
+  // FIX bug 1: validar UUIDs upfront (evita PG 22P02 -> 500/404 generico)
+  const invalidIds = limited.filter(id => !UUID_RE.test(id));
+  if (invalidIds.length) {
+    return res.status(400).json({
+      error: 'invalid_ids',
+      message: `IDs invalidos (esperado UUID): ${invalidIds.join(', ')}`,
+      invalid_count: invalidIds.length,
+    });
   }
   const r = await query(
     `SELECT p.id, p.slug, p.title, p.subtitle, p.kind, p.cover_image_url,
@@ -207,9 +227,34 @@ router.get('/compare', asyncHandler(async (req, res) => {
             (SELECT name FROM categories WHERE id = p.category_id) AS category_name
        FROM products p
       WHERE p.id = ANY($1::UUID[]) AND p.status = 'approved' AND p.deleted_at IS NULL`,
-    [ids]
+    [limited]
   );
-  res.json({ products: r.rows, count: r.rows.length });
+  // FIX bug 2: identificar IDs missing (existiam no request mas DB nao retornou)
+  const foundIds = new Set(r.rows.map(p => p.id));
+  const missingIds = limited.filter(id => !foundIds.has(id));
+  // FIX bug 2: 404 se NENHUM produto encontrado, ou 200 com aviso parcial
+  if (r.rows.length === 0) {
+    return res.status(404).json({
+      error: 'products_not_found',
+      message: 'Nenhum dos produtos solicitados foi encontrado ou esta disponivel para comparacao',
+      requested_count: limited.length,
+    });
+  }
+  if (r.rows.length < 2) {
+    return res.status(400).json({
+      error: 'insufficient_products',
+      message: `Apenas ${r.rows.length} produto(s) valido(s) encontrado(s). Comparar precisa de >=2.`,
+      found: r.rows.length,
+      missing_ids: missingIds,
+    });
+  }
+  // Success: include warnings se aplicavel (truncado / parcialmente missing)
+  res.json({
+    products: r.rows,
+    count: r.rows.length,
+    ...(missingIds.length && { missing_ids: missingIds }),
+    ...(truncated && { warning_truncated: `Apenas os primeiros 4 de ${allIds.length} IDs foram considerados` }),
+  });
 }));
 
 // GET /products/flash-promo - produtos em promocao relampago ativa (MLB-10)
