@@ -9,7 +9,7 @@ const fs = require('node:fs/promises');
 const { exec } = require('node:child_process');
 const { promisify } = require('node:util');
 const { query, healthcheck } = require('@cas/db-client');
-const { logger, errorHandler, asyncHandler, jwt, cache, mask } = require('@cas/shared');
+const { logger, errorHandler, asyncHandler, jwt, cache, mask, rateLimiter } = require('@cas/shared');
 
 const execP = promisify(exec);
 const log = logger.child({ svc: 'aiops-svc' });
@@ -208,31 +208,83 @@ app.get('/health', (_req, res) => res.json({
 // Cache 5s alinhado com client refresh: 1 colaborador "shared" por janela de 5s.
 // 2 users abrindo /status simultaneo dividem 1 backend call.
 // Trade-off: dados ate 5s antigos, aceitavel para status page (nao real-time).
+// GET /aiops/status - public minimal health (UX status page)
+// FIX-WORKER-7 pass 90: 4 BUGS aplicando Pattern W7 (DLP recon + rate-limit + tier-split).
+//
+// BUG 1 *** DLP RECON DISCLOSURE *** metrics + alerts breakdown publicos
+//   PRE-FIX: response retornava cpu/ram/disk/load_avg + alerts_24h breakdown.
+//   Recon vector severo:
+//     - load_avg_1m baixo = atacante sabe quando hammer eh efetivo
+//     - alerts_24h critical > 0 = plataforma com issues = momento atacar
+//     - cpu_percent constante = baseline p/ detectar DoS impact
+//   FIX: tier-split:
+//     - /status (public): apenas { ok: bool, ts } - boolean health
+//     - /status/detail (admin): metrics + alerts breakdown completo
+//
+// BUG 2 *** RATE-LIMIT MISSING *** /status publico hammer
+//   PRE-FIX: zero limit + cache 5s = bot pode disparar 100req/seg apos cache miss
+//   coletando metrics deltas para detectar load spike pattern.
+//   FIX: statusLimiter 60/min/IP (status page legitimo refresh 30s).
+//
+// BUG 3 *** db.ok BOOLEAN LEAK *** UP/DOWN recon
+//   PRE-FIX: ok: db.ok expoe DB outage real-time.
+//   Atacante coordena ataque com DB down detection.
+//   FIX: ok = TRUE apenas se DB ok AND metrics OK; FALSE = degraded
+//   (sem revelar se eh DB ou metrics issue).
+//
+// BUG 4 *** NO GRACEFUL DEGRADATION ***
+//   PRE-FIX: se healthcheck() throw, 500 leak stack trace.
+//   FIX: try/catch + return ok:false silent.
+const statusLimiter = rateLimiter.createLimiter({
+  windowMs: 60 * 1000, max: 60,
+  message: 'Rate limit exceeded em /status.',
+});
+
 app.get('/status',
-  cache.cacheMiddleware(() => 'aiops:status:public:v2', 5),
+  statusLimiter,
+  cache.cacheMiddleware(() => 'aiops:status:public:v3', 10),
   asyncHandler(async (_req, res) => {
-  const db = await healthcheck();
-  const m = await collectMetrics();
-  // Sanitiza metrics: so cpu/ram/disk percent + load. SEM hostname, uptime, extras (platform)
-  const sanitized = {
-    cpu_percent: m.cpu_percent,
-    ram_percent: m.ram_percent,
-    disk_percent: m.disk_percent,
-    load_avg_1m: m.load_avg_1m,
-  };
-  // Contador de alertas critical das ultimas 24h (sem expor IDs/conteudo)
-  const alertCount = await query(
-    `SELECT severity, COUNT(*)::INT AS n FROM alerts
-      WHERE created_at > NOW() - INTERVAL '24 hours'
-      GROUP BY severity`
-  );
-  res.json({
-    ok: db.ok,
-    metrics: sanitized,
-    alerts_24h: alertCount.rows.reduce((acc, r) => ({ ...acc, [r.severity]: r.n }), {}),
-    // host + ports map + recent_alerts removidos (DLP)
-  });
-}));
+    let ok = true;
+    try {
+      const db = await healthcheck();
+      if (!db.ok) ok = false;
+    } catch (_e) {
+      ok = false;
+    }
+    res.json({
+      ok,
+      ts: new Date().toISOString(),
+    });
+  })
+);
+
+// GET /aiops/status/detail - admin/staff full metrics + alerts breakdown
+// FIX-WORKER-7 pass 90: detail tier autenticado (era expostos em /status publico).
+app.get('/status/detail',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware(() => 'aiops:status:detail:v1', 5),
+  asyncHandler(async (_req, res) => {
+    const db = await healthcheck();
+    const m = await collectMetrics();
+    const sanitized = {
+      cpu_percent: m.cpu_percent,
+      ram_percent: m.ram_percent,
+      disk_percent: m.disk_percent,
+      load_avg_1m: m.load_avg_1m,
+    };
+    const alertCount = await query(
+      `SELECT severity, COUNT(*)::INT AS n FROM alerts
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+        GROUP BY severity`
+    );
+    res.json({
+      ok: db.ok,
+      metrics: sanitized,
+      alerts_24h: alertCount.rows.reduce((acc, r) => ({ ...acc, [r.severity]: r.n }), {}),
+      ts: new Date().toISOString(),
+    });
+  })
+);
 
 // FIX-WORKER-10 pass 5: /metrics agora admin-only (raw com hostname + extras)
 const metricsHandler = asyncHandler(async (req, res) => {

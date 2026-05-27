@@ -17306,7 +17306,36 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc POST /:id/qna/:qid/answer (pass 86) - 9 bugs duplicated route
 - ✅ product-svc upload.js endpoints (pass 87) - 6 bugs storage DoS
 - ✅ product-svc qna/answer DEPRECATED (pass 88) - consolidate review-svc
-- ✅ notification-svc /read-all (pass 89 esta iter) - 4 bugs DoS+audit+cap
+- ✅ notification-svc /read-all (pass 89) - 4 bugs DoS+audit+cap
+- ✅ aiops-svc /status (pass 90 esta iter) - 4 bugs DLP recon + tier-split
+
+W7 PASS 90 RESUMO:
+- aiops-svc/src/server.js GET /status refactor (4 bugs):
+  * DLP RECON DISCLOSURE: metrics + alerts_24h breakdown publicos
+    - PRE-FIX: cpu/ram/disk/load_avg expostos publicamente
+      * Recon vector severo: load_avg baixo = atacante sabe quando hammer
+      * alerts_24h critical > 0 = plataforma com issues = momento atacar
+    - FIX: tier-split:
+      * /status (public) -> apenas { ok: bool, ts }
+      * /status/detail (admin/staff) -> metrics + alerts breakdown completo
+  * NEW statusLimiter 60/min/IP (status page legit refresh ~30s)
+    - PRE-FIX: zero rate-limit + cache 5s = 100 req/seg apos cache miss
+      coletando metrics deltas (DoS pattern detection)
+  * db.ok BOOLEAN LEAK UP/DOWN recon:
+    - PRE-FIX: ok=db.ok expoe DB outage real-time -> atacante coordena DB-down
+    - FIX: ok = TRUE apenas se DB ok; FALSE = degraded silencioso
+  * Graceful degradation try/catch
+    - PRE-FIX: healthcheck() throw -> 500 stack trace leak
+    - FIX: try/catch return ok:false silencioso
+- Pattern W7 em 95 endpoints + 23 regras (A-W) - 90 micro-iters
+- Tier-split pattern estabelecido: public minimalist + admin detail
+  (modelo reaplicavel em outros healthchecks/status endpoints)
+
+PROXIMA ITER:
+- W7 pass 91: search-svc /search Pattern W7 audit (Regra D+E+I + filters)
+- W7 pass 92: search-svc /autocomplete + /trending audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 89 RESUMO:
 - notification-svc/src/server.js POST /read-all refactor (4 bugs):
