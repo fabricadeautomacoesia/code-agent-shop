@@ -1032,3 +1032,34 @@ VALIDACAO PUBLICA (chunk JS por ser 'use client'):
   AskQuickButton / Fazer pergunta / Pergunte ao vendedor / Tem alguma duvida -> OK
 
 DEPLOY: commit e882b50 pushed, storefront image rebuilt + service replicas atualizadas.
+
+## WORKER 17 (MLB-NEW) - Installments sem juros (Mercado Credito style)
+Mercado Livre exibe "em ate 12x de R$ X,XX sem juros" abaixo de TODA etiqueta
+de preco - feature mais cintada por compradores para conversao. Implementado
+parcelamento padrao 12x sem juros com parcela minima R$ 5 em CAS:
+
+NOVO COMPONENTE: apps/storefront/src/components/installments.tsx
+- Server Component puro (zero JS bundle adicional) com 2 variants:
+  * variant=pdp: icone CreditCard verde + "em ate 12x de R$ X,XX sem juros"
+  * variant=card: linha compacta "ate 12x R$ X,XX sem juros" (10px font)
+- Skip render se isFree ou price<minParcela*2
+
+API HELPER: apps/storefront/src/lib/api.ts
+- Api.installments(cents, max=12, minParcelaCents=500) -> { n, perCents }|null
+- Decrementa n ate atingir parcela minima de R$5 (regra Inovare conservadora)
+
+INTEGRACOES (4 surfaces):
+- PDP main price block (variant=pdp) -> antes do CTA Comprar
+- ProductCard card grid (variant=card) -> abaixo do preco no rodape
+- recently-viewed.tsx (variant=card) -> abaixo do preco
+- PDP "Voce tambem pode gostar" (variant=card) -> abaixo do preco
+
+VALIDACAO PUBLICA (HTML SSR direto):
+- /product/agente-rag-documentos-cas-004 (R$199): "em ate 12x de R$ 16,58 sem juros" OK
+- "Voce tambem pode gostar":
+  * R$149 -> "ate 12x R$ 12,41 sem juros" OK
+  * R$179 -> "ate 12x R$ 14,91 sem juros" OK
+- /products catalog: "sem juros" presente em cards OK
+
+DEPLOY: commit 041839e pushed, build storefront via /opt/cas/deploy/Dockerfile.next
+com contexto /opt/cas/apps/storefront, service updated --force, converged OK.
