@@ -3233,3 +3233,48 @@ GAP RESTANTE (proxima iter):
 - /conta/* paginas private (noindex via robots, mas canonical seria nice-to-have)
 - /comparar?ids=X,Y eh dinamico (canonical deve ser /comparar OU especifico
   por combinacao - decidir UX)
+
+## WORKER 9 pass 4 (SEO) - canonical coverage 7 surfaces adicionais
+
+VETOR DETECTADO:
+W9 pass 3 cobriu top-level pages (/, /products, /sellers, /promocoes,
+/categoria/[slug]), mas auditoria revelou 7 surfaces sem canonical:
+- /comparar?ids=X,Y -> EXPLOSAO COMBINATORIAL no Google: ?ids=a,b vs ?ids=b,a
+  vs ?ids=a,c viram URLs duplicadas (N! crescimento). User-generated content
+  nao deve ser indexavel.
+- /sobre, /privacidade, /termos, /cloud-code-ilimitado, /status, /register:
+  paginas estaticas sem canonical = sem signal forte de URL preferida.
+
+FIX (7 arquivos):
+1. /comparar/page.tsx: noindex (robots: index:false, follow:true) +
+   canonical '/comparar' base -> Google nao indexa combinacoes ids=X,Y mas
+   ainda segue links internos.
+2. /sobre/page.tsx: canonical '/sobre'
+3. /privacidade/page.tsx: canonical '/privacidade' + description
+4. /termos/page.tsx: canonical '/termos' + description
+5. /cloud-code-ilimitado/page.tsx: canonical '/cloud-code-ilimitado'
+6. /status/layout.tsx: canonical '/status'
+7. /register/layout.tsx: canonical '/register' (landing de aquisicao - indexavel)
+
+VALIDACAO PUBLICA (curl --resolve, 7 cenarios):
+- /comparar?ids=a,b,c -> canonical /comparar + robots noindex,follow OK
+- /sobre -> canonical /sobre OK
+- /privacidade -> canonical /privacidade OK
+- /termos -> canonical /termos OK
+- /cloud-code-ilimitado -> canonical /cloud-code-ilimitado OK
+- /status -> canonical /status OK
+- /register -> canonical /register OK
+
+DEPLOY: commit 26a21b4 pushed, storefront rebuilt via deploy/Dockerfile.next,
+docker service update --force converged OK.
+
+IMPACTO ESPERADO:
+- /comparar nao gera mais N URLs duplicadas no SERP (kill combinatorial)
+- Static pages tem canonical signal explicito para Google preferir HTTPS
+- /register indexavel agrega valor SEO (long-tail "criar conta marketplace IA")
+- 100% das paginas publicas top-level agora tem canonical explicito
+
+GAP RESTANTE (proxima iter):
+- /conta/* private pages (ja tem noindex - canonical nice-to-have apenas)
+- /seller/[slug] pages (paginas de loja - validar se ja tem canonical OG)
+- /product/[slug] PDP (verificar SEO completeness - JSON-LD + canonical)
