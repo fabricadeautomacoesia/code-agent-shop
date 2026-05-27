@@ -14,13 +14,37 @@ export const metadata = {
   alternates: { canonical: '/comparar' },
 };
 
-async function fetchSafe<T>(path: string): Promise<T | null> {
+// FIX-WORKER-3 pass 8: fetchCompare retorna detalhe do error (consume W7 pass 6).
+// Antes: fetchSafe descartava body de 400/404 -> mensagem generica "Comparacao invalida"
+// Agora: backend errors granulares (invalid_ids/products_not_found/insufficient_products)
+// chegam ao frontend para mensagem clara e CTA apropriado.
+type CompareResult = {
+  ok: true;
+  products: any[];
+  count: number;
+  missing_ids?: string[];
+  warning_truncated?: string;
+} | {
+  ok: false;
+  status: number;
+  error: string;
+  message: string;
+  invalid_count?: number;
+  found?: number;
+  requested_count?: number;
+  missing_ids?: string[];
+};
+
+async function fetchCompare(ids: string): Promise<CompareResult> {
   try {
     const base = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';
-    const r = await fetch(`${base}${path}`, { cache: 'no-store' });
-    if (!r.ok) return null;
-    return r.json();
-  } catch { return null; }
+    const r = await fetch(`${base}/api/products/compare?ids=${ids}`, { cache: 'no-store' });
+    const body = await r.json().catch(() => ({}));
+    if (r.ok) return { ok: true, ...body };
+    return { ok: false, status: r.status, error: body.error || 'unknown', message: body.message || 'Erro desconhecido', ...body };
+  } catch (e: any) {
+    return { ok: false, status: 0, error: 'network', message: 'Falha de rede ao buscar produtos' };
+  }
 }
 
 export default async function CompararPage({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
@@ -40,16 +64,49 @@ export default async function CompararPage({ searchParams }: { searchParams: Pro
     </div>
   );
 
-  const data: any = await fetchSafe(`/api/products/compare?ids=${ids}`);
-  const products = data?.products || [];
+  const result = await fetchCompare(ids);
 
-  if (products.length < 2) return (
-    <div className="container mx-auto px-6 py-16 max-w-2xl text-center">
-      <h1 className="font-display font-bold text-2xl mb-3 text-red-400">Comparacao invalida</h1>
-      <p className="text-white/60 mb-6">Selecione pelo menos 2 produtos validos.</p>
-      <Link href="/products" className="btn-primary">Voltar ao catalogo</Link>
-    </div>
-  );
+  // FIX-WORKER-3 pass 8: error path com mensagens granulares por tipo de erro
+  if (!result.ok) {
+    const errorMessages: Record<string, { title: string; hint: string }> = {
+      invalid_ids: {
+        title: 'IDs invalidos',
+        hint: `Os identificadores enviados nao sao UUIDs validos${result.invalid_count ? ` (${result.invalid_count} invalidos)` : ''}. Verifique o link.`,
+      },
+      products_not_found: {
+        title: 'Produtos indisponiveis',
+        hint: `Nenhum dos ${result.requested_count || 'produtos solicitados'} esta disponivel para comparacao. Podem ter sido removidos ou despublicados.`,
+      },
+      insufficient_products: {
+        title: 'Produtos insuficientes',
+        hint: `Apenas ${result.found || 0} produto(s) valido(s) foram encontrados. Comparacao precisa de pelo menos 2 produtos disponiveis.`,
+      },
+      min_2_products: {
+        title: 'Selecione pelo menos 2',
+        hint: 'A comparacao precisa de no minimo 2 produtos. Adicione mais via lista de catalogo.',
+      },
+      network: {
+        title: 'Falha de conexao',
+        hint: 'Nao foi possivel buscar os produtos. Tente novamente em alguns segundos.',
+      },
+    };
+    const e = errorMessages[result.error] || { title: 'Erro inesperado', hint: result.message };
+    return (
+      <div className="container mx-auto px-6 py-16 max-w-2xl text-center">
+        <GitCompare className="w-16 h-16 mx-auto mb-4 text-white/30" />
+        <h1 className="font-display font-bold text-2xl mb-3 text-red-400">{e.title}</h1>
+        <p className="text-white/60 mb-2">{e.hint}</p>
+        {result.missing_ids && result.missing_ids.length > 0 && (
+          <p className="text-xs text-white/40 mb-6 font-mono">
+            Indisponiveis: {result.missing_ids.slice(0, 3).join(', ')}{result.missing_ids.length > 3 ? ` +${result.missing_ids.length - 3}` : ''}
+          </p>
+        )}
+        <Link href="/products" className="btn-primary inline-block">Voltar ao catalogo</Link>
+      </div>
+    );
+  }
+
+  const products = result.products;
 
   // Calcular features comuns (union de tech_stack)
   const allTech = new Set<string>();
@@ -67,6 +124,20 @@ export default async function CompararPage({ searchParams }: { searchParams: Pro
         </h1>
         <p className="text-white/60">Analise lado a lado para decidir a melhor opcao</p>
       </div>
+
+      {/* FIX-WORKER-3 pass 8: avisos de partial success (W7 pass 6 backend response) */}
+      {(result.missing_ids && result.missing_ids.length > 0) || result.warning_truncated ? (
+        <div className="mb-6 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-sm">
+          {result.missing_ids && result.missing_ids.length > 0 && (
+            <div className="text-yellow-200">
+              <strong>Aviso:</strong> {result.missing_ids.length} produto(s) solicitado(s) nao puderam ser carregados (removidos ou despublicados).
+            </div>
+          )}
+          {result.warning_truncated && (
+            <div className="text-yellow-200 mt-1">{result.warning_truncated}</div>
+          )}
+        </div>
+      ) : null}
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
