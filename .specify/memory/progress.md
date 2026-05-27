@@ -5700,3 +5700,52 @@ PROXIMA ITER:
 - Refactor /admin/payouts para usar hook (atualmente inline - W4 pass 1)
 - Aplicar em /admin/orders + /admin/reports
 - Considerar Toast component centralizado (vs banners inline)
+
+## WORKER 4 pass 3 (ADMIN) - DRY refactor payouts + products via useAdminAction
+
+GAP DETECTADO (proxima iter do W4 pass 2):
+"Refactor /admin/payouts para usar hook (atualmente inline - W4 pass 1)"
+"Aplicar em /admin/orders + /admin/reports"
+
+REFACTORED 2 pages neste pass:
+
+1. apps/dashboard-admin/src/app/payouts/page.tsx:
+- Inline try/catch (W4 pass 1) -> useAdminAction hook
+- 3 funcoes (approve/reject/processTransfer) com 1-liner via action.run
+- Per-row dual busy: busyApprove vs busyReject (antes era 1 busy global)
+  -> User pode clicar approve em row A enquanto reject em row B
+- loadError separado de action.error (semantica clara)
+
+2. apps/dashboard-admin/src/app/products/page.tsx:
+- 2 funcoes (archive/platformTake) refactored para hook
+- mesma estrutura banners (loadError + action.error + action.success)
+- Hook unifica disabled state + texto dinamico
+
+4 PAGES ADMIN AGORA USAM useAdminAction:
+- /admin/payouts (W4 pass 1 -> pass 3 refactor)
+- /admin/qa-queue (W4 pass 2)
+- /admin/sellers (W4 pass 2)
+- /admin/products (W4 pass 3)
+
+DEPLOY:
+- commit 206b4d2 pushed
+- dashboard-admin rebuilt (~3.7s) + converged
+
+VALIDACAO PUBLICA (4 cenarios):
+- /payouts HTTP 200 OK
+- /products HTTP 200 OK
+- /qa-queue HTTP 200 OK (anterior)
+- /sellers HTTP 200 OK (anterior)
+- Bundle payouts contem: busyKey, approve-, transfer-
+  -> codigo hook deployado
+
+PROGRESS METRIC:
+4 de 7 admin pages com hook (57% cobertura DRY).
+Restantes: /admin/vault, /admin/orders, /admin/reports
+Cada uma ~5min refactor mecânico (pattern estabelecido).
+
+PROXIMA ITER:
+- /admin/vault (revoke keys)
+- /admin/orders (refund, dispute)
+- /admin/reports (resolve, dismiss)
+- Considerar Toast component centralizado (vs banners inline per page)
