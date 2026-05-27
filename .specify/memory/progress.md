@@ -13892,3 +13892,93 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d cron
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W4: admin /admin/qa-queue refletir Regra Q (re-reject via endpoint dedicado)
+
+================================================================
+ITER W7 PASS 28 - qa-svc /qa/run 5 BUGS (Regra A+B+K+M + atomicity) (2026-05-27)
+================================================================
+ESCOPO: qa-svc POST /qa/run (trigger LLM analysis - $$/$$/$$ cost)
+FILE: services/qa-svc/src/server.js (linhas 83-139)
+
+CONTEXTO: W7 pass 27 cobriu /qa/callback (FRAUD VECTOR). Pass 28 fecha
+qa-svc auditando /qa/run - endpoint que CUSTA $ real (LLM calls).
+Bugs aqui = LLM cost waste + race + audit poluido.
+
+BUGS CORRIGIDOS (5):
+
+1. *** Regra K race inflight check ***
+- PRE-FIX (linhas 112-128): SELECT inflight runs SEM FOR UPDATE
+- CENARIO: 2 requests paralelos /qa/run para mesmo product_id:
+  T0: Req A SELECT inflight = 0 rows
+  T1: Req B SELECT inflight = 0 rows (paralelo, race window)
+  T2: Req A INSERT run verdict='running'
+  T3: Req B INSERT run verdict='running'
+  T4: 2 RUNS PARALELAS -> double-process LLM
+  T5: Custo LLM duplicado (OpenAI $0.02-0.10 por call), audit log poluido
+- IMPACTO: monetario direto (custo LLM real)
+- FIX: tx() atomic + SELECT FOR UPDATE products (row-level lock).
+  Segunda request bloqueia ate primeira COMMIT, depois ve status='qa_running'
+  -> ALLOWED_STATUSES rejeita.
+
+2. *** Regra B *** products.deleted_at IS NULL missing
+- PRE-FIX: SELECT id, ... FROM products WHERE id = $1 (sem filter)
+- Produto soft-deletado (admin moderou) -> dispatcher antigo chama /qa/run
+  -> Processa produto fantasma -> LLM custo desperdicado
+- FIX: AND deleted_at IS NULL no WHERE
+- Defensive: produto deletado retorna 404 antes do INSERT run
+
+3. *** Regra M *** ownership check triggered_by missing
+- PRE-FIX: triggered_by validado syntaticamente (Zod UUID) MAS sem
+  verificacao que req.user.sub === triggered_by OR role admin/staff
+- ATAQUE:
+  Atacante passa triggered_by=<victim_uuid>
+  Run criado com triggered_by_user_id=victim
+  Audit forense ve "victim triggered QA" - mas foi atacante
+  Confusao timeline + difamacao soft via audit
+- IMPACTO: integridade audit/forense
+- FIX: check { isAdmin OR triggered_by === req.user.sub }
+- Pattern Regra M (W7 pass 21 payment) replicado em qa-svc
+
+4. *** Regra A *** product status check missing
+- PRE-FIX: aceitava trigger QA em qualquer status (archived, rejected
+  permanente, qa_running concurrent - este ultimo era guarded so por inflight)
+- IMPACTO: LLM call em produtos archived = desperdicio
+- FIX: ALLOWED_STATUSES whitelist:
+  ['draft', 'qa_pending', 'rejected', 'approved']
+  - draft: primeira analise
+  - qa_pending: retry pos-error
+  - rejected: re-submit pos-fix do seller
+  - approved: re-QA voluntaria (v2 do produto)
+  Excluidos: archived (terminal), qa_running (inflight ja cobre)
+
+5. *** ATOMICITY *** INSERT + UPDATE em queries separadas
+- PRE-FIX: INSERT run (linha 130-134) + UPDATE products (linha 137) lineares
+- Se UPDATE falhar (lock, restart, network): run verdict='running' MAS
+  product status nao virou 'qa_running'
+- CONSEQUENCIA: cron timeout W12 busca status='qa_running' p/ stuck >10min,
+  nao encontra esse run = ORFAO no DB ate cleanup manual
+- FIX: ambos INSERT + UPDATE dentro do MESMO tx() atomic
+
+PATTERN W7 18 ENDPOINTS + 17 REGRAS COMPLETO:
+qa-svc: /qa/callback (pass 27 FRAUD VECTOR) + /qa/run (pass 28 esta iter)
+
+DEFESA EM PROFUNDIDADE COMPLETA pos-pass-27+28:
+- Antes do callback: /qa/run valida status, ownership, evita LLM waste
+- Callback: state machine + idempotency + race lock
+- Resultado: produto chega ao approved/rejected so via fluxo legitimo
+  (n8n callback ou admin force_approve via endpoint dedicado)
+
+PROXIMA ITER:
+- W7 pass 29: notification-svc /test endpoint (admin) audit
+- W7 pass 30: order-svc orders dispute endpoint audit
+- W18 pass 7: idx parcial product_views > 90d cron
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+
+W7 PROGRESS TOTAL:
+- product-svc: passes 1-10
+- search-svc: passes 11-15
+- order-svc: passes 16-20 (cart, orders, download)
+- payment-svc: passes 21-23 (create, webhook, payout)
+- vault-svc: passes 24-25 (use, revoke)
+- notification-svc: pass 26 (outbox)
+- qa-svc: passes 27-28 (callback FRAUD + run COST)
+- 17 regras consolidadas A-Q

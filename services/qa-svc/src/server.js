@@ -88,53 +88,131 @@ app.post('/qa/run',
     triggered_by: z.string().uuid().optional(),
   })}),
   asyncHandler(async (req, res, next) => {
+    // FIX-WORKER-7 pass 28: 5 BUGS aplicando Pattern W7 17 regras.
+    //
+    // BUG 1 *** Regra K race inflight check ***
+    //   Pre-fix: inflight SELECT sem FOR UPDATE -> 2 requests paralelos passam
+    //   guard -> 2 INSERT runs verdict='running' -> double-process LLM (custo $$)
+    //   + race no callback W7 pass 27 (mitigado mas LLM cost ja gasto).
+    //   FIX: tx() + SELECT product + inflight check + INSERT run + UPDATE
+    //   products STATUS tudo atomico.
+    //
+    // BUG 2 *** Regra B *** products.deleted_at IS NULL missing
+    //   Produto deletado -> /qa/run dispatcher antigo chama -> processa
+    //   produto fantasma -> LLM custo desperdicado + audit poluido.
+    //   FIX: AND deleted_at IS NULL no SELECT.
+    //
+    // BUG 3 *** Regra M *** ownership check triggered_by missing
+    //   Pre-fix: triggered_by validado syntaticamente (UUID Zod) MAS sem
+    //   verificacao que req.user.sub === triggered_by ou role admin/staff.
+    //   Atacante passa triggered_by=<victim_uuid> -> audit confunde forense.
+    //   FIX: triggered_by null OU === req.user.sub OU role admin.
+    //
+    // BUG 4 *** Regra A *** product status check missing
+    //   Produto em archived/qa_running concurrent/rejected_permanent: trigger
+    //   novo run desperdica LLM + UI seller confusa.
+    //   FIX: status IN ('draft', 'qa_pending', 'rejected', 'approved')
+    //   (qa_running rejeita pelo inflight check)
+    //   approved permite re-QA (v2 do produto).
+    //
+    // BUG 5 *** atomicity INSERT/UPDATE *** 2 queries lineares
+    //   Pre-fix: INSERT run + UPDATE products status em queries separadas.
+    //   UPDATE falha (lock/restart) -> run verdict='running' MAS product
+    //   status nao virou 'qa_running' -> cron timeout busca status='qa_running'
+    //   nao encontra stuck -> orfão.
+    //   FIX: ambos dentro do MESMO tx() atomic.
     const { product_id, product_version_id, triggered_by } = req.body;
 
-    const p = await query(
-      `SELECT id, title, description, kind, package_url, package_hash_sha256, tech_stack,
-              api_keys_required, install_instructions, seller_id
-         FROM products WHERE id = $1`, [product_id]
-    );
-    if (!p.rows.length) return res.status(404).json({ error: 'product_not_found' });
-    const product = p.rows[0];
+    // FIX bug 3 (Regra M): ownership/role check no triggered_by
+    if (triggered_by) {
+      const isAdmin = ['admin', 'staff'].includes(req.user?.role);
+      if (!isAdmin && triggered_by !== req.user?.sub) {
+        return next(errorHandler.forbidden('triggered_by_mismatch',
+          'triggered_by deve ser seu user_id ou voce precisa ser admin/staff'));
+      }
+    }
 
-    // FIX-WORKER-12 pass 6: anti-duplicate run check.
-    // Antes: dispatch network timeout (15s n8n / 5min worker) deixava
-    // setImmediate processando mas products.status ja era 'qa_running'.
-    // Outro service podia chamar /qa/run novamente -> 2 runs paralelas
-    // para mesmo product_id -> double-process LLM + custos duplicados +
-    // race condition em UPDATE products no callback.
-    //
-    // Agora: se ja existe run com verdict='running' iniciado ha < 10min,
-    // retorna 409 conflict (idempotente, evita waste).
-    // 10min e generoso: worker timeout 5min + n8n max 15s + buffer.
-    // Apos 10min sem callback = considerado stuck, libera novo run.
-    const inflight = await query(
-      `SELECT id, started_at FROM product_qa_runs
-        WHERE product_id = $1
-          AND verdict = 'running'
-          AND started_at > NOW() - INTERVAL '10 minutes'
-        ORDER BY started_at DESC LIMIT 1`,
-      [product_id]
-    );
-    if (inflight.rows.length) {
-      log.warn({ product_id, existing_run_id: inflight.rows[0].id }, '[qa.run.duplicate_blocked]');
+    let outcome;
+    let product;
+    let run_id;
+
+    await tx(async (c) => {
+      // FIX bug 1+2 (Regra K + B): SELECT FOR UPDATE products + deleted_at
+      const p = await c.query(
+        `SELECT id, title, description, kind, package_url, package_hash_sha256,
+                tech_stack, api_keys_required, install_instructions, seller_id, status
+           FROM products
+          WHERE id = $1 AND deleted_at IS NULL
+          FOR UPDATE`,
+        [product_id]
+      );
+      if (!p.rows.length) { outcome = { error: 'product_not_found' }; return; }
+      product = p.rows[0];
+
+      // FIX bug 4 (Regra A): valida status atual permite trigger QA
+      const ALLOWED_STATUSES = ['draft', 'qa_pending', 'rejected', 'approved'];
+      if (!ALLOWED_STATUSES.includes(product.status)) {
+        outcome = { error: 'product_status_not_qa_eligible', current_status: product.status };
+        return;
+      }
+
+      // FIX bug 1 (Regra K): inflight check DENTRO do tx + FOR UPDATE lock.
+      // FOR UPDATE no products acima ja serializa via row-level lock,
+      // segunda request bloqueia ate primeira COMMIT - depois ve INSERT run
+      // realizado + status='qa_running' -> ALLOWED_STATUSES nao inclui
+      // 'qa_running' -> rejeita.
+      // Inflight 10min window mantido como defense (worker stuck).
+      const inflight = await c.query(
+        `SELECT id, started_at FROM product_qa_runs
+          WHERE product_id = $1
+            AND verdict = 'running'
+            AND started_at > NOW() - INTERVAL '10 minutes'
+          ORDER BY started_at DESC LIMIT 1`,
+        [product_id]
+      );
+      if (inflight.rows.length) {
+        outcome = {
+          error: 'qa_run_already_in_progress',
+          existing_run_id: inflight.rows[0].id,
+          started_at: inflight.rows[0].started_at,
+        };
+        return;
+      }
+
+      // FIX bug 5 (atomicity): INSERT run + UPDATE product no MESMO tx
+      const run = await c.query(
+        `INSERT INTO product_qa_runs (product_id, product_version_id, triggered_by_user_id, verdict, started_at)
+         VALUES ($1, $2, $3, 'running', NOW()) RETURNING id`,
+        [product_id, product_version_id || null, triggered_by || null]
+      );
+      run_id = run.rows[0].id;
+
+      await c.query(
+        `UPDATE products SET status = 'qa_running', qa_verdict = 'running' WHERE id = $1`,
+        [product_id]
+      );
+    });
+
+    if (outcome?.error === 'product_not_found') {
+      return res.status(404).json({ error: 'product_not_found' });
+    }
+    if (outcome?.error === 'product_status_not_qa_eligible') {
+      return res.status(400).json({
+        error: 'product_status_not_qa_eligible',
+        message: `Status atual '${outcome.current_status}' nao permite trigger QA.`,
+        current_status: outcome.current_status,
+        allowed_statuses: ['draft', 'qa_pending', 'rejected', 'approved'],
+      });
+    }
+    if (outcome?.error === 'qa_run_already_in_progress') {
+      log.warn({ product_id, existing_run_id: outcome.existing_run_id }, '[qa.run.duplicate_blocked]');
       return res.status(409).json({
         error: 'qa_run_already_in_progress',
         message: 'QA ja em execucao para este produto. Aguarde resultado ou >10min para retry.',
-        existing_run_id: inflight.rows[0].id,
-        started_at: inflight.rows[0].started_at,
+        existing_run_id: outcome.existing_run_id,
+        started_at: outcome.started_at,
       });
     }
-
-    const run = await query(
-      `INSERT INTO product_qa_runs (product_id, product_version_id, triggered_by_user_id, verdict, started_at)
-       VALUES ($1, $2, $3, 'running', NOW()) RETURNING id`,
-      [product_id, product_version_id || null, triggered_by || null]
-    );
-    const run_id = run.rows[0].id;
-
-    await query(`UPDATE products SET status = 'qa_running', qa_verdict = 'running' WHERE id = $1`, [product_id]);
 
     res.status(202).json({ ok: true, run_id, message: 'QA disparado' });
 
