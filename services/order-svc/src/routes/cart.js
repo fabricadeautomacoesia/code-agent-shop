@@ -114,13 +114,11 @@ router.patch('/items/:id',
 // Endpoint hit a cada keystroke no checkout coupon input (com debounce frontend ~300ms).
 // User digitando 10 chars = 10+ hits por cupom em <10s.
 // TTL 30s baixo porque used_count/is_active podem mudar mas refresh suficiente.
-// Cache key inclui code + subtotal porque tier breakpoints dependem dele.
-// NAO cacheia se user autenticado (min_tier check varia por user) - bypass via getKey null.
+// Cache key inclui code + subtotal + user.tier porque min_tier check varia por loyalty tier.
+// Router tem jwt.requireAuth() global - req.user.sub sempre presente.
 router.get('/coupon/:code/preview',
   cache.cacheMiddleware((req) => {
-    // FIX: bypass cache se ha Bearer token (min_tier check pessoal nao deveria cachear)
-    if (req.headers.authorization) return null;
-    return `coupon:preview:${req.params.code}:s=${req.query.subtotal_cents || 0}`;
+    return `coupon:preview:${req.params.code}:s=${req.query.subtotal_cents || 0}:u=${req.user?.sub || 'anon'}`;
   }, 30),
   asyncHandler(async (req, res, next) => {
   const subtotal = parseInt(req.query.subtotal_cents || '0', 10);
