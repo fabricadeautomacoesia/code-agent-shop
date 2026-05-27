@@ -17293,7 +17293,37 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc GET / public listing (pass 73) - 8 bugs major
 - ✅ product-svc GET /:slug detail PDP (pass 74) - 5 bugs DLP + whitelist
 - ✅ product-svc /:slug/reviews + /:slug/qna (pass 75) - 10 bugs filters + UX
-- ✅ product-svc /compare + /flash-promo/active (pass 76 esta iter) - 9 bugs
+- ✅ product-svc /compare + /flash-promo/active (pass 76) - 9 bugs
+- ✅ product-svc /recommendations/for-me (pass 77 esta iter) - 5 bugs + cold-start
+
+W7 PASS 77 RESUMO:
+- product-svc/src/routes/public.js /recommendations/for-me refactor (5 bugs):
+  * Regra A: status IN ('approved','platform_owned') em 2 sites
+    - CTE user_categories E query principal
+    - MLB platform_owned products invisiveis em reco (MLB-9 feature)
+  * Regra D: + p.id ASC final tiebreaker
+    - reco_score=1 + avg_rating=NULL + sales_count=0 (caso novo seller)
+    - N products tied -> ordem indefinida
+  * Regra E: ?limit (1-50, default 12)
+    - PDP usa 6, /home usa 12, /recomendacoes page poderia 30
+  * N+1 FIX: 3 subqueries correlacionadas -> LEFT JOIN sellers
+    - 12 products * 3 subqueries = 36 sub-statements -> 1 plan node
+  * COLD-START FALLBACK NEW:
+    - PRE-FIX: user novo sem product_views -> CTE empty -> response []
+    - POS-FIX: detect hasViews query rapida (1 row LIMIT 1) -> branch
+      simplificada com top sales_count + platform_owned PRIORITY ORDER
+    - UX critica: signup novo user -> /home agora retorna populated
+    - Response inclui cold_start boolean p/ UI mostrar label
+      "Top vendidos da plataforma" vs "Recomendados para voce"
+- Pattern W7 em 81 endpoints + 23 regras (A-W) - 77 micro-iters
+- Regra A FIX acumulado: 6 endpoints publicos product-svc
+  (pass 73/74/75x2/76x2/77) - platform_owned MLB visivel em tudo
+
+PROXIMA ITER:
+- W7 pass 78: product-svc /recently-viewed + /:slug/related audit
+- W7 pass 79: product-svc /:slug/also-bought audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 76 RESUMO:
 - product-svc/src/routes/public.js 2 MLB feature endpoints (9 bugs):

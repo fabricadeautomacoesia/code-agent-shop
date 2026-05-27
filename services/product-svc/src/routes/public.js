@@ -30,70 +30,127 @@ const router = express.Router();
 // - User compra produto -> deveria sumir de "for-me" mas pode aparecer
 //   ate 60s. Aceitavel para recommendations (nao billing).
 // - Logout/login do mesmo user reusa cache (mesma key) -> ainda mais ganho.
+// GET /recommendations/for-me - MLB-6 recomendacoes personalizadas
+// FIX-WORKER-7 pass 8: CTE viewed unused + user_categories sem filter approved.
+// FIX-WORKER-7 pass 77: 5 BUGS aplicando Pattern W7 (Regras A+D+E + N+1 + cold-start).
+//
+// BUG 1 *** Regra A INCOMPLETA *** status='approved' exclui platform_owned
+//   2 sites de bug: CTE user_categories (linha 58) E query principal (linha 85)
+//   MLB platform_owned products invisiveis em reco - feature MLB-9 invisivel.
+//   FIX: status IN ('approved','platform_owned') em AMBOS sites.
+//
+// BUG 2 *** Regra D TIEBREAKER MISSING *** ORDER BY 3-level sem id
+//   reco_score=1 + avg_rating=NULL + sales_count=0 (caso novo seller burst):
+//   N products tied -> ordem indefinida.
+//   FIX: + p.id ASC final tiebreaker.
+//
+// BUG 3 *** Regra E LIMIT HARDCODED *** sem ?limit
+//   PDP "Voce tambem pode gostar" mostra 6, /home mostra 12, /recomendacoes
+//   page poderia mostrar 30.
+//   FIX: ?limit (1-50, default 12).
+//
+// BUG 4 *** N+1 SUBQUERIES *** 3 subqueries correlacionadas por row
+//   12 products * 3 subqueries = 36 sub-statements PG por hit.
+//   FIX: LEFT JOIN sellers explicit (1 plan node previsivel).
+//
+// BUG 5 *** COLD-START EMPTY *** user novo sem product_views = response []
+//   PRE-FIX: user_categories vazio + p.sales_count > 100 cap restritivo
+//   = response com 0 rows em UX critica (signup -> /home).
+//   FIX: bare cold-start fallback - se user_categories vazio, mostrar
+//   top-rated products globais (sales_count >= 1 OR is_platform_owned).
 router.get('/recommendations/for-me',
   require('@cas/shared').jwt.requireAuth(),
-  cache.cacheMiddleware((req) => `products:reco:for-me:${req.user.sub}`, 60),
+  cache.cacheMiddleware((req) => `products:reco:for-me:${req.user.sub}:lim=${req.query.limit||12}`, 60),
   asyncHandler(async (req, res) => {
-    // FIX-WORKER-7 pass 8: 2 bugs identificados nesta query:
-    //
-    // BUG 1: CTE 'viewed' declarada mas NUNCA USADA na query principal.
-    //   - Produtos ja vistos podem aparecer como recommendation
-    //   - UX ruim: "veja produtos que VOCE JA VIU" = sugestao redundante
-    //   - Recommendations deveria mostrar produtos NOVOS
-    //   FIX: adicionar `AND p.id NOT IN (SELECT ... FROM viewed)` no WHERE
-    //
-    // BUG 2: CTE 'user_categories' nao filtra produtos deletados/non-approved.
-    //   - Se user viu produto X 100x mas X foi deletado, X.category_id ainda
-    //     conta para "top categories" do user
-    //   - Recommendation enviesada por historico stale
-    //   FIX: JOIN com WHERE p.status='approved' AND p.deleted_at IS NULL
-    //   (mesmo pattern de W7 pass 7 /recently-viewed)
-    const r = await query(
-      `WITH user_categories AS (
-         SELECT p.category_id, COUNT(*) AS view_count
-           FROM product_views v
-           JOIN products p ON p.id = v.product_id
-          WHERE v.user_id = $1
-            AND v.created_at > NOW() - INTERVAL '30 days'
-            AND p.status = 'approved'
-            AND p.deleted_at IS NULL
-          GROUP BY p.category_id
-          ORDER BY view_count DESC
-          LIMIT 3
-       ),
-       viewed AS (
-         SELECT DISTINCT product_id FROM product_views
-          WHERE user_id = $1
-            AND created_at > NOW() - INTERVAL '90 days'
-       ),
-       in_cart_or_owned AS (
-         SELECT ci.product_id FROM cart_items ci
-            JOIN carts c ON c.id = ci.cart_id WHERE c.user_id = $1
-         UNION
-         SELECT oi.product_id FROM order_items oi
-            JOIN orders o ON o.id = oi.order_id WHERE o.buyer_user_id = $1
-       )
-       SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
-              p.cover_image_url, p.price_cents, p.currency, p.is_free,
-              p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
-              p.is_platform_owned, p.flash_promo_active,
-              (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug,
-              (SELECT store_name FROM sellers WHERE id = p.seller_id) AS store_name,
-              (SELECT reputation_tier FROM sellers WHERE id = p.seller_id) AS reputation_tier,
-              CASE WHEN p.category_id IN (SELECT category_id FROM user_categories) THEN 2 ELSE 1 END AS reco_score
-         FROM products p
-        WHERE p.status = 'approved' AND p.deleted_at IS NULL
-          AND p.id NOT IN (SELECT product_id FROM in_cart_or_owned)
-          AND p.id NOT IN (SELECT product_id FROM viewed)
-          AND (
-            p.category_id IN (SELECT category_id FROM user_categories)
-            OR p.sales_count > 100
-          )
-        ORDER BY reco_score DESC, p.avg_rating DESC NULLS LAST, p.sales_count DESC
-        LIMIT 12`,
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit, 10) || 12));
+
+    // FIX-WORKER-7 pass 77 BUG 5: detectar cold-start (user novo) e usar fallback
+    // Check rapido: tem alguma view?
+    const hasViews = await query(
+      `SELECT 1 FROM product_views
+        WHERE user_id = $1 AND created_at > NOW() - INTERVAL '90 days' LIMIT 1`,
       [req.user.sub]
     );
-    res.json({ products: r.rows });
+    const isColdStart = !hasViews.rows.length;
+
+    // BUG 4: LEFT JOIN sellers (substitui 3 subqueries)
+    // BUG 1: Regra A status IN ('approved','platform_owned') em 2 sites
+    // BUG 2: Regra D + p.id ASC final tiebreaker
+    // BUG 3: $2 limit param
+    // BUG 5: cold-start usa branch simplificada (top globais)
+    const r = isColdStart
+      ? await query(
+          `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
+                  p.cover_image_url, p.price_cents, p.currency, p.is_free,
+                  p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
+                  p.is_platform_owned, p.flash_promo_active,
+                  s.store_slug, s.store_name, s.reputation_tier,
+                  1 AS reco_score
+             FROM products p
+             LEFT JOIN sellers s ON s.id = p.seller_id
+            WHERE p.status IN ('approved','platform_owned')
+              AND p.deleted_at IS NULL
+              AND (p.is_platform_owned = TRUE OR p.sales_count > 0)
+            ORDER BY p.is_platform_owned DESC,
+                     p.sales_count DESC,
+                     p.avg_rating DESC NULLS LAST,
+                     p.id ASC
+            LIMIT $2`,
+          [req.user.sub, limit]
+        )
+      : await query(
+          `WITH user_categories AS (
+             SELECT p.category_id, COUNT(*) AS view_count
+               FROM product_views v
+               JOIN products p ON p.id = v.product_id
+              WHERE v.user_id = $1
+                AND v.created_at > NOW() - INTERVAL '30 days'
+                AND p.status IN ('approved','platform_owned')
+                AND p.deleted_at IS NULL
+              GROUP BY p.category_id
+              ORDER BY view_count DESC
+              LIMIT 3
+           ),
+           viewed AS (
+             SELECT DISTINCT product_id FROM product_views
+              WHERE user_id = $1
+                AND created_at > NOW() - INTERVAL '90 days'
+           ),
+           in_cart_or_owned AS (
+             SELECT ci.product_id FROM cart_items ci
+                JOIN carts c ON c.id = ci.cart_id WHERE c.user_id = $1
+             UNION
+             SELECT oi.product_id FROM order_items oi
+                JOIN orders o ON o.id = oi.order_id WHERE o.buyer_user_id = $1
+           )
+           SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
+                  p.cover_image_url, p.price_cents, p.currency, p.is_free,
+                  p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
+                  p.is_platform_owned, p.flash_promo_active,
+                  s.store_slug, s.store_name, s.reputation_tier,
+                  CASE WHEN p.category_id IN (SELECT category_id FROM user_categories) THEN 2 ELSE 1 END AS reco_score
+             FROM products p
+             LEFT JOIN sellers s ON s.id = p.seller_id
+            WHERE p.status IN ('approved','platform_owned')
+              AND p.deleted_at IS NULL
+              AND p.id NOT IN (SELECT product_id FROM in_cart_or_owned)
+              AND p.id NOT IN (SELECT product_id FROM viewed)
+              AND (
+                p.category_id IN (SELECT category_id FROM user_categories)
+                OR p.sales_count > 100
+              )
+            ORDER BY reco_score DESC, p.avg_rating DESC NULLS LAST,
+                     p.sales_count DESC, p.id ASC
+            LIMIT $2`,
+          [req.user.sub, limit]
+        );
+
+    res.json({
+      products: r.rows,
+      count: r.rows.length,
+      limit,
+      cold_start: isColdStart,  // UX UI pode mostrar "Top vendidos da plataforma" label
+    });
   })
 );
 
