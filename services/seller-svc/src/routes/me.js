@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, crypto, cache, logger, rateLimiter } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, crypto, cache, logger, rateLimiter, mask } = require('@cas/shared');
 
 const log = logger.child({ svc: 'seller-svc', mod: 'me' });
 const router = express.Router();
@@ -347,13 +347,44 @@ router.get('/sla-status', asyncHandler(async (req, res) => {
 }));
 
 // GET /sellers/me/sla-history
+// GET /sellers/me/sla-history - historico SLA do seller
+// FIX-WORKER-7 pass 70: 3 BUGS aplicando Pattern W7 (Regras D+E+I).
+//
+// BUG 1 *** Regra I SELECT h.* *** vaza colunas internas
+//   seller_sla_history.* pode ter internal_notes/triggered_by/cron_run_id.
+//   FIX: explicit fields.
+//
+// BUG 2 *** Regra D TIEBREAKER MISSING *** ORDER BY created_at DESC
+//   Cron SLA roda burst -> 2 entries created_at identicos.
+//   FIX: + h.id DESC.
+//
+// BUG 3 *** Regra E PAGINATION MISSING *** hardcoded LIMIT 50
+//   Seller veterano (12+ meses) tem 100+ SLA events. Só vê 50 primeiras.
+//   FIX: ?limit (1-200, default 50) + ?offset + total + has_more.
 router.get('/sla-history', asyncHandler(async (req, res) => {
+  const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const r = await query(
-    `SELECT h.* FROM seller_sla_history h
+    `SELECT h.id, h.seller_id, h.event_type, h.previous_class, h.new_class,
+            h.previous_status, h.new_status, h.reason, h.created_at
+       FROM seller_sla_history h
        JOIN sellers s ON s.id = h.seller_id
-      WHERE s.user_id = $1 ORDER BY h.created_at DESC LIMIT 50`, [req.user.sub]
+      WHERE s.user_id = $1
+      ORDER BY h.created_at DESC, h.id DESC
+      LIMIT $2 OFFSET $3`,
+    [req.user.sub, limit, offset]
   );
-  res.json({ history: r.rows });
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM seller_sla_history h
+       JOIN sellers s ON s.id = h.seller_id WHERE s.user_id = $1`,
+    [req.user.sub]
+  );
+  const total = totalRes.rows[0].total;
+  res.json({
+    history: r.rows,
+    total, limit, offset,
+    has_more: (offset + r.rows.length) < total,
+  });
 }));
 
 // POST /sellers/me/payout - solicitar saque (REAL MONEY OUT request)
@@ -504,20 +535,88 @@ router.post('/payout',
 // Antes: dashboard-seller /financeiro tinha botao "Solicitar saque" mas zero
 // visibilidade do que aconteceu depois (admin aprovou? rejeitou? processou?).
 // Seller ficava no escuro apos solicitar - tinha que perguntar suporte.
+// GET /sellers/me/payouts - historico de saques do seller
+// FIX-WORKER-7 pass 70: 5 BUGS aplicando Pattern W7 (Regras D+E + filter + DLP + UX).
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING *** ORDER BY requested_at DESC
+//   Seller dispara N payouts script -> requested_at identicos burst.
+//   FIX: + id DESC.
+//
+// BUG 2 *** Regra E NO OFFSET *** ?limit existe MAS ?offset missing
+//   Seller 1+ ano com 200+ payouts não consegue paginar além das primeiras 200.
+//   FIX: ?offset + total + has_more.
+//
+// BUG 3 *** ?status FILTER MISSING ***
+//   Seller quer ver SO "pending" (aguardando admin), SO "rejected" (entender motivo)
+//   ou SO "paid" (historico fiscal). Sem filter -> client filter post-fetch.
+//   FIX: ?status enum whitelist (pending|approved|processing|paid|rejected|cancelled).
+//
+// BUG 4 *** DLP rejected_reason texto livre ***
+//   rejected_reason eh livre admin: "Conta bancaria invalida (titular CPF
+//   123.456.789-00 diferente)" -> CPF vazado para seller. Outros patterns:
+//   "Suspeita lavagem - veja PR 12345 Bearer abc..." -> token leak.
+//   FIX: mask.text() defensive em rejected_reason (CPF/Bearer/JWT auto-mask).
+//
+// BUG 5 *** TOTAL + has_more UX ***
+//   Frontend "Carregar mais" sem suporte. FIX adicionado.
+const PAYOUT_STATUS_ENUM = new Set([
+  'pending','approved','processing','paid','rejected','cancelled'
+]);
+
 router.get('/payouts', asyncHandler(async (req, res, next) => {
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
-  const lim = Math.max(1, Math.min(parseInt(req.query.limit || '50', 10), 200));
+  const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const statusFilter = req.query.status ? String(req.query.status) : null;
+  if (statusFilter && !PAYOUT_STATUS_ENUM.has(statusFilter)) {
+    return res.status(400).json({ error: 'invalid_status', allowed: Array.from(PAYOUT_STATUS_ENUM) });
+  }
+
   const s = await query('SELECT id FROM sellers WHERE user_id = $1', [req.user.sub]);
   if (!s.rows.length) return next(errorHandler.notFound('seller_not_found'));
+
+  // Build WHERE
+  const whereParts = ['seller_id = $1'];
+  const params = [s.rows[0].id];
+  let i = 2;
+  if (statusFilter) {
+    whereParts.push(`status = $${i++}`);
+    params.push(statusFilter);
+  }
+  params.push(limit, offset);
+  const limIdx = i++;
+  const offIdx = i++;
+
   const r = await query(
     `SELECT id, amount_cents, status, asaas_transfer_id, requested_at,
             approved_at, paid_at, rejected_reason
        FROM seller_payouts
-      WHERE seller_id = $1
-      ORDER BY requested_at DESC LIMIT $2`,
-    [s.rows[0].id, lim]
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY requested_at DESC, id DESC
+      LIMIT $${limIdx} OFFSET $${offIdx}`,
+    params
   );
-  res.json({ payouts: r.rows, count: r.rows.length });
+
+  // Total count
+  const countParams = params.slice(0, -2);
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM seller_payouts WHERE ${whereParts.join(' AND ')}`,
+    countParams
+  );
+  const total = totalRes.rows[0].total;
+
+  // DLP mask rejected_reason (admin pode escrever CPF/Bearer/JWT acidentalmente)
+  const payouts = r.rows.map((row) => ({
+    ...row,
+    rejected_reason: row.rejected_reason ? mask.text(row.rejected_reason) : null,
+  }));
+
+  res.json({
+    payouts,
+    total, limit, offset,
+    has_more: (offset + payouts.length) < total,
+    status: statusFilter,
+  });
 }));
 
 // GET /sellers/me/kpi

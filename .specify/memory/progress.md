@@ -17286,7 +17286,34 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ order-svc GET / buyer listing (pass 66) - Regra E + filters + UX
 - ✅ product-svc /admin/qa-queue (pass 67) - Regra D+E + LGPD + cache
 - ✅ gateway middleware audit (pass 68) - DLP logs + fail2ban
-- ✅ product-svc GET /products/me (pass 69 esta iter) - admin bypass + Regra D+E+I + filters
+- ✅ product-svc GET /products/me (pass 69) - admin bypass + Regra D+E+I + filters
+- ✅ seller-svc /sla-history + /payouts (pass 70 esta iter) - Regra D+E+I + DLP + filter
+
+W7 PASS 70 RESUMO:
+- seller-svc/src/routes/me.js 2 endpoints refactor (8 bugs):
+  * /sla-history (3 bugs):
+    - Regra I: SELECT h.* -> explicit fields (sem internal_notes/cron_run_id)
+    - Regra D: + h.id DESC tiebreaker (cron SLA burst)
+    - Regra E: ?limit (1-200) + ?offset + total + has_more
+  * /payouts (5 bugs):
+    - Regra D: + id DESC tiebreaker (seller script burst)
+    - Regra E: ?offset adicionado (?limit ja existia) + total + has_more
+    - NEW ?status filter enum whitelist
+      (pending|approved|processing|paid|rejected|cancelled)
+    - DLP CRITICAL mask.text(rejected_reason)
+      * Admin pode escrever CPF/Bearer/JWT em rejected_reason texto livre:
+        "Conta bancaria invalida (CPF 123.456.789-00 diferente)" -> CPF leak
+        "Suspeita lavagem - veja PR 12345 Bearer abc..." -> token leak
+    - Total + has_more UX paginacao
+- Pattern W7 em 71 endpoints + 23 regras (A-W) - 70 micro-iters
+- DLP cross-svc agora em 5 svcs:
+  payment-svc + notification-svc + aiops-svc + vault-svc + seller-svc
+
+PROXIMA ITER:
+- W7 pass 71: order-svc /admin/financials audit (se houver)
+- W7 pass 72: seller-svc /kpi Regra I + sellers.js audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 69 RESUMO:
 - product-svc/src/routes/seller-mgmt.js GET / refactor (7 bugs):
