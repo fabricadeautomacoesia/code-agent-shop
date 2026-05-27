@@ -1335,3 +1335,48 @@ DEPLOY: commit 6a73d1f pushed,
 - search-svc rebuilt via Dockerfile.node SVC=search-svc (contexto root)
 - storefront rebuilt via Dockerfile.next (contexto apps/storefront)
 - ambos --force update, converged OK.
+
+## WORKER 6 (GATEWAY/AUTH-SVC) - UX inconsistente em mensagens de erro auth
+Auditoria publica de 10 endpoints de auth-svc + 2fa via curl --resolve revelou:
+- /auth/register, /login, /refresh, /logout, /forgot-password, /reset-password:
+  HTTP codes e responses corretos (400/401/200 conforme spec)
+- /auth/2fa/setup, /activate, /disable: HTTP 200/400/401 corretos
+- Schemas Zod retornam {error:'validation_error', message:'Falha de validacao',
+  details:[{path, code, message}]} - bom para debug mas opaco para o user
+
+BUG REAL UX: storefront mostrava setError(e.message) ou setError(e.data?.message),
+exibindo strings tipo "invalid_credentials", "validation_error", "Falha de
+validacao" - codigos de maquina sem acao para o user.
+
+FIX: novo apps/storefront/src/lib/auth-errors.ts
+- friendlyAuthError(e) -> mensagem PT-BR amigavel
+- 22 codigos mapeados: invalid_credentials, email_already_in_use, missing_token,
+  invalid_token, invalid_password, missing_refresh, refresh_expired, not_set_up,
+  2fa_not_enabled, twofa_required, twofa_corrupt, reset_token_expired,
+  reset_token_invalid, forbidden_role, account_suspended, rate_limited, etc
+- validation_error com details[0]: extrai field + reason
+  ("Campo obrigatorio: email" em vez de "Falha de validacao")
+- Fallback gracioso: se backend retorna message humanizada, usa; senao mensagem
+  generica "Erro ao processar requisicao"
+
+APLICADO EM 5 PAGINAS:
+- /login: setError(friendlyAuthError(err))
+- /register: idem
+- /conta/seguranca: idem (3 callsites: startSetup/activate/disable)
+- /esqueci-senha: setErr(friendlyAuthError(e))
+- /redefinir-senha: idem
+
+VALIDACAO PUBLICA (5 chunks JS):
+1) login chunk contem "Email ou senha incorretos", "Senha incorreta",
+   "Sessao expirada", "Codigo invalido" OK
+2) register chunk contem "Este email ja esta cadastrado" OK
+3) conta/seguranca chunk contem "2FA ainda nao foi configurado",
+   "2FA nao esta ativado", invalid_token OK
+4) esqueci-senha chunk contem "Link de redefinicao expirado", rate_limited OK
+5) redefinir-senha chunk contem "Link de redefinicao expirado/invalido" OK
+
+Backend real ainda testado: POST /api/auth/login com senha errada retornou
+{"error":"invalid_credentials"} -> mapper produz "Email ou senha incorretos."
+
+DEPLOY: commit 1c7ab17 pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
