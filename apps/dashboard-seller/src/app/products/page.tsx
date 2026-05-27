@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Send, Plus, AlertCircle, CheckCircle, Clock, FileEdit } from 'lucide-react';
 import { sellerFetch, fmtBRL, fmtDate } from '@/lib/seller-api';
+import { useSellerAction } from '@/lib/use-seller-action';
 
 const STATUS_COLOR: Record<string, string> = {
   draft:        'bg-gray-500/20 text-gray-300',
@@ -17,19 +18,25 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function SellerProductsPage() {
   const [products, setProducts] = useState<any[]>([]);
-  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [filter, setFilter] = useState('all');
 
   async function load() {
-    try { const r = await sellerFetch<{ products: any[] }>('/products/me'); setProducts(r.products); }
-    catch (e: any) { setError(e.message); }
+    try { const r = await sellerFetch<{ products: any[] }>('/products/me'); setProducts(r.products); setLoadError(''); }
+    catch (e: any) { setLoadError(e.message); }
   }
   useEffect(() => { load(); }, []);
 
+  // FIX-WORKER-5 pass 1: useSellerAction hook substitui alert(e.message) browser-blocking.
+  // Era UX feio + nao indicava success. Agora: 2 banners inline + busy state.
+  const action = useSellerAction(load);
+
   async function submitQA(id: string) {
     if (!confirm('Enviar para QA automatizado? O pipeline LLM avaliara seu produto. Confidence < 80% = rejeitado.')) return;
-    try { await sellerFetch(`/products/me/${id}/submit`, { method: 'POST' }); load(); }
-    catch (e: any) { alert(e.message); }
+    action.run(`submit-${id}`, async () => {
+      await sellerFetch(`/products/me/${id}/submit`, { method: 'POST' });
+      return `Produto ${id.slice(0, 8)}... enviado para QA`;
+    });
   }
 
   const filtered = filter === 'all' ? products : products.filter((p) => p.status === filter);
@@ -57,7 +64,21 @@ export default function SellerProductsPage() {
         ))}
       </div>
 
-      {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">{error}</div>}
+      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+
+      {/* FIX-WORKER-5 pass 1: banners action via useSellerAction */}
+      {action.error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.error}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.success}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
 
       <div className="glass p-6 overflow-x-auto">
         {filtered.length === 0 ? (
@@ -95,8 +116,9 @@ export default function SellerProductsPage() {
                         <Link href={`/products/${p.id}`} className="text-magenta hover:underline text-xs inline-flex items-center gap-1">
                           <FileEdit className="w-3 h-3" /> Editar
                         </Link>
-                        <button onClick={() => submitQA(p.id)} className="text-green-400 hover:underline text-xs inline-flex items-center gap-1">
-                          <Send className="w-3 h-3" /> Enviar QA
+                        <button onClick={() => submitQA(p.id)} disabled={action.busyKey === `submit-${p.id}`}
+                          className="text-green-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                          <Send className="w-3 h-3" /> {action.busyKey === `submit-${p.id}` ? 'Enviando...' : 'Enviar QA'}
                         </button>
                       </>
                     )}
