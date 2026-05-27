@@ -6214,3 +6214,50 @@ PROXIMA ITER:
 - W6: gateway pathRewrite audit + auth-svc 2FA flow E2E
 - Mover useSellerAction+useAdminAction para packages/shared-ui (DRY cross-app)
 - W14: indices SQL faltando em queries com 3 subqueries (sellers join inline)
+
+## WORKER 1 PASS 2 - NotificationBell stale notifs ao reabrir
+
+BUG ENCONTRADO em components/notification-bell.tsx linha 89-91:
+  useEffect(() => {
+    if (open && notifs.length === 0) load();  // <- guarda errada
+  }, [open]);
+
+CENARIO QUEBRADO (reproduzivel):
+1. User abre sino, ve 5 notifs (load roda OK)
+2. Fecha sem marcar nenhuma como lida
+3. Backend cria 2 notifs novas em background
+4. Badge atualiza para 7 (loadCount poll 30s pega)
+5. User clica sino -> mostra so as 5 antigas (skip load por length>0)
+6. Unica solucao: F5 reload pagina
+
+IMPACTO UX:
+- Notifs importantes (order_paid, payout_approved) podiam ficar invisiveis
+  no dropdown por minutos/horas.
+- Badge mostrava "7" mas dropdown so 5 -> confusao + perda de confianca.
+
+FIX (2 mudancas):
+1. Remover guarda - sempre refetch ao abrir:
+   useEffect(() => { if (open) load(); }, [open, token]);
+2. load() agora sincroniza unreadCount com payload real:
+   setUnreadCount(list.filter(n => !n.is_read).length);
+
+BONUS:
+- token nos deps (eslint correctness)
+- Drift entre poll count (16 bytes) e lista completa eliminado
+- Trade-off aceito: cada open() dispara 1 req extra (era cache local).
+  Como sino abre raramente (~5x/sessao), custo desprezivel vs UX correto.
+
+VALIDACAO:
+- /api/notifications/unread-count: 401 sem token (correto)
+- /api/notifications: 401 sem token (correto)
+- Fix e 100% client-side, sem mudanca backend necessaria
+
+DEPLOY:
+- commit 75ffbe5 push main OK
+- 15 insertions, 3 deletions
+- storefront rebuild via cron auto-pull
+
+PROXIMA ITER:
+- W2: /cart -> /checkout -> /conta/pedidos E2E audit
+- W13: notification-svc retry logic + outbox processor
+- Considerar React Query/SWR cache global em vez de poll manual
