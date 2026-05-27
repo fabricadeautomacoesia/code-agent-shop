@@ -201,13 +201,23 @@ app.get('/top-sellers',
   asyncHandler(async (req, res) => {
   const perCategory = Math.min(parseInt(req.query.per_category || '4', 10), 12);
   const catFilter = (req.query.category || '').toString().trim();
+  // FIX-WORKER-7 pass 11: 2 bugs (pattern W7 pass 9/10):
+  // 1. status = 'approved' ignorava platform_owned (Clausula Master Revenda copy)
+  //    -> produtos da plataforma INVISIVEIS em top-sellers global
+  // 2. ORDER BY sales_count DESC sem tiebreaker -> empate arbitrario entre
+  //    produtos novos com sales_count=0 (mudava entre cache evictions)
   const r = await query(
     `WITH ranked AS (
        SELECT p.*, c.slug AS cat_slug, c.name AS cat_name,
-              ROW_NUMBER() OVER (PARTITION BY p.category_id ORDER BY p.sales_count DESC) AS rn
+              ROW_NUMBER() OVER (
+                PARTITION BY p.category_id
+                ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST
+              ) AS rn
          FROM products p
          JOIN categories c ON c.id = p.category_id
-        WHERE p.status = 'approved' AND p.deleted_at IS NULL AND c.parent_id IS NULL
+        WHERE p.status IN ('approved','platform_owned')
+          AND p.deleted_at IS NULL
+          AND c.parent_id IS NULL
           AND ($2::TEXT IS NULL OR $2 = '' OR c.slug = $2)
      )
      SELECT id, slug, title, subtitle, short_description, kind, cover_image_url,
@@ -247,22 +257,34 @@ app.get('/top-sellers/:category',
   }
   const cat = catR.rows[0];
   // 2) Top sellers da categoria
+  // FIX-WORKER-7 pass 11: 4 bugs (pattern W7 pass 9/10 aplicado):
+  // 1. status = 'approved' ignorava platform_owned (Clausula Master Revenda copy)
+  // 2. 3 subqueries (store_slug, store_name, reputation_tier) por linha ->
+  //    LIMIT 50 max = 150 scans extras sellers. FIX: LEFT JOIN sellers unico.
+  // 3. ORDER BY sales_count DESC sem tiebreaker -> empate arbitrario entre
+  //    produtos novos com sales_count=0. FIX: avg_rating + published_at tiebreakers.
+  // 4. Response sem 'limit' (pass 9/10 incluiu p/ frontend validar shape).
   const r = await query(
     `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
             p.cover_image_url, p.price_cents, p.currency, p.is_free,
             p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
             p.is_platform_owned, p.published_at,
-            (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug,
-            (SELECT store_name FROM sellers WHERE id = p.seller_id) AS store_name,
-            (SELECT reputation_tier FROM sellers WHERE id = p.seller_id) AS reputation_tier,
-            ROW_NUMBER() OVER (ORDER BY p.sales_count DESC) AS sales_rank
+            s.store_slug, s.store_name, s.reputation_tier,
+            ROW_NUMBER() OVER (
+              ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST
+            ) AS sales_rank
        FROM products p
-      WHERE p.status = 'approved' AND p.deleted_at IS NULL AND p.category_id = $1
-      ORDER BY p.sales_count DESC LIMIT $2`, [cat.id, lim]
+       LEFT JOIN sellers s ON s.id = p.seller_id
+      WHERE p.status IN ('approved','platform_owned')
+        AND p.deleted_at IS NULL
+        AND p.category_id = $1
+      ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST
+      LIMIT $2`, [cat.id, lim]
   );
   res.json({
     products: r.rows,
     category: { slug: cat.slug, name: cat.name, name_singular: cat.name_singular, description: cat.description, parent_id: cat.parent_id },
+    limit: lim,
   });
 }));
 

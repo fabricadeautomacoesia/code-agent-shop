@@ -12255,3 +12255,83 @@ PROXIMA ITER:
 - W18 pass 8: audit pg_stat_user_indexes -> drop dead indices (~2 weeks data)
 - W3 pass 10: refatorar CartDrawer usar <Dialog> (pass 9 wrapper)
 - W7 pass 11: /recommendations/trending por categoria (MLB-5 nao feita)
+
+================================================================
+ITER W7 PASS 11 - top-sellers MLB-5 audit (2 endpoints, 6 bugs) (2026-05-27)
+================================================================
+ESCOPO: search-svc GET /top-sellers + /top-sellers/:category (MLB-5)
+FILE: services/search-svc/src/server.js (linhas 195-275)
+
+CONTEXTO: progress.md indicava "W7 pass 11: /recommendations/trending por
+categoria (MLB-5 nao feita)". Audit revelou MLB-5 JA IMPLEMENTADO em
+search-svc (top-sellers global + per-category). MAS com 6 bugs identicos
+aos corrigidos em W7 pass 9/10 (related + also-bought).
+
+PATTERN W7 CTE FILTER + JOIN sellers + status platform_owned APLICADO
+A 4O E 5O ENDPOINT product-svc/search-svc consolidando regras.
+
+BUGS CORRIGIDOS (6 distribuidos):
+
+/top-sellers (global - 2 bugs):
+1. status = 'approved' ignorava platform_owned
+   - Mesma omissao W7 pass 10 (/also-bought) #2
+   - Produtos Clausula Master Revenda Direta (copy is_platform_owned=TRUE)
+     INVISIVEIS em top-sellers global da home
+   - FIX: status IN ('approved','platform_owned')
+
+2. ORDER BY sales_count DESC sem tiebreaker (ROW_NUMBER PARTITION)
+   - 5+ produtos novos com sales_count=0 -> ordem arbitraria PG planner
+   - Cache 120s amortiza, mas cache evict + rebuild = ordem diferente
+   - Frontend layout "salta" entre evictions
+   - FIX: ROW_NUMBER ORDER BY sales_count DESC, avg_rating DESC NULLS LAST,
+     published_at DESC NULLS LAST (3-tier determinism)
+
+/top-sellers/:category (per-cat - 4 bugs):
+1. status = 'approved' ignorava platform_owned (mesmo bug global)
+2. 3 SUBQUERIES (store_slug, store_name, reputation_tier) por linha
+   - LIMIT 50 max = ATE 150 scans extras sellers (pattern W7 pass 9 #5)
+   - Cache 180s amortiza mas first-hit pos-expire = lento
+   - FIX: LEFT JOIN sellers s ON s.id = p.seller_id (1 scan unico)
+3. ORDER BY sales_count DESC tiebreaker faltando (mesmo bug global)
+4. Response shape sem 'limit' field
+   - W7 pass 9/10 incluiu p/ frontend validar shape
+   - FIX: limit: lim no JSON response
+
+NAO CORRIGIDO (deliberado):
+
+5. parent existence check NA categoria - linha 245 retorna 404 OK
+   (pattern pass 9/10 ja seguido neste endpoint - bom precedente)
+6. ranked CTE PARTITION BY category_id - sem deleted_at no parent
+   (filtra explicitamente WHERE p.deleted_at IS NULL - OK)
+
+PATTERN W7 CTE/JOIN/STATUS consolidado em 5 endpoints:
+- pass 7: /recently-viewed (CTE filter inside)
+- pass 8: /recommendations/for-me (CTE user_categories + viewed)
+- pass 9: /related (CTE related_pool + parent check + JOIN sellers)
+- pass 10: /also-bought (CTE co_buyers + filtros INSIDE + parent + JOIN)
+- pass 11: /top-sellers + /top-sellers/:category (JOIN sellers + status + tiebreaker)
+
+REGRAS UNIFICADAS (5 endpoints product-svc + search-svc):
+A. status IN ('approved','platform_owned') sempre (nao so 'approved')
+B. deleted_at IS NULL explicit
+C. JOIN sellers (NAO subqueries) p/ store_slug/name/reputation_tier
+D. ORDER BY com tiebreakers deterministicos (avg_rating + published_at)
+E. Response include 'limit' field p/ frontend validacao shape
+F. Parent existence -> 404 distinguivel de empty (quando aplicavel)
+
+BENEFICIO PERF (estimado heuristica):
+- /top-sellers/:category com 50 produtos: 3 subqueries * 50 = 150 sellers scans
+  -> 1 LEFT JOIN sellers (~50x menos scans)
+- ~5-10ms saved per request first-hit (cache amortiza demais)
+- Cumulative: 5 endpoints * ~10ms = 50ms saved em first-hit aggregate
+- Cache hit rate sobe ~5% (ordering deterministic = mesma key/value)
+
+W7 PRODUCT-SVC + SEARCH-SVC PROGRESS:
+- product-svc: passes 1-10 (10 iters)
+- search-svc: pass 11 (esta iter - 1o audit search-svc nesta serie)
+
+PROXIMA ITER:
+- W7 pass 12: /search principal (q, filters, facets) - mesma audit
+- W7 pass 13: /search/autocomplete UX edge cases
+- W18 pass 7: idx parcial product_views > 90d (cron-based)
+- W3 pass 10: refatorar CartDrawer usar <Dialog> (pass 9 wrapper)
