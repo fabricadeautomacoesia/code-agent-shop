@@ -102,6 +102,23 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## SECURITY HARDENING (WORKER 17 - VAULT-SVC CRITICAL FIX)
+Code audit em services/vault-svc/src/server.js revelou 2 falhas:
+
+BUG 1 (CRITICAL): POST /vault/use exigia apenas jwt.requireAuth() sem role check.
+  Qualquer buyer autenticado podia chamar e receber plain_key decriptado da
+  plataforma (OpenAI/Anthropic/Gemini etc). Vazamento total das chaves LLM.
+
+BUG 2 (MEDIUM): catch do decrypt vazava e.message no response (DLP fail).
+
+CORRECAO commitada local (195c6e9):
+- vaultUseGuard middleware: aceita x-internal-token=VAULT_INTERNAL_TOKEN (service mesh)
+  OU jwt com role admin/staff/service. Buyer/seller -> 403 forbidden_role.
+- catch sanitiza response (apenas 'decrypt_failed'), log estruturado server-side.
+
+NOTA DEPLOY: precisara configurar VAULT_INTERNAL_TOKEN como secret Swarm e
+injetar nos services que consumam chaves LLM via vault/use.
+
 ## SECURITY HARDENING (WORKER 6 - 2FA CRITICAL FIX)
 Code audit estatico em auth-svc/routes/auth.js + two-factor.js revelou bug critico:
 - AES-256-GCM exige authentication tag de 16 bytes para validar integridade.
