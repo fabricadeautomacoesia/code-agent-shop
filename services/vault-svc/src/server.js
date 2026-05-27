@@ -60,9 +60,21 @@ app.get('/keys', adminOnly, asyncHandler(async (req, res) => {
 }));
 
 // POST /api/vault/use -> internal: outro svc pede chave para usar
-// Retorna chave decriptada APENAS para chamadas internas (verifica role admin OU header interno)
+// FIX SEG-VAULT-1: APENAS admin/staff OU header interno x-internal-token compativel com VAULT_INTERNAL_TOKEN
+// Antes, qualquer JWT valido (incluindo buyer comum) podia chamar este endpoint e
+// receber plain_key da pool da plataforma - vazamento critico.
+function vaultUseGuard(req, res, next) {
+  const internalTok = req.headers['x-internal-token'];
+  const expected = process.env.VAULT_INTERNAL_TOKEN;
+  if (expected && internalTok && internalTok === expected) {
+    return next(); // chamada interna (gateway -> service mesh) liberada
+  }
+  // senao, exige JWT com role privilegiado
+  return jwt.requireAuth({ roles: ['admin', 'staff', 'service'] })(req, res, next);
+}
+
 app.post('/use',
-  jwt.requireAuth(),
+  vaultUseGuard,
   validate({ body: z.object({ provider: z.string(), seller_id: z.string().uuid().optional(), operation: z.string().optional() }) }),
   asyncHandler(async (req, res, next) => {
     const { provider, seller_id, operation } = req.body;
@@ -88,7 +100,9 @@ app.post('/use',
     try {
       plain = cryp.decrypt({ encrypted: k.encrypted_key, iv: k.iv, tag: k.auth_tag });
     } catch (e) {
-      return next(errorHandler.serverError('decrypt_failed', e.message));
+      // FIX SEG-VAULT-2: nao vaza exception message ao cliente (DLP). Loga estruturado server-side.
+      log.error({ err: e.message, key_id: k.id, fp: k.key_fingerprint }, '[vault.decrypt_fail]');
+      return next(errorHandler.serverError('decrypt_failed'));
     }
     await query('UPDATE vault_api_keys SET last_used_at = NOW(), last_used_ip = $1 WHERE id = $2', [req.ip, k.id]);
     res.json({
