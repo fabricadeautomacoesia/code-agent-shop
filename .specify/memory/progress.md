@@ -2505,3 +2505,55 @@ DEPLOY:
 - commit e03c151 pushed
 - order-svc rebuilt via Dockerfile.node SVC=order-svc, converged OK
 - storefront rebuilt via Dockerfile.next, converged OK
+
+## WORKER 17 pass 3 (VAULT/SECURITY) - fail2ban defense-in-depth
+Audit pos-W17 pass 1-2: vault-svc tinha vaultUseGuard (auth) e rate-limit,
+mas NAO tinha fail2ban. Idem payment-svc apos W11 pass 2.
+
+GAP IDENTIFICADO:
+- Gateway aplica fail2ban so para /api/auth/* (linha 146)
+- /api/vault/use, /api/payments/asaas/create, /api/qa/run usam x-internal-token
+  com timing-safe comparison (W17 pass 1 + W12 + W11 fixes anteriores)
+- TIMING-SAFE so previne timing attacks - NAO limita TAXA de tentativas
+- Atacante poderia brute-forcear token internamente sem limite
+
+FIX 1 services/vault-svc/src/server.js:
+- Import fail2ban from @cas/shared
+- app.use(fail2ban.middleware()) global
+- vaultUseGuard agora chama:
+  * req.fail2ban.reportSuccess() em token valido (limpa counter)
+  * req.fail2ban.reportFailure() em token invalido (incrementa)
+
+FIX 2 services/payment-svc/src/server.js:
+- Mesma estrutura: import + app.use + asaasCreateGuard hooks
+
+UNIT TEST (in container) - fail2ban module standalone:
+- 4 attempts: banned=false
+- 5th attempt: banned=true (config: MAX_ATTEMPTS=5, WINDOW=15min, BAN=15min)
+- isBanned(1.2.3.4) = true depois de 5 falhas
+- isBanned(9.9.9.9) = false (isolacao por IP correto)
+
+E2E TEST encontrou observacao operacional CRITICA:
+- VAULT_INTERNAL_TOKEN, PAYMENT_INTERNAL_TOKEN, QA_RUN_INTERNAL_TOKEN
+  NAO estao configurados em .env Swarm de producao
+- Sem env, codigo cai no jwt.requireAuth() path -> 401 missing_token
+  (correto, mas nunca entra no reportFailure path)
+- Para fail2ban funcionar end-to-end, ops PRECISA:
+  1. Gerar 3 tokens distintos (32+ bytes hex)
+  2. Adicionar em .env Swarm:
+     VAULT_INTERNAL_TOKEN=<hex>
+     PAYMENT_INTERNAL_TOKEN=<hex>
+     QA_RUN_INTERNAL_TOKEN=<hex>
+  3. Restart services (docker service update --force)
+  4. Atualizar dispatchers em order-svc (W11) + product-svc (W12)
+     para enviar header correspondente
+
+DEPLOY: commit 5d3daed pushed
+- vault-svc rebuilt via Dockerfile.node SVC=vault-svc, converged OK
+- payment-svc rebuilt via Dockerfile.node SVC=payment-svc, converged OK
+
+OBSERVACAO LIMITACAO:
+- fail2ban Map eh in-memory por pod (Swarm tem multiplas replicas)
+- Atacante distribuindo sob LB pode passar de 5 falhas globalmente
+- Migration futura: usar Redis (cache layer) para shared state
+- Aceitable hoje: replicas=1 por svc nos secrets-protected endpoints
