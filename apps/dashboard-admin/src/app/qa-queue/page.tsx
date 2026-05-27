@@ -57,7 +57,28 @@ export default function QAQueuePage() {
   return (
     <div>
       <h1 className="font-display font-bold text-4xl mb-2">QA Queue</h1>
-      <p className="text-white/60 mb-8">Produtos aguardando ou rejeitados pelo pipeline LLM (threshold 0.80)</p>
+      <p className="text-white/60 mb-4">Produtos aguardando ou rejeitados pelo pipeline LLM (threshold 0.80)</p>
+
+      {/* FIX-WORKER-4 pass 14: alert banner se ha produtos com timeout recente
+          (W12 pass 7 cron cancela runs stuck >10min - indica n8n/worker issue infra) */}
+      {(() => {
+        const timeoutCount = queue.filter((p) => p.last_run_verdict === 'timeout').length;
+        if (timeoutCount === 0) return null;
+        return (
+          <div className="bg-orange-500/10 border-l-4 border-orange-500 text-orange-200 p-4 rounded-lg mb-4">
+            <div className="font-semibold mb-1 text-sm">
+              {timeoutCount} produto(s) com QA timeout recente
+            </div>
+            <div className="text-xs opacity-80">
+              QA pipeline cancelou automaticamente runs travados {'>'} 10min (W12 cron).
+              Possivel causa: n8n down, worker.py crash, callback HTTP fail.
+              Verifique infra antes de force-approve.
+            </div>
+          </div>
+        );
+      })()}
+      <div className="mb-4" />
+
 
       {/* FIX-WORKER-4 pass 5: loadError banner. Antes silencioso em console
           + "Fila vazia" enganosa. Agora admin ve falhas explicitas. */}
@@ -93,7 +114,10 @@ export default function QAQueuePage() {
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-white/40 uppercase border-b border-white/10">
               <tr>
-                <th className="py-2">Titulo</th><th>Vendedor</th><th>Status</th><th>QA Score</th><th>Enviado</th><th className="text-right">Acoes</th>
+                <th className="py-2">Titulo</th><th>Vendedor</th><th>Status</th>
+                {/* FIX-WORKER-4 pass 14: nova coluna "Ultima tentativa" (W12 pass 7 timeouts) */}
+                <th>Ultima tentativa</th>
+                <th>QA Score</th><th>Enviado</th><th className="text-right">Acoes</th>
               </tr>
             </thead>
             <tbody>
@@ -121,6 +145,30 @@ export default function QAQueuePage() {
                     ) : (p.store_name || '-')}
                   </td>
                   <td><span className={`px-2 py-0.5 rounded text-xs ${statusColor[p.status]}`}>{p.status}</span></td>
+                  {/* FIX-WORKER-4 pass 14: ultima tentativa verdict (timeout warning principal) */}
+                  <td>
+                    {p.last_run_verdict ? (
+                      <div className="flex flex-col gap-0.5">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold w-fit ${
+                          p.last_run_verdict === 'timeout'  ? 'bg-orange-500/20 text-orange-300' :
+                          p.last_run_verdict === 'error'    ? 'bg-red-500/20 text-red-300' :
+                          p.last_run_verdict === 'rejected' ? 'bg-red-500/20 text-red-400' :
+                          p.last_run_verdict === 'approved' ? 'bg-green-500/20 text-green-400' :
+                          p.last_run_verdict === 'running'  ? 'bg-blue-500/20 text-blue-300' :
+                                                              'bg-white/10 text-white/40'
+                        }`}>
+                          {p.last_run_verdict}
+                        </span>
+                        {p.timeout_count > 0 && (
+                          <span className="text-[10px] text-orange-300/80" title={`${p.timeout_count} timeout(s) historicos`}>
+                            x{p.timeout_count} timeout(s)
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-white/30">sem runs</span>
+                    )}
+                  </td>
                   <td>
                     {p.qa_confidence_score !== null && (
                       <span className={`font-mono text-xs ${p.qa_confidence_score >= 0.8 ? 'text-green-400' : 'text-red-400'}`}>

@@ -36,10 +36,24 @@ async function invalidateProductCache(productId) {
 }
 
 // GET /products/admin/qa-queue
+// FIX-WORKER-4 pass 14: enrich com last_run_verdict (W12 pass 7 timeouts).
+// Antes: admin via "qa_pending" simples sem saber se foi timeout anterior.
+// Agora: subquery do ultimo run revela 'timeout' (cron auto-cancel), 'error'
+// (dispatch fail), 'rejected' (LLM rejeitou), etc.
+// Usa idx_qa_runs_product_started (W14 pass 6) - 1 scan por product_id ordenado DESC.
 router.get('/qa-queue', asyncHandler(async (req, res) => {
   const r = await query(
     `SELECT p.id, p.title, p.slug, p.status, p.qa_verdict, p.qa_confidence_score,
-            p.submitted_at, s.store_name, u.email
+            p.submitted_at, s.store_name, u.email,
+            (SELECT verdict FROM product_qa_runs r
+               WHERE r.product_id = p.id
+               ORDER BY r.started_at DESC LIMIT 1) AS last_run_verdict,
+            (SELECT started_at FROM product_qa_runs r
+               WHERE r.product_id = p.id
+               ORDER BY r.started_at DESC LIMIT 1) AS last_run_started_at,
+            (SELECT COUNT(*)::INT FROM product_qa_runs r
+               WHERE r.product_id = p.id
+                 AND r.verdict = 'timeout') AS timeout_count
        FROM products p
        LEFT JOIN sellers s ON s.id = p.seller_id
        LEFT JOIN users u ON u.id = s.user_id
