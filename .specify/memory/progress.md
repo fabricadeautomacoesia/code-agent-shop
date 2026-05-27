@@ -12506,3 +12506,83 @@ PROXIMA ITER:
 - W7 pass 15: /trending audit + Regra G se ILIKE
 - W18 pass 7: idx parcial product_views > 90d (cron-based)
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
+
+================================================================
+ITER W7 PASS 14 - /facets 3 bugs + /trending audit (2026-05-27)
+================================================================
+ESCOPO: search-svc GET /facets + audit /trending
+FILE: services/search-svc/src/server.js (linhas 357-434)
+
+CONTEXTO: W7 pass 13 estabeleceu 7 regras (A-G). Aplicacao a /facets
++ /trending. /trending nao usa ILIKE user input -> Regra G N/A.
+/facets viola Regra A (mesma omissao platform_owned passes 11-13) +
+2 bugs perf/correctness.
+
+AUDIT /trending (clean):
+- Nao usa ILIKE com user input (so query_normalized stored)
+- Regex protection SQLi/XSS ja correto (linha 366-368)
+- Filtros CHAR_LENGTH + COUNT>=2 (anti-spam) OK
+- Cache 300s + auto-rotate 7d window OK
+- Bug pequeno reportado mas NAO corrigido: regex backslash escape
+  `!~ '[''"<>;\\]'` - JS string escapa 4 vezes, PG ve `\`, regex ve `\`.
+  Se query_normalized tem backslash literal (raro - sanitize mig 027
+  ja remove), pode passar. Baixo impacto - DEFERIDO.
+
+BUGS /facets CORRIGIDOS (3):
+
+1. REGRA A violada (linha 415) - status='approved' so
+- Mesmo bug consolidado em 7 endpoints anteriores (passes 7-13)
+- IMPACTO ESPECIFICO /facets:
+  * UI sidebar mostra "147 templates" (count)
+  * User clica kind=template -> /search retorna ate 152 (W7 pass 12
+    inclui platform_owned)
+  * INCONSISTENCIA visual: facet count != results count
+  * User questiona "por que mostra 147 mas vejo 152?" -> bug report
+- FIX: status IN ('approved','platform_owned') em base CTE
+
+2. NULL json_agg crash frontend
+- ANTES: (SELECT json_agg(...) FROM (...) WHERE ...) AS kinds
+  - Se base CTE vazia (filtros impossiveis: cat invalida + kind valido)
+    json_agg retorna NULL (nao array vazio)
+- FRONTEND CRASH: facets.kinds.map(...) em null -> TypeError
+- FIX: COALESCE(json_agg(...), '[]'::JSON) em ambos kinds + seller_tiers
+- Pattern defensive: backend NUNCA retorna null em arrays consumidos por UI
+
+3. SEM RATE LIMITER (era hot endpoint exposto)
+- ANTES: app.get('/facets', cache.cacheMiddleware(...))
+  - Sem limiter -> bot pode bombardear pre-cache-populate
+  - Combo cat+kind ~50 keys diferentes = miss rate alto pos-restart
+  - 100 hits/s * 30ms aggregate = 3s PG CPU
+- FIX: searchLimiter adicionado (mesmo /search principal)
+- Defesa em profundidade: rate-limit + cache + escape (cross-endpoint)
+
+PATTERN W7 8 ENDPOINTS AUDITADOS:
+- product-svc: /recently-viewed, /for-me, /related, /also-bought
+- search-svc: /top-sellers + /top-sellers/:cat, /search, /autocomplete,
+              /facets, /trending (audit clean)
+
+REGRAS A-G consolidadas:
+A. status IN ('approved','platform_owned')
+B. deleted_at IS NULL
+C. JOIN sellers (nao subqueries)
+D. Tiebreakers deterministicos (incl p.id PK)
+E. Response include 'limit'/shape
+F. Parent existence 404 distinguivel
+G. SQL LIKE wildcard escape user input
+
+NOVA REGRA H (este pass):
+H. COALESCE json_agg('[]'::JSON) defense - backend nunca retorna null
+   em arrays consumidos por UI .map()/.filter()/.length
+   - Aplica: facets, search results edge cases, any GROUP BY aggregate
+   - Frontend defensive Array.isArray() ja complementa (W3 pass 2)
+
+W7 PROGRESS:
+- product-svc: passes 1-10 (10 iters)
+- search-svc: passes 11 (top-sellers), 12 (/search), 13 (/autocomplete),
+              14 (/facets + /trending audit)
+
+PROXIMA ITER:
+- W7 pass 15: /categories audit + audit aiops-svc endpoints
+- W18 pass 7: idx parcial product_views > 90d (cron-based)
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W14: migration adicionar idx parcial categories.parent_id IS NULL

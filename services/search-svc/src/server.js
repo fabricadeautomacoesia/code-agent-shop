@@ -394,7 +394,11 @@ app.get('/categories',
 // /categoria/agentes-ia via "147 templates disponiveis" (count global) sendo que
 // agentes-ia so tem 3 templates. Cache servia o numero errado por ate 180s.
 // Tambem normalizado category lowercase (slugs sao lower no DB) p/ cache hit rate.
+// FIX-WORKER-7 pass 14: rate-limit aplicado (era hot endpoint sem proteção)
+// Bot hit 100/s em /facets sem cache = 3s PG CPU (50k base CTE + 4 aggregates).
+// Cache 180s ajuda mas combo cat+kind ~50 keys -> miss rate alto pos-restart.
 app.get('/facets',
+  searchLimiter,
   cache.cacheMiddleware((req) => {
     const cat = (req.query.category || '').toString().trim().toLowerCase();
     const kind = (req.query.kind || '').toString().trim().toLowerCase();
@@ -407,21 +411,35 @@ app.get('/facets',
   const VALID_KINDS = new Set(['automation','ai_agent','n8n_workflow','node_script','python_script','php_script','prompt_pack','template','dataset','other']);
   const kindFilter = VALID_KINDS.has(kind) ? kind : null;
   const catFilter = cat || null;
+  // FIX-WORKER-7 pass 14: 2 bugs CTE base:
+  // 1. Regra A: status='approved' ignorava platform_owned -> INCONSISTENCIA
+  //    facets vs /search results (pass 12 inclui platform_owned). UI mostra
+  //    "147 templates" mas pode haver 152 quando platform_owned contam.
+  //    User filtra kind=template -> resultado /search difere do count facet.
+  // 2. COALESCE em json_agg para garantir array vazio em vez de NULL.
+  //    Frontend .map() em null crash. Pattern defensive cross-svc.
   const r = await query(
     `WITH base AS (
        SELECT p.id, p.kind, p.price_cents, p.seller_id, p.category_id
          FROM products p
          LEFT JOIN categories c ON c.id = p.category_id
-        WHERE p.status='approved' AND p.deleted_at IS NULL
+        WHERE p.status IN ('approved','platform_owned')
+          AND p.deleted_at IS NULL
           AND ($1::TEXT IS NULL OR c.slug = $1)
           AND ($2::TEXT IS NULL OR p.kind = $2)
      )
      SELECT
-       (SELECT json_agg(json_build_object('kind', kind, 'count', cnt))
-          FROM (SELECT kind, COUNT(*) AS cnt FROM base GROUP BY kind) k) AS kinds,
-       (SELECT json_agg(json_build_object('tier', reputation_tier, 'count', cnt))
-          FROM (SELECT s.reputation_tier, COUNT(*) AS cnt FROM base b JOIN sellers s ON s.id=b.seller_id
-                  GROUP BY s.reputation_tier) t) AS seller_tiers,
+       COALESCE(
+         (SELECT json_agg(json_build_object('kind', kind, 'count', cnt))
+            FROM (SELECT kind, COUNT(*) AS cnt FROM base GROUP BY kind) k),
+         '[]'::JSON
+       ) AS kinds,
+       COALESCE(
+         (SELECT json_agg(json_build_object('tier', reputation_tier, 'count', cnt))
+            FROM (SELECT s.reputation_tier, COUNT(*) AS cnt FROM base b JOIN sellers s ON s.id=b.seller_id
+                    GROUP BY s.reputation_tier) t),
+         '[]'::JSON
+       ) AS seller_tiers,
        (SELECT json_build_object(
           'min', COALESCE(MIN(price_cents), 0),
           'max', COALESCE(MAX(price_cents), 0),
