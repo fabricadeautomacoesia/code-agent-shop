@@ -159,6 +159,46 @@ router.post('/:id/versions',
       [req.params.id, req.body.version, req.body.changelog, req.body.breaking_changes,
        req.body.package_url || null, req.body.package_hash_sha256 || null]
     );
+
+    // MLB-NEW: notifica subscribers (wishlist + buyers ja owners) sobre nova versao.
+    // Mercado Livre style 'voltou para o estoque' adaptado para digital products.
+    // Fan-out via INSERT em notifications - async, nao bloqueia response.
+    try {
+      const productInfo = await query(
+        `SELECT title, slug FROM products WHERE id = $1`, [req.params.id]
+      );
+      const title = productInfo.rows[0]?.title || 'Produto';
+      const slug  = productInfo.rows[0]?.slug || '';
+      const ver   = req.body.version;
+      const bcWarn = req.body.breaking_changes ? ' (BREAKING CHANGES - revise antes de atualizar)' : '';
+
+      // Subscribers = wishlist + buyers (UNION distinct para evitar dupe)
+      // Exclui o proprio seller (que esta publicando)
+      await query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
+         SELECT DISTINCT u.id, 'in_app', 'product_new_version', $1::text, $2::text, $3::JSONB, 0
+           FROM (
+             SELECT user_id FROM product_wishlist WHERE product_id = $4::UUID
+             UNION
+             SELECT DISTINCT o.buyer_user_id AS user_id FROM order_items oi
+               JOIN orders o ON o.id = oi.order_id
+              WHERE oi.product_id = $4::UUID AND o.status IN ('paid','fulfilled')
+           ) AS subs
+           JOIN users u ON u.id = subs.user_id
+          WHERE u.deleted_at IS NULL AND u.is_active = TRUE AND u.id != $5::UUID`,
+        [
+          `Nova versao v${ver}: ${title}`,
+          `O produto "${title}" recebeu uma atualizacao v${ver}${bcWarn}.\nChangelog: ${req.body.changelog.slice(0, 500)}`,
+          JSON.stringify({ product_id: req.params.id, slug, version: ver, breaking_changes: req.body.breaking_changes }),
+          req.params.id,
+          req.user.sub,
+        ]
+      );
+    } catch (e) {
+      // Nao bloqueia o create de version se notification falhar
+      log.warn({ err: e.message, product_id: req.params.id }, '[version.notify_failed]');
+    }
+
     res.status(201).json({ version: r.rows[0] });
   })
 );
