@@ -1284,3 +1284,54 @@ service updated --force, converged OK.
 
 LICAO: audit anterior so checava page.tsx, ignorando layout.tsx que e o
 pattern Next.js App Router para client components.
+
+## WORKER 10 (SEARCH/AIOPS) - Endpoint /search/top-sellers/:category UX bug
+Auditoria publica de search-svc revelou: GET /api/search/top-sellers/:category
+retornava 200 + {"products":[]} tanto para slug invalido quanto para categoria
+sem produtos -> storefront nao conseguia diferenciar "404 essa categoria nao
+existe" de "0 produtos vendidos ainda". Tambem nao expunha metadata da
+categoria (name, description) para enriquecer UI.
+
+Outros endpoints testados via curl --resolve - todos saudaveis:
+- /api/search?q=agente -> resultados OK
+- /api/search/autocomplete?q=age -> 2 suggestions OK
+- /api/search/trending -> top 7d OK
+- /api/search/categories -> 25 categories OK
+- /api/search/facets -> kinds + tech_stacks OK
+- /api/search/top-sellers (sem slug) -> per_category grouped OK
+- /api/aiops/status -> cpu/ram/disco + recent_alerts OK
+- /api/aiops/metrics -> ultimas leituras OK
+- /api/aiops/alerts -> alerts recentes OK
+
+FIX SVC: services/search-svc/src/server.js
+- Resolve categoria primeiro: SELECT id, slug, name, name_singular,
+  description, parent_id FROM categories WHERE slug = $1
+- Se !rows.length -> 404 {error: 'category_not_found', slug}
+- Se OK, query produtos JOIN substituido por WHERE p.category_id = cat.id (mais
+  rapido, usa idx_products_category)
+- Response enriquecido: { products, category: { slug, name, name_singular,
+  description, parent_id } }
+
+FIX STOREFRONT: apps/storefront/src/app/categoria/[slug]/{page,layout}.tsx
+- fetchSafe -> fetchTopSellers retorna {status, data} (preserva HTTP code)
+- page.tsx: if (status === 404) notFound()
+- page.tsx: usa category.name validado em vez de slug.replace(/-/g, ' ')
+- page.tsx: renderiza category.description abaixo do h1 se disponivel
+- layout.tsx generateMetadata: fetcha /top-sellers/:slug?limit=1, usa nome
+  validado no title + description metadata (fallback gracioso p/ slug)
+
+VALIDACAO PUBLICA (5 cenarios):
+1) /api/search/top-sellers/categoria-inexistente -> HTTP 404 + {error,slug} OK
+2) /api/search/top-sellers/script-rust (existe mas 0 prods) -> HTTP 200 +
+   products:[] + category{name:"Rust", parent_id:...} OK
+3) /api/search/top-sellers/agentes-ia?limit=2 -> HTTP 200 + 2 produtos +
+   category metadata OK
+4) /categoria/categoria-inexistente -> renderiza not-found page
+   ("Pagina nao encontrada" + "404") OK
+5) /categoria/agentes-ia -> title "Mais vendidos: Agentes de IA" (nome
+   correto da API, nao slug bruto "agentes ia") OK
+
+DEPLOY: commit 6a73d1f pushed,
+- search-svc rebuilt via Dockerfile.node SVC=search-svc (contexto root)
+- storefront rebuilt via Dockerfile.next (contexto apps/storefront)
+- ambos --force update, converged OK.
