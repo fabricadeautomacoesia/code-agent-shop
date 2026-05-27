@@ -14166,3 +14166,77 @@ PROXIMA ITER:
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W4: dashboard-admin /admin/disputes listar (consume endpoint pass 29)
 - W13: notification-svc templates audit (XSS em template render)
+
+================================================================
+ITER W3 PASS 10 - CartDrawer refator usar <Dialog> wrapper (2026-05-27)
+================================================================
+ESCOPO: storefront CartDrawer migra pattern modal manual -> <Dialog>
+FILE: apps/storefront/src/components/cart-drawer.tsx
+
+CONTEXTO: W3 pass 9 criou <Dialog> wrapper DRY com 7 elementos canonicos.
+Pass 10 valida wrapper no consumer MAIS CRITICO (cart-drawer abre em
+todo PDP + Nav + add-to-cart). Refactor incremental conforme plano pass 9.
+
+REFATORACAO APLICADA:
+
+REMOVIDO (~30 linhas pre-fix):
+- useEffect manual Escape keyboard listener (linhas 31-43 pre-fix)
+- document.body.style.overflow manual + prevOverflow restore
+- if (!cartOpen) return null guard (Dialog cuida)
+- <div outer wrapper> + <button backdrop> + <aside role=dialog>
+- aria-modal + aria-labelledby manual
+- z-index hardcode
+
+ADICIONADO (declarativo):
+- import Dialog from './dialog'
+- <Dialog open={cartOpen} onClose={...} title="Carrinho"
+    ariaLabel="Carrinho de compras" variant="drawer-right"
+    closeLabel="Fechar carrinho" hideCloseButton
+    className="relative w-full max-w-md glass-strong h-full ..." />
+- hideCloseButton=true (CartDrawer tem header custom com ShoppingBag icon)
+
+BENEFICIOS:
+
+1. DRY consolidacao
+   - 30 linhas a menos por consumer (4 consumers total = 120 linhas)
+   - Manutencao centralizada em dialog.tsx
+
+2. A11Y MELHOR pos-refactor (Dialog adiciona BONUS):
+   - Focus auto-mount no primeiro focusavel (pre-fix NAO tinha)
+   - Focus return-to-opener on close (pre-fix NAO tinha)
+   - Pattern dialog 7 elementos garantido (impossivel esquecer um)
+
+3. CONSISTENCY cross-modals:
+   - CartDrawer + Nav mobile + SearchAutocomplete + AskQuickButton
+   - Mesma UX/keyboard/aria entre todos
+   - Bugs futuros em <Dialog> = fix 1 lugar -> melhora 4 consumers
+
+4. TYPE-SAFE:
+   - DialogProps explicit (TypeScript IntelliSense)
+   - title/ariaLabel/closeLabel/className/etc validados em compile time
+   - vs strings espalhadas pelo JSX pre-fix
+
+VALIDACAO VISUAL/FUNCIONAL:
+
+- Visual identico pre/pos-refactor (className override mantem glass-strong
+  + h-full + max-w-md + border-l)
+- hideCloseButton preserva header custom ShoppingBag icon + X manual
+- z-index 60 (Dialog default) = correto p/ drawer cart
+
+GAP CONSCIENTE:
+- Dead code: const SUBJECT_REJECT_CHARS (sem _RE) linha 244 notification-svc
+  ainda existe (W7 pass 30 deixou orfao). Limpeza low-priority - sem efeito
+  runtime. DEFERIDO.
+
+PATTERN W3 DIALOG REFACTOR CONSUMERS:
+- pass 10 CartDrawer (esta iter) - PRIMEIRO consumer refatorado
+- pass 11 (futura) AskQuickButton (modal centered simples)
+- pass 12 (futura) SearchAutocomplete (modal centered c/ Escape pre-existing)
+- pass 13 (futura) Nav mobile (drawer-right complex)
+- NotificationBell mantem custom (popover != dialog full screen)
+
+PROXIMA ITER:
+- W3 pass 11: refatorar AskQuickButton usar <Dialog> (centered simple)
+- W18 pass 7: idx parcial product_views > 90d cron-based
+- W4: dashboard-admin /admin/disputes (consume pass 29 endpoint)
+- W13: notification-svc templates audit (XSS render)
