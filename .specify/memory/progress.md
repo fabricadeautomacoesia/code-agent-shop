@@ -2414,3 +2414,50 @@ PROXIMOS GAPS MLB (remanescentes):
 - Notificacoes push browser (Service Worker)
 - Reorder cart drag-and-drop
 - Mercado Pago Carteira Digital (jah ja temos Asaas)
+
+## WORKER 12 pass 2 (QA WORKER) - SSRF defense em callback_url
+Re-auditoria qa-worker.py apos W12 pass 1 (qa-svc auth). Pass 1 fechou
+"qualquer um pode disparar /qa/run". Mas worker ainda confiava 100% no
+callback_url enviado por qa-svc.
+
+ATTACK VECTOR (defense-in-depth):
+- Se qa-svc fosse comprometido (env, supply chain, RCE), atacante poderia
+  enviar /analyze com callback_url=http://attacker.com/leak
+- Worker postaria payload completo (run_id, product_id, raw_response do LLM
+  com codigo do produto, llm_provider, tokens, cost_usd_cents) ao atacante
+- Tipico SSRF: worker virou messenger para qualquer destino externo
+
+FIX: services/qa-worker/app/main.py linha 480+
+- Nova funcao _is_callback_url_allowed(url):
+  * Default whitelist: tasks.cas_qa-svc(:PORT)?, qa-svc(:PORT)?,
+    127.0.0.1, localhost (com regex anchored ^...$)
+  * Override via env QA_CALLBACK_ALLOWED_HOSTS (csv) para dev/test
+- send_callback verifica antes de POST -> rejeita silenciosamente com log
+
+VALIDACAO (UNIT TEST in container 10/10):
+- WHITELIST aceita:
+  http://tasks.cas_qa-svc:3013/qa/callback OK
+  http://tasks.cas_qa-svc/qa/callback (sem port) OK
+  https://qa-svc:3013/qa/callback OK
+  http://127.0.0.1:3013/qa/callback OK
+  http://localhost:3013/qa/callback OK
+- BLOQUEIA:
+  http://attacker.com/leak -> blocked OK
+  http://169.254.169.254/aws-metadata (cloud metadata) -> blocked OK
+  file:///etc/passwd (scheme attack) -> blocked OK
+  '' (empty) -> blocked OK
+  http://tasks.cas_qa-svc.attacker.com/qa/callback (subdomain bypass) -> blocked OK
+
+A regex usa $ anchor depois de optional port/path, prevenindo subdomain
+confusion (tasks.cas_qa-svc.attacker.com NAO matcha).
+
+DEPLOY: commit 538856a pushed, qa-worker rebuilt + service updated --force,
+converged OK. grep dentro do container confirma _is_callback_url_allowed
+presente.
+
+GAP MAIOR observado (qa-worker keeps restart-looping):
+- service logs mostram repetidos startup/shutdown sem error message
+- Pode ser healthcheck failing OU traffic patterns. Investigar proxima iter.
+
+NOTA OPERACIONAL: QA_CALLBACK_ALLOWED_HOSTS pode ser definido em .env Swarm
+para staging/dev terem URLs diferentes. Producao: default whitelist suficiente.
