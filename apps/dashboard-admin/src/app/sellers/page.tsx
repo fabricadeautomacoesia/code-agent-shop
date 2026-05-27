@@ -2,28 +2,36 @@
 
 import { useEffect, useState } from 'react';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
+import { useAdminAction } from '@/lib/use-admin-action';
 import { Ban, CheckCircle, ArrowUp } from 'lucide-react';
 
 export default function SellersPage() {
   const [pending, setPending] = useState<any[]>([]);
-  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   async function load() {
-    try { const r = await adminFetch<{ sellers: any[] }>('/sellers/admin/pending-kyc'); setPending(r.sellers); }
-    catch (e: any) { setError(e.message); }
+    try { const r = await adminFetch<{ sellers: any[] }>('/sellers/admin/pending-kyc'); setPending(r.sellers); setLoadError(''); }
+    catch (e: any) { setLoadError(e.message); }
   }
   useEffect(() => { load(); }, []);
+
+  // FIX-WORKER-4 pass 2: useAdminAction hook
+  const action = useAdminAction(load);
 
   async function suspend(id: string) {
     const reason = prompt('Motivo da suspensao:');
     if (!reason) return;
-    await adminFetch(`/sellers/admin/${id}/suspend`, { method: 'POST', body: JSON.stringify({ reason }) });
-    load();
+    action.run(`suspend-${id}`, async () => {
+      await adminFetch(`/sellers/admin/${id}/suspend`, { method: 'POST', body: JSON.stringify({ reason }) });
+      return `Seller ${id.slice(0, 8)}... suspenso`;
+    });
   }
   async function promoteB(id: string) {
     if (!confirm('Promover este seller para Classe B (Cloud Code Ilimitado)?')) return;
-    await adminFetch(`/sellers/admin/${id}/promote-class-b`, { method: 'POST', body: JSON.stringify({ sla_days: 15 }) });
-    load();
+    action.run(`promote-${id}`, async () => {
+      await adminFetch(`/sellers/admin/${id}/promote-class-b`, { method: 'POST', body: JSON.stringify({ sla_days: 15 }) });
+      return `Seller ${id.slice(0, 8)}... promovido para Classe B`;
+    });
   }
 
   return (
@@ -31,7 +39,21 @@ export default function SellersPage() {
       <h1 className="font-display font-bold text-4xl mb-2">Sellers</h1>
       <p className="text-white/60 mb-8">Gestao de vendedores e KYC pendente</p>
 
-      {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">{error}</div>}
+      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+
+      {/* FIX-WORKER-4 pass 2: feedback banners via useAdminAction */}
+      {action.error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.error}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.success}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
 
       <div className="glass p-6">
         <h2 className="font-display font-bold text-xl mb-4">KYC Pendente ({pending.length})</h2>
@@ -51,12 +73,14 @@ export default function SellersPage() {
                   <td className="text-white/40 text-xs">{fmtDate(s.created_at)}</td>
                   <td className="text-right space-x-2">
                     {s.seller_class === 'class_a' && (
-                      <button onClick={() => promoteB(s.id)} className="text-magenta hover:underline text-xs inline-flex items-center gap-1">
-                        <ArrowUp className="w-3 h-3" /> Classe B
+                      <button onClick={() => promoteB(s.id)} disabled={action.busyKey === `promote-${s.id}`}
+                        className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                        <ArrowUp className="w-3 h-3" /> {action.busyKey === `promote-${s.id}` ? '...' : 'Classe B'}
                       </button>
                     )}
-                    <button onClick={() => suspend(s.id)} className="text-red-400 hover:underline text-xs inline-flex items-center gap-1">
-                      <Ban className="w-3 h-3" /> Suspender
+                    <button onClick={() => suspend(s.id)} disabled={action.busyKey === `suspend-${s.id}`}
+                      className="text-red-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                      <Ban className="w-3 h-3" /> {action.busyKey === `suspend-${s.id}` ? '...' : 'Suspender'}
                     </button>
                   </td>
                 </tr>

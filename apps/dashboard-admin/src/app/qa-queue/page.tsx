@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
+import { useAdminAction } from '@/lib/use-admin-action';
 import { CheckCircle, XCircle, Award } from 'lucide-react';
 
 export default function QAQueuePage() {
@@ -13,18 +14,25 @@ export default function QAQueuePage() {
   }
   useEffect(() => { load(); }, []);
 
+  // FIX-WORKER-4 pass 2: useAdminAction hook substitui try/catch repetido
+  const action = useAdminAction(load);
+
   async function forceApprove(id: string) {
     const reason = prompt('Justificativa para aprovacao manual (override LLM):');
     if (!reason) return;
-    await adminFetch(`/products/admin/${id}/force-approve`, { method: 'POST', body: JSON.stringify({ reason }) });
-    load();
+    action.run(`approve-${id}`, async () => {
+      await adminFetch(`/products/admin/${id}/force-approve`, { method: 'POST', body: JSON.stringify({ reason }) });
+      return `Produto ${id.slice(0, 8)}... aprovado manualmente`;
+    });
   }
   async function platformTake(id: string) {
     if (!confirm('Acionar Clausula Master de Revenda Direta?\nIsso cria copia do produto como is_platform_owned=TRUE (100% lucro plataforma).')) return;
     const reason = prompt('Justificativa:');
     if (!reason) return;
-    await adminFetch(`/products/admin/${id}/platform-take`, { method: 'POST', body: JSON.stringify({ reason }) });
-    load();
+    action.run(`take-${id}`, async () => {
+      await adminFetch(`/products/admin/${id}/platform-take`, { method: 'POST', body: JSON.stringify({ reason }) });
+      return `Platform-take ${id.slice(0, 8)}... criado`;
+    });
   }
 
   const statusColor: Record<string, string> = {
@@ -38,6 +46,20 @@ export default function QAQueuePage() {
     <div>
       <h1 className="font-display font-bold text-4xl mb-2">QA Queue</h1>
       <p className="text-white/60 mb-8">Produtos aguardando ou rejeitados pelo pipeline LLM (threshold 0.80)</p>
+
+      {/* FIX-WORKER-4 pass 2: feedback banners via useAdminAction */}
+      {action.error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.error}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.success}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
 
       <div className="glass p-6 overflow-x-auto">
         {queue.length === 0 ? (
@@ -67,11 +89,13 @@ export default function QAQueuePage() {
                   </td>
                   <td className="text-xs text-white/50">{p.submitted_at ? fmtDate(p.submitted_at) : '-'}</td>
                   <td className="text-right space-x-2">
-                    <button onClick={() => forceApprove(p.id)} className="text-green-400 hover:underline text-xs inline-flex items-center gap-1">
-                      <CheckCircle className="w-3 h-3" /> Aprovar
+                    <button onClick={() => forceApprove(p.id)} disabled={action.busyKey === `approve-${p.id}`}
+                      className="text-green-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                      <CheckCircle className="w-3 h-3" /> {action.busyKey === `approve-${p.id}` ? '...' : 'Aprovar'}
                     </button>
-                    <button onClick={() => platformTake(p.id)} className="text-magenta hover:underline text-xs inline-flex items-center gap-1">
-                      <Award className="w-3 h-3" /> Take
+                    <button onClick={() => platformTake(p.id)} disabled={action.busyKey === `take-${p.id}`}
+                      className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                      <Award className="w-3 h-3" /> {action.busyKey === `take-${p.id}` ? '...' : 'Take'}
                     </button>
                   </td>
                 </tr>
