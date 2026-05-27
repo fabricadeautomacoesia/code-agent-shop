@@ -12,6 +12,33 @@ const { jwt, validate, asyncHandler, errorHandler, crypto: cryp } = require('@ca
 const router = express.Router();
 router.use(jwt.requireAuth());
 
+// FIX-WORKER-6 pass 1: GET /auth/2fa/status - frontend /conta/seguranca consulta
+// estado 2FA do usuario logado. Antes, frontend confiava em me.twofa_enabled,
+// mas isso so e setado quando is_enabled=true (apos activate). Apos /setup mas
+// antes de /activate, o user ja tem segredo em DB mas nao reflete no /me ->
+// UI nao sabia se ja existia setup pendente, levando usuario a regenerar
+// segredos infinitamente (cada /setup sobrescreve). Status endpoint mostra
+// estado real: has_pending_setup, enabled, recovery_codes_count.
+router.get('/status', asyncHandler(async (req, res) => {
+  const r = await query(
+    `SELECT is_enabled, enabled_at, disabled_at, secret_tag IS NOT NULL AS has_secret,
+            COALESCE(jsonb_array_length(recovery_codes_hash), 0) AS recovery_count
+       FROM user_two_factor WHERE user_id = $1`,
+    [req.user.sub]
+  );
+  if (!r.rows.length) {
+    return res.json({ enabled: false, has_pending_setup: false, recovery_count: 0 });
+  }
+  const row = r.rows[0];
+  res.json({
+    enabled: !!row.is_enabled,
+    has_pending_setup: !!row.has_secret && !row.is_enabled,
+    enabled_at: row.enabled_at,
+    disabled_at: row.disabled_at,
+    recovery_count: Number(row.recovery_count) || 0,
+  });
+}));
+
 // POST /auth/2fa/setup -> retorna QR + secret temporario
 router.post('/setup', asyncHandler(async (req, res) => {
   const secret = authenticator.generateSecret();

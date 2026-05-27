@@ -13,6 +13,9 @@ export default function SegurancaPage() {
   const router = useRouter();
   const { token } = useAuth();
   const [me, setMe] = useState<any>(null);
+  // FIX-WORKER-6 pass 1: novo state twofaStatus separado de me.twofa_enabled
+  // para refletir has_pending_setup (segredo em DB mas nao ativado ainda).
+  const [twofaStatus, setTwofaStatus] = useState<{ enabled: boolean; has_pending_setup: boolean; recovery_count: number } | null>(null);
   const [setupData, setSetupData] = useState<any>(null);
   const [token2fa, setToken2fa] = useState('');
   const [password, setPassword] = useState('');
@@ -21,9 +24,18 @@ export default function SegurancaPage() {
   const [ok, setOk] = useState('');
   const [loading, setLoading] = useState(false);
 
+  async function refreshStatus() {
+    if (!token) return;
+    try {
+      const s: any = await Api.api('/auth/2fa/status', { auth: token });
+      setTwofaStatus(s);
+    } catch {}
+  }
+
   useEffect(() => {
     if (!token) { router.push('/login'); return; }
     Api.me(token).then((r) => setMe(r.user)).catch(() => {});
+    refreshStatus();
   }, [token]);
 
   async function startSetup() {
@@ -44,6 +56,7 @@ export default function SegurancaPage() {
       setOk('2FA ativado com sucesso! Salve os codigos de recuperacao.');
       setToken2fa('');
       Api.me(token!).then((m) => setMe(m.user));
+      refreshStatus();
     } catch (e: any) { setError(friendlyAuthError(e)); }
     finally { setLoading(false); }
   }
@@ -55,6 +68,7 @@ export default function SegurancaPage() {
       setOk('2FA desativado.');
       setPassword(''); setToken2fa('');
       Api.me(token!).then((m) => setMe(m.user));
+      refreshStatus();
     } catch (e: any) { setError(friendlyAuthError(e)); }
     finally { setLoading(false); }
   }
@@ -71,15 +85,21 @@ export default function SegurancaPage() {
           <Shield className="w-8 h-8 text-magenta" />
           <div>
             <h2 className="font-display font-bold text-xl">2FA TOTP</h2>
+            {/* FIX-WORKER-6 pass 1: usa twofaStatus (endpoint real) com fallback p/ me.twofa_enabled */}
             <div className="text-sm text-white/60">
-              Status: {me.twofa_enabled
+              Status: {(twofaStatus?.enabled ?? me.twofa_enabled)
                 ? <span className="text-green-400 font-semibold">Ativado</span>
-                : <span className="text-yellow-400">Desativado</span>}
+                : twofaStatus?.has_pending_setup
+                  ? <span className="text-orange-400 font-semibold">Setup pendente (escaneie o QR abaixo)</span>
+                  : <span className="text-yellow-400">Desativado</span>}
+              {twofaStatus?.enabled && twofaStatus.recovery_count > 0 && (
+                <span className="ml-2 text-xs text-white/50">({twofaStatus.recovery_count} codigos de recuperacao restantes)</span>
+              )}
             </div>
           </div>
         </div>
 
-        {!me.twofa_enabled && !setupData && (
+        {!(twofaStatus?.enabled ?? me.twofa_enabled) && !setupData && (
           <div>
             <div className="flex items-start gap-3 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg mb-4">
               <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
@@ -140,7 +160,7 @@ export default function SegurancaPage() {
           </div>
         )}
 
-        {me.twofa_enabled && !setupData && (
+        {(twofaStatus?.enabled ?? me.twofa_enabled) && !setupData && (
           <div className="space-y-3">
             <div className="flex items-start gap-3 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
               <Shield className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
