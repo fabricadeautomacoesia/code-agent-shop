@@ -1,13 +1,25 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { adminFetch, fmtBRL, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
-import { Archive, Award, ExternalLink, Eye } from 'lucide-react';
-import Link from 'next/link';
+import { Archive, Award, ExternalLink, Eye, FileEdit } from 'lucide-react';
+
+// FIX-WORKER-4 pass 13: badge cor-coded por status (era hardcoded "approved" verde)
+const STATUS_COLOR: Record<string, string> = {
+  approved:    'bg-green-500/20 text-green-400',
+  qa_pending:  'bg-yellow-500/20 text-yellow-400',
+  qa_running:  'bg-blue-500/20 text-blue-300',
+  rejected:    'bg-red-500/20 text-red-400',
+  draft:       'bg-gray-500/20 text-gray-300',
+  archived:    'bg-white/10 text-white/40',
+  paused:      'bg-orange-500/20 text-orange-400',
+};
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<any[]>([]);
+  // FIX-WORKER-4 pass 13: filter UI funcional (era state morto sem dropdown)
   const [filter, setFilter] = useState('approved');
   const [loadError, setLoadError] = useState('');
 
@@ -47,11 +59,36 @@ export default function AdminProductsPage() {
       <div className="flex justify-between items-end mb-8">
         <div>
           <h1 className="font-display font-bold text-4xl mb-2">Produtos</h1>
-          <p className="text-white/60">{products.length} produto(s) no catalogo</p>
+          {/* FIX-WORKER-4 pass 13: count claro - "exibindo X" vs "100 produtos" enganoso quando ha 500+ */}
+          <p className="text-white/60">
+            Exibindo {products.length} produto(s) no filtro "{filter}"
+            {products.length >= 100 && <span className="text-yellow-400 ml-2">(limite 100 - use filtros)</span>}
+          </p>
         </div>
       </div>
 
-      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+      {/* FIX-WORKER-4 pass 13: filter UI funcional (state era morto sem UI) */}
+      <div className="flex gap-2 mb-6 overflow-x-auto">
+        {(['approved','qa_pending','qa_running','rejected','draft','archived','paused'] as const).map((s) => (
+          <button key={s} onClick={() => setFilter(s)}
+            aria-label={`Filtrar status ${s}`}
+            aria-pressed={filter === s}
+            className={`px-3 py-1.5 rounded-lg text-xs uppercase font-semibold whitespace-nowrap transition-colors ${
+              filter === s
+                ? 'bg-gradient-to-r from-magenta to-violet-deep text-white'
+                : 'glass hover:border-white/30'
+            }`}>
+            {s}
+          </button>
+        ))}
+      </div>
+
+      {loadError && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>Erro carregando lista: {loadError}</span>
+          <button onClick={() => { setLoadError(''); load(); }} className="text-xs hover:underline">retry</button>
+        </div>
+      )}
 
       {/* FIX-WORKER-4 pass 3: banners action via useAdminAction */}
       {action.error && (
@@ -68,6 +105,14 @@ export default function AdminProductsPage() {
       )}
 
       <div className="glass p-6 overflow-x-auto">
+        {products.length === 0 ? (
+          /* FIX-WORKER-4 pass 13: empty state condicional (era tabela vazia silenciosa) */
+          <p className="text-white/60 text-center py-12">
+            {loadError
+              ? 'Nao foi possivel carregar produtos.'
+              : `Nenhum produto com status "${filter}".`}
+          </p>
+        ) : (
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-white/40 uppercase border-b border-white/10">
             <tr>
@@ -76,13 +121,24 @@ export default function AdminProductsPage() {
             </tr>
           </thead>
           <tbody>
-            {products.map((p) => (
+            {products.map((p) => {
+              // FIX-WORKER-4 pass 13: per-row busy state (pattern consolidado)
+              const busyTake = action.busyKey === `take-${p.id}`;
+              const busyArchive = action.busyKey === `archive-${p.id}`;
+              // Status real (era hardcoded "approved")
+              const statusReal = p.status || filter;
+              return (
               <tr key={p.id} className="border-b border-white/5 hover:bg-white/5">
                 <td className="py-3">
                   <div className="flex items-center gap-3">
-                    {p.cover_image_url && (
-                      <img src={p.cover_image_url} alt={p.title}
-                        className="w-12 h-12 object-cover rounded" />
+                    {/* FIX-WORKER-4 pass 13: <img> -> next/image (pattern W8/W3) */}
+                    {p.cover_image_url ? (
+                      <div className="w-12 h-12 relative rounded overflow-hidden flex-shrink-0">
+                        <Image src={p.cover_image_url} alt={p.title || 'Produto'}
+                          fill sizes="48px" className="object-cover" />
+                      </div>
+                    ) : (
+                      <div className="w-12 h-12 bg-white/5 rounded flex-shrink-0" aria-hidden="true" />
                     )}
                     <div>
                       <div className="font-medium">{p.title}</div>
@@ -91,34 +147,51 @@ export default function AdminProductsPage() {
                   </div>
                 </td>
                 <td>{p.is_platform_owned
-                  ? <span className="px-2 py-0.5 rounded bg-magenta/20 text-magenta-glow text-xs flex items-center gap-1 w-fit"><Award className="w-3 h-3" /> CAS Oficial</span>
+                  ? <span className="px-2 py-0.5 rounded bg-magenta/20 text-magenta-glow text-xs flex items-center gap-1 w-fit"><Award className="w-3 h-3" aria-hidden="true" /> CAS Oficial</span>
                   : (p.store_name || '-')}
                 </td>
                 <td className="text-white/60">{p.category_name || '-'}</td>
                 <td className="font-display font-bold text-magenta-glow">{fmtBRL(p.price_cents)}</td>
                 <td className="font-mono text-xs">{p.sales_count || 0}</td>
                 <td>{p.avg_rating ? Number(p.avg_rating).toFixed(1) : '-'}</td>
+                {/* FIX-WORKER-4 pass 13: badge dinamico (era hardcoded "approved" verde) */}
                 <td>
-                  <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs">approved</span>
+                  <span className={`px-2 py-0.5 rounded text-xs ${STATUS_COLOR[statusReal] || 'bg-white/10 text-white/60'}`}>
+                    {statusReal}
+                  </span>
                 </td>
                 <td className="text-right space-x-2">
-                  <a href={`https://cas.inovareinteligenciaartificial.com/product/${p.slug}`} target="_blank"
+                  {/* FIX-WORKER-4 pass 13: rel security pattern W4 pass 7 */}
+                  <a href={`https://cas.inovareinteligenciaartificial.com/product/${p.slug}`}
+                    target="_blank" rel="noopener noreferrer"
+                    aria-label={`Abrir ${p.title} na vitrine`}
                     className="text-magenta hover:underline text-xs inline-flex items-center gap-1">
-                    <ExternalLink className="w-3 h-3" /> Ver
+                    <ExternalLink className="w-3 h-3" aria-hidden="true" /> Ver
                   </a>
-                  {!p.is_platform_owned && (
-                    <button onClick={() => platformTake(p.id)} className="text-yellow-400 hover:underline text-xs inline-flex items-center gap-1">
-                      <Award className="w-3 h-3" /> Take
+                  {!p.is_platform_owned && statusReal !== 'archived' && (
+                    <button onClick={() => platformTake(p.id)}
+                      disabled={busyTake || busyArchive}
+                      aria-label={`Platform-take produto ${p.title}`}
+                      className="text-yellow-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                      <Award className="w-3 h-3" aria-hidden="true" /> {busyTake ? '...' : 'Take'}
                     </button>
                   )}
-                  <button onClick={() => archive(p.id)} className="text-red-400 hover:underline text-xs inline-flex items-center gap-1">
-                    <Archive className="w-3 h-3" /> Arquivar
-                  </button>
+                  {/* FIX-WORKER-4 pass 13: Arquivar so se nao ja arquivado */}
+                  {statusReal !== 'archived' && (
+                    <button onClick={() => archive(p.id)}
+                      disabled={busyArchive || busyTake}
+                      aria-label={`Arquivar produto ${p.title}`}
+                      className="text-red-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                      <Archive className="w-3 h-3" aria-hidden="true" /> {busyArchive ? '...' : 'Arquivar'}
+                    </button>
+                  )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
+        )}
       </div>
     </div>
   );
