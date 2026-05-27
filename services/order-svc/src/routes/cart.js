@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, cache } = require('@cas/shared');
 
 const router = express.Router();
 router.use(jwt.requireAuth());
@@ -110,7 +110,19 @@ router.patch('/items/:id',
 
 // MLB-11: preview do cupom progressivo - retorna tiers ordenados e tier atual baseado em subtotal informado
 // MLB++: tambem retorna min_tier do cupom + tier do user pra UI exibir badge 'Exclusivo Gold'
-router.get('/coupon/:code/preview', asyncHandler(async (req, res, next) => {
+// FIX-WORKER-18 pass 7: cache 30s para /coupon/:code/preview.
+// Endpoint hit a cada keystroke no checkout coupon input (com debounce frontend ~300ms).
+// User digitando 10 chars = 10+ hits por cupom em <10s.
+// TTL 30s baixo porque used_count/is_active podem mudar mas refresh suficiente.
+// Cache key inclui code + subtotal porque tier breakpoints dependem dele.
+// NAO cacheia se user autenticado (min_tier check varia por user) - bypass via getKey null.
+router.get('/coupon/:code/preview',
+  cache.cacheMiddleware((req) => {
+    // FIX: bypass cache se ha Bearer token (min_tier check pessoal nao deveria cachear)
+    if (req.headers.authorization) return null;
+    return `coupon:preview:${req.params.code}:s=${req.query.subtotal_cents || 0}`;
+  }, 30),
+  asyncHandler(async (req, res, next) => {
   const subtotal = parseInt(req.query.subtotal_cents || '0', 10);
   const c = await query(
     `SELECT code, discount_type, discount_value, tier_breakpoints, expires_at, min_tier
