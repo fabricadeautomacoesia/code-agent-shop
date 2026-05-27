@@ -17283,7 +17283,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ aiops-svc /metrics + /alerts + /audit-log (pass 63) - Regra D+E+I + DLP CRITICAL
 - ✅ aiops-svc /audit-log/actions + /db/dead-indexes (pass 64) - cache + drift detection
 - ✅ vault-svc /keys/rotation-due + /keys (pass 65) - Regra D+E + DLP + filters
-- ✅ order-svc GET / buyer listing (pass 66 esta iter) - Regra E + filters + UX
+- ✅ order-svc GET / buyer listing (pass 66) - Regra E + filters + UX
+- ✅ product-svc /admin/qa-queue (pass 67 esta iter) - Regra D+E + LGPD + cache
+
+W7 PASS 67 RESUMO:
+- product-svc/src/routes/admin.js /qa-queue refactor (6 bugs):
+  * Regra D: + p.id ASC tiebreaker (submitted_at NULL ou identicos burst)
+  * Regra E: ?limit (1-200, default 50) + ?offset
+    - Antes hardcoded LIMIT 200 - incidente QA LLM down 500+ ficaria oculto
+  * NEW ?status filter (qa_pending|qa_running|rejected) enum whitelist
+    - Admin pode triar fila "ver SO travados" (qa_running) etc.
+  * LGPD role-tier: maskPII.email (admin=full, staff=masked)
+    - Pattern W7 cross-svc estabelecido pass 57/59/60
+  * Total count + has_more p/ UI paginacao estavel
+  * CACHE 30s vary by status/limit/offset
+    - QA queue muda quando cron processa (5-10min)
+- Pattern W7 em 68 endpoints + 23 regras (A-W) - 67 micro-iters
+- LGPD role-tier cross-svc: 8 endpoints
+  (review-svc 3 + order-svc 2 + seller-svc 3 + product-svc 1)
+
+PROXIMA ITER:
+- W7 pass 68: gateway middleware audit (DLP log + rate-limit)
+- W7 pass 69: product-svc /me CRUD audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 66 RESUMO:
 - order-svc/src/routes/orders.js GET / refactor (4 bugs):
