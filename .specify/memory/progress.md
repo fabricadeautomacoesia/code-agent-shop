@@ -7244,3 +7244,65 @@ PROXIMA ITER:
 - W3 pass 4: ReviewForm com mesmo pattern friendly error + char counter
 - W3 pass 5: product-tabs.tsx audit (Visao/Pre-req/Changelog/Reviews/Q&A)
 - W8 pass 4: contador char no review form (visual consistency com qna)
+
+## WORKER 4 PASS 5 - /admin/qa-queue 4 bugs UX + state
+
+AUDIT dashboard-admin /admin/qa-queue encontrou 4 bugs:
+
+BUG 1 (CRITICAL "fila vazia" mascarando outage):
+  catch (e: any) { console.error(e); }
+- Erro de carga era apenas console.error
+- UI exibia "Fila vazia. Sistema saudavel." (mensagem hardcoded)
+- Admin via "saudavel" durante outage real -> nao reagia
+- Aprovacoes manuais paravam ate alguem abrir DevTools
+
+BUG 2 (TypeError edge case):
+  setQueue(r.queue);  // se { queue: null } ou {} -> .map quebra
+- Tela em branco + TypeError no console
+
+BUG 3 (UX/feature) botoes em todas as rows:
+- "Aprovar" mostrado tambem em status='approved' (noop) e 'qa_running' (race)
+- "Take" mostrado em is_platform_owned=true (loop circular)
+- Backend (product-svc) tem validacao, mas admin clicava e via 400 cripta
+
+BUG 4 (visual ambiguity):
+  {p.store_name || '-'}
+- Produtos is_platform_owned mostravam "-"
+- Admin nao distinguia "produto oficial CAS" de "bug seller faltando"
+
+FIX (4 mudancas):
+
+1. loadError state visivel:
+   - Banner vermelho com botao "retry" (re-dispara load())
+   - Mensagem condicional: "Tente o retry" se erro / "Sistema saudavel" sem erro
+   - admin agora ve outage real imediatamente
+
+2. setQueue(r.queue || []) defensivo + setQueue([]) no catch
+   - Limpa dados stale + previne TypeError
+
+3. Botoes condicionais:
+   - canApprove = ['qa_pending','rejected'].includes(p.status)
+   - canTake = ['qa_pending','rejected','approved'].includes(p.status)
+              && !p.is_platform_owned
+   - Se nenhuma acao: <span italic>sem acoes</span> (afford claro)
+
+4. Badge "Plataforma CAS" com Award icon para is_platform_owned:
+   - Cor magenta-glow (consistente PDP)
+   - Visual distinto de "-" (seller faltando)
+
+DEPLOY:
+- commit aeccca6 push main OK
+- 63 insertions, 14 deletions
+- dashboard-admin rebuild via VPS cron
+- Backend product-svc inalterado (ja validava estados)
+
+W4 ADMIN AUDIT PROGRESS:
+- pass 1: useAdminAction hook criado (W4 pass 1-3 refactor pages)
+- pass 2-3: sellers + qa-queue migrados para hook
+- pass 4: /admin/payouts feature morta "Transferir Asaas" (bug critico)
+- pass 5: /admin/qa-queue 4 bugs UX (esta iter)
+
+PROXIMA ITER:
+- W4 pass 6: /admin/orders audit (deve ser read-only por design, validar)
+- W4 pass 7: /admin/sellers tier promotion buttons
+- W4 pass 8: /admin/reports KPIs dashboard
