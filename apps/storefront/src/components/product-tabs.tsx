@@ -134,16 +134,44 @@ export function ProductTabs({ product, reviews, qna }: Props) {
               {reviews.map((r: any) => (
                 <div key={r.id} className="border-b border-white/5 pb-4 last:border-0">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    {Array.from({ length: r.rating }).map((_, i) => (
-                      <Star key={i} className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                    ))}
+                    {/* FIX-WORKER-3: 5 estrelas sempre (preenchidas vs vazias estilo MLB) em vez de N estrelas */}
+                    <div className="flex items-center gap-0.5" aria-label={`${r.rating} de 5 estrelas`}>
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <Star key={i} className={`w-4 h-4 ${
+                          i < r.rating ? 'fill-yellow-400 text-yellow-400' : 'fill-white/10 text-white/20'
+                        }`} />
+                      ))}
+                    </div>
                     <span className="font-semibold text-sm">{r.title}</span>
                     {r.is_verified_purchase && (
                       <span className="text-[10px] px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">COMPRA VERIFICADA</span>
                     )}
                   </div>
                   <p className="text-sm text-white/70">{r.body}</p>
-                  <div className="text-xs text-white/40 mt-1">{r.buyer_name}</div>
+                  <div className="flex items-center gap-2 text-xs text-white/40 mt-1">
+                    {/* FIX-WORKER-3: fallback "Usuario CAS" quando user sem display_name */}
+                    <span>{r.buyer_name || 'Usuario CAS'}</span>
+                    <span>-</span>
+                    <span>{new Date(r.created_at).toLocaleDateString('pt-BR')}</span>
+                    {Number(r.helpful_count) > 0 && (
+                      <>
+                        <span>-</span>
+                        <span className="text-green-400">{r.helpful_count} util</span>
+                      </>
+                    )}
+                  </div>
+                  {/* FIX-WORKER-3: resposta do vendedor expandido (era ignorado no payload) */}
+                  {r.reply_from_seller && (
+                    <div className="mt-2 ml-3 pl-3 border-l-2 border-magenta">
+                      <div className="text-[10px] uppercase text-magenta-glow font-bold mb-1">Resposta do vendedor</div>
+                      <p className="text-xs text-white/70 whitespace-pre-line">{r.reply_from_seller}</p>
+                      {r.reply_at && (
+                        <div className="text-[10px] text-white/30 mt-1">
+                          {new Date(r.reply_at).toLocaleDateString('pt-BR')}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
