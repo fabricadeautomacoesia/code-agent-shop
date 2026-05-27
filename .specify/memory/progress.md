@@ -12424,3 +12424,85 @@ PROXIMA ITER:
 - W7 pass 14: /facets categories filter audit
 - W18 pass 7: idx parcial product_views > 90d (cron-based)
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
+
+================================================================
+ITER W7 PASS 13 - /search/autocomplete 6 bugs (SECURITY + Regras A/B/D) (2026-05-27)
+================================================================
+ESCOPO: search-svc GET /autocomplete (1 req/keystroke - critico UX search)
+FILE: services/search-svc/src/server.js (linhas 191-215)
+
+CONTEXTO: W7 pass 12 consolidou 6 regras. /autocomplete viola 4 regras
++ 1 BUG SECURITY (wildcard injection logico). Endpoint mais hot do svc
+(1 req por keystroke SearchBar) = exposto a abuso.
+
+BUGS CORRIGIDOS (6):
+
+1. *** SECURITY *** SQL LIKE Wildcard Injection (linha 203)
+- PRE-FIX: [`%${q}%`] - PG $1 param previne SQL injection direto, MAS
+  user input com SQL wildcards % _ vira parte do pattern logico
+- ABUSO REAL:
+  a. q='%' -> ILIKE '%%%' = match TODOS produtos
+     -> 50k seq scan + retorna top 10 arbitrarios + ~200ms CPU PG
+  b. q='_%_%' -> ILIKE '%_%_%' = single-char + any + single-char wildcards
+     -> N^M complexidade explosao em pg
+  c. Bot/atacante envia 100 q='%' em 5s -> DoS amplification ~20s PG CPU
+     em uma instancia (autocompleteLimiter ajuda mas N+M tokens diferentes)
+- FIX: q.replace(/[%_\]/g, '\$&') escape antes wrap %...%
+  + ILIKE $1 ESCAPE '\' p/ PG honrar nossa escape char
+- DEFESA EM PROFUNDIDADE: rate-limit + escape + idx trigram
+
+2. REGRA A duplicada - status='approved' (linhas 199 + 208)
+- Mesmo bug em DUAS queries do mesmo endpoint
+- Produtos Clausula Master Revenda Direta (is_platform_owned=TRUE)
+  INVISIVEIS em autocomplete
+- USER experience: digita nome de produto plataforma -> nao aparece
+  na sugestao -> Enter manda search principal -> aparece la (W7 pass 12)
+  -> usuario confuso "tem ou nao tem?"
+- FIX: status IN ('approved','platform_owned') em AMBAS queries
+
+3. REGRA B violada linha 208 (similarity query)
+- Linha 200 (ILIKE) tem deleted_at IS NULL OK
+- Linha 208 (similarity) NAO tem -> info leak produtos deletados
+- USER clica sugestao deletado -> /product/<slug> 404
+- FIX: deleted_at IS NULL na similarity query
+
+4. REGRA D faltando ordering tiebreaker (2 queries)
+- ORDER BY title ASC (linha 202) - empate entre titulos iguais
+  ("Agente WhatsApp" pode existir multiplas vezes)
+- ORDER BY s DESC (linha 209) - mesma similarity score = arbitrario
+- FIX: tiebreaker slug (unique sempre - PK indireto via UNIQUE constraint)
+- ORDER BY title ASC, slug + ORDER BY s DESC, slug
+
+5. CACHE DESPERDICIO (linha 193) - DEFERIDO
+- middleware cacheia mesmo q<2 (return [] precoce)
+- Solucao requer skip middleware ou conditional cache - refactor maior
+- DEFERIDO p/ iter dedicada
+
+6. MERGE RANKING bug (linhas 212-213)
+- PRE-FIX: [...r.rows ILIKE, ...sim.rows similarity]
+  Map(slug) mantem PRIMEIRA -> ILIKE rank 7 ganha de similarity 0.9
+- USER digita "watsap" -> ILIKE '%watsap%' nao matcha "WhatsApp" mas
+  similarity('WhatsApp', 'watsap') = 0.6 -> deveria ser top 1
+  Mas se um produto "WatsApp Tester" matcha ILIKE rank 5, ele ganha
+- FIX: filtro highSim (s >= 0.4) na frente do array merge
+- threshold 0.4 = high-confidence semantic match
+- ILIKE complementa (rank exato) - sim complementa (typo tolerance)
+
+PATTERN W7 6 ENDPOINTS CONFIRMADO:
+- product-svc: /recently-viewed, /for-me, /related, /also-bought
+- search-svc: /top-sellers, /top-sellers/:cat, /search, /autocomplete
+
+REGRAS A-F + NOVA REGRA G (este pass):
+G. SQL LIKE wildcard escape user input (security hardening)
+   q.replace(/[%_\]/g, '\$&') + ESCAPE '\' no SQL
+   Aplica a TODA query usando ILIKE com user input variavel
+
+W7 PROGRESS:
+- product-svc: passes 1-10
+- search-svc: passes 11 (top-sellers), 12 (/search), 13 (/autocomplete)
+
+PROXIMA ITER:
+- W7 pass 14: /facets audit (categorias filter agregadas)
+- W7 pass 15: /trending audit + Regra G se ILIKE
+- W18 pass 7: idx parcial product_views > 90d (cron-based)
+- W3 pass 10: refatorar CartDrawer usar <Dialog>

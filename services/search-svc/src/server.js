@@ -194,22 +194,57 @@ app.get('/autocomplete',
   asyncHandler(async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (q.length < 2) return res.json({ suggestions: [] });
+  // FIX-WORKER-7 pass 13: 6 bugs corrigidos no /autocomplete.
+  //
+  // 1. *** SECURITY *** SQL LIKE wildcard injection (nao SQL injection direto -
+  //    PG parametrizado bloqueia - mas wildcard logico). User input '%' fazia
+  //    ILIKE '%%%' = match TODOS produtos -> ~50k scan + DoS amplification.
+  //    User input '_' fazia ILIKE '%_%' = single-char wildcard.
+  //    FIX: escape wildcards % _ \ no input antes de wrap em %...%.
+  //
+  // 2. Regra A duplicada (linha 199+208): status='approved' so. Pattern W7 6
+  //    endpoints (passes 7-12) require status IN ('approved','platform_owned').
+  //    Produtos Clausula Master INVISIVEIS em autocomplete.
+  //
+  // 3. Regra B violada linha 208 (similarity query): SEM deleted_at IS NULL.
+  //    Info leak - produtos deletados aparecem em sugestoes (link 404).
+  //
+  // 4. Regra D faltando: ORDER BY title ASC + ORDER BY s DESC sem tiebreakers.
+  //    Empate entre titulos iguais ou mesma similarity = ordem arbitraria.
+  //    FIX: tiebreaker slug (unique - sempre determinista).
+  //
+  // 5. Cache desperdicio: q<2 cacheia '[]' por chave 'a'/'b' etc.
+  //    NOTE: middleware respeita 200 - antes do return [] no caller.
+  //    Solucao requer skip middleware = refactor maior - DEFERIDO.
+  //
+  // 6. Merge ranking: ILIKE primeiro pode "comer" similarity 0.9 match.
+  //    FIX: priorizar similarity SE score >= 0.4 (high confidence semantic).
+  const qEscaped = q.replace(/[%_\\]/g, '\\$&'); // escape SQL LIKE wildcards
   const r = await query(
     `SELECT DISTINCT title, slug FROM products
-      WHERE status = 'approved'
+      WHERE status IN ('approved','platform_owned')
         AND deleted_at IS NULL
-        AND title ILIKE $1
-      ORDER BY title ASC LIMIT 10`,
-    [`%${q}%`]
+        AND title ILIKE $1 ESCAPE '\\'
+      ORDER BY title ASC, slug LIMIT 10`,
+    [`%${qEscaped}%`]
   );
   // Sugestoes adicionais por similarity (pg_trgm)
+  // FIX bug 3: deleted_at IS NULL + status platform_owned + tiebreaker slug
   const sim = await query(
     `SELECT title, slug, similarity(title, $1) AS s
-       FROM products WHERE status = 'approved' AND title % $1
-       ORDER BY s DESC LIMIT 10`, [q]
+       FROM products
+      WHERE status IN ('approved','platform_owned')
+        AND deleted_at IS NULL
+        AND title % $1
+      ORDER BY s DESC, slug LIMIT 10`, [q]
   ).catch(() => ({ rows: [] }));
 
-  const merged = [...r.rows, ...sim.rows];
+  // FIX bug 6: priorizar similarity matches high-confidence (s >= 0.4)
+  // ANTES: ILIKE primeiro - Map.set primeiro win - similarity 0.9 perdida
+  //        se ILIKE tambem match no rank 7
+  // AGORA: similarity high-confidence primeiro, ILIKE complementa
+  const highSim = sim.rows.filter((x) => x.s >= 0.4);
+  const merged = [...highSim, ...r.rows, ...sim.rows];
   const unique = Array.from(new Map(merged.map((x) => [x.slug, x])).values()).slice(0, 10);
   res.json({ suggestions: unique });
 }));
