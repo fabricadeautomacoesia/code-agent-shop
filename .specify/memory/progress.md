@@ -17318,7 +17318,38 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ auth-svc /logout (pass 98) - 4 bugs + MLB revoke_all
 - ✅ seller-svc /:slug/stats + /:slug/products (pass 99) - 9 bugs
 - ✅ W7 MARCO pass 100 - 100 micro-iters + deploy script + doc
-- ✅ review-svc /qna/:id/voted (pass 101 esta iter) - 4 bugs UUID+Regra A+UX+cache
+- ✅ review-svc /qna/:id/voted (pass 101) - 4 bugs UUID+Regra A+UX+cache
+- ✅ vault-svc /use endpoint (pass 102 esta iter) - 3 bugs critical security
+
+W7 PASS 102 RESUMO:
+- vault-svc/src/server.js POST /use refactor (3 bugs adicionais):
+  * Provider enum whitelist (8 providers)
+    - openai/anthropic/gemini/groq/asaas/evolution/telegram/smtp
+    - PRE-FIX: z.string() aceita 'spoofed' -> 1000 SELECT vault_api_keys waste
+    - Bypass economic: atacante autenticado consome DB queries
+    - FIX: Zod refine + 400 invalid provider claro com allowed list
+  * Regra P AUDIT LOG critical security
+    - Vault /use retorna plain_key crypto secret
+    - Compliance/forense: incident response key leak requer trail
+    - PRE-FIX: log Pino apenas (rotated/deletable) - audit_log eh DB permanent
+    - FIX: INSERT audit_log atomic best-effort
+    - Payload: provider+key_id+fingerprint+seller_id+operation+ip
+    - NUNCA inclui plain_key (security)
+  * operation param unused -> usado em audit_log payload
+    - PRE-FIX: _operation destructured (underscore prefix unused)
+    - FIX: incluir em payload (qual LLM call: chat/embed/etc)
+- Pattern W7 em 110 endpoints + 23 regras (A-W) - 102 micro-iters
+- vault-svc 100% W7 (em pass 24 + 65 + 102):
+  POST /use (24+102) + GET /keys (65) + GET /keys/rotation-due (65)
+  + POST /keys/:id/revoke (25) + POST /keys/:id/rotate (existing)
+  + POST /keys (provision) + POST /usage (existing)
+
+PROXIMA ITER:
+- W7 pass 103: notification-svc /:id/read audit (Regra P + idempotency)
+- W7 pass 104: order-svc remaining endpoints
+- Operacional: SSH VPS + bash deploy/w7-deploy-validate.sh (urgente p/ user)
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 101 RESUMO:
 - review-svc/src/server.js GET /qna/:id/voted refactor (4 bugs):

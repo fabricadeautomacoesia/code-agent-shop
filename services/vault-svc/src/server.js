@@ -396,10 +396,41 @@ app.get('/keys',
 // FIX SEG-VAULT-1: APENAS admin/staff OU header interno x-internal-token compativel com VAULT_INTERNAL_TOKEN
 // Antes, qualquer JWT valido (incluindo buyer comum) podia chamar este endpoint e
 // receber plain_key da pool da plataforma - vazamento critico.
+// FIX-WORKER-7 pass 102: 3 BUGS adicionais (provider enum + audit + DLP fingerprint).
+//
+// BUG 5 *** PROVIDER ENUM WHITELIST MISSING ***
+//   PRE-FIX: z.string() aceita 'openai; DROP TABLE...' (PG safe via $1 mas
+//   provider='spoofed' bypassa pool filter e SELECT FOR UPDATE eh waste).
+//   Tambem: SQL injection nao tecnico mas economic (atacante autenticado
+//   tenta 1000 providers fake -> 1000 queries SELECT vault_api_keys).
+//   FIX: enum whitelist (openai|anthropic|gemini|groq|asaas|evolution).
+//
+// BUG 6 *** Regra P AUDIT LOG MISSING ***
+//   Vault /use retorna plain_key crypto secret. Compliance/forense REQUER trail
+//   "quem pegou qual key, quando, why" para incident response (key leak suspect
+//   -> investigar TODOS access do periodo).
+//   PRE-FIX: log Pino apenas (pode ser deletado/rotated). audit_log eh DB
+//   permanent + immutable trail.
+//   FIX: INSERT audit_log atomic (best-effort - nao bloqueia plain_key release).
+//   Payload: provider, seller_id, key_id, fingerprint (NUNCA plain_key).
+//
+// BUG 7 *** operation PARAM UNUSED ***
+//   PRE-FIX: _operation destructured mas nunca usado. Pattern incompleto.
+//   FIX: incluir operation no audit_log payload (qual LLM call: chat/embed/etc).
+const VAULT_PROVIDER_ENUM = new Set([
+  'openai','anthropic','gemini','groq','asaas','evolution','telegram','smtp'
+]);
+
 app.post('/use',
   useRateLimit,
   vaultUseGuard,
-  validate({ body: z.object({ provider: z.string(), seller_id: z.string().uuid().optional(), operation: z.string().optional() }) }),
+  validate({ body: z.object({
+    provider: z.string().refine((p) => VAULT_PROVIDER_ENUM.has(p), {
+      message: 'provider invalido. Allowed: ' + Array.from(VAULT_PROVIDER_ENUM).join(', '),
+    }),
+    seller_id: z.string().uuid().optional(),
+    operation: z.string().max(60).optional(),
+  }) }),
   asyncHandler(async (req, res, next) => {
     // FIX-WORKER-7 pass 24: 4 BUGS CRITICOS em endpoint que toca criptografia.
     //
@@ -436,7 +467,7 @@ app.post('/use',
     //   2 keys nunca usadas (last_used_at NULL) + created_at ms identico
     //   (batch import) = ordem arbitraria PG planner.
     //   FIX: tiebreaker id (UUID sempre unique).
-    const { provider, seller_id, operation: _operation } = req.body;
+    const { provider, seller_id, operation } = req.body;
 
     // FIX bug 1: SELECT explicit p/ ambas queries (security: nunca SELECT *
     // em tabela com encrypted material).
@@ -500,6 +531,29 @@ app.post('/use',
       key_id: k.id, provider: k.provider, fingerprint: k.key_fingerprint, plain_key: plain,
       is_platform_pool: k.is_platform_pool, alias: k.key_alias,
     });
+
+    // FIX-WORKER-7 pass 102 BUG 6+7: audit log compliance forense (best-effort)
+    // NUNCA inclui plain_key. Apenas metadata (provider/key_id/fingerprint/operation).
+    // Forense: incident response key leak -> SELECT audit_log WHERE target_id=key_id.
+    query(
+      `INSERT INTO audit_log
+        (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'vault.use', 'vault_key', $3, 'info', $4::JSONB)`,
+      [
+        req.user?.sub || null,
+        req.user?.role || (req.headers['x-internal-token'] ? 'internal' : 'unknown'),
+        k.id,
+        JSON.stringify({
+          provider: k.provider,
+          fingerprint: k.key_fingerprint,
+          is_platform_pool: k.is_platform_pool,
+          seller_id: seller_id || null,
+          operation: operation || null,
+          ip: req.ip,
+        }),
+      ]
+    ).catch((e) => log.warn({ err: e.message, key_id: k.id }, '[vault.use.audit_fail]'));
+
     // FIX-WORKER-17 pass 9: INSERT vault_key_usage REMOVIDO daqui.
     // Bug original: criava registro "fantasma" com cost_usd_cents=0 + success=TRUE
     // mesmo antes da chamada LLM ter ocorrido.
