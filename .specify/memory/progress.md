@@ -17120,3 +17120,81 @@ PROXIMA ITER:
 - W7 pass 57: review-svc /seller/received audit (cross-seller queries)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W18 PASS 9 - DROP redundant subset prefix indices (mig 047) (2026-05-27)
+================================================================
+ESCOPO: drop 2 indices redundantes baseado em ANALISE ESTATICA
+FILE: db/migrations/047_drop_redundant_subset_indices.sql (NEW)
+
+CONTEXTO: W18 pass 8 criou tooling /aiops/db/dead-indexes (pg_stat audit
+endpoint + script standalone). Pass 9 aplica DROPS BASEADOS EM ANALISE
+ESTATICA pura - sem precisar pg_stat prod (que requeriria 2+ semanas warm-up).
+
+METODOLOGIA ANALISE ESTATICA:
+- Identifica indices SUBSET PREFIX (single-col coberto por composite N-col)
+- PG planner pode usar idx composite (a,b) para query WHERE a=?
+  (B-tree ordering: prefix scan eficiente)
+- Idx single-col redundante = storage waste + INSERT overhead
+
+INDICES DROPADOS (2):
+
+1. idx_pviews_user (mig 011:9) - single col user_id
+- Coberto por:
+  * idx_pviews_user_recent (mig 011:13) = (user_id, created_at DESC)
+  * idx_pviews_rolling_90d (mig 041) = (user_id, created_at DESC) WHERE active
+  * idx_pviews_rolling_30d (mig 041) = (user_id, product_id, created_at)
+- Triple coverage - single-col REDUNDANTE 100%
+- Storage saved: ~30% do tamanho rolling idx (estimativa - dependendo populate)
+- INSERT speedup: 1 menos idx update per INSERT product_views (hot table)
+
+2. idx_oi_product (mig 006:148) - single col product_id
+- Coberto por:
+  * idx_oi_product_order_covering (mig 038:34) = (product_id, order_id)
+- Composite COBRE single (prefix scan B-tree)
+- Storage saved: ~50% (composite eh ~2x size single, mas obrigatorio p/ joins)
+- INSERT speedup: 1 menos idx update per INSERT order_items
+
+DROPS DEFERRED (precisa pg_stat real prod, nao analise estatica):
+- idx_orders_status: broad mas usado em admin queue listings
+- idx_pviews_created: usado em trending recent (W18 pass 7)
+- idx_orders_payment_status: possivel overlap mas usados em admin filters
+- Outros: requer audit /aiops/db/dead-indexes em prod 2+ semanas
+
+HISTORIA DROPS CUMULATIVOS:
+- mig 023: idx_notif_outbox_unlocked (redundant - early audit)
+- mig 029: idx_notif_user_unread (dead WHERE filter coverage)
+- mig 047 (esta iter): 2 subset prefix dropps
+
+VALIDATION POS-APPLY:
+- EXPLAIN ANALYZE SELECT * FROM product_views WHERE user_id = ?
+  DEVE mostrar: Index Only Scan using idx_pviews_user_recent OR rolling
+- EXPLAIN ANALYZE SELECT * FROM order_items WHERE product_id = ?
+  DEVE mostrar: idx_oi_product_order_covering scan
+- Se Seq Scan -> rollback via CREATE INDEX IF NOT EXISTS (documentado mig)
+
+ANALYZE atualizado:
+- ANALYZE product_views (mig final)
+- ANALYZE order_items (mig final)
+- Atualiza pg_statistics ajudar planner escolher idx novo
+
+PATTERN W18 PROGRESS:
+- pass 1-2: cache layer Redis
+- pass 3-4: lazy loading imagens
+- pass 5: webhook reconcile cron
+- pass 6: idx parcial co_buyers (orders+order_items)
+- pass 7: rolling 90d/30d product_views + cron rotation
+- pass 8: dead idx audit tooling (SQL + endpoint admin)
+- pass 9: DROP redundant subset indices (esta iter)
+
+PATTERN W7+W13+W18+W4 CONSOLIDADO:
+- W7: 49 endpoints + 23 regras (A-W) - 55 micro-iters
+- W13: renderMustache XSS
+- W18: 9 passes
+- W4: 13 admin pages
+
+PROXIMA ITER:
+- W7 pass 56: read-only audit endpoints (Regra I cross-svc)
+- W7 pass 57: review-svc /seller/received audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes em prod 2+ semanas -> drops adicionais
