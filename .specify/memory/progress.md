@@ -17305,7 +17305,34 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc POST /:id/versions (pass 85) - 8 bugs versioning
 - ✅ product-svc POST /:id/qna/:qid/answer (pass 86) - 9 bugs duplicated route
 - ✅ product-svc upload.js endpoints (pass 87) - 6 bugs storage DoS
-- ✅ product-svc qna/answer DEPRECATED (pass 88 esta iter) - consolidate review-svc
+- ✅ product-svc qna/answer DEPRECATED (pass 88) - consolidate review-svc
+- ✅ notification-svc /read-all (pass 89 esta iter) - 4 bugs DoS+audit+cap
+
+W7 PASS 89 RESUMO:
+- notification-svc/src/server.js POST /read-all refactor (4 bugs):
+  * NEW readAllLimiter 5/15min/user (anti-DoS DB)
+    - PRE-FIX: bot hammer /read-all loop = UPDATE locks 100k notifs minutos
+    - Real users marcam all-read 1-2x/dia
+  * NEW batch cap 1000 rows por chamada via subquery LIMIT
+    - PRE-FIX: UPDATE WHERE...is_read=FALSE pode afetar 100k rows
+    - Lock cascata + WAL bloat + replication lag
+    - Multi-call cobre todos: 100k notifs = 100 chamadas rate-limited
+  * Regra P audit log atomic INSERT (best-effort)
+    - Forense: detectar bots automatizados ocultando phishing
+    - Severity=info + marked count + has_more + ip
+  * UX has_more flag no response
+    - Frontend decide repeat call ate has_more=false
+    - + batch_limit echo p/ visibility
+- Pattern W7 em 94 endpoints + 23 regras (A-W) - 89 micro-iters
+- notification-svc 100% W7 nos 5 endpoints user-facing:
+  GET / (pass 62) + GET /unread-count + POST /:id/read + POST /read-all (89)
+  + POST /test (pass 30/86)
+
+PROXIMA ITER:
+- W7 pass 90: aiops-svc /status endpoint detail audit
+- W7 pass 91: search-svc /search Pattern W7 audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 88 RESUMO:
 - product-svc POST /products/me/:id/qna/:qid/answer DEPRECATED:

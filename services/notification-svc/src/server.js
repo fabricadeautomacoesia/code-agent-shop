@@ -23,6 +23,19 @@ const testEmailLimiter = rateLimit({
   keyGenerator: (req) => req.user?.sub || req.ip,
 });
 
+// FIX-WORKER-7 pass 89: rate-limit em /read-all (anti-DoS DB)
+// PRE-FIX: bot pwned pode hammer /read-all em loop. User com 100k notifs
+// (cron mass-insert) -> UPDATE locks notifications table por minutos.
+// Real users marcam all-read 1-2x/dia.
+const readAllLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15min
+  max: 5,
+  message: { error: 'rate_limit_exceeded', message: 'Limite de 5 mark-all-read por 15 minutos.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.sub || req.ip,
+});
+
 const log = logger.child({ svc: 'notification-svc' });
 const app = express();
 const PORT = parseInt(process.env.PORT_NOTIFICATION || '3018', 10);
@@ -289,16 +302,69 @@ app.post('/:id/read', jwt.requireAuth(), asyncHandler(async (req, res, next) => 
   res.json({ ok: true });
 }));
 
-// FIX-WORKER-1: POST /api/notifications/read-all - marca todas in_app nao-lidas como lidas
-app.post('/read-all', jwt.requireAuth(), asyncHandler(async (req, res) => {
-  const r = await query(
-    `UPDATE notifications SET is_read = TRUE, read_at = NOW()
-      WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE
-      RETURNING id`,
-    [req.user.sub]
-  );
-  res.json({ ok: true, marked: r.rowCount });
-}));
+// POST /api/notifications/read-all - marca todas in_app nao-lidas como lidas
+// FIX-WORKER-1: original implementation
+// FIX-WORKER-7 pass 89: 4 BUGS aplicando Pattern W7 (rate-limit + cap + Regra P + UX).
+//
+// BUG 1 *** RATE-LIMIT MISSING *** DoS DB
+//   PRE-FIX: bot hammer /read-all em loop. User com 100k notifs (cron
+//   mass-insert) -> UPDATE locks notifications table por minutos.
+//   FIX: readAllLimiter 5/15min/user.
+//
+// BUG 2 *** NO BATCH CAP *** unbounded UPDATE
+//   PRE-FIX: UPDATE WHERE...is_read=FALSE pode afetar 100k rows.
+//   Lock cascata + replica replication lag + WAL bloat.
+//   FIX: cap 1000 rows por chamada via subquery LIMIT.
+//   Multi-call cobre todos: 100k notifs = 100 chamadas (rate-limited).
+//
+// BUG 3 *** Regra P AUDIT LOG MISSING ***
+//   Bulk mark all = acao significativa user-level.
+//   Forense: detectar bots automatizados marcando read p/ ocultar phishing.
+//   FIX: INSERT audit_log severity=info com marked count.
+//
+// BUG 4 *** UX has_more flag ***
+//   Frontend nao sabe se restam unread apos call.
+//   FIX: response inclui marked + has_more (cliente decide repeat).
+app.post('/read-all',
+  jwt.requireAuth(),
+  readAllLimiter,
+  asyncHandler(async (req, res) => {
+    // BUG 2: cap 1000 rows via subquery
+    const r = await query(
+      `UPDATE notifications SET is_read = TRUE, read_at = NOW()
+        WHERE id IN (
+          SELECT id FROM notifications
+           WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1000
+        )
+        RETURNING id`,
+      [req.user.sub]
+    );
+
+    // Check has_more (existe pelo menos 1 unread restante apos cap)
+    const remainingRes = await query(
+      `SELECT 1 FROM notifications
+        WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE
+        LIMIT 1`,
+      [req.user.sub]
+    );
+    const hasMore = remainingRes.rows.length > 0;
+
+    // BUG 3 Regra P: audit log best-effort (nao bloqueia response)
+    try {
+      await query(
+        `INSERT INTO audit_log
+          (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'notification.read_all', 'notifications', NULL, 'info', $3::JSONB)`,
+        [req.user.sub, req.user.role,
+         JSON.stringify({ marked: r.rowCount, has_more: hasMore, ip: req.ip })]
+      );
+    } catch (_e) { /* audit best-effort */ }
+
+    res.json({ ok: true, marked: r.rowCount, has_more: hasMore, batch_limit: 1000 });
+  })
+);
 
 // POST /api/notifications/test - admin envia teste
 // FIX-WORKER-13 pass 6: 3 hardening em endpoint sensitivo:
