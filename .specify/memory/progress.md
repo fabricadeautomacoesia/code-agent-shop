@@ -17294,7 +17294,36 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc GET /:slug detail PDP (pass 74) - 5 bugs DLP + whitelist
 - ✅ product-svc /:slug/reviews + /:slug/qna (pass 75) - 10 bugs filters + UX
 - ✅ product-svc /compare + /flash-promo/active (pass 76) - 9 bugs
-- ✅ product-svc /recommendations/for-me (pass 77 esta iter) - 5 bugs + cold-start
+- ✅ product-svc /recommendations/for-me (pass 77) - 5 bugs + cold-start
+- ✅ product-svc /recently-viewed + /:slug/related (pass 78 esta iter) - 7 bugs
+
+W7 PASS 78 RESUMO:
+- product-svc/src/routes/public.js 2 personalized endpoints (7 bugs):
+  * /recently-viewed (4 bugs):
+    - Regra A: status IN ('approved','platform_owned') na CTE last_views
+      (User viu MLB product PDP, voltou /conta -> some da lista = UX confusao)
+    - Regra D: + p.id ASC tiebreaker em CTE + outer ORDER BY
+      (2 product_views MAX(created_at) identicos burst -> ordem indef)
+    - N+1 FIX: 3 subqueries correlacionadas -> LEFT JOIN sellers
+      (12 products * 3 subqueries = 36 sub-statements -> 1 plan node)
+    - UX: + limit echo no response shape
+  * /:slug/related (3 bugs):
+    - Regra A: status IN ('approved','platform_owned') na CTE related_pool
+    - Regra D: + p2.id ASC final tiebreaker (sales=0 + avg=NULL caso novo)
+    - store_name MISSING no SELECT final
+      (UX inconsistente: /compare e /flash-promo retornam store_name)
+      (Frontend "Por ${store_name}" recebia undefined)
+- Pattern W7 em 83 endpoints + 23 regras (A-W) - 78 micro-iters
+- Regra A FIX acumulado: 8 endpoints product-svc public
+  (pass 73 GET / + 74 /:slug + 75 reviews + 75 qna + 76 compare
+   + 76 flash-promo + 77 reco + 78 recently-viewed + 78 related)
+- product-svc public.js endpoints publicos 100% W7 (10/10 listing-style)
+
+PROXIMA ITER:
+- W7 pass 79: product-svc /:slug/also-bought audit (collaborative filtering)
+- W7 pass 80: product-svc wishlist.js endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 77 RESUMO:
 - product-svc/src/routes/public.js /recommendations/for-me refactor (5 bugs):

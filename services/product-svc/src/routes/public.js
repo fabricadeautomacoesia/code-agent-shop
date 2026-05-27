@@ -162,18 +162,32 @@ router.get('/recommendations/for-me',
 // TTL 30s pois user pode visitar PDP A entao voltar a /conta esperando ver A no
 // recently. 60s seria muito (notavel). 30s e equilibrio: dois clicks rapidos
 // dividem 1 backend call mas refresh < min mantem UX vivo.
+// GET /products/recently-viewed - MLB "Vistos recentemente"
+// FIX-WORKER-7 pass 7: filtro WHERE approved dentro da CTE.
+// FIX-WORKER-7 pass 78: 4 BUGS aplicando Pattern W7 (Regras A+D + N+1 + UX).
+//
+// BUG 1 *** Regra A *** AND p.status = 'approved' (linha 184)
+//   Mesma classe pass 73-77: platform_owned MLB products invisiveis
+//   em "Vistos recentemente". User viu MLB product PDP -> volta /conta ->
+//   produto SOME da lista (UX confusao).
+//   FIX: status IN ('approved','platform_owned').
+//
+// BUG 2 *** Regra D TIEBREAKER MISSING *** ORDER BY last_view_at DESC
+//   2 product_views com MAX(created_at) identicos (script burst) ->
+//   ordem indefinida na lista "vistos recentemente".
+//   FIX: + p.id ASC tiebreaker.
+//
+// BUG 3 *** N+1 SUBQUERIES *** 3 subqueries correlacionadas por row
+//   12 products * 3 subqueries = 36 sub-statements PG por hit.
+//   FIX: LEFT JOIN sellers explicit (mesmo pattern pass 73/76/77).
+//
+// BUG 4 *** UX limit echo missing *** response shape inconsistente
+//   FIX: + limit echo (frontend pode confirmar param aplicado).
 router.get('/recently-viewed',
   require('@cas/shared').jwt.requireAuth(),
   cache.cacheMiddleware((req) => `products:recently-viewed:${req.user.sub}:lim=${req.query.limit || 12}`, 30),
   asyncHandler(async (req, res) => {
     const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 30));
-    // FIX-WORKER-7 pass 7: bug "menos produtos que limit" quando user viu produtos
-    // deletados/nao-approved.
-    // ANTES: CTE last_views LIMIT N -> JOIN products WHERE approved -> retorna < N
-    //   Ex: user viu 12 produtos, 5 foram deletados -> retorna apenas 7
-    //   Frontend espera 12, ve 7, usuario confuso "ei, vi mais produtos!"
-    // AGORA: filtro WHERE approved esta DENTRO da CTE (JOIN products no proprio CTE).
-    //   CTE ja produz so produtos validos LIMIT N. Garantia: retorna ate N produtos.
     const r = await query(
       `WITH last_views AS (
          SELECT pv.product_id, MAX(pv.created_at) AS last_view_at
@@ -181,26 +195,25 @@ router.get('/recently-viewed',
            JOIN products p ON p.id = pv.product_id
           WHERE pv.user_id = $1::UUID
             AND pv.created_at > NOW() - INTERVAL '14 days'
-            AND p.status = 'approved'
+            AND p.status IN ('approved','platform_owned')
             AND p.deleted_at IS NULL
           GROUP BY pv.product_id
-          ORDER BY MAX(pv.created_at) DESC
+          ORDER BY MAX(pv.created_at) DESC, pv.product_id ASC
           LIMIT $2::INT
        )
        SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
               p.cover_image_url, p.price_cents, p.currency, p.is_free,
               p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
               p.is_platform_owned, p.flash_promo_active, p.flash_promo_discount_pct,
-              (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug,
-              (SELECT store_name FROM sellers WHERE id = p.seller_id) AS store_name,
-              (SELECT reputation_tier FROM sellers WHERE id = p.seller_id) AS reputation_tier,
+              s.store_slug, s.store_name, s.reputation_tier,
               lv.last_view_at
          FROM last_views lv
          JOIN products p ON p.id = lv.product_id
-        ORDER BY lv.last_view_at DESC`,
+         LEFT JOIN sellers s ON s.id = p.seller_id
+        ORDER BY lv.last_view_at DESC, p.id ASC`,
       [req.user.sub, lim]
     );
-    res.json({ products: r.rows, count: r.rows.length });
+    res.json({ products: r.rows, count: r.rows.length, limit: lim });
   })
 );
 
@@ -306,7 +319,24 @@ router.get('/:slug/related',
   }
 
   // FIX bug 5: JOIN sellers unico (era 2 subqueries por linha = N*2 scans)
-  // FIX-WORKER-7 pass 9: CTE related_pool + JOIN sellers eficiente
+  // FIX-WORKER-7 pass 9: CTE related_pool + JOIN sellers eficiente.
+  // FIX-WORKER-7 pass 78: 3 BUGS aplicando Pattern W7 (Regras A+D + store_name).
+  //
+  // BUG 1 *** Regra A *** AND p2.status = 'approved' (CTE related_pool)
+  //   Mesma classe pass 73-77: platform_owned MLB products excluidos
+  //   do "Relacionados" PDP -> MLB feature invisivel cross-link.
+  //   FIX: status IN ('approved','platform_owned').
+  //
+  // BUG 2 *** Regra D TIEBREAKER MISSING *** ORDER BY 2-level sem id
+  //   Products sales_count=0 + avg_rating=NULL (caso novo seller burst):
+  //   ordem indefinida no related pool.
+  //   FIX: + p2.id ASC final tiebreaker.
+  //
+  // BUG 3 *** store_name MISSING *** UX inconsistente cross-endpoint
+  //   PRE-FIX: SELECT s.store_slug, s.reputation_tier (sem store_name).
+  //   /compare e /flash-promo retornam store_name - related nao.
+  //   Frontend renderiza "Por ${store_name}" mas recebe undefined.
+  //   FIX: + s.store_name no SELECT final.
   const r = await query(
     `WITH related_pool AS (
        SELECT p2.id, p2.slug, p2.title, p2.subtitle, p2.short_description, p2.kind,
@@ -316,21 +346,23 @@ router.get('/:slug/related',
          FROM products p2
         WHERE p2.category_id = $1
           AND p2.id <> $2
-          AND p2.status = 'approved'
+          AND p2.status IN ('approved','platform_owned')
           AND p2.deleted_at IS NULL
-        ORDER BY p2.sales_count DESC NULLS LAST, p2.avg_rating DESC NULLS LAST
+        ORDER BY p2.sales_count DESC NULLS LAST,
+                 p2.avg_rating DESC NULLS LAST,
+                 p2.id ASC
         LIMIT $3
      )
      SELECT rp.id, rp.slug, rp.title, rp.subtitle, rp.short_description, rp.kind,
             rp.cover_image_url, rp.price_cents, rp.currency, rp.is_free,
             rp.tech_stack, rp.avg_rating, rp.review_count, rp.sales_count,
             rp.is_platform_owned, rp.flash_promo_active,
-            s.store_slug, s.reputation_tier
+            s.store_slug, s.store_name, s.reputation_tier
        FROM related_pool rp
        LEFT JOIN sellers s ON s.id = rp.seller_id`,
     [parent.rows[0].category_id, parent.rows[0].id, limit]
   );
-  res.json({ products: r.rows, limit });
+  res.json({ products: r.rows, limit, count: r.rows.length });
 }));
 
 // GET /products/compare?ids=uuid,uuid,uuid - comparar ate 4 produtos (MLB-7)
