@@ -3376,3 +3376,57 @@ LICAO INFRA:
 Padrao: hardcode 127.0.0.1 quebra em Swarm. Documentar no Blueprint V8
 secao "Next.js + Docker Swarm": SEMPRE usar service alias DNS como
 fallback, nunca localhost.
+
+## WORKER 6 pass 1 (GATEWAY/AUTH-SVC) - GET /auth/2fa/status endpoint missing
+
+VETOR DETECTADO (audit curl publica):
+GET /api/auth/2fa/status -> 404 {"error":"route_not_found"}
+
+Auditoria do auth-svc revelou que /auth/2fa routes existiam apenas para
+setup, activate e disable (POSTs). Sem GET status, o frontend
+/conta/seguranca dependia exclusivamente de me.twofa_enabled (de /me).
+
+Caso edge nao tratado:
+1. User clica "Ativar 2FA" -> /setup INSERT segredo, is_enabled=FALSE
+2. User fecha aba sem completar activate -> segredo orphan em DB
+3. me.twofa_enabled continua FALSE -> UI diz "Desativado"
+4. User volta dias depois, clica "Ativar 2FA" de novo
+5. /setup ON CONFLICT DO UPDATE -> sobrescreve segredo anterior
+6. Perda silenciosa: codigos manuais antigos do user (se salvou) viraram lixo
+
+Bug real validado em curl: teste1@cas.io tinha has_pending_setup=true
+desde primeira chamada (de auditoria anterior). UI nao mostrava esse estado.
+
+FIX (2 arquivos):
+1. services/auth-svc/src/routes/two-factor.js:
+   + GET /status -> { enabled, has_pending_setup, enabled_at, disabled_at,
+                       recovery_count } via JOIN com jsonb_array_length
+2. apps/storefront/src/app/conta/seguranca/page.tsx:
+   + new state twofaStatus (separado de me)
+   + refreshStatus() em mount + apos activate/disable
+   + Display: "Setup pendente" (orange) se has_pending_setup
+   + Display: "{N} codigos de recuperacao restantes" se enabled
+   + Condicionais usam (twofaStatus?.enabled ?? me.twofa_enabled) safe-fallback
+
+DEPLOY:
+- commit a13896d pushed
+- auth-svc rebuilt (Dockerfile.node --build-arg SVC=auth-svc)
+- storefront rebuilt (Dockerfile.next)
+- ambos services converged
+
+VALIDACAO PUBLICA (3 cenarios):
+- /api/auth/2fa/status (fresh user) -> 200 + JSON
+  { enabled: false, has_pending_setup: true, recovery_count: 0 }
+  (teste1 tinha pending pre-existente - case real do bug!)
+- POST /api/auth/2fa/setup -> sobrescreve (mas agora visivel no status)
+- /api/auth/2fa/status -> ainda has_pending_setup: true (apos setup)
+
+IMPACTO:
+- UI agora mostra estado correto: setup pendente vs. desativado vs. ativado
+- User pode completar setup pendente em vez de regenerar e perder QR antigo
+- Recovery count visivel: alerta usuario quando codigos estao acabando
+- /me ainda funciona como fallback (UI safe-defaults se status falhar)
+
+GAP DETECTADO (proxima iter):
+- /auth/2fa/recovery (regenera recovery codes) nao existe - useful UX
+- /auth/2fa/disable nao verifica se ja esta enabled (poderia retornar 404)
