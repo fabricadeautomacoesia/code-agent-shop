@@ -21,6 +21,13 @@ app.get('/health', (_req, res) => res.json({ ok: true, svc: 'search-svc' }));
 app.get('/', asyncHandler(async (req, res) => {
   const t0 = Date.now();
   const q = (req.query.q || '').toString().trim();
+  // FIX-WORKER-10 pass 5: early-return para q 1-2 chars SEM filtros (lixo/typo).
+  // tsquery em 1-2 chars retorna 0 rows mas executa Seq Scan no search_tsv -> waste.
+  // Se ha filtros (category/kind/etc), q curto e OK (filtros restringem search).
+  // Tambem nao loga em search_log -> evita bloat (matches trigger sanitize mig 027).
+  if (q && q.length < 3 && !req.query.category && !req.query.kind && !req.query.tag) {
+    return res.json({ results: [], page: 1, limit: 0, total: 0, pages: 0, duration_ms: Date.now() - t0, hint: 'query too short - min 3 chars' });
+  }
   const category = req.query.category;
   const kind = req.query.kind;
   // FIX-WORKER-10 pass 2: NaN -> null silencioso (antes max_price=abc -> PG NaN -> 404)
