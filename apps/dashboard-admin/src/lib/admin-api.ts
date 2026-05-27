@@ -12,8 +12,20 @@ export async function adminFetch<T = any>(path: string, init: RequestInit = {}):
     credentials: 'include',
     cache: 'no-store',
   });
-  if (!r.ok) throw new Error(`http_${r.status}`);
-  return r.status === 204 ? (null as T) : r.json();
+  if (!r.ok) {
+    // FIX-WORKER-8 pass 1: tentar extrair mensagem do body (gateway envia
+    // {error,message} JSON). Antes: Error('http_404') generico sem contexto.
+    // Permite UI mostrar "Token expirado" em vez de "http_401".
+    let msg = `http_${r.status}`;
+    try { const j = await r.json(); if (j?.message) msg = j.message; else if (j?.error) msg = j.error; } catch {}
+    const e: any = new Error(msg);
+    e.status = r.status;
+    throw e;
+  }
+  // FIX-WORKER-8 pass 1: await explicito (Regra B padronizada) - era
+  // micro-optim retornar Promise mas confunde manutencao + caller .then
+  // chains podem perder stack trace JSON parse.
+  return r.status === 204 ? (null as T) : await r.json();
 }
 
 export const fmtBRL = (cents: number) =>

@@ -11403,3 +11403,80 @@ PROXIMA ITER:
 - W3 pass 3: AddToCart loading state + optimistic update
 - W18 pass 6: idx parcial order_items status='paid' (co_buyers CTE)
 - W8 audit: consistencia visual - icones lucide-react cross-PDP
+
+================================================================
+ITER W8 PASS 1 - Audit Regra B cross-dashboards (2026-05-27)
+================================================================
+ESCOPO: Auditoria sistematica cross-files Regra B (W3 pass 1):
+"r.json() DENTRO do try-catch + await explicito"
+FILES:
+- apps/dashboard-admin/src/app/page.tsx
+- apps/dashboard-admin/src/lib/admin-api.ts
+- apps/dashboard-seller/src/app/page.tsx
+- apps/dashboard-seller/src/lib/seller-api.ts
+
+CONTEXTO: W3 pass 2 expos bug critico GATEWAY_URL outlier (Regra D).
+Auditoria expandida para REGRA B revelou 5 violacoes em dashboards.
+
+AUDITORIA GATEWAY_URL (Regra D) - CLEAN:
+- grep GATEWAY_URL cross-frontends: 10 files storefront, todos 127.0.0.1
+- Dashboards nao usam SSR fetch (so client) - Regra D N/A
+- Storefront 100% consistente apos W3 pass 2 (also-bought corrigido)
+
+AUDITORIA REGRA B (5 violacoes corrigidas):
+
+1. dashboard-admin/src/app/page.tsx (aiops status polling)
+- VIOLACAO: r.ok ? r.json() : null - retornava Promise
+- IMPACTO: refresh durante deploy gateway 503 HTML body -> r.json()
+  rejeita FORA do try -> .then(setStatus) silenciado +
+  unhandledRejection no console (poluicao DevTools)
+- FIX: await r.json() dentro do try (regra B canonica)
+- BONUS: if (!r.ok) return null antes do await (early exit)
+
+2. dashboard-seller/src/app/page.tsx (seller home)
+- VIOLACAO DUPLA:
+  a. SEM try-catch wrap (fetch lanca em network error)
+  b. r.json() sem await (Regra B)
+- IMPACTO REAL: gateway down -> fetch lanca -> funcao rejeita ->
+  .then(setSomething) nunca chama -> "Carregando..." PERMANENTE
+  no UI seller. Seller pensava sistema travado, abria suporte.
+- FIX: try-catch wrap completo + await r.json() dentro
+
+3. dashboard-admin/src/lib/admin-api.ts (adminFetch helper)
+- VIOLACAO: r.json() sem await na linha 16 + Error generico
+- ANTES: throw new Error('http_404') - sem contexto p/ UI
+- DEPOIS: try parse body -> Error(j.message || j.error) + e.status
+- IMPACTO: UI pode mostrar "Token expirado" em vez de "http_401"
+- BONUS: e.status anexado p/ caller distinguir status code
+
+4. dashboard-seller/src/lib/seller-api.ts sellerFetch
+- VIOLACAO: r.json() sem await na linha 20
+- POSITIVO PRE-FIX: ja extraia data.message no error path
+- FIX: await padronizado + e.status anexado (consistente admin-api)
+
+5. dashboard-seller/src/lib/seller-api.ts sellerUpload
+- VIOLACAO: r.json() sem await linha 34 + Error generico sem body
+- IMPACTO: seller fazia upload, erro "http_400" generico sem dica
+- Erros upload sao especificos: invalid_mime, size_exceeded, quota
+- FIX: extrair message do body (pattern sellerFetch) + e.status
+
+PATTERN W3 4-REGRAS CONSOLIDADO:
+- A. revalidate alinhado TTL backend (server components)
+- B. r.json() DENTRO try-catch + await explicito (canonico)
+- C. .catch defense-in-depth Promise.all (defesa em profundidade)
+- D. GATEWAY_URL fallback '127.0.0.1:3002' (host network Swarm)
+
+NOVA REGRA E: Error com status anexo + body message extraction
+- e.status = r.status (caller distingue 401/403/404/500)
+- Try extrair {message, error} do body antes do generico http_N
+- Aplicado: admin-api.ts, seller-api.ts (2 funcoes)
+- Permite UI exibir mensagens humanas em vez de codigos HTTP
+
+W8 VISUAL/UX PROGRESS:
+- pass 1: Regra B cross-dashboards 5 violacoes (esta iter)
+
+PROXIMA ITER:
+- W8 pass 2: aplicar Regra E (Error+status) em storefront/lib/api.ts
+  (atualmente lanca Error generico em alguns paths)
+- W3 pass 3: AddToCart loading state + optimistic update
+- W18 pass 6: idx parcial order_items status='paid' (co_buyers CTE)

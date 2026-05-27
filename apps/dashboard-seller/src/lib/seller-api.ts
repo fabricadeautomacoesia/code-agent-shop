@@ -15,9 +15,13 @@ export async function sellerFetch<T = any>(path: string, init: RequestInit = {})
   if (!r.ok) {
     let data: any = null;
     try { data = await r.json(); } catch {}
-    throw new Error(data?.message || `http_${r.status}`);
+    // FIX-WORKER-8 pass 1: anexar status no Error p/ caller distinguir 401/403/404/500
+    const e: any = new Error(data?.message || data?.error || `http_${r.status}`);
+    e.status = r.status;
+    throw e;
   }
-  return r.status === 204 ? (null as T) : r.json();
+  // FIX-WORKER-8 pass 1: await explicito (Regra B padronizada cross-files)
+  return r.status === 204 ? (null as T) : await r.json();
 }
 
 export async function sellerUpload(path: string, file: File): Promise<any> {
@@ -30,8 +34,17 @@ export async function sellerUpload(path: string, file: File): Promise<any> {
     credentials: 'include',
     body: fd,
   });
-  if (!r.ok) throw new Error(`http_${r.status}`);
-  return r.json();
+  if (!r.ok) {
+    // FIX-WORKER-8 pass 1: extrair mensagem do body (same pattern sellerFetch)
+    // upload tem erros especificos: invalid_mime, size_exceeded, quota_exceeded.
+    // Antes: generico 'http_400' nao orientava seller a corrigir.
+    let data: any = null;
+    try { data = await r.json(); } catch {}
+    const e: any = new Error(data?.message || data?.error || `http_${r.status}`);
+    e.status = r.status;
+    throw e;
+  }
+  return await r.json();
 }
 
 export const fmtBRL = (cents: number) =>

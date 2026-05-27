@@ -4,13 +4,23 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, Clock, TrendingUp, Star, MessageCircle, ShoppingBag } from 'lucide-react';
 
+// FIX-WORKER-8 pass 1: 2 bugs criticos:
+// 1. Sem try-catch: fetch lanca em network error -> funcao rejeita ->
+//    .then(setSomething) nunca chama -> loading state PERMANENTE em UI.
+//    Seller via "Carregando..." infinito quando gateway down.
+// 2. Regra B (W3 pass 1): r.json() sem await retornava Promise. JSON
+//    malformed (HTML 503 gateway) rejeita fora -> unhandledRejection.
+// FIX: try-catch wrap + await r.json() dentro.
 async function fetchJSON(url: string) {
   const token = typeof window !== 'undefined' ? localStorage.getItem('cas_seller_token') : null;
-  const r = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    credentials: 'include', cache: 'no-store',
-  });
-  return r.ok ? r.json() : null;
+  try {
+    const r = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include', cache: 'no-store',
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
 }
 
 const fmtBRL = (cents: number) => new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL' }).format((cents||0)/100);

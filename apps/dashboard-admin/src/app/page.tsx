@@ -2,8 +2,17 @@
 
 import { useEffect, useState } from 'react';
 
+// FIX-WORKER-8 pass 1: regra B (W3 pass 1) violada - r.json() sem await
+// retornava Promise. Se body malformed (HTML gateway error, body truncated),
+// rejeita FORA do try -> .then(setStatus) nunca chama + unhandledRejection
+// no console. Common em refresh durante deploy (gateway 503 HTML).
+// FIX: await r.json() DENTRO do try-catch (Regra B + Regra C defense).
 async function fetchJSON(url: string) {
-  try { const r = await fetch(url, { credentials: 'include', cache: 'no-store' }); return r.ok ? r.json() : null; } catch { return null; }
+  try {
+    const r = await fetch(url, { credentials: 'include', cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
 }
 
 export default function AdminHome() {
