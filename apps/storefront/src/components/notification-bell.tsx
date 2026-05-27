@@ -102,32 +102,74 @@ export function NotificationBell() {
     if (open) load();
   }, [open, token]);
 
+  // FIX-WORKER-3 pass 7: optimistic update + rollback em erro (pattern
+  // WishlistButton pass 4 + PriceAlertButton pass 6).
+  // ANTES: setState APOS await OK -> dessincronizacao state vs DB se 500/network.
+  //        catch{} silent -> notif aparecia "lida" no UI mas backend nao marcou.
+  //        Proximo poll /unread-count sobrescrevia count correto, mas notifs list
+  //        ficava errada ate fechar/abrir. Dessincronizacao confusa.
+  // AGORA: flip imediato + rollback se falhar.
   async function markRead(id: string) {
+    // snapshot pre-mutate (para rollback)
+    const target = notifs.find((n) => n.id === id);
+    if (!target || target.is_read) return; // ja lido = no-op
+    // optimistic flip imediato
+    setNotifs((p) => p.map((n) => n.id === id ? { ...n, is_read: true } : n));
+    setUnreadCount((c) => Math.max(0, c - 1));
     try {
       await Api.api(`/notifications/${id}/read`, { method: 'POST', auth: token! });
-      setNotifs((p) => p.map((n) => n.id === id ? { ...n, is_read: true } : n));
-      setUnreadCount((c) => Math.max(0, c - 1));
-    } catch {}
+    } catch {
+      // rollback - restaura is_read=false e incrementa unread
+      setNotifs((p) => p.map((n) => n.id === id ? { ...n, is_read: false } : n));
+      setUnreadCount((c) => c + 1);
+    }
   }
 
   // FIX-WORKER-1: marcar todas como lidas em uma acao
+  // FIX-WORKER-3 pass 7: optimistic + rollback (mesmo pattern markRead acima)
   async function markAllRead() {
+    // snapshot pre-mutate
+    const prevNotifs = notifs;
+    const prevCount = unreadCount;
+    // optimistic flip imediato (UX instantanea)
+    setNotifs((p) => p.map((n) => ({ ...n, is_read: true })));
+    setUnreadCount(0);
     try {
       await Api.api(`/notifications/read-all`, { method: 'POST', auth: token! });
-      setNotifs((p) => p.map((n) => ({ ...n, is_read: true })));
-      setUnreadCount(0);
-    } catch {}
+    } catch {
+      // rollback - restaura snapshot completo
+      setNotifs(prevNotifs);
+      setUnreadCount(prevCount);
+    }
   }
 
+  // FIX-WORKER-3 pass 7 (a11y): Escape key fecha dropdown (keyboard users)
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
   if (!token) return null;
+
+  // FIX-WORKER-3 pass 7 (a11y): aria-label dinamico com contagem + aria-expanded
+  // + aria-haspopup. Antes: screen readers anunciavam apenas "botao" sem contexto.
+  const bellLabel = unread > 0
+    ? `Notificacoes: ${unread} nao lida${unread === 1 ? '' : 's'}`
+    : 'Notificacoes';
 
   return (
     <div className="relative">
       <button onClick={() => setOpen(!open)}
-        className="p-2 rounded-lg hover:bg-white/5 transition-colors relative">
-        <Bell className="w-5 h-5" />
+        aria-label={bellLabel}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="p-2 rounded-lg hover:bg-white/5 transition-colors relative focus-visible:outline-2 focus-visible:outline-magenta">
+        <Bell className="w-5 h-5" aria-hidden="true" />
         {unread > 0 && (
-          <span className="absolute -top-1 -right-1 bg-magenta text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
+          <span aria-hidden="true"
+            className="absolute -top-1 -right-1 bg-magenta text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
             {unread > 9 ? '9+' : unread}
           </span>
         )}
@@ -193,7 +235,15 @@ export function NotificationBell() {
                   if (url && isExternal) {
                     return <a key={n.id} href={url} onClick={onClickItem} target="_blank" rel="noopener" className={cls}>{inner}</a>;
                   }
-                  return <div key={n.id} onClick={onClickItem} className={cls}>{inner}</div>;
+                  // FIX-WORKER-3 pass 7 (a11y): div onClick sem url -> role=button +
+                  // tabIndex + onKeyDown Enter/Space. Antes: inacessivel keyboard.
+                  return (
+                    <div key={n.id} onClick={onClickItem}
+                      role="button" tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClickItem(); } }}
+                      aria-label={`${n.title} - ${n.is_read ? 'lida' : 'nao lida'}`}
+                      className={cls}>{inner}</div>
+                  );
                 })
               )}
             </div>

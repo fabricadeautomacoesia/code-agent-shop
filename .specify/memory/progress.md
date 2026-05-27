@@ -11919,3 +11919,92 @@ PROXIMA ITER:
 - W3 pass 7: NotificationBell auditar action buttons + dropdown items
 - W3 pass 8: PDP variant /check usar store (architectural - gap pass 4)
 - W18 pass 6: idx parcial order_items status='paid'
+
+================================================================
+ITER W3 PASS 7 - NotificationBell 4 bugs (optimistic + a11y) (2026-05-27)
+================================================================
+ESCOPO: NotificationBell (sino + dropdown + items)
+FILE: apps/storefront/src/components/notification-bell.tsx
+
+CONTEXTO: W3 pass 6 estabeleceu efficiency pattern + race-condition cross.
+NotificationBell tem 2 actions async (markRead + markAllRead) + dropdown
++ items keyboard nav. Audit revelou 4 bugs UX + a11y.
+
+BUGS CORRIGIDOS (4):
+
+1. OPTIMISTIC UPDATE com catch{} SILENT (markRead + markAllRead)
+- ANTES: setState APOS await OK + catch{} silencioso
+- IMPACTO REAL: backend 500/network -> nao marcou no DB, MAS frontend
+  ja atualizou is_read=true + decrementou unreadCount
+  -> dessincronizacao state vs DB
+  -> proximo poll 30s /unread-count sobrescreve count correto MAS
+     lista notifs continua errada ate fechar+abrir
+  -> user via badge "3" mas notifs todas marcadas como lidas (visualmente)
+- FIX: optimistic flip imediato + rollback se request falhar
+- markRead: snapshot target + flip + try/catch rollback
+- markAllRead: snapshot prevNotifs+prevCount + flip + rollback
+- Pattern same WishlistButton pass 4 + PriceAlertButton pass 6
+- BONUS: markRead checa target?.is_read -> no-op se ja lido
+
+2. ESCAPE KEY nao fechava dropdown (a11y keyboard)
+- ANTES: so click fora (backdrop) fechava. Keyboard users sem mouse:
+  - Tab para sino, Enter abre, Tab para items, Tab Tab... sem saida
+  - WCAG 2.1.1 keyboard accessible violado
+- FIX: useEffect [open] adiciona window keydown listener
+  - Escape key -> setOpen(false) - cleanup ao close ou unmount
+- Pattern correto: modal/popup com Escape close
+
+3. A11Y BELL BUTTON sem context
+- ANTES: <button onClick={setOpen}> apenas - screen readers anunciavam
+  "botao, push button" sem dizer pra que serve nem quantas notifs
+- FIX:
+  a. aria-label dinamico: "Notificacoes: 3 nao lidas" (singular/plural)
+  b. aria-expanded={open} - estado dropdown
+  c. aria-haspopup="menu" - tipo popup
+  d. focus-visible outline-magenta (era invisivel keyboard nav)
+  e. <Bell aria-hidden> + badge <span aria-hidden> - decorativos
+- WCAG 4.1.2 Name Role Value: PASS
+
+4. NOTIFICATION ITEM div SEM keyboard handler (inacessivel)
+- ANTES linha 196: <div onClick={onClickItem} className={cls}>
+- Notif sem cta_url (raras mas existem - test_bell, etc) renderizam div
+- div NAO eh focusavel + sem keyboard - keyboard users IMPOSSIBILITADOS
+  de marcar como lidas
+- FIX:
+  a. role="button" - declara semantica
+  b. tabIndex={0} - entra na tab order
+  c. onKeyDown Enter/Space chama onClickItem (com preventDefault no Space)
+  d. aria-label="title - lida/nao lida" - estado anunciado
+- WCAG 2.1.1 Keyboard + 4.1.2 Name Role Value: PASS
+
+PATTERN W3 OPTIMISTIC+ROLLBACK CROSS-COMPONENT (passes 4-7):
+- WishlistButton pass 4: optimistic + rollback (POST/DELETE)
+- PriceAlertButton pass 6: optimistic + rollback (POST/DELETE)
+- NotificationBell pass 7: optimistic + rollback (POST markRead/read-all)
+- Pattern reusable: snapshot pre + flip immediate + catch -> restore
+
+PATTERN W3 A11Y ESCAPE-KEY (novo pass 7):
+- Modais/popups com Escape close listener
+- useEffect [open] adiciona/remove keydown
+- WCAG 2.1.1 keyboard accessibility
+- Aplicar: CartDrawer, modals diversos
+
+PATTERN W3 A11Y DIV-AS-BUTTON (novo pass 7):
+- <div onClick> sem role+tabIndex+onKeyDown = inacessivel keyboard
+- Quando precisa: role="button" + tabIndex={0} + onKeyDown Enter/Space
+- Preferivel: usar <button> nativo (auto a11y)
+- Aplicar review: outros <div onClick> no codebase
+
+W3 PDP PROGRESS (focado em componentes auditados):
+- pass 1: fetchRelated 3 bugs
+- pass 2: also-bought 4 bugs (CRITICO prod)
+- pass 3: AddToCart 4 race conditions
+- pass 4: WishlistButton Pattern B+D
+- pass 5: CompareButton 2 bugs UX
+- pass 6: PriceAlertButton Pattern B + endpoint /check
+- pass 7: NotificationBell 4 bugs optimistic + a11y (esta iter)
+
+PROXIMA ITER:
+- W3 pass 8: outros <div onClick> codebase (cart-drawer, etc)
+- W3 pass 9: PDP variant WishlistButton /check -> store (architectural)
+- W18 pass 6: idx parcial order_items status='paid'
