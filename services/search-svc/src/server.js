@@ -236,12 +236,38 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
 // (1 req por keystroke do SearchBar). Mesmas queries repetem MUITO entre users.
 // TTL curto (60s) garante que produtos novos aparecem rapido nas sugestoes.
 // Key normaliza q lowercase + trim p/ maximizar hit rate.
+// FIX-WORKER-7 pass 92: 3 BUGS aplicando Pattern W7 (DLP cache key + ?limit + parallel).
+//
+// BUG 1 *** DLP CACHE KEY *** q raw em Redis key
+//   PRE-FIX: cache.cacheMiddleware key = `search:ac:${q}` armazena query raw
+//   no Redis key (visible via Redis MONITOR/SCAN).
+//   User cola Bearer/sk em URL bar autocomplete -> key Redis vaza secret.
+//   Atacante com acesso Redis (cluster compromise) ve queries de outros users.
+//   FIX: hash SHA-256 prefix p/ cache key (lookups O(1) sem leak).
+//
+// BUG 2 *** ?limit MISSING ***
+//   PRE-FIX: hardcoded 10 sugestoes. UI mobile mostra 5, desktop 10.
+//   FIX: ?limit (1-20, default 10).
+//
+// BUG 3 *** SERIAL QUERIES *** ILIKE + similarity sequencial
+//   PRE-FIX: 2 queries paralelas executadas sequencialmente (await + await).
+//   Latency = ILIKE_ms + similarity_ms.
+//   FIX: Promise.all() concurrent - latency = max(ILIKE, similarity).
 app.get('/autocomplete',
   autocompleteLimiter,
-  cache.cacheMiddleware((req) => `search:ac:${(req.query.q || '').toString().trim().toLowerCase()}`, 60),
+  cache.cacheMiddleware((req) => {
+    const qNorm = (req.query.q || '').toString().trim().toLowerCase();
+    const lim = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 10));
+    // BUG 1: hash defensive (PII/DLP - cache key nao expoe query)
+    const crypto = require('node:crypto');
+    const qHash = crypto.createHash('sha256').update(qNorm).digest('hex').slice(0, 16);
+    return `search:ac:${qHash}:lim=${lim}`;
+  }, 60),
   asyncHandler(async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (q.length < 2) return res.json({ suggestions: [] });
+  // BUG 2: ?limit configurable
+  const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 10));
   // FIX-WORKER-7 pass 13: 6 bugs corrigidos no /autocomplete.
   //
   // 1. *** SECURITY *** SQL LIKE wildcard injection (nao SQL injection direto -
@@ -268,24 +294,27 @@ app.get('/autocomplete',
   // 6. Merge ranking: ILIKE primeiro pode "comer" similarity 0.9 match.
   //    FIX: priorizar similarity SE score >= 0.4 (high confidence semantic).
   const qEscaped = q.replace(/[%_\\]/g, '\\$&'); // escape SQL LIKE wildcards
-  const r = await query(
-    `SELECT DISTINCT title, slug FROM products
-      WHERE status IN ('approved','platform_owned')
-        AND deleted_at IS NULL
-        AND title ILIKE $1 ESCAPE '\\'
-      ORDER BY title ASC, slug LIMIT 10`,
-    [`%${qEscaped}%`]
-  );
-  // Sugestoes adicionais por similarity (pg_trgm)
-  // FIX bug 3: deleted_at IS NULL + status platform_owned + tiebreaker slug
-  const sim = await query(
-    `SELECT title, slug, similarity(title, $1) AS s
-       FROM products
-      WHERE status IN ('approved','platform_owned')
-        AND deleted_at IS NULL
-        AND title % $1
-      ORDER BY s DESC, slug LIMIT 10`, [q]
-  ).catch(() => ({ rows: [] }));
+
+  // BUG 3: Promise.all concurrent (era sequential await + await)
+  const [r, sim] = await Promise.all([
+    query(
+      `SELECT DISTINCT title, slug FROM products
+        WHERE status IN ('approved','platform_owned')
+          AND deleted_at IS NULL
+          AND title ILIKE $1 ESCAPE '\\'
+        ORDER BY title ASC, slug LIMIT $2`,
+      [`%${qEscaped}%`, limit]
+    ),
+    query(
+      `SELECT title, slug, similarity(title, $1) AS s
+         FROM products
+        WHERE status IN ('approved','platform_owned')
+          AND deleted_at IS NULL
+          AND title % $1
+        ORDER BY s DESC, slug LIMIT $2`,
+      [q, limit]
+    ).catch(() => ({ rows: [] })),
+  ]);
 
   // FIX bug 6: priorizar similarity matches high-confidence (s >= 0.4)
   // ANTES: ILIKE primeiro - Map.set primeiro win - similarity 0.9 perdida
@@ -293,8 +322,8 @@ app.get('/autocomplete',
   // AGORA: similarity high-confidence primeiro, ILIKE complementa
   const highSim = sim.rows.filter((x) => x.s >= 0.4);
   const merged = [...highSim, ...r.rows, ...sim.rows];
-  const unique = Array.from(new Map(merged.map((x) => [x.slug, x])).values()).slice(0, 10);
-  res.json({ suggestions: unique });
+  const unique = Array.from(new Map(merged.map((x) => [x.slug, x])).values()).slice(0, limit);
+  res.json({ suggestions: unique, limit, count: unique.length });
 }));
 
 // GET /search/top-sellers - mais vendidos POR CATEGORIA (V8 - MLB style)

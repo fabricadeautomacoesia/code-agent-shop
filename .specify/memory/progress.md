@@ -17308,7 +17308,31 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc qna/answer DEPRECATED (pass 88) - consolidate review-svc
 - ✅ notification-svc /read-all (pass 89) - 4 bugs DoS+audit+cap
 - ✅ aiops-svc /status (pass 90) - 4 bugs DLP recon + tier-split
-- ✅ search-svc /search (pass 91 esta iter) - 4 bugs enums + DLP
+- ✅ search-svc /search (pass 91) - 4 bugs enums + DLP
+- ✅ search-svc /autocomplete (pass 92 esta iter) - 3 bugs DLP cache + limit + parallel
+
+W7 PASS 92 RESUMO:
+- search-svc/src/server.js /autocomplete refactor (3 bugs):
+  * DLP CACHE KEY: q raw em Redis key
+    - PRE-FIX: cache key = `search:ac:${q}` (Redis MONITOR/SCAN expose)
+    - User cola Bearer/sk-API key URL bar autocomplete -> Redis key leak
+    - Atacante Redis cluster compromise ve queries de outros users
+    - FIX: SHA-256 hash prefix 16 chars (`search:ac:${hash}:lim=${N}`)
+  * NEW ?limit (1-20, default 10)
+    - PRE-FIX: hardcoded 10 - UI mobile mostra 5, desktop 10
+    - Cache key inclui :lim p/ vary correto
+  * Promise.all CONCURRENT
+    - PRE-FIX: await ILIKE + await similarity (sequential)
+    - Latency total = sum(ILIKE_ms + similarity_ms)
+    - FIX: Promise.all -> latency = max(ILIKE, similarity) ~50% reducao
+  * Response shape: + count + limit echo
+- Pattern W7 em 97 endpoints + 23 regras (A-W) - 92 micro-iters
+
+PROXIMA ITER:
+- W7 pass 93: search-svc /top-sellers + /trending audit
+- W7 pass 94: search-svc /facets + /categories audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 91 RESUMO:
 - search-svc/src/server.js GET / refactor (4 bugs):
