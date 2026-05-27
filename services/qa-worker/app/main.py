@@ -431,12 +431,29 @@ def estimate_cost(provider: str, model: str, usage: dict) -> int:
 
 
 # ============================================================
+import hmac as _hmac
+import hashlib as _hashlib
+
 # Callback
 # ============================================================
 async def send_callback(url: str, payload: dict):
+    """FIX-WORKER-12: callback sempre assinado com HMAC SHA-256 do body
+    usando QA_CALLBACK_SECRET (mesma chave em qa-svc). Sem isso, atacantes
+    podiam forjar callback aprovando produtos sem QA real.
+    json.dumps com separators=(',', ':') + sort_keys=False bate com JSON.stringify
+    do Node por default. Para evitar divergencia, qa-svc valida sobre o body raw."""
+    import json as _json
+    secret = os.getenv("QA_CALLBACK_SECRET", "")
+    body_bytes = _json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    headers = {"Content-Type": "application/json"}
+    if secret:
+        sig = _hmac.new(secret.encode(), body_bytes, _hashlib.sha256).hexdigest()
+        headers["X-Signature"] = sig
+    else:
+        print("[qa-worker] WARN callback sem assinatura - QA_CALLBACK_SECRET ausente", flush=True)
     async with httpx.AsyncClient(timeout=30) as cli:
         try:
-            await cli.post(url, json=payload)
+            await cli.post(url, content=body_bytes, headers=headers)
         except Exception as e:
             print(f"[qa-worker] callback FAIL: {e}", flush=True)
 

@@ -15,9 +15,17 @@ const PORT = parseInt(process.env.PORT_QA || '3013', 10);
 const QA_THRESHOLD = parseFloat(process.env.QA_CONFIDENCE_THRESHOLD || '0.80');
 const N8N_URL      = process.env.N8N_WEBHOOK_URL;
 const N8N_SECRET   = process.env.N8N_WEBHOOK_SECRET || '';
-const WORKER_URL   = process.env.QA_WORKER_URL || `http://127.0.0.1:${process.env.PORT_QA_WORKER || 3014}`;
+const WORKER_URL   = process.env.QA_WORKER_URL || `http://tasks.cas_qa-worker:${process.env.PORT_QA_WORKER || 3014}`;
+// FIX-WORKER-12 (CRITICAL SEC): segredo p/ assinar callback do n8n/worker.
+// Sem isso, qualquer endpoint da internet podia forjar confidence_score=1.0
+// e aprovar QUALQUER produto sem QA real.
+const QA_CALLBACK_SECRET = process.env.QA_CALLBACK_SECRET || '';
+// Para Swarm, callback URL precisa ser o service name (worker isolado nao conhece localhost do qa-svc)
+const CALLBACK_BASE = process.env.QA_CALLBACK_BASE_URL || `http://tasks.cas_qa-svc:${PORT}`;
 
 app.disable('x-powered-by');
+// FIX-WORKER-12: callback usa raw body para validar HMAC byte-exact antes de parsear
+app.use('/qa/callback', express.raw({ type: '*/*', limit: '5mb' }));
 app.use(express.json({ limit: '5mb' }));
 app.use(sanitize.middleware());
 
@@ -75,7 +83,8 @@ app.post('/qa/run',
           tech_stack: product.tech_stack,
           api_keys_required: product.api_keys_required,
           install_instructions: product.install_instructions,
-          callback_url: `http://127.0.0.1:${PORT}/qa/callback`,
+          callback_url: `${CALLBACK_BASE}/qa/callback`,
+          callback_secret_hint: QA_CALLBACK_SECRET ? 'present' : 'missing',
         };
 
         // Opcao A: n8n se configurado (orquestracao externa)
@@ -120,8 +129,42 @@ app.post('/qa/run',
  * POST /qa/callback - recebe veredito do n8n OU worker.
  * Aplica gate: confidence >= 0.80 => APPROVED, senao => REJECTED.
  * Se APPROVED + seller_class B => reseta SLA timer.
+ *
+ * FIX-WORKER-12 (CRITICAL): valida HMAC SHA-256 do body com QA_CALLBACK_SECRET.
+ * Sem isso, antes qualquer endpoint da internet podia forjar callback com
+ * confidence_score=1.0 e aprovar qualquer produto sem QA real -> trigger de
+ * cadeia: order_paid -> license_key -> download. Fraude direta.
  */
+function qaCallbackGuard(req, res, next) {
+  if (!QA_CALLBACK_SECRET) {
+    log.error('[qa.callback.misconfigured] QA_CALLBACK_SECRET nao definido');
+    return res.status(503).json({ error: 'callback_not_configured' });
+  }
+  // req.body aqui eh Buffer (express.raw montado em /qa/callback acima)
+  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
+  const sig = req.headers['x-signature'] || '';
+  const expected = crypto.createHmac('sha256', QA_CALLBACK_SECRET).update(raw).digest('hex');
+  let valid = false;
+  try {
+    const a = Buffer.from(sig, 'hex');
+    const b = Buffer.from(expected, 'hex');
+    valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch { valid = false; }
+  if (!valid) {
+    log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[qa.callback.invalid_signature]');
+    return res.status(401).json({ error: 'invalid_signature' });
+  }
+  // Apos validar, parseia para o handler downstream
+  try {
+    req.body = JSON.parse(raw.toString('utf8'));
+  } catch {
+    return res.status(400).json({ error: 'invalid_json' });
+  }
+  next();
+}
+
 app.post('/qa/callback',
+  qaCallbackGuard,
   validate({ body: z.object({
     run_id: z.string().uuid(),
     confidence_score: z.number().min(0).max(1),
