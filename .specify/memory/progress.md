@@ -9523,3 +9523,83 @@ PROXIMA ITER:
 - W4 pass 11: /admin/vault badge "Renova Xd" usando rotation_due_at
 - W17 pass 13: POST /keys/:id/rotate (swap chave UI workflow)
 - W13: template email vault_rotation_due (admins offline)
+
+## WORKER 13 PASS 7 - template vault_rotation_due + fan-out email overdue
+
+CONTEXTO:
+W17 pass 12 criou rotationAlertCron() com notifications channel=in_app apenas.
+Admin offline (web fechado, ferias) nao via alerta -> token revogado upstream
+chegava surpresa em prod (100% errors).
+
+2 ENTREGUES:
+
+1. Migration 036 seed notification_templates:
+   - template_code='vault_rotation_due'
+   - Subject: "[CAS Vault] Chave {alias} ({provider}) - rotacao em {days}d"
+   - body_template text + body_html_template HTML formatado
+   - variables JSONB: [alias, provider, days, key_id]
+   - DEFENSIVE: tenta schema mig 008 (code/channel singular) e fallback
+     mig 018 (template_code/channels array)
+   - ON CONFLICT UPDATE idempotente
+
+   Email content:
+   - 4-step rotation instructions
+   - CTA link admin.cas.../vault
+   - Warning "NAO IGNORE: token revogado = 100% errors"
+
+2. vault-svc rotationAlertCron() EXTENDED:
+   - in_app: SEMPRE (warn 7d antes + diario ate rotacao)
+   - email: APENAS overdue (days < 0)
+     * Evita inbox flood em warnings recorrentes
+     * Garante delivery offline para admin/staff
+     * Priority 3 (urgent) - prioritario no outbox
+   - Idempotencia mantida (1 notif/key/dia max - in_app + email = 2 rows)
+
+OUTBOX PROCESSOR (W13 passes 1-5 ja existe):
+- Pick rows pending channel=email a cada 30s
+- Mustache render usando payload + user.email/full_name
+- sendEmail() nodemailer SMTP
+- Retry exp backoff (30s/2min/10min/1h/terminal)
+- Audit log automatico
+
+FLOW E2E:
+1. Key X com rotation_due_at = NOW-1d
+2. rotationAlertCron detecta (24h cycle)
+3. Insere 2 rows por admin:
+   - 1x in_app priority 3 -> NotificationBell
+   - 1x email priority 3 -> outbox
+4. <30s outbox processa email -> SMTP delivery
+5. Admin web ve no sino + email no inbox
+
+DEPLOY:
+- commit daa4caa push main OK
+- 102 insertions, 2 deletions
+- Migration 036 + vault-svc rebuild via VPS cron
+- notification-svc inalterado (outbox ja generico)
+
+VALIDACAO POS-DEPLOY:
+- SELECT template WHERE template_code='vault_rotation_due'
+- Forcar overdue: UPDATE vault_api_keys SET rotation_due_at=NOW()-INTERVAL '1 day'
+- Cron 24h roda
+- SELECT notifications WHERE template_code='vault_rotation_due' AND channel='email'
+- Admin recebe email (SMTP_HOST configurado)
+
+W13 NOTIFICATION AUDIT TOTAL (passes 1-7):
+- pass 1: SELECT explicit (no outbox internals leak)
+- pass 2: mustache render + XSS escape
+- pass 3: SMTP retry exp backoff
+- pass 4: /unread-count endpoint dedicado
+- pass 5: silent failure fix sendTelegram + sendEmail
+- pass 6: /test rate-limit + audit log
+- pass 7: vault_rotation_due template + fan-out (esta iter)
+
+INTEGRACAO W13 + W17 CICLO COMPLETO:
+- W17 detecta rotacao + cria notifications (in_app + email)
+- W13 outbox entrega email via SMTP retry
+- W13 outbox tambem cuida idempotency (signature_valid + processed_at)
+- Loop fechado: rotation detected -> admin alertado web+email
+
+PROXIMA ITER:
+- W4 pass 11: /admin/vault badge "Renova Xd" (UI consume rotation_due_at)
+- W17 pass 13: POST /keys/:id/rotate (swap chave 1-click)
+- W13 pass 8: templates remaining (vault_overdue_critical p/ 5+ dias overdue)
