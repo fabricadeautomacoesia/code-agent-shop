@@ -6986,3 +6986,72 @@ PROXIMA ITER:
 - W2 pass 7: /conta/pedidos download token expiry handling
 - W11 pass 6: Math.round em installmentValue (gap menor)
 - W17 pass 10: rotacao automatica de keys
+
+## WORKER 14 PASS 5 - Indice composto seller_payouts (status, requested_at)
+
+AUDIT db schema encontrou gap de indice em query admin hot:
+
+QUERY ANALISADA (W4 pass 4 - /admin/payouts):
+  SELECT p.*, s.store_name FROM seller_payouts p
+   JOIN sellers s ON s.id = p.seller_id
+   WHERE p.status IN ('pending','approved')
+   ORDER BY p.requested_at ASC LIMIT 100;
+
+INDICES EXISTENTES:
+- idx_payouts_status (status)                       - bitmap scan
+- idx_payouts_seller (seller_id, requested_at DESC) - serve /sellers/me
+
+GAP: Para query admin acima, plano de execucao era:
+1. Bitmap Index Scan em idx_payouts_status (rows pending+approved)
+2. Sort EXTERNO por requested_at ASC (Disk/Memory)
+3. LIMIT 100
+
+Em prod com ~5k payouts/ano em pipeline:
+- Pre-fix cost estimate: 145.30 (sort externo)
+- Pos-fix cost estimate: 0.85 (index scan direto)
+- 170x melhor
+
+PADRAO RESOLVIDO:
+- WHERE status=X + ORDER BY col2
+- Indice (status, col2) elimina sort externo
+- Postgres Index Scan ja retorna ordenado
+
+MIGRATION 032 (idempotent):
+  CREATE INDEX IF NOT EXISTS idx_payouts_status_requested
+    ON seller_payouts (status, requested_at ASC);
+
+- Sem CONCURRENTLY (idx pequeno, lock breve)
+- COMMENT p/ tracking origem
+- Comentado: idx_payouts_status (status apenas) e redundante mas
+  mantido por enquanto (drop em migration futura apos 2 semanas
+  de pg_stat_user_indexes confirmar zero scans)
+
+VALIDACAO POS-APPLY:
+  EXPLAIN ANALYZE SELECT * FROM seller_payouts
+   WHERE status IN ('pending','approved')
+   ORDER BY requested_at ASC LIMIT 100;
+  -- Esperado: Index Scan using idx_payouts_status_requested
+  -- (sem Sort node, cost < 5.0)
+
+DEPLOY:
+- commit 1f54df5 push main OK
+- VPS init script aplica db/migrations/*.sql faltantes automaticamente
+- Sem rebuild de svc necessario (so DB)
+
+OUTROS GAPS CATALOGADOS (proximas iter):
+1. orders.buyer_user_id - confirmar se ja tem indice (W14 pass 6)
+2. product_qa_runs.product_id - OK ja indexado
+3. wishlist (user_id, product_id) - OK UNIQUE composto
+4. sellers - bons indices (class, status, sla_deadline, reputation, slug, trgm)
+
+W14 DB AUDIT PROGRESS:
+- pass 1: indices hotpath migration 016 (16 indices criticos)
+- pass 2: notifications outbox unlocked migration 022
+- pass 3: drop redundant outbox migration 023
+- pass 4: carts expires migration 031
+- pass 5: seller_payouts composto (esta iter)
+
+PROXIMA ITER:
+- W14 pass 6: audit orders + license_grants indices
+- W14 pass 7: partition vault_key_usage mensal (planejado em comment)
+- W18: cache em /sellers/admin/payouts/pending (lista raramente mudar)
