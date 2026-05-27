@@ -46,7 +46,19 @@ export function friendlyAuthError(e: any): string {
   if (code === 'validation_error' && e?.data?.details?.length) {
     const d = e.data.details[0];
     const field = Array.isArray(d.path) ? d.path[d.path.length - 1] : d.path;
+    // FIX-WORKER-1 pass 2: mensagens PT-BR especificas por campo (UX > generico)
+    const FIELD_HINTS: Record<string, string> = {
+      phone_e164: 'Telefone: use formato internacional +5511999999999 (com codigo do pais).',
+      email:      'Email: digite um email valido (exemplo@dominio.com).',
+      cpf_cnpj:   'CPF/CNPJ: digite apenas numeros, 11 ou 14 digitos.',
+      password:   'Senha: minimo 8 caracteres, com letra maiuscula e numero.',
+      full_name:  'Nome completo: minimo 2 caracteres.',
+    };
+    if (d.code === 'invalid_string' && FIELD_HINTS[field]) {
+      return FIELD_HINTS[field];
+    }
     if (d.code === 'too_small') {
+      if (FIELD_HINTS[field]) return FIELD_HINTS[field];
       return `${field}: deve ter pelo menos ${d.minimum} caractere(s).`;
     }
     if (d.code === 'invalid_type') {

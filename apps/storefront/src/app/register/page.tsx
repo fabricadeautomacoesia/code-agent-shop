@@ -34,9 +34,25 @@ function RegisterInner() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true); setError('');
+    setError('');
+    // FIX-WORKER-1 pass 2: validacao client-side preventiva evita roundtrip + UX confuso
+    if (form.phone_e164 && !/^\+[1-9]\d{6,14}$/.test(form.phone_e164)) {
+      setError('Telefone: use formato internacional +5511999999999 (com codigo do pais).');
+      return;
+    }
+    if (form.cpf_cnpj && !/^\d{11,14}$/.test(form.cpf_cnpj.replace(/\D/g, ''))) {
+      setError('CPF/CNPJ: digite apenas numeros, 11 ou 14 digitos.');
+      return;
+    }
+    setLoading(true);
     try {
-      await Api.register({ ...form, role });
+      // CPF/CNPJ: normaliza removendo pontuacao antes de enviar
+      const payload = {
+        ...form,
+        role,
+        cpf_cnpj: form.cpf_cnpj ? form.cpf_cnpj.replace(/\D/g, '') : '',
+      };
+      await Api.register(payload);
       router.push('/login?registered=1');
     } catch (err: any) {
       setError(friendlyAuthError(err));
