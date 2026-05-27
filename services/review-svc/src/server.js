@@ -754,7 +754,22 @@ const TARGET_TABLE_MAP = {
   user: 'users',
   qna: 'product_qna',
 };
-app.post('/reports', jwt.requireAuth(),
+// FIX-WORKER-7 pass 38: rate-limit DOS-ATTACK PRIMARY VECTOR.
+// Endpoint MAIS critico de abuse em review-svc (DoS reputational).
+// PRE-FIX (gap documentado desde pass 35): zero rate-limit.
+// ATAQUE: atacante seller competidor abre 1000 reports/min em concorrentes:
+//   - alerts table cresce + admin dashboard overflow
+//   - Sellers reportados suspensos "preventivamente" enquanto admin investiga
+//   - DoS reputational similar pass 29 dispute (atacante elimina competicao)
+// FIX: rateLimiter 5/15min/IP (real users <2 reports/dia legitimo).
+const reportLimiter = rateLimiter.createLimiter({
+  windowMs: 15 * 60 * 1000, max: 5,
+  message: 'Muitas denuncias recentes. Aguarde alguns minutos.',
+});
+
+app.post('/reports',
+  reportLimiter,
+  jwt.requireAuth(),
   validate({ body: z.object({
     target_type: z.enum(['product','seller','review','user','qna']),
     target_id: z.string().uuid(),
@@ -763,41 +778,127 @@ app.post('/reports', jwt.requireAuth(),
     evidence_urls: z.array(z.string().url()).optional(),
   })}),
   asyncHandler(async (req, res, next) => {
+    // FIX-WORKER-7 pass 38: 6 BUGS aplicando Pattern W7 17 regras.
+    //
+    // BUG 1 RATE-LIMIT (acima do handler) - PRIMARY VECTOR DoS reputational
+    //
+    // BUG 2 *** SELF-REPORT block ***
+    //   Pre-fix: user pode reportar a si mesmo (target_type='user'+target_id=self)
+    //   OU seu proprio produto (target_type='product' do seller dono).
+    //   Sem semantica - confusao admin queue.
+    //   FIX: validar reporter != target_user_id (resolve target ownership)
+    //
+    // BUG 3 *** ATOMICITY *** INSERT report + INSERT alert sem tx()
+    //   Falha alert = report orfao sem alerta admin. Admin nao processa.
+    //   FIX: tx() atomic - tudo all-or-nothing.
+    //
+    // BUG 4 *** Regra I *** RETURNING * vaza internal_notes/admin_resolution_notes
+    //   FIX: RETURNING explicit fields consumed por UI.
+    //
+    // BUG 5 *** Regra B *** deleted_at IS NULL no target check
+    //   Pre-fix: SELECT 1 FROM tbl WHERE id=$1 (sem deleted_at filter)
+    //   Pode reportar produto soft-deletado - admin queue lixo.
+    //   FIX: AND deleted_at IS NULL (onde aplicavel: products, users)
+    //
+    // BUG 6 *** XSS storage *** description raw em alerts.message
+    //   alerts.message concat string com description user input.
+    //   W13 pass 31 (renderMustache) resolve XSS no render time MAS
+    //   storage raw permite future bug se template change.
+    //   FIX: strip control chars + truncate na storage (defensive).
     const tbl = TARGET_TABLE_MAP[req.body.target_type];
-    // 1. Valida existencia do target (anti-spam UUID fake)
-    const exists = await query(
-      `SELECT 1 FROM ${tbl} WHERE id = $1 LIMIT 1`,
-      [req.body.target_id]
-    );
-    if (!exists.rows.length) {
-      return next(errorHandler.notFound('target_not_found'));
+
+    // Pre-validation: self-report block (bug 2)
+    // target_type=user direto: target_id === reporter
+    if (req.body.target_type === 'user' && req.body.target_id === req.user.sub) {
+      return next(errorHandler.badRequest('cannot_report_self'));
     }
-    // 2. Dedup: mesmo user nao pode reportar o mesmo target+reason 2x em 7 dias
-    const dup = await query(
-      `SELECT 1 FROM reports
-        WHERE reporter_user_id = $1 AND target_type = $2 AND target_id = $3
-          AND reason_code = $4 AND created_at > NOW() - INTERVAL '7 days'
-        LIMIT 1`,
-      [req.user.sub, req.body.target_type, req.body.target_id, req.body.reason_code]
-    );
-    if (dup.rows.length) {
-      return next(errorHandler.conflict('duplicate_report', 'Voce ja reportou este item nos ultimos 7 dias'));
+
+    let outcome;
+    let report;
+    await tx(async (c) => {
+      // FIX bug 5 (Regra B): deleted_at IS NULL aplicavel a products + users
+      // (sellers + reviews + qna usam is_hidden/is_active separadas).
+      const hasDeletedAt = ['products','users'].includes(tbl);
+      const existsSql = hasDeletedAt
+        ? `SELECT 1 FROM ${tbl} WHERE id = $1::UUID AND deleted_at IS NULL LIMIT 1`
+        : `SELECT 1 FROM ${tbl} WHERE id = $1::UUID LIMIT 1`;
+      const exists = await c.query(existsSql, [req.body.target_id]);
+      if (!exists.rows.length) {
+        outcome = { error: 'target_not_found' };
+        return;
+      }
+
+      // Bug 2 expandido: se target_type=product/seller/review/qna, validar
+      // target ownership nao eh do reporter (anti-self-report transitive).
+      if (req.body.target_type === 'product') {
+        const own = await c.query(
+          `SELECT 1 FROM products p
+             JOIN sellers s ON s.id = p.seller_id
+            WHERE p.id = $1::UUID AND s.user_id = $2::UUID LIMIT 1`,
+          [req.body.target_id, req.user.sub]
+        );
+        if (own.rows.length) { outcome = { error: 'cannot_report_own_product' }; return; }
+      } else if (req.body.target_type === 'seller') {
+        const own = await c.query(
+          `SELECT 1 FROM sellers WHERE id = $1::UUID AND user_id = $2::UUID LIMIT 1`,
+          [req.body.target_id, req.user.sub]
+        );
+        if (own.rows.length) { outcome = { error: 'cannot_report_own_seller' }; return; }
+      }
+
+      // Dedup 7 dias (pre-existing, mantido)
+      const dup = await c.query(
+        `SELECT 1 FROM reports
+          WHERE reporter_user_id = $1::UUID AND target_type = $2 AND target_id = $3::UUID
+            AND reason_code = $4 AND created_at > NOW() - INTERVAL '7 days'
+          LIMIT 1`,
+        [req.user.sub, req.body.target_type, req.body.target_id, req.body.reason_code]
+      );
+      if (dup.rows.length) { outcome = { error: 'duplicate_report' }; return; }
+
+      // FIX bug 6: sanitize description antes storage (defense-in-depth)
+      // Strip control chars C0/C1 (anti future XSS via alerts.message rendering)
+      const sanitizedDesc = req.body.description
+        ? req.body.description.replace(/[ --]/g, '').slice(0, 2000)
+        : null;
+
+      // INSERT report (Regra I: RETURNING explicit)
+      const r = await c.query(
+        `INSERT INTO reports (reporter_user_id, target_type, target_id, reason_code,
+                              description, evidence_urls)
+         VALUES ($1::UUID, $2, $3::UUID, $4, $5, $6)
+         RETURNING id, target_type, target_id, reason_code, status, created_at`,
+        [req.user.sub, req.body.target_type, req.body.target_id, req.body.reason_code,
+         sanitizedDesc, req.body.evidence_urls || null]
+      );
+      report = r.rows[0];
+
+      // Alerta admin ATOMIC (mesmo tx - bug 3)
+      // FIX bug 6: alerts.message tambem sanitizada via slice (max 500)
+      const alertMsg = `Reporter: ${req.user.sub}. Motivo: ${req.body.reason_code}. ${sanitizedDesc || ''}`.slice(0, 500);
+      await c.query(
+        `INSERT INTO alerts (severity, source, code, title, message, target_type, target_id)
+         VALUES ('warn','reports','new_report',$1,$2,$3,$4::UUID)`,
+        [`Nova denuncia: ${req.body.reason_code}`, alertMsg,
+         req.body.target_type, req.body.target_id]
+      );
+    });
+
+    if (outcome?.error === 'target_not_found') return next(errorHandler.notFound('target_not_found'));
+    if (outcome?.error === 'cannot_report_own_product') {
+      return res.status(400).json({ error: 'cannot_report_own_product',
+        message: 'Voce nao pode reportar seu proprio produto.' });
     }
-    const r = await query(
-      `INSERT INTO reports (reporter_user_id, target_type, target_id, reason_code, description, evidence_urls)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [req.user.sub, req.body.target_type, req.body.target_id, req.body.reason_code,
-       req.body.description || null, req.body.evidence_urls || null]
-    );
-    // alerta para admin
-    await query(
-      `INSERT INTO alerts (severity, source, code, title, message, target_type, target_id)
-       VALUES ('warn','reports','new_report',$1,$2,$3,$4)`,
-      [`Nova denuncia: ${req.body.reason_code}`,
-       `Reporter: ${req.user.sub}. Motivo: ${req.body.reason_code}. ${req.body.description || ''}`.slice(0, 500),
-       req.body.target_type, req.body.target_id]
-    );
-    res.status(201).json({ report: r.rows[0] });
+    if (outcome?.error === 'cannot_report_own_seller') {
+      return res.status(400).json({ error: 'cannot_report_own_seller',
+        message: 'Voce nao pode reportar sua propria loja.' });
+    }
+    if (outcome?.error === 'duplicate_report') {
+      return res.status(409).json({ error: 'duplicate_report',
+        message: 'Voce ja reportou este item nos ultimos 7 dias.' });
+    }
+
+    res.status(201).json({ report });
   })
 );
 

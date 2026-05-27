@@ -15440,3 +15440,102 @@ W7+W13+W18+W4 CONSOLIDADO:
 - W13: renderMustache XSS
 - W18: 8 passes
 - W4: 13 admin pages
+
+================================================================
+ITER W7 PASS 38 - review-svc POST /reports 6 BUGS (DoS reputational) (2026-05-27)
+================================================================
+ESCOPO: review-svc POST /reports (abuse report - vetor primario DoS)
+FILE: services/review-svc/src/server.js (linhas 757-802 -> rewrite)
+
+CONTEXTO: W7 passes 32-37 cobriram 6 endpoints review-svc. Pass 38 ataca
+o endpoint MAIS RISCO ABUSE - report-flood eh vetor DoS reputational
+similar pass 29 (dispute) e pass 30 (notif test admin compromise).
+
+BUGS CORRIGIDOS (6):
+
+1. *** RATE-LIMIT (PRIMARY VECTOR DoS reputational) ***
+- Gap documentado desde pass 35 como "critical pendente"
+- PRE-FIX: zero rate-limit em endpoint criar reports
+- ATAQUE REAL:
+  Atacante seller competidor:
+  - report-flood 1000 reports/min em sellers concorrentes
+  - alerts table cresce + admin dashboard overflow
+  - Sellers reportados SUSPENSOS preventivamente enquanto admin investiga
+  - Mercado livre da concorrencia = atacante (seller competidor) ataca
+- IMPACTO: similar pass 29 (dispute DoS reputational) - vetor abuse direto
+- FIX: rateLimiter 5/15min/IP (real users <2 reports/dia legitimo)
+
+2. *** SELF-REPORT BLOCK ***
+- Pre-fix: user pode reportar a si mesmo OU seu proprio produto/seller
+  - target_type='user'+target_id=req.user.sub = self-report direto
+  - target_type='product' de produto que pertence ao reporter (seller)
+  - target_type='seller' de seller cujo user_id=req.user.sub
+- Semantica quebrada - admin queue confusa
+- FIX: 3 checks consolidados:
+  a. target_type='user' AND target_id === req.user.sub -> 400
+  b. target_type='product': JOIN products+sellers verificar ownership
+  c. target_type='seller': verificar sellers.user_id === req.user.sub
+- review/qna self-report tecnicamente possivel (user reporta propria
+  review) mas pattern raro - cobrir em iter futura se needed
+
+3. *** ATOMICITY *** INSERT report + INSERT alert sem tx()
+- PRE-FIX: 2 queries lineares. Falha INSERT alert = report orfao
+  sem alerta admin. Admin nao processa - report "fantasma" no DB.
+- FIX: tx() atomic - tudo all-or-nothing.
+
+4. *** Regra I *** RETURNING * vaza internal_notes/admin_resolution_notes
+- reports table futuro pode ter risk_score, internal_notes (admin moderation)
+- Pre-fix RETURNING * = leak ao reporter
+- FIX: RETURNING explicit 6 fields consumed por UI
+
+5. *** Regra B *** deleted_at IS NULL no target check
+- Pre-fix: SELECT 1 FROM tbl WHERE id=$1 (sem deleted_at filter)
+- Pode reportar produto soft-deletado -> admin queue lixo
+- FIX: AND deleted_at IS NULL aplicavel a products + users
+- (sellers + reviews + qna usam is_hidden/is_active - skip)
+
+6. *** XSS storage *** description raw em alerts.message
+- Pre-fix: alerts.message concat raw description user input
+- W13 pass 31 (renderMustache) resolve XSS no render time MAS
+  storage raw permite future bug se template change
+- FIX: sanitize control chars C0/C1 + truncate 2000 chars (defensive)
+- alerts.message tambem truncado 500 chars (anti-bloat alerts)
+
+PATTERN W7 REPORT/DISPUTE ENDPOINTS (DoS reputational vector):
+- Pass 29 POST /orders/:id/dispute: ownership + cross-table + idempotency
+- Pass 38 POST /reports: rate-limit + self-report + ownership transitive
+- Pattern: SEMPRE rate-limit + ownership check + dedup window em endpoints
+  que afetam reputation outros users (admin queue, alerts, suspensions)
+
+PATTERN W7 29 ENDPOINTS + 18 REGRAS (A-R):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 7 (/, /:id/vote, /qna/:id/upvote, /qna, /qna/:id/answer,
+                /:id/reply, /reports pass 38 esta iter)
+
+REVIEW-SVC PROGRESS (8 endpoints total - 7/8 = 87.5%):
+- ✅ POST / (pass 32)
+- ✅ POST /:id/vote (pass 33)
+- ✅ POST /qna/:id/upvote (pass 34)
+- ✅ POST /qna (pass 35)
+- ✅ POST /qna/:id/answer (pass 36)
+- ✅ POST /:id/reply (pass 37)
+- ✅ POST /reports (pass 38 esta iter)
+- POST /reports/:id/resolve (admin terminal pendente - 1 endpoint final)
+
+PROXIMA ITER:
+- W7 pass 39: POST /reports/:id/resolve (admin terminal Regra Q + audit)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
+- W7 pass 40: seller-svc audit (nao iniciado - 9o svc, 1/13)
+
+W7+W13+W18+W4 CONSOLIDADO:
+- W7: 29 endpoints + 18 regras (A-R) - 38 micro-iters
+- W13: renderMustache XSS
+- W18: 8 passes
+- W4: 13 admin pages
