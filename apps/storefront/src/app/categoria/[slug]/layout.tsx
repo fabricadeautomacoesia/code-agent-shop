@@ -19,6 +19,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: `Mais vendidos: ${name} - Code & Agent Shop`,
     description,
+    // FIX-WORKER-9 pass 3: canonical dinamico por slug
+    alternates: { canonical: `/categoria/${slug}` },
     openGraph: {
       type: 'website',
       title: `Top ${name}`,

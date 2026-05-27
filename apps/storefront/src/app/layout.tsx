@@ -16,6 +16,9 @@ export const metadata: Metadata = {
   title: 'Code & Agent Shop - O Marketplace de Automacoes e IA',
   description: 'Compre e venda automacoes, scripts, workflows n8n e agentes de IA prontos para producao.',
   keywords: ['marketplace', 'automacao', 'agentes IA', 'n8n', 'workflows', 'scripts'],
+  // FIX-WORKER-9 pass 3: canonical em root = home (/), child layouts overridem com canonical proprio
+  // Sem isso: home tinha ZERO canonical + /products?sort=X eram indexadas como pages diferentes
+  alternates: { canonical: '/' },
   openGraph: {
     type: 'website',
     locale: 'pt_BR',

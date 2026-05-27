@@ -10,6 +10,8 @@ export const revalidate = 30;
 export const metadata = {
   title: 'Promocoes Relampago - Code & Agent Shop',
   description: 'Descontos por tempo limitado em automacoes e agentes IA. Aproveite enquanto duram!',
+  // FIX-WORKER-9 pass 3: canonical (estava herdando root '/' incorretamente)
+  alternates: { canonical: '/promocoes' },
 };
 
 async function fetchSafe<T>(path: string): Promise<T | null> {
