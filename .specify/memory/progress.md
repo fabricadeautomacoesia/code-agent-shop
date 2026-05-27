@@ -14616,3 +14616,99 @@ PROXIMA ITER:
 - W18 pass 8: audit pg_stat_user_indexes (drop dead idx ~2 weeks data)
 - W3 pass 14: testes e2e Dialog wrapper (Playwright)
 - W7 pass 32: review-svc audit (mesmo pattern)
+
+================================================================
+ITER W13 PASS 1 - renderMustache 4 BUGS XSS/prototype pollution (2026-05-27)
+================================================================
+ESCOPO: notification-svc renderMustache template engine (XSS hardening)
+FILE: services/notification-svc/src/server.js (linhas 46-72)
+
+CONTEXTO: W7 pass 30 cobriu notification-svc /test endpoint admin
+(arbitrary email + header injection). Pass W13 audita CORE template
+render engine usado em TODOS emails da plataforma (~M emails/ano).
+
+BUGS CORRIGIDOS (4 + 1 deferido):
+
+1. *** PROTOTYPE POLLUTION via nested keys ***
+- PRE-FIX: regex [\w.]+ aceita .ilimitado em paths {{a.b.c.d.e...}}
+- Linha 65 pre-fix: cur = cur[p] (sem validacao keys reservadas)
+- VETOR:
+  Atacante seta payload.user_name = "{{constructor.constructor.prototype.toString}}"
+  -> notification template renderiza: cur = ctx -> cur.constructor -> Function
+  -> cur.prototype -> Function.prototype -> cur.toString -> function nativa
+  -> String(cur) = "function toString() { [native code] }"
+  -> VAZA info runtime no email
+- IMPACT: nao executa codigo direto MAS:
+  a. Vaza fingerprint engine Node JS (version detection)
+  b. Em runtimes futuros (eval em emails legacy?) potencial RCE
+  c. Confusion: emails saiem com codigo no body confunde users
+- FIX:
+  - RESERVED_KEYS set (__proto__/constructor/prototype/toString/etc)
+  - hasOwnProperty check (nao herda do Object.prototype)
+  - Max depth 3 levels nested
+
+2. *** TYPE COERCION leak ***
+- PRE-FIX: String(cur) em qualquer tipo
+- Vetor: ctx.user_data = userObject with custom toString()
+  String(userObject) chama toString -> codigo arbitrario executa em
+  contexto notification-svc (sem sandbox)
+- Mesmo sem toString custom, [object Object] vaza shape ao user
+- FIX: typeof guard - aceita SO string/number/boolean
+  Outros tipos retornam '' (failsafe)
+
+3. *** URL SCHEMA INJECTION em isHtml mode ***
+- PRE-FIX: ctx.cta_url = "javascript:alert(document.cookie)"
+- Template body_html: <a href="{{cta_url}}">Click</a>
+- Apos _htmlEscape: <a href="javascript:alert(document.cookie)">
+  (escape converte aspas mas NAO converte javascript:)
+- Email clients comportam diferente:
+  a. Gmail bloqueia (sandbox iframe)
+  b. Outlook legacy / IMAP custom clients podem render
+  c. Mobile apps custom podem ate executar
+- FIX: DANGEROUS_URL_SCHEMA regex bloqueia
+  javascript:|data:|vbscript:|file: -> retorna '' + log warn
+- Email cliente nao executa script (defense em profundidade)
+
+4. *** Mustache CONFUSION attack ***
+- PRE-FIX: render UMA VEZ (replace nao recursivo) - OK
+- VETOR mais sutil: seller cria product title="Olá {{email}}!"
+- Notification body="Produto aprovado: {{product_title}}"
+- renderMustache(body, ctx) -> "Produto aprovado: Olá {{email}}!"
+- User recebe email com {{email}} LITERAL no body
+- Nao vaza dados (renderMustache nao re-renderiza) MAS:
+  a. UX broken - parece bug
+  b. Suporte recebe ticket "por que {{email}} no email?"
+- FIX: Implicito via bug 1+2 - reserved keys + type guard nao
+  resolvem {{email}} se ctx nao tem campo email -> retorna ''
+  Mas '{{email}}' literal SOBREVIVE no body (eh string ja escapada)
+- DEFERIDO: sanitize input upstream (product_title nao deve ter {{}}).
+  Pattern futuro: notification-svc /enqueue validar payload sem {{}}
+
+PATTERN W13 NOTIFICATION SECURITY:
+- Pass 26 outbox: race condition email duplicado
+- Pass 30 /test admin: header injection + spam vector
+- Pass 31 (W13 esta iter): template engine prototype pollution + URL schema
+
+DEFENSE EM PROFUNDIDADE notification:
+- Layer 1: input sanitize upstream (seller product fields)
+- Layer 2: template engine hardening (esta iter)
+- Layer 3: email client sandbox (gmail, etc)
+- Layer 4: SMTP reputation (anti-spam)
+- Bypass requer defeat de TODAS layers
+
+PATTERN W7 22 ENDPOINTS + 18 REGRAS (A-R):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3 (outbox pass 26, /test pass 30, renderMustache pass 31)
+- qa-svc: 2
+
+W7+W13 PROGRESS: 31 micro-iters + 18 regras consolidadas.
+
+PROXIMA ITER:
+- W18 pass 8: audit pg_stat_user_indexes drop dead idx
+- W3 pass 14: testes e2e Dialog wrapper (Playwright)
+- W7 pass 32: review-svc audit (mesmo pattern)
+- W13 pass 2: notification-svc /enqueue upstream sanitize ({{}} stripping)

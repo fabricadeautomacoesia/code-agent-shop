@@ -56,18 +56,55 @@ function _htmlEscape(s) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '/': '&#x2F;',
   })[c]);
 }
+
+// FIX-WORKER-13 pass 6: hardening contra prototype pollution + URL schema injection.
+// Keys reservadas que NAO devem ser resolvidas via cur[p]:
+//   - constructor / __proto__ / prototype: prototype walk pode vazar toString
+//     de funcoes nativas, expor info runtime, OU em runtimes maliciosos
+//     permitir prototype pollution writes upstream
+//   - hasOwnProperty / valueOf / toString: methods do Object.prototype
+//     herdados - se ctx ausentes da chave real, retorna funcao stringificada
+const RESERVED_KEYS = new Set([
+  '__proto__', 'constructor', 'prototype',
+  'hasOwnProperty', 'valueOf', 'toString', 'toLocaleString', 'isPrototypeOf',
+]);
+
+// Schema whitelist para sanitize URL em template variables.
+// Email clients geralmente bloqueiam javascript: mas defensive cross-client.
+// Detecta inicio com schema perigoso ANTES de inserir em <a href> de body_html.
+const DANGEROUS_URL_SCHEMA = /^\s*(javascript|data|vbscript|file)\s*:/i;
+
 function renderMustache(template, ctx, isHtml = false) {
   if (!template || typeof template !== 'string') return template;
   return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path) => {
     const parts = path.split('.');
+    // FIX bug 1: limite profundidade nested (max 3 levels) - anti-walk attack
+    if (parts.length > 3) return '';
     let cur = ctx;
     for (const p of parts) {
       if (cur == null) return '';
+      // FIX bug 1: bloqueia reserved keys (constructor/__proto__/prototype)
+      if (RESERVED_KEYS.has(p)) return '';
+      // hasOwn check evita herdar do Object.prototype (toString etc)
+      if (!Object.prototype.hasOwnProperty.call(cur, p)) return '';
       cur = cur[p];
     }
     if (cur == null) return '';
+    // FIX bug 2: tipo guard - apenas string/number/bool stringificam safe.
+    // Objetos/arrays retornam empty (evita [object Object] no email + toString custom).
+    if (typeof cur !== 'string' && typeof cur !== 'number' && typeof cur !== 'boolean') return '';
     const s = String(cur);
-    return isHtml ? _htmlEscape(s) : s;
+    if (isHtml) {
+      // FIX bug 4: HTML context + detect URL-like values com schema perigoso.
+      // Se valor parece URL com javascript:/data:/vbscript:/file: -> blank.
+      // Email clients legacy podem render mesmo escapado (#javascript:).
+      if (DANGEROUS_URL_SCHEMA.test(s)) {
+        log.warn({ value_prefix: s.slice(0, 30) }, '[notif.template.dangerous_url_blocked]');
+        return '';
+      }
+      return _htmlEscape(s);
+    }
+    return s;
   });
 }
 
