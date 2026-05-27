@@ -48,9 +48,9 @@ export default async function PromocoesPage() {
         <div className="space-y-6">
           {products.map((p: any) => (
             <div key={p.id} className="glass p-6 grid md:grid-cols-3 gap-6 items-center">
+              {/* FIX-WORKER-8: next/image substituindo <img> raw (perf + a11y) */}
               <Link href={`/product/${p.slug}`} className="block">
                 {p.cover_image_url && (
-                  {/* FIX-WORKER-8: next/image substituindo <img> raw (perf + a11y) */}
                   <div className="w-full h-48 relative rounded-lg overflow-hidden">
                     <Image src={p.cover_image_url} alt={p.title || 'Produto'}
                       fill sizes="(max-width:768px) 100vw, 400px" className="object-cover" />
