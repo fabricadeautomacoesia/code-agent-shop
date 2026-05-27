@@ -17323,7 +17323,39 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ notification-svc /:id/read (pass 103) - 3 bugs Regra K+rate+UX
 - ✅ order-svc cart.js GET / + DELETE /items/:id (pass 104) - 7 bugs
 - ✅ order-svc cart.js PATCH /items/:id + coupon/preview (pass 105) - 5 bugs
-- ✅ order-svc cart.js POST /coupon (pass 106 esta iter) - 4 bugs rate+race+audit
+- ✅ order-svc cart.js POST /coupon (pass 106) - 4 bugs rate+race+audit
+- ✅ product-svc /:id/force-approve (pass 107 esta iter) - 7 bugs admin override
+
+W7 PASS 107 RESUMO:
+- product-svc/src/routes/admin.js POST /:id/force-approve refactor (7 bugs):
+  * UUID validate missing: PG 22P02 -> 500 leak
+  * Regra K SELECT FOR UPDATE missing
+    - PRE-FIX: 2 admins simultaneo (force-approve + platform-take) race
+    - FIX: SELECT FOR UPDATE OF p inicial
+  * SILENT 404 + Regra N state machine
+    - PRE-FIX: UPDATE rowcount=0 + audit_log target_id inexistente
+    - PRE-FIX: aceita force-approve em product approved/platform_owned/archived
+      * 'approved' -> sobrescreve approved_by + timeline corrompido
+      * 'platform_owned' -> divergencia com duplicate (pass platform-take)
+      * 'archived' -> ressurreta product publico (mod bypass)
+    - FIX: state machine WHITELIST (qa_pending|qa_running|rejected)
+    - FIX: 409 invalid_state com allowed_states + current_status
+  * Regra Q idempotency: SELECT FOR UPDATE + WHERE status check no UPDATE
+  * NEW forceApproveLimiter 20/hr/admin
+    - Admin pwned spam approves = seller scam route (produtos maliciosos)
+    - Real ops ~5-10 force-approves/dia
+  * Seller NOTIFICATION (atomic mesma tx)
+    - PRE-FIX: seller nao sabia que produto foi aprovado por override
+    - Compliance LGPD: direito-acesso a decisoes sobre produtos
+    - Pattern pass 36/86 cross-svc estabelecido
+- Pattern W7 em 117 endpoints + 23 regras (A-W) - 107 micro-iters
+
+PROXIMA ITER:
+- W7 pass 108: product-svc /:id/platform-take audit (Clausula Master critical)
+- W7 pass 109: product-svc /:id/archive audit
+- Operacional: SSH VPS + bash deploy/w7-deploy-validate.sh
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 106 RESUMO:
 - order-svc/src/routes/cart.js POST /coupon refactor (4 bugs):

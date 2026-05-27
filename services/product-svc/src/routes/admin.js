@@ -138,16 +138,91 @@ router.get('/qa-queue',
   })
 );
 
-// POST /products/admin/:id/force-approve (override admin)
+// POST /products/admin/:id/force-approve - admin override QA bypass
+// FIX-WORKER-7 pass 107: 7 BUGS aplicando Pattern W7 (UUID+K+N+Q + rate-limit + notif + 404).
+//
+// BUG 1 *** UUID VALIDATE MISSING *** PG 22P02 -> 500 leak
+//   FIX: FORCE_APPROVE_UUID_RE upfront.
+//
+// BUG 2 *** Regra K SELECT FOR UPDATE MISSING ***
+//   PRE-FIX: UPDATE products sem lock - 2 admins simultaneo race.
+//   Cenario: Admin A clicka force-approve + Admin B clicka platform-take.
+//   Sem lock pessimistico: A faz UPDATE status='approved', B faz
+//   INSERT platform_owned baseado em snapshot pre-A -> divergencia.
+//   FIX: SELECT FOR UPDATE OF p inicial.
+//
+// BUG 3 *** SILENT 404 *** UPDATE rowcount=0 + {ok:true}
+//   PRE-FIX: product inexistente -> UPDATE 0 rows MAS audit_log criado.
+//   Audit_log com target_id que nao existe = trail corrompido.
+//   FIX: SELECT FOR UPDATE check existe + 404 se ausente.
+//
+// BUG 4 *** Regra N STATE MACHINE MISSING ***
+//   PRE-FIX: aceita force-approve em product ja approved/platform_owned/archived.
+//   - product 'approved' force-approved novamente: sobrescreve approved_by
+//     + audit timeline corrompido (multiplos approves mesmo product)
+//   - product 'platform_owned' force-approved: muda seller_id approved_by mas
+//     duplicate original ja existe (pass platform-take) - estado invalido
+//   - product 'archived' force-approved: ressurreta product publico (mod bypass)
+//   FIX: state machine check status IN ('qa_pending','qa_running','rejected')
+//
+// BUG 5 *** Regra Q IDEMPOTENCY *** re-force-approve sobrescreve trail
+//   Pattern pass 25/36/85 estabeleceu: terminal operations idempotent guard.
+//   Inclusive em BUG 4 fix.
+//
+// BUG 6 *** RATE-LIMIT MISSING ***
+//   Admin pwned spam force-approves -> seller scam route (approve produtos
+//   maliciosos em massa). Real ops: ~5-10 force-approves/dia.
+//   FIX: forceApproveLimiter 20/hr/admin.
+//
+// BUG 7 *** SELLER NOTIFICATION MISSING ***
+//   Pattern pass 36/86: critical action notify affected party.
+//   Seller deveria saber "produto aprovado por override admin" + reason.
+//   Compliance: seller direito-acesso (LGPD) ao saber decisoes sobre produtos.
+//   FIX: INSERT notifications atomic dentro tx().
+const FORCE_APPROVE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const forceApproveLimiter = require('@cas/shared').rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 20,
+  message: 'Muitos force-approves recentes. Aguarde 1 hora.',
+});
+
 router.post('/:id/force-approve',
-  validate({ body: z.object({ reason: z.string().min(5) }) }),
-  asyncHandler(async (req, res) => {
+  forceApproveLimiter,
+  validate({ body: z.object({ reason: z.string().min(5).max(1000) }) }),
+  asyncHandler(async (req, res, next) => {
+    // BUG 1: UUID validate
+    if (!FORCE_APPROVE_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('product_not_found'));
+    }
+
+    let outcome;
+    let productMeta;
+
     await tx(async (c) => {
+      // BUG 2+3+4: SELECT FOR UPDATE + state machine
+      const cur = await c.query(
+        `SELECT id, status, title, slug, seller_id
+           FROM products WHERE id = $1::UUID FOR UPDATE`,
+        [req.params.id]
+      );
+      if (!cur.rows.length) { outcome = { error: 'not_found' }; return; }
+      const p = cur.rows[0];
+
+      // BUG 4+5 Regra N+Q: state machine
+      const APPROVABLE_STATES = new Set(['qa_pending','qa_running','rejected']);
+      if (!APPROVABLE_STATES.has(p.status)) {
+        outcome = { error: 'invalid_state', current_status: p.status };
+        return;
+      }
+      productMeta = { id: p.id, title: p.title, slug: p.slug, seller_id: p.seller_id, previous_status: p.status };
+
+      // UPDATE atomic com idempotent state guard
       await c.query(
         `UPDATE products SET status = 'approved', qa_verdict = 'approved', approved_at = NOW(),
                             approved_by = $1, published_at = COALESCE(published_at, NOW()), updated_at = NOW()
-          WHERE id = $2`, [req.user.sub, req.params.id]
+          WHERE id = $2 AND status IN ('qa_pending','qa_running','rejected')`,
+        [req.user.sub, req.params.id]
       );
+
       // reset SLA do seller (deu produto aprovado!)
       await c.query(
         `UPDATE sellers s SET sla_last_upload_at = NOW(),
@@ -155,15 +230,53 @@ router.post('/:id/force-approve',
           FROM products p WHERE p.id = $1 AND p.seller_id = s.id AND s.seller_class = 'class_b'`,
         [req.params.id]
       );
+
       await c.query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1,$2,'product.force_approve','product',$3,'warn',$4::JSONB)`,
-        [req.user.sub, req.user.role, req.params.id, JSON.stringify({ reason: req.body.reason })]
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({
+           reason: req.body.reason,
+           previous_status: productMeta.previous_status,
+           ip: req.ip,
+         })]
       );
+
+      // BUG 7: notify seller (atomic - mesma tx)
+      if (productMeta.seller_id) {
+        await c.query(
+          `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
+           SELECT s.user_id, 'in_app'::notification_channel, 'product_force_approved',
+                  $1::text, $2::text, $3::JSONB, 1
+             FROM sellers s WHERE s.id = $4::UUID
+            LIMIT 1`,
+          [
+            `Produto aprovado por admin: ${productMeta.title}`,
+            `Seu produto foi aprovado por override admin. Motivo: ${String(req.body.reason).slice(0, 300)}`,
+            JSON.stringify({
+              product_id: req.params.id,
+              product_slug: productMeta.slug,
+              previous_status: productMeta.previous_status,
+            }),
+            productMeta.seller_id,
+          ]
+        );
+      }
     });
+
+    if (outcome?.error === 'not_found') return next(errorHandler.notFound('product_not_found'));
+    if (outcome?.error === 'invalid_state') {
+      return res.status(409).json({
+        error: 'invalid_state',
+        message: 'Produto nao pode ser force-approved neste estado.',
+        current_status: outcome.current_status,
+        allowed_states: ['qa_pending','qa_running','rejected'],
+      });
+    }
+
     // FIX-WORKER-7 pass 5: passa productId p/ invalidacao especifica detail/reviews/qna
     await invalidateProductCache(req.params.id);
-    res.json({ ok: true });
+    res.json({ ok: true, product_id: req.params.id, previous_status: productMeta?.previous_status });
   })
 );
 
