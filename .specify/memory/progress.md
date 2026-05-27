@@ -17312,7 +17312,38 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ search-svc /autocomplete (pass 92) - 3 bugs DLP cache + limit + parallel
 - ✅ search-svc /top-sellers + /top-sellers/:category + /trending (pass 93) - 6 bugs
 - ✅ search-svc /categories + /facets (pass 94) - 5 bugs
-- ✅ payment-svc /webhooks/:id/reset (pass 95 esta iter) - 4 bugs admin race+DLP
+- ✅ payment-svc /webhooks/:id/reset (pass 95) - 4 bugs admin race+DLP
+- ✅ qa-svc /qa/runs/:product_id + /qa/runs/stuck (pass 96 esta iter) - 10 bugs DLP+tier-split
+
+W7 PASS 96 RESUMO:
+- qa-svc/src/server.js 2 endpoints refactor (10 bugs):
+  * /qa/runs/:product_id (7 bugs):
+    - Regra D: + id DESC tiebreaker (cron QA retry burst)
+    - Regra E: ?limit (1-200, default 50) + ?offset + total + has_more
+    - DLP CRITICAL reasons/suggestions arrays:
+      * LLM concatena error.message com Bearer/PG_PASS/JWT
+      * FIX: mask.text() per array element
+    - DLP tier-split admin vs seller:
+      * Seller NAO ve: llm_provider/llm_model/cost_usd_cents/tokens
+      * Compliance: gross margin disclosure protegida
+      * Operacional: fingerprint provider/model nao vaza p/ atacante
+    - Regra A status pre-check (deleted_at IS NULL)
+    - NEW ?verdict filter (approved|rejected|running|timeout|error)
+    - is_admin_view flag p/ UX label
+  * /qa/runs/stuck (3 bugs):
+    - Regra D: + id ASC tiebreaker
+    - Regra E: ?limit/?offset + total + has_more
+    - NEW ?threshold_minutes (1-1440, default 5)
+      * Admin pode triage 5/10/15/30 min etc
+- Pattern W7 em 104 endpoints + 23 regras (A-W) - 96 micro-iters
+- DLP tier-split estabelecido cross-svc: review-svc + order-svc + seller-svc
+  + product-svc + qa-svc
+
+PROXIMA ITER:
+- W7 pass 97: auth-svc remaining endpoints audit
+- W7 pass 98: order-svc remaining endpoints
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 95 RESUMO:
 - payment-svc/src/server.js POST /webhooks/:id/reset refactor (4 bugs):

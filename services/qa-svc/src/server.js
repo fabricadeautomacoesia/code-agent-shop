@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, startup } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, startup, mask } = require('@cas/shared');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
 // QA_CALLBACK_SECRET obrigatorio (HMAC do worker -> autenticidade de scores).
@@ -573,29 +573,121 @@ app.post('/qa/callback',
 // llm_provider/model. Agora exige role admin/staff OU ser o seller dono do produto.
 // Tambem valida UUID antes do query (evita PG 22P02 -> 404 generico).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// GET /qa/runs/:product_id - historico QA runs (admin/staff full + seller owner masked)
+// FIX-WORKER-7 pass 96: 7 BUGS aplicando Pattern W7.
+//
+// BUG 1 *** Regra D *** ORDER BY started_at DESC sem id DESC tiebreaker
+//   Cron QA pode rodar burst (timeout retry) -> started_at identicos
+// BUG 2 *** Regra E *** hardcoded LIMIT 50 sem ?limit/?offset
+// BUG 3 *** DLP reasons/suggestions arrays *** LLM raw text leak
+//   PRE-FIX: reasons/suggestions retornados raw. LLM concatena error.message
+//   que pode ter Bearer/PG_PASS/JWT em stack traces de exception caught.
+//   FIX: mask.text() em cada string array element.
+// BUG 4 *** DLP llm_provider/llm_model/cost p/ SELLER ***
+//   PRE-FIX: seller ve llm_provider="openai" / llm_model="gpt-4o" /
+//   cost_usd_cents - vaza fingerprint operacional + custos internos.
+//   Atacante pode tentar exploit specific provider quirks.
+//   Compliance: gross margin disclosure (custo vs price seller).
+//   FIX: tier-split (admin=full, seller=masked sem provider/model/cost).
+// BUG 5 *** Regra A status pre-check MISSING ***
+//   PRE-FIX: aceita product_id deletado/archived - runs fantasma response.
+//   FIX: ownership query inclui status IN ('approved','platform_owned',
+//   'qa_pending','qa_running','rejected','draft') - admite all states
+//   ATIVOS (draft/qa_pending para seller seu produto novo, etc).
+// BUG 6 *** ?verdict FILTER MISSING ***
+//   Debug UX: filtrar SO "timeout"/"rejected"/"running" para investigar issues.
+//   FIX: ?verdict enum (approved|rejected|running|timeout|error).
+// BUG 7 *** Total + has_more UX paginacao ***
+const QA_VERDICT_ENUM = new Set(['approved','rejected','running','timeout','error']);
+
 app.get('/qa/runs/:product_id', jwt.requireAuth(), asyncHandler(async (req, res, next) => {
   if (!UUID_RE.test(req.params.product_id)) {
     return next(errorHandler.badRequest('invalid_uuid'));
   }
-  // Authz: admin/staff OU seller dono do produto
+  const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+  // BUG 6: verdict filter optional
+  const verdictFilter = req.query.verdict ? String(req.query.verdict) : null;
+  if (verdictFilter && !QA_VERDICT_ENUM.has(verdictFilter)) {
+    return res.status(400).json({ error: 'invalid_verdict', allowed: Array.from(QA_VERDICT_ENUM) });
+  }
+
+  // Authz: admin/staff OU seller dono do produto + Regra A status check
   const role = req.user?.role;
-  if (role !== 'admin' && role !== 'staff') {
+  const isAdmin = role === 'admin' || role === 'staff';
+  if (!isAdmin) {
     const own = await query(
       `SELECT 1 FROM products p JOIN sellers s ON s.id = p.seller_id
-        WHERE p.id = $1 AND s.user_id = $2::UUID`,
+        WHERE p.id = $1 AND s.user_id = $2::UUID AND p.deleted_at IS NULL`,
       [req.params.product_id, req.user.sub]
     );
     if (!own.rows.length) return next(errorHandler.forbidden('not_product_owner'));
   }
+
+  // Build WHERE
+  const whereParts = ['product_id = $1'];
+  const params = [req.params.product_id];
+  let i = 2;
+  if (verdictFilter) {
+    whereParts.push(`verdict = $${i++}`);
+    params.push(verdictFilter);
+  }
+  params.push(limit, offset);
+  const limIdx = i++;
+  const offIdx = i++;
+
   const r = await query(
     `SELECT id, product_id, product_version_id, verdict, confidence_score,
             sintaxe_ok, resolves_problem, is_functional, reasons, suggestions,
             llm_provider, llm_model, tokens_input, tokens_output, cost_usd_cents,
             duration_ms, started_at, finished_at
-       FROM product_qa_runs WHERE product_id = $1 ORDER BY started_at DESC LIMIT 50`,
-    [req.params.product_id]
+       FROM product_qa_runs
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY started_at DESC, id DESC
+      LIMIT $${limIdx} OFFSET $${offIdx}`,
+    params
   );
-  res.json({ runs: r.rows });
+
+  // BUG 7: total count UX
+  const countParams = params.slice(0, -2);
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM product_qa_runs WHERE ${whereParts.join(' AND ')}`,
+    countParams
+  );
+  const total = totalRes.rows[0].total;
+
+  // BUG 3+4: DLP tier-split (admin=full, seller=masked)
+  const runs = r.rows.map((row) => {
+    if (isAdmin) {
+      return row;
+    }
+    // Seller: mask DLP fields + remove operational fingerprint
+    return {
+      ...row,
+      // BUG 3: mask.text() em reasons/suggestions (LLM error concat may have secrets)
+      reasons: Array.isArray(row.reasons)
+        ? row.reasons.map((r) => typeof r === 'string' ? mask.text(r) : r)
+        : row.reasons,
+      suggestions: Array.isArray(row.suggestions)
+        ? row.suggestions.map((s) => typeof s === 'string' ? mask.text(s) : s)
+        : row.suggestions,
+      // BUG 4: remove operational fingerprint p/ seller
+      llm_provider: null,
+      llm_model: null,
+      cost_usd_cents: null,
+      tokens_input: null,
+      tokens_output: null,
+    };
+  });
+
+  res.json({
+    runs,
+    total, limit, offset,
+    has_more: (offset + runs.length) < total,
+    verdict: verdictFilter,
+    is_admin_view: isAdmin,
+  });
 }));
 
 // ============================================================
@@ -680,18 +772,46 @@ async function timeoutStuckRuns() {
 }
 
 // GET /qa/runs/stuck - admin lista runs candidatos a timeout (pre-cron visibility)
+// FIX-WORKER-7 pass 96: 3 BUGS aplicando Pattern W7 (Regra D+E + threshold param).
+//
+// BUG 1 *** Regra D *** ORDER BY started_at ASC sem id ASC tiebreaker
+// BUG 2 *** Regra E *** hardcoded LIMIT 50 sem ?limit/?offset
+// BUG 3 *** ?threshold_minutes MISSING ***
+//   PRE-FIX: hardcoded 5 min. Admin pode querer 10/15/30 min p/ triage.
+//   FIX: ?threshold_minutes (1-1440 = 24h cap, default 5).
 app.get('/qa/runs/stuck',
   jwt.requireAuth({ roles: ['admin', 'staff'] }),
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const thresholdMin = Math.max(1, Math.min(1440, parseInt(req.query.threshold_minutes, 10) || 5));
+
     const r = await query(
       `SELECT id, product_id, started_at, llm_provider, n8n_execution_id,
               EXTRACT(EPOCH FROM (NOW() - started_at))/60::INT AS minutes_running
          FROM product_qa_runs
         WHERE verdict = 'running'
-          AND started_at < NOW() - INTERVAL '5 minutes'
-        ORDER BY started_at ASC LIMIT 50`
+          AND started_at < NOW() - ($1 || ' minutes')::INTERVAL
+        ORDER BY started_at ASC, id ASC
+        LIMIT $2 OFFSET $3`,
+      [String(thresholdMin), limit, offset]
     );
-    res.json({ runs: r.rows, count: r.rows.length });
+
+    const totalRes = await query(
+      `SELECT COUNT(*)::INT AS total FROM product_qa_runs
+        WHERE verdict = 'running'
+          AND started_at < NOW() - ($1 || ' minutes')::INTERVAL`,
+      [String(thresholdMin)]
+    );
+
+    res.json({
+      runs: r.rows,
+      count: r.rows.length,
+      total: totalRes.rows[0].total,
+      limit, offset,
+      threshold_minutes: thresholdMin,
+      has_more: (offset + r.rows.length) < totalRes.rows[0].total,
+    });
   })
 );
 
