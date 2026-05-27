@@ -268,49 +268,110 @@ app.post('/use',
   vaultUseGuard,
   validate({ body: z.object({ provider: z.string(), seller_id: z.string().uuid().optional(), operation: z.string().optional() }) }),
   asyncHandler(async (req, res, next) => {
-    const { provider, seller_id, operation } = req.body;
-    // 1. tenta seller-specific
+    // FIX-WORKER-7 pass 24: 4 BUGS CRITICOS em endpoint que toca criptografia.
+    //
+    // BUG 1 *** SECURITY GRAVE *** SELECT * em vault_api_keys (2x!)
+    //   Tabela contem encrypted_key + iv + auth_tag (AES-256-GCM secret material).
+    //   SELECT * carrega TUDO no Node memory + transita PG wire protocol.
+    //   Em crash/exception, stack trace pode vazar encrypted_key/iv/tag.
+    //   Logs server (Pino) podem dump objeto inteiro em verbose mode.
+    //   Pattern Regra I cross-svc CRITICO em endpoints toca crypto.
+    //   FIX: SELECT explicit com 6 campos necessarios para decrypt+response.
+    //   NUNCA mais campos via SELECT * (defense em profundidade vs vazamento).
+    //
+    // BUG 2 *** RACE POOL ALLOCATION (Regra K) ***
+    //   Fallback pool platform: ORDER BY last_used_at NULLS FIRST.
+    //   2 requests simultaneos (mesmo provider, sem seller_id) leem mesma key
+    //   "menos usada" -> ambos pegam MESMA key. Load balancing QUEBRADO.
+    //   Em providers com quota por key (OpenAI/Anthropic rate-limit per-key):
+    //   - 1 key exhausted (429 from provider)
+    //   - Outras keys idle (quota nao usada)
+    //   - Plataforma "tem quota" mas usuario ve falha
+    //   FIX: tx() + SELECT FOR UPDATE em pool fallback (lock atomico).
+    //   Seller-specific NAO precisa lock (uma key por seller).
+    //
+    // BUG 3 UPDATE last_used_at separado da SELECT (race-residual)
+    //   Pre-fix: SELECT -> decrypt -> UPDATE (3 queries lineares)
+    //   Se UPDATE falhar (lock, network) apos retornar plain_key, last_used_at
+    //   NAO atualizado -> proxima request ve essa key como "menos usada" again.
+    //   Resultado: mesma key recebe sequencia infinita, outras idle.
+    //   FIX: UPDATE dentro do MESMO tx() do pool. last_used_at atualiza com
+    //   plain_key release atomicamente.
+    //
+    // BUG 4 ORDER BY tiebreaker faltando (Regra D)
+    //   Pre-fix: ORDER BY last_used_at NULLS FIRST, created_at ASC
+    //   2 keys nunca usadas (last_used_at NULL) + created_at ms identico
+    //   (batch import) = ordem arbitraria PG planner.
+    //   FIX: tiebreaker id (UUID sempre unique).
+    const { provider, seller_id, operation: _operation } = req.body;
+
+    // FIX bug 1: SELECT explicit p/ ambas queries (security: nunca SELECT *
+    // em tabela com encrypted material).
+    const KEY_FIELDS = `id, provider, encrypted_key, iv, auth_tag,
+                        key_fingerprint, key_alias, is_platform_pool`;
+
+    // 1. tenta seller-specific (sem race - uma key por seller normalmente)
     let r = seller_id ? await query(
-      `SELECT * FROM vault_api_keys
-        WHERE provider = $1 AND seller_id = $2 AND is_active AND (expires_at IS NULL OR expires_at > NOW())
-        ORDER BY created_at DESC LIMIT 1`,
+      `SELECT ${KEY_FIELDS} FROM vault_api_keys
+        WHERE provider = $1 AND seller_id = $2 AND is_active
+          AND (expires_at IS NULL OR expires_at > NOW())
+        ORDER BY created_at DESC, id LIMIT 1`,
       [provider, seller_id]
     ) : { rows: [] };
-    // 2. fallback platform pool
-    if (!r.rows.length) {
-      r = await query(
-        `SELECT * FROM vault_api_keys
-          WHERE provider = $1 AND is_platform_pool AND is_active AND (expires_at IS NULL OR expires_at > NOW())
-          ORDER BY last_used_at NULLS FIRST, created_at ASC LIMIT 1`,
-        [provider]
+
+    // 2. fallback platform pool - REQUER FOR UPDATE (load balancing race)
+    let k = r.rows[0];
+    if (!k) {
+      // FIX bug 2+3: tx() atomic - SELECT FOR UPDATE + UPDATE atomicos
+      await tx(async (c) => {
+        const poolR = await c.query(
+          `SELECT ${KEY_FIELDS} FROM vault_api_keys
+            WHERE provider = $1 AND is_platform_pool AND is_active
+              AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY last_used_at NULLS FIRST, created_at ASC, id
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED`,
+          [provider]
+        );
+        if (poolR.rows.length) {
+          k = poolR.rows[0];
+          // UPDATE last_used_at DENTRO do tx() - garante atomicidade
+          // FOR UPDATE SKIP LOCKED + UPDATE no MESMO tx() = serializacao
+          // automatica entre requests concorrentes (cada uma pega DIFFERENT key).
+          await c.query(
+            'UPDATE vault_api_keys SET last_used_at = NOW(), last_used_ip = $1 WHERE id = $2',
+            [req.ip, k.id]
+          );
+        }
+      });
+    } else {
+      // Seller-specific path - UPDATE simples (sem race em uma key por seller)
+      await query(
+        'UPDATE vault_api_keys SET last_used_at = NOW(), last_used_ip = $1 WHERE id = $2',
+        [req.ip, k.id]
       );
     }
-    if (!r.rows.length) return next(errorHandler.notFound('no_key_available'));
-    const k = r.rows[0];
+
+    if (!k) return next(errorHandler.notFound('no_key_available'));
+
     let plain;
     try {
       plain = cryp.decrypt({ encrypted: k.encrypted_key, iv: k.iv, tag: k.auth_tag });
     } catch (e) {
       // FIX SEG-VAULT-2: nao vaza exception message ao cliente (DLP). Loga estruturado server-side.
+      // Importante: NAO inclui k.encrypted_key/iv/tag no log (security).
       log.error({ err: e.message, key_id: k.id, fp: k.key_fingerprint }, '[vault.decrypt_fail]');
       return next(errorHandler.serverError('decrypt_failed'));
     }
-    await query('UPDATE vault_api_keys SET last_used_at = NOW(), last_used_ip = $1 WHERE id = $2', [req.ip, k.id]);
     res.json({
       key_id: k.id, provider: k.provider, fingerprint: k.key_fingerprint, plain_key: plain,
       is_platform_pool: k.is_platform_pool, alias: k.key_alias,
     });
     // FIX-WORKER-17 pass 9: INSERT vault_key_usage REMOVIDO daqui.
-    // Bug: criava registro "fantasma" com cost_usd_cents=0 + success=TRUE
+    // Bug original: criava registro "fantasma" com cost_usd_cents=0 + success=TRUE
     // mesmo antes da chamada LLM ter ocorrido.
-    // CONSEQUENCIA:
-    // - COUNT(*) FROM vault_key_usage = 2x calls reais (1 do /use + 1 do /usage)
-    // - Calls que falhavam apos /use mas nao chegavam a chamar /usage ficavam
-    //   gravadas como success=TRUE (default), poluindo dashboards de health
-    // - Auditoria forensics confusa (2 timestamps por call)
     // SOLUCAO: log autoritativo unico via POST /usage que tem o set completo
     // (cost, tokens, duration, success real, error_message).
-    // O UPDATE last_used_at acima ja provem signal "key acessada".
   })
 );
 

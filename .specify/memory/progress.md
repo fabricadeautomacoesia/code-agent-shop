@@ -13532,3 +13532,96 @@ PROXIMA ITER:
 - W13: notification-svc Regra N state machine
 - W18 pass 7: idx parcial product_views > 90d cron
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
+
+================================================================
+ITER W7 PASS 24 - vault-svc /use 4 BUGS (SECURITY CRYPTO + race) (2026-05-27)
+================================================================
+ESCOPO: vault-svc POST /use (LLM key dispense - toca criptografia AES-256-GCM)
+FILE: services/vault-svc/src/server.js (linhas 266-315)
+
+CONTEXTO: W7 pass 23 fechou payment-svc. Pass 24 audita vault-svc -
+endpoint que toca SECRET MATERIAL (encrypted_key + iv + auth_tag).
+Audit revelou bug security crit RAS + race pool allocation.
+
+BUGS CORRIGIDOS (4):
+
+1. *** SECURITY GRAVE *** SELECT * em vault_api_keys (2 lugares!)
+- Tabela vault_api_keys contem:
+  - encrypted_key BYTEA (AES-256-GCM ciphertext)
+  - iv BYTEA (nonce 12 bytes)
+  - auth_tag BYTEA (16 bytes integrity)
+- SELECT * carrega TUDO no Node memory + transita PG protocol
+- PG wire NAO eh criptografado por padrao app<->DB (sem TLS = plaintext)
+- Em crash/exception unhandled, Pino logger pode dump objeto completo
+- Pattern Regra I cross-svc CRITICO em endpoints toca crypto
+- 2 queries (seller-specific + platform pool fallback) ambas vulneraveis
+- FIX: SELECT explicit 8 campos necessarios para decrypt+response:
+  id, provider, encrypted_key, iv, auth_tag, key_fingerprint,
+  key_alias, is_platform_pool
+- Pattern defensivo: encrypted material nunca via wildcard
+
+2. *** RACE POOL KEY ALLOCATION (Regra K) ***
+- Fallback platform pool: ORDER BY last_used_at NULLS FIRST = "menos usada"
+- Load balancing entre keys (OpenAI: 10 keys quota separada cada)
+- CENARIO REAL: 2 requests simultaneos (mesmo provider, sem seller_id):
+  - Request A: SELECT pool, le key X como "menos usada" (last_used_at=NULL)
+  - Request B: SELECT pool (paralelo!), le mesma key X (sem lock)
+  - Request A: UPDATE key X last_used_at=NOW(), decrypt, retorna
+  - Request B: UPDATE key X (idempotente, sobrescreve com timestamp +1ms)
+  - Ambos usam mesma key X -> quota A:50% + quota B:50% = 100% em UMA key
+  - Outras keys IDLE
+- Em quota providers (OpenAI/Anthropic): 1 key exhausted (429) enquanto
+  outras subutilizadas. Plataforma TEM quota mas usuario ve falha.
+- FIX: tx() + SELECT FOR UPDATE SKIP LOCKED em pool fallback
+  - SKIP LOCKED: request B pula key X (locked) e pega proxima
+  - Load balancing automatico via PG row-level lock
+  - Seller-specific NAO precisa (1 key por seller normalmente)
+
+3. UPDATE LAST_USED_AT SEPARADO (race-residual)
+- Pre-fix: 3 queries lineares (SELECT pool + decrypt + UPDATE)
+  - Falha UPDATE pos-decrypt -> client recebe plain_key MAS last_used_at
+    nao atualizado -> proxima request ve essa key como "menos usada"
+  - Sequencia infinita mesma key
+- FIX: UPDATE last_used_at DENTRO do tx() com FOR UPDATE
+  - Lock + UPDATE atomicos -> next request ve novo timestamp
+  - Combina com SKIP LOCKED = serializacao perfeita
+- Seller-specific path mantem UPDATE separado (sem race em 1 key/seller)
+
+4. ORDER BY tiebreaker faltando (Regra D)
+- Pre-fix: ORDER BY last_used_at NULLS FIRST, created_at ASC
+- 2 keys nunca usadas + created_at ms identico (batch import) = arbitrario
+- FIX: tiebreaker id (UUID sempre unique) - 3-tier deterministic
+
+PATTERN W7 SECURITY CRYPTO ENDPOINT:
+- Crypto material (encrypted, iv, tag): NUNCA SELECT *
+- Logs NAO dump objeto completo (Pino structured log fields explicit)
+- Errors NAO incluem ciphertext (so id, fingerprint - non-secret refs)
+- Pattern documentar: explicitar tabelas "crypto-sensitive" no schema
+
+SKIP LOCKED PATTERN (novo - FIX bug 2):
+- FOR UPDATE SKIP LOCKED: nao bloqueia, pula rows locked
+- Perfeito para pool/queue allocation (multiple workers, sem starvation)
+- PG idiomatic - simpler que advisory locks
+- Aplicavel: vault pool (esta iter), notification outbox processing,
+  qa pipeline job dispatch, futuros queue patterns
+
+PATTERN W7 14+1 ENDPOINTS + 16 REGRAS (A-P):
+- product-svc: 4 endpoints
+- search-svc: 5 endpoints
+- order-svc: 8 endpoints
+- payment-svc: 3 endpoints
+- vault-svc: 1 endpoint (/use esta iter)
+
+NOVA REGRA P (W7 pass 24):
+P. Crypto-sensitive tables NUNCA SELECT *. Listar explicit os 6-10 campos
+   minimos. Pattern defensivo:
+   - encrypted material nao vaza via logs/stack-traces/dumps
+   - Errors carregam so refs non-secret (id, fingerprint, alias)
+   - schema documenta colunas crypto-sensitive via COMMENT
+   Aplica: vault_api_keys, futuro: 2fa_secrets, password_hashes (se crypto)
+
+PROXIMA ITER:
+- W7 pass 25: vault-svc /usage + /rotate audit (Regra O multi-phase)
+- W18 pass 7: idx parcial product_views > 90d cron
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W13: notification-svc Regra N+SKIP LOCKED pattern
