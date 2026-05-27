@@ -17316,7 +17316,38 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ qa-svc /qa/runs/:product_id + /qa/runs/stuck (pass 96) - 10 bugs DLP+tier-split
 - ✅ auth-svc PATCH /me (pass 97) - 8 bugs validation+race+audit
 - ✅ auth-svc /logout (pass 98) - 4 bugs + MLB revoke_all
-- ✅ seller-svc /:slug/stats + /:slug/products (pass 99 esta iter) - 9 bugs
+- ✅ seller-svc /:slug/stats + /:slug/products (pass 99) - 9 bugs
+- ✅ W7 MARCO pass 100 esta iter - 100 micro-iters + deploy script + doc
+
+W7 PASS 100 RESUMO (MARCO):
+- docs/W7-MARCO-PASS-100.md NEW - documentacao completa:
+  * 23 regras Pattern W7 consolidadas (A-W) com endpoint count
+  * LGPD role-tier 10 endpoints cross-svc
+  * DLP cross-svc em 7 svcs
+  * Regra L resource caps 3 svcs
+  * Regra P audit_log 15+ endpoints
+  * Admin bypass pattern 5 endpoints
+  * Tier-split healthcheck
+  * Deprecated routes
+- deploy/w7-deploy-validate.sh NEW - script deploy + validation:
+  * FASE 1: git pull origin main (puxa 99 passes do GitHub)
+  * FASE 2: docker build + stack deploy 12 svcs
+  * FASE 3: curl validation 14 checks (aiops.status DLP, search enums,
+    products pagination, gateway healthz, auth schemas)
+  * FASE 4: docker service ls + containers em erro
+  * Output: PASS/FAIL summary + exit code
+- VPS status documentado: NAO VALIDADO em prod
+  * Sandbox local: 100% passes commitados + push OK
+  * Prod: requer SSH manual + execucao do script
+  * User instrucao clara em docs/W7-MARCO-PASS-100.md
+- Pattern W7 em 108 endpoints + 23 regras (A-W) - 100 micro-iters MARCO
+
+PROXIMA ITER:
+- W7 pass 101: review-svc remaining endpoints
+- W7 pass 102: vault-svc /use audit
+- Operacional: SSH VPS + bash deploy/w7-deploy-validate.sh
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 99 RESUMO:
 - seller-svc/src/routes/sellers.js 2 endpoints refactor (9 bugs):
