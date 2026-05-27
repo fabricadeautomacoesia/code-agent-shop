@@ -42,15 +42,17 @@ export default function OGImage() {
             justifyContent: 'center',
             fontSize: 48,
             fontWeight: 800,
-          }}>C&amp;</div>
-          <div style={{ fontSize: 48, fontWeight: 700, letterSpacing: -2 }}>
-            Code <span style={{ color: '#EC4899' }}>&amp;</span> Agent <span style={{ color: '#9CA3AF' }}>Shop</span>
+            color: 'white',
+          }}>CAS</div>
+          <div style={{ display: 'flex', fontSize: 48, fontWeight: 700, letterSpacing: -2, color: 'white' }}>
+            Code & Agent Shop
           </div>
         </div>
-        <div style={{ fontSize: 64, fontWeight: 700, lineHeight: 1.1, maxWidth: 1000 }}>
-          Marketplace de automacoes,<br />agentes IA e workflows n8n
+        <div style={{ display: 'flex', fontSize: 64, fontWeight: 700, lineHeight: 1.1, maxWidth: 1000, color: 'white' }}>
+          Marketplace de automacoes, agentes IA e workflows n8n
         </div>
         <div style={{
+          display: 'flex',
           fontSize: 28,
           color: '#9CA3AF',
           marginTop: 32,
