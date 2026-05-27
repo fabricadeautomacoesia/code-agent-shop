@@ -4619,3 +4619,68 @@ PROXIMA ITER:
 - Considerar tornar PAYMENT_INTERNAL_TOKEN OBRIGATORIO em PROD (fail-closed)
   similar ao JWT secrets W17 pass 6 - hoje continua silently broken
 - Audit qa-svc/vault-svc para mesmo pattern fetch sem r.ok check
+
+## WORKER 17 pass 8 (SHARED+4SVCS) - enforceInProd + periodic warnings
+
+GAP DETECTADO (proxima iter do W2 pass 3):
+"Considerar tornar PAYMENT_INTERNAL_TOKEN OBRIGATORIO em PROD (fail-closed)"
+
+Trade-off:
+- Fail-closed total = quebrar PROD ate ops configurar (high friction)
+- Warn-only (W17 pass 7) = silencioso runtime (W2 pass 3 fiasco)
+- Solucao gradual: enforceInProd com periodic + opt-in strict mode
+
+FIX (1 arquivo packages/shared/src/startup.js + 4 services):
+
+Novo conceito enforceInProd em validateStartupEnv:
+1. PROD + STRICT_INTERNAL_TOKENS=1 -> errors.push -> process.exit(1) fail-closed
+2. PROD sem strict -> warn startup + setInterval 10min re-emit (.unref())
+3. DEV -> silencioso
+
+Mensagens claras com action:
+"SHOULD-BE-CRITICAL env missing: PAYMENT_INTERNAL_TOKEN (cross-service auth broken)"
+"Set STRICT_INTERNAL_TOKENS=1 to refuse boot until configured."
+
+WIRED em 4 services:
+- order-svc: PAYMENT_INTERNAL_TOKEN (dispatch checkout -> payment-svc)
+- payment-svc: PAYMENT_INTERNAL_TOKEN (recebe order-svc fetch)
+- qa-svc: QA_RUN_INTERNAL_TOKEN (product-svc -> qa-svc /qa/run)
+- vault-svc: VAULT_INTERNAL_TOKEN (product-svc -> vault-svc /use)
+
+DEPLOY:
+- commit 38f0e9a pushed
+- 4 builds paralelos (~2.5s cada)
+- 4 services updates converged
+
+VALIDACAO STARTUP LOGS:
+- order-svc: "SHOULD-BE-CRITICAL env missing: PAYMENT_INTERNAL_TOKEN" OK
+- vault-svc: "SHOULD-BE-CRITICAL env missing: VAULT_INTERNAL_TOKEN" OK
+- Action visible: "Set STRICT_INTERNAL_TOKENS=1 to refuse boot until configured"
+- Service continua listening (nao quebra ate ops decidir)
+- setInterval 10min armado para re-emit (ops VAI ver no log de qualquer escolha)
+
+IMPACTO ARQUITETURAL:
+- 3 niveis de fail-closed disponiveis (DEV warn / PROD periodic / STRICT exit)
+- Ops pode rolar tokens gradualmente sem panic
+- Log noise crescente impede oblivion (W2 pass 3 era 1 warn one-shot perdido)
+- Defense em depth: startup + runtime W2 pass 3 + agora periodic
+
+MIGRATION PATH OPS DOCUMENTADO:
+1. Deploy (feito - 38f0e9a)
+2. openssl rand -hex 32 (3 tokens distintos)
+3. docker secret create cas_payment_internal_token (etc)
+4. Configurar em Swarm services env vars
+5. (opcional, futuro) STRICT_INTERNAL_TOKENS=1 quando estavel
+
+CICLO W17 (passes 4-8) FECHA TEMA SECURITY HARDENING DEFINITIVO:
+- pass 4: vault DLP info leak
+- pass 5: shared/crypto stricter validation
+- pass 6: shared/jwt fail-closed PROD
+- pass 7: shared/startup unified helper
+- pass 8: enforceInProd com periodic + strict mode opt-in
+TOTAL: 5 latent vulnerabilities + 2 helpers reusaveis. Security tema fechado.
+
+PROXIMA ITER:
+- Audit produto features dependentes de vault (LLM autocomplete, related)
+  estao broken silencioso? Validar via curl
+- Documentar Blueprint V8 secao "Internal Tokens" oficialmente
