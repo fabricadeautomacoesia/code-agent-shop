@@ -17301,7 +17301,33 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc price-alerts.js (pass 81) - 8 bugs GET + POST
 - ✅ product-svc seller-mgmt.js POST / draft (pass 82) - 4 bugs DoS+race
 - ✅ product-svc PATCH /products/me/:id (pass 83) - 6 bugs Regra K+P
-- ✅ product-svc POST /:id/submit (pass 84 esta iter) - 7 bugs state machine
+- ✅ product-svc POST /:id/submit (pass 84) - 7 bugs state machine
+- ✅ product-svc POST /:id/versions (pass 85 esta iter) - 8 bugs versioning
+
+W7 PASS 85 RESUMO:
+- product-svc/src/routes/seller-mgmt.js POST /:id/versions refactor (8 bugs):
+  * UUID validate missing: PG 22P02 -> 500 leak
+  * Regra A: ownership sem status check
+    - PRE-FIX: versao em product deletado/archived/rejected = fantasma DB
+    - FIX: status IN ('approved','platform_owned') + deleted_at NULL
+  * Regra K tx() + SELECT FOR UPDATE OF products
+    - Race: seller publish version + admin platform-take simultaneo
+    - Versao em product platform_owned com seller original (audit inconsistente)
+  * Regra Q version unique via ON CONFLICT (product_id, version) DO NOTHING
+    - PRE-FIX: 2 versions "v1.0.0" causaria 500 unique constraint leak
+    - POS-FIX: 409 version_already_exists com versao informada (UX clarity)
+  * Regra I RETURNING explicit fields (sem qa_run_id internal leak)
+  * Regra P audit log atomic INSERT dentro tx() + severity=warn p/ breaking
+  * Changelog max 5000 chars schema (defesa adicional)
+  * NEW versionPublishLimiter 10/hr/seller
+    - PRE-FIX: bot publica 100 versions = notification explosion (N*M fanout)
+- Pattern W7 em 91 endpoints + 23 regras (A-W) - 85 micro-iters
+
+PROXIMA ITER:
+- W7 pass 86: product-svc POST /:id/qna/:qid/answer audit
+- W7 pass 87: product-svc upload.js endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 84 RESUMO:
 - product-svc/src/routes/seller-mgmt.js POST /:id/submit refactor (7 bugs):

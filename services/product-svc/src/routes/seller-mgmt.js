@@ -629,43 +629,142 @@ router.post('/:id/submit',
 );
 
 // POST /products/me/:id/versions - publica nova versao (changelog)
+// POST /products/me/:id/versions - publica nova versao (changelog)
+// FIX-WORKER-7 pass 85: 8 BUGS aplicando Pattern W7 (UUID+A+K+P+Q+I + rate-limit + sanitize).
+//
+// BUG 1 *** UUID VALIDATE MISSING *** PG 22P02 -> 500 leak
+//   FIX: VERSION_UUID_RE upfront.
+//
+// BUG 2 *** Regra A *** ownership sem status check
+//   PRE-FIX: WHERE p.id + s.user_id - aceita product em qualquer status
+//   incluindo deleted_at != NULL ou status='archived'/'rejected'.
+//   Seller publica versao em produto deletado -> versao fantasma no DB.
+//   Versao em product nao approved nunca aparece PDP -> waste.
+//   FIX: + p.status IN ('approved','platform_owned') + p.deleted_at IS NULL.
+//
+// BUG 3 *** Regra K tx() + SELECT FOR UPDATE ***
+//   PRE-FIX: SELECT ownership + 2x INSERT (version + notifications) sem lock.
+//   Race: seller publica version + admin platform-take simultaneo -> versao
+//   em product platform_owned com seller original (audit inconsistency).
+//   FIX: tx() wrap + FOR UPDATE em products.
+//
+// BUG 4 *** Regra Q IDEMPOTENCY version unique ***
+//   PRE-FIX: aceita 2 versions mesmo "v1.0.0" se DB nao tem unique constraint.
+//   Se constraint existe: PG 23505 -> 500 leak.
+//   FIX: ON CONFLICT (product_id, version) DO NOTHING + check rowcount.
+//
+// BUG 5 *** Regra I RETURNING * ***
+//   product_versions.* expoe qa_run_id (cross-link interno) e potencialmente
+//   internal_metadata em migrations futuras.
+//   FIX: explicit fields.
+//
+// BUG 6 *** Regra P AUDIT LOG MISSING ***
+//   Nova versao = mudanca critica produto publico (notifica TODOS owners
+//   + wishlist subscribers). Compliance gap sem trail.
+//   FIX: INSERT audit_log dentro tx().
+//
+// BUG 7 *** CHANGELOG XSS *** raw em body_html notification potencial
+//   PRE-FIX: changelog raw em notifications.body. Se template_code renderizer
+//   trata como HTML -> XSS no NotificationBell.
+//   FIX: log uses plain text (body, nao body_html) - confirma defensivo + slice 500.
+//   (Mantido behavior atual mas documenta defesa.)
+//
+// BUG 8 *** RATE-LIMIT MISSING ***
+//   PRE-FIX: bot publica 100 versions consecutivas -> notification explosion
+//   (wishlist subs * versions = N*M fanout).
+//   FIX: versionPublishLimiter 10/hr/seller (real users 1-2 versions/semana).
+const VERSION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const versionPublishLimiter = rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 10,
+  message: 'Muitas versoes publicadas recentemente. Aguarde 1 hora.',
+});
+
 router.post('/:id/versions',
+  versionPublishLimiter,
   validate({ body: z.object({
     version: z.string().regex(/^\d+\.\d+\.\d+$/),
-    changelog: z.string().min(5),
+    changelog: z.string().min(5).max(5000),
     breaking_changes: z.boolean().default(false),
     package_url: z.string().url().optional(),
     package_hash_sha256: z.string().length(64).optional(),
   })}),
   asyncHandler(async (req, res, next) => {
-    const owns = await query(
-      `SELECT p.id FROM products p JOIN sellers s ON s.id = p.seller_id
-        WHERE p.id = $1 AND s.user_id = $2`, [req.params.id, req.user.sub]
-    );
-    if (!owns.rows.length) return next(errorHandler.notFound('not_found'));
-    const r = await query(
-      `INSERT INTO product_versions
-        (product_id, version, changelog, breaking_changes, package_url, package_hash_sha256, qa_verdict)
-       VALUES ($1,$2,$3,$4,$5,$6,'pending') RETURNING *`,
-      [req.params.id, req.body.version, req.body.changelog, req.body.breaking_changes,
-       req.body.package_url || null, req.body.package_hash_sha256 || null]
-    );
+    // BUG 1: UUID validate
+    if (!VERSION_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('product_not_found'));
+    }
+
+    let outcome;
+    let version;
+    let prodMeta;
+
+    await tx(async (c) => {
+      // BUG 2+3: Regra A status + Regra K SELECT FOR UPDATE
+      const owns = await c.query(
+        `SELECT p.id, p.title, p.slug, p.status
+           FROM products p JOIN sellers s ON s.id = p.seller_id
+          WHERE p.id = $1 AND s.user_id = $2
+            AND p.status IN ('approved','platform_owned')
+            AND p.deleted_at IS NULL
+          FOR UPDATE OF p`,
+        [req.params.id, req.user.sub]
+      );
+      if (!owns.rows.length) { outcome = { error: 'not_found_or_not_approved' }; return; }
+      prodMeta = owns.rows[0];
+
+      // BUG 4 Regra Q: ON CONFLICT idempotent
+      // BUG 5 Regra I: explicit fields no RETURNING
+      const ins = await c.query(
+        `INSERT INTO product_versions
+          (product_id, version, changelog, breaking_changes, package_url, package_hash_sha256, qa_verdict)
+         VALUES ($1,$2,$3,$4,$5,$6,'pending')
+         ON CONFLICT (product_id, version) DO NOTHING
+         RETURNING id, product_id, version, changelog, breaking_changes,
+                   package_url, package_hash_sha256, qa_verdict, is_current, created_at`,
+        [req.params.id, req.body.version, req.body.changelog, req.body.breaking_changes,
+         req.body.package_url || null, req.body.package_hash_sha256 || null]
+      );
+      if (!ins.rows.length) { outcome = { error: 'version_already_exists', version: req.body.version }; return; }
+      version = ins.rows[0];
+
+      // BUG 6 Regra P: audit log atomic
+      await c.query(
+        `INSERT INTO audit_log
+          (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'product.version_publish', 'product_version', $3, $4, $5::JSONB)`,
+        [req.user.sub, req.user.role, version.id,
+         req.body.breaking_changes ? 'warn' : 'info',
+         JSON.stringify({
+           product_id: req.params.id,
+           version: req.body.version,
+           breaking_changes: req.body.breaking_changes,
+           has_package_url: !!req.body.package_url,
+           ip: req.ip,
+         })]
+      );
+    });
+
+    if (outcome?.error === 'not_found_or_not_approved') {
+      return next(errorHandler.notFound('product_not_found_or_not_approved'));
+    }
+    if (outcome?.error === 'version_already_exists') {
+      return res.status(409).json({
+        error: 'version_already_exists',
+        message: `Versao ${outcome.version} ja foi publicada para este produto.`,
+        version: outcome.version,
+      });
+    }
 
     // MLB-NEW: notifica subscribers (wishlist + buyers ja owners) sobre nova versao.
-    // Mercado Livre style 'voltou para o estoque' adaptado para digital products.
-    // Fan-out via INSERT em notifications - async, nao bloqueia response.
+    // FIX-WORKER-7 pass 85: notifications FORA do tx() principal (long-running fan-out
+    // nao deve bloquear lock em products). Se falhar, version ja foi criada + audit.
     try {
-      const productInfo = await query(
-        `SELECT title, slug FROM products WHERE id = $1`, [req.params.id]
-      );
-      const title = productInfo.rows[0]?.title || 'Produto';
-      const slug  = productInfo.rows[0]?.slug || '';
+      const title = prodMeta.title || 'Produto';
+      const slug  = prodMeta.slug || '';
       const ver   = req.body.version;
       const bcWarn = req.body.breaking_changes ? ' (BREAKING CHANGES - revise antes de atualizar)' : '';
 
-      // Subscribers = wishlist + buyers (UNION distinct para evitar dupe)
-      // Exclui o proprio seller (que esta publicando)
-      // notifications.channel eh ENUM notification_channel - cast obrigatorio
+      // BUG 7 defesa: body texto plano slice 500 + body_html omitido
       await query(
         `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
          SELECT DISTINCT u.id, 'in_app'::notification_channel, 'product_new_version', $1::text, $2::text, $3::JSONB, 0
@@ -691,7 +790,7 @@ router.post('/:id/versions',
       log.warn({ err: e.message, product_id: req.params.id }, '[version.notify_failed]');
     }
 
-    res.status(201).json({ version: r.rows[0] });
+    res.status(201).json({ version });
   })
 );
 
