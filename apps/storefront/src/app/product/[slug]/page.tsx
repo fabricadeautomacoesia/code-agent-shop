@@ -10,6 +10,7 @@ import { AskQuickButton } from '@/components/ask-quick-button';
 import { CompareButton } from '@/components/compare-button';
 import { Installments } from '@/components/installments';
 import { OfficialBadge } from '@/components/official-badge';
+import { RecentlyViewedStrip } from '@/components/recently-viewed-strip';
 import { JsonLd, productLd, breadcrumbLd } from '@/components/json-ld';
 
 export const revalidate = 30;
@@ -258,6 +259,9 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
           </div>
         </section>
       )}
+
+      {/* MLB-NEW WORKER 16: RecentlyViewedStrip horizontal scroll (so renderiza se logado + >=3 outros vistos) */}
+      <RecentlyViewedStrip excludeId={product.id} />
     </div>
   );
 }
