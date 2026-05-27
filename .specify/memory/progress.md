@@ -4286,3 +4286,57 @@ GAP DETECTADO (proxima iter):
 - Auditar product-svc me CRUD (PUT /products/:id) - invalida detail?
 - Auditar wishlist add/remove - invalida user wishlist counts?
 - Auditar order-svc - invalida user orders cache se aplicavel
+
+## WORKER 7 pass 5 (PRODUCT-SVC) - cache invalidation detail/reviews/qna por slug
+
+GAP DETECTADO (proxima iter do W3 pass 2):
+"Auditar product-svc me CRUD (PUT /products/:id) - invalida detail?"
+
+AUDIT revelou helper invalidate() em 2 arquivos com mesma falha:
+- services/product-svc/src/routes/seller-mgmt.js (PATCH /me, /:id/submit, /:id/versions)
+- services/product-svc/src/routes/admin.js (force-approve, platform-take, archive)
+
+Ambos invalidavam apenas patterns genericos:
+- products:list:* (lista paginada)
+- products:related:* (recomendacoes)
+- search:facets:* (filtros)
+- search:top-sellers:* (admin so)
+- products:flash-promo:* (admin so)
+
+MAS DEIXAVAM stale:
+- products:detail:<slug> (60s TTL) -> PDP shows old data
+- products:reviews:<slug>:* -> idem (afetado por status changes)
+- products:qna:<slug> -> idem
+
+BUG VISIVEL na pratica:
+Seller edita preco/title -> PATCH retorna ok -> abre PDP -> ve versao antiga
+por ate 60s -> tickets "minha mudanca nao salvou".
+
+FIX (2 arquivos product-svc):
++ invalidate(productId?) e invalidateProductCache(productId?) refatorados:
+  1. Mantem patterns genericos
+  2. Lookup slug via SELECT se productId fornecido
+  3. Append cache.del por slug: detail, reviews:*, qna
+  4. Tasks paralelas Promise.all
++ 6 callers atualizados (3 em cada arquivo) com req.params.id
+
+DEPLOY:
+- commit 746e264 pushed
+- product-svc rebuilt + deployed (~2.4s)
+- Service converged
+
+VALIDACAO PUBLICA:
+- /api/products/<slug> -> 200 (detail funcional pos-deploy)
+- /api/products?limit=3 -> 3 produtos OK
+- /api/products/<slug>/qna -> 2 perguntas (W3 pass 2 cache inv preservado)
+
+IMPACTO:
+- Sellers veem mudancas no PDP em real-time (vs ate 60s antes)
+- Admin force-approve/platform-take/archive invalidam tudo correto
+- Reduce tickets "edicao nao salvou"
+- Pattern consistente com review-svc (W3 pass 2)
+
+PROXIMA ITER:
+- product_wishlist add/remove tem cache? Atual nao tem (POST direto)
+- Auditar order-svc para mesmo pattern (orders cache)
+- Considerar cache.purge('products:*') em mass mutations
