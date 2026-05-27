@@ -15733,3 +15733,88 @@ REVIEW-SVC 100% + SELLER-SVC 2/8 endpoints (W7 pass 40+41).
 
 ITER INTERROMPIDA: user requested pause "quando tiver versao online validada VPS".
 Pass 41 commit+push apenas. Proximas iters W7 pass 42+ aguardando direcao.
+
+================================================================
+ITER W7 PASS 42 - seller-svc admin KYC approve/reject (compliance Layer 2) (2026-05-27)
+================================================================
+ESCOPO: seller-svc admin KYC review endpoints (Layer 2 compliance flow)
+FILE: services/seller-svc/src/routes/admin.js
+- Modificado: GET /pending-kyc (mig 045 compat)
+- NOVO: POST /:id/kyc/approve (admin aprovacao)
+- NOVO: POST /:id/kyc/reject (admin rejeicao + reason)
+
+CONTEXTO: W7 pass 41 corrigiu compliance break GRAVE (auto-approve KYC).
+Pass 41 estabeleceu LAYER 1 (submit -> kyc_submitted). Pass 42 implementa
+LAYER 2 (admin review approve|reject). Layer 3 ja existe (pass 40 /payout).
+
+FLOW COMPLETO compliance/KYC (3 layers):
+1. seller POST /sellers/me/kyc -> status='kyc_submitted' (pass 41)
+2. admin POST /sellers/admin/:id/kyc/approve -> status='active' (esta iter)
+   OR admin POST /sellers/admin/:id/kyc/reject -> status='kyc_rejected' (esta iter)
+3. pass 40 /payout libera SO status='active' (defesa fechada)
+
+GET /pending-kyc FIXES (3 bugs):
+1. Filtro pre-fix SO status='pending_kyc' (eternamente vazio pos-mig 045)
+   FIX: WHERE status IN ('pending_kyc','kyc_submitted')
+   ORDER BY CASE status (kyc_submitted prioridade FIFO) + tiebreaker
+2. Regra I SELECT s.* vaza document_number_hash + interna
+   FIX: SELECT explicit 13 fields p/ UI admin queue
+3. Regra D tiebreaker: s.id como ultima (UUID unique)
+
+NOVO POST /:id/kyc/approve (10 patterns W7 aplicados):
+- UUID validate upfront
+- tx() atomic
+- FOR UPDATE seller (Regra K)
+- Regra Q idempotent terminal (SO kyc_submitted -> active)
+  Active/pending_kyc/suspended bloqueados (409 invalid_state)
+- WHERE status='kyc_submitted' guard idempotent UPDATE
+- audit_log INSERT atomic (LGPD/GDPR compliance)
+  payload JSON com doc_type + legal_name_length (privacy-safe)
+- Notification email seller 'kyc_approved'
+  ("KYC aprovado! Pode publicar produtos e solicitar saques")
+- Cache invalidate via invalidateSellerCache
+- log.warn structured (audit trail externo)
+- Response: { ok, new_status: 'active' }
+
+NOVO POST /:id/kyc/reject:
+- Mesma estrutura approve + reason body min 10 chars
+- UPDATE status='kyc_rejected' + kyc_rejection_reason preservado
+- IMPORTANTE: document_number_hash MANTIDO (anti-fraud)
+  Seller pode re-submeter (status -> kyc_submitted) com correcoes
+- Notification email seller 'kyc_rejected' com reason
+  ("Motivo: X. Voce pode re-submeter com correcoes")
+- Cache invalidate
+
+PATTERN W7 ADMIN-TERMINAL COMPLETO 5 ENDPOINTS:
+- Pass 25 vault /revoke (timeline forense preserved)
+- Pass 31 dispute resolve (state machine + audit)
+- Pass 36 qna answer (admin bypass + Regra Q)
+- Pass 37 review reply (admin bypass + notif buyer)
+- Pass 39 reports resolve (admin terminal + notif reporter)
+- Pass 42 kyc approve/reject (esta iter - compliance + notif seller)
+
+PATTERN W7 33 ENDPOINTS + 18 REGRAS (A-R) - 42 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 3 (pass 40 /payout, pass 41 /kyc, pass 42 admin/kyc esta iter)
+
+SELLER-SVC PROGRESS (3/8+ endpoints):
+- ✅ POST /sellers/me/payout (pass 40)
+- ✅ POST /sellers/me/kyc (pass 41)
+- ✅ POST /sellers/admin/:id/kyc/approve|reject (pass 42 esta iter)
+- ✅ GET /sellers/admin/pending-kyc (pass 42 fix)
+- GET /sellers/me + PATCH /sellers/me (pendente)
+- GET /sla-status + /sla-history + /payouts + /kpi (read-only pendente)
+- POST /sellers/admin/:id/suspend|reactivate (pendente - audit Regra Q+audit_log)
+
+PROXIMA ITER:
+- W7 pass 43: seller-svc PATCH /sellers/me (profile update)
+- W7 pass 44: seller-svc /admin/:id/suspend|reactivate (Regra Q terminal)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod

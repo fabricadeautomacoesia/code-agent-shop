@@ -146,15 +146,191 @@ router.get('/all', asyncHandler(async (req, res) => {
 }));
 
 // GET /sellers/admin/pending-kyc
+// FIX-WORKER-7 pass 42: 3 BUGS corrigidos:
+// 1. Pre-fix filtrava SO status='pending_kyc' - apos mig 045, novo status
+//    'kyc_submitted' eh o real "aguardando review". Endpoint ficaria vazio
+//    pos-deploy mig 045.
+// 2. Regra I SELECT s.* vaza campos internos (document_number_hash, kyc_*).
+// 3. ORDER BY created_at ASC sem tiebreaker.
 router.get('/pending-kyc', asyncHandler(async (req, res) => {
   const r = await query(
-    `SELECT s.*, u.email, u.full_name FROM sellers s
+    `SELECT s.id, s.store_slug, s.store_name, s.status, s.seller_class,
+            s.document_type, s.legal_name,
+            s.address_city, s.address_state, s.address_zip,
+            s.kyc_submitted_at, s.kyc_reviewed_at, s.kyc_rejection_reason,
+            s.created_at,
+            u.email, u.full_name
+       FROM sellers s
        JOIN users u ON u.id = s.user_id
-      WHERE s.status = 'pending_kyc'
-      ORDER BY s.created_at ASC LIMIT 100`
+      WHERE s.status IN ('pending_kyc','kyc_submitted')
+      ORDER BY
+        CASE s.status
+          WHEN 'kyc_submitted' THEN 1   -- priorizar review (FIFO submit time)
+          WHEN 'pending_kyc' THEN 2
+          ELSE 3
+        END,
+        s.kyc_submitted_at ASC NULLS LAST,
+        s.created_at ASC,
+        s.id
+      LIMIT 100`
   );
   res.json({ sellers: r.rows });
 }));
+
+// FIX-WORKER-7 pass 42: NOVO endpoint POST /sellers/admin/:id/kyc/approve
+// Aplicando pattern admin-terminal consolidado (pass 25/31/36/37/39).
+//
+// Layer 2 do compliance flow (pass 41 Layer 1 + pass 40 Layer 3):
+// - seller submit /kyc -> status='kyc_submitted' (pass 41)
+// - admin approve -> status='active' (esta iter)
+// - admin reject -> status='kyc_rejected' + reason (esta iter)
+// - pass 40 /payout SO aceita status='active' (combo defense complete)
+const KYC_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const { tx } = require('@cas/db-client');
+
+router.post('/:id/kyc/approve',
+  asyncHandler(async (req, res, next) => {
+    if (!KYC_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+
+    let outcome;
+    await tx(async (c) => {
+      // Regra K FOR UPDATE + Regra Q idempotent terminal
+      const cur = await c.query(
+        `SELECT id, status, document_type, legal_name FROM sellers
+          WHERE id = $1::UUID FOR UPDATE`,
+        [req.params.id]
+      );
+      if (!cur.rows.length) { outcome = { error: 'not_found' }; return; }
+      const s = cur.rows[0];
+
+      // Regra Q: SO kyc_submitted pode ser approved
+      // active = ja approved (idempotent), pending_kyc = nunca submeteu, suspended = bloqueado
+      if (s.status !== 'kyc_submitted') {
+        outcome = { error: 'invalid_state', current_status: s.status };
+        return;
+      }
+
+      // UPDATE com idempotent guard
+      await c.query(
+        `UPDATE sellers SET
+            status = 'active',
+            kyc_reviewed_at = NOW(),
+            kyc_reviewed_by_user_id = $1::UUID,
+            kyc_rejection_reason = NULL,
+            updated_at = NOW()
+          WHERE id = $2::UUID AND status = 'kyc_submitted'`,
+        [req.user.sub, req.params.id]
+      );
+
+      // Audit log atomic (pattern pass 23/25/31 - sec event compliance critical)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'kyc.approve', 'seller', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({
+           document_type: s.document_type,
+           legal_name_length: s.legal_name?.length || 0,
+           ip: req.ip,
+         })]
+      );
+
+      // Notification ao seller (UX engagement - aprovado!)
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body)
+         SELECT user_id, 'email', 'kyc_approved',
+                'KYC aprovado!',
+                'Seu KYC foi aprovado. Voce ja pode publicar produtos e solicitar saques.'
+           FROM sellers WHERE id = $1::UUID`,
+        [req.params.id]
+      );
+    });
+
+    if (outcome?.error === 'not_found') return next(errorHandler.notFound('seller_not_found'));
+    if (outcome?.error === 'invalid_state') {
+      return res.status(409).json({
+        error: 'invalid_state',
+        message: `Estado atual '${outcome.current_status}' nao permite aprovacao. Apenas kyc_submitted.`,
+        current_status: outcome.current_status,
+      });
+    }
+    await invalidateSellerCache(req.params.id);
+    log.warn({ actor: req.user.sub, target: req.params.id }, '[kyc.approve]');
+    res.json({ ok: true, new_status: 'active' });
+  })
+);
+
+// POST /sellers/admin/:id/kyc/reject
+router.post('/:id/kyc/reject',
+  validate({ body: z.object({ reason: z.string().min(10).max(2000) }) }),
+  asyncHandler(async (req, res, next) => {
+    if (!KYC_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+
+    let outcome;
+    await tx(async (c) => {
+      const cur = await c.query(
+        `SELECT id, status, document_type FROM sellers
+          WHERE id = $1::UUID FOR UPDATE`,
+        [req.params.id]
+      );
+      if (!cur.rows.length) { outcome = { error: 'not_found' }; return; }
+      const s = cur.rows[0];
+
+      if (s.status !== 'kyc_submitted') {
+        outcome = { error: 'invalid_state', current_status: s.status };
+        return;
+      }
+
+      // FIX-WORKER-7 pass 42: REJECT preserva document_number_hash p/ unique
+      // constraint funcionar (anti re-submit same doc), MAS limpa para permitir
+      // seller RE-SUBMETER novo documento. Trade-off: hash mantido = anti-fraud,
+      // mas seller corrige rejection_reason e re-submete (status -> kyc_submitted).
+      await c.query(
+        `UPDATE sellers SET
+            status = 'kyc_rejected',
+            kyc_reviewed_at = NOW(),
+            kyc_reviewed_by_user_id = $1::UUID,
+            kyc_rejection_reason = $2,
+            updated_at = NOW()
+          WHERE id = $3::UUID AND status = 'kyc_submitted'`,
+        [req.user.sub, req.body.reason, req.params.id]
+      );
+
+      // Audit log atomic
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'kyc.reject', 'seller', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({ reason: req.body.reason, document_type: s.document_type, ip: req.ip })]
+      );
+
+      // Notification ao seller (UX - sabe motivo + corrigir)
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body)
+         SELECT user_id, 'email', 'kyc_rejected',
+                'KYC nao aprovado',
+                $2
+           FROM sellers WHERE id = $1::UUID`,
+        [req.params.id, `Motivo: ${req.body.reason}. Voce pode re-submeter o KYC com correcoes.`]
+      );
+    });
+
+    if (outcome?.error === 'not_found') return next(errorHandler.notFound('seller_not_found'));
+    if (outcome?.error === 'invalid_state') {
+      return res.status(409).json({
+        error: 'invalid_state',
+        message: `Estado atual '${outcome.current_status}' nao permite rejeicao. Apenas kyc_submitted.`,
+        current_status: outcome.current_status,
+      });
+    }
+    await invalidateSellerCache(req.params.id);
+    log.warn({ actor: req.user.sub, target: req.params.id, reason: req.body.reason.slice(0, 50) }, '[kyc.reject]');
+    res.json({ ok: true, new_status: 'kyc_rejected' });
+  })
+);
 
 // GET /sellers/admin/payouts/pending
 // FIX-WORKER-4 pass 4: bug "Transferir Asaas" feature MORTA.
