@@ -2461,3 +2461,47 @@ GAP MAIOR observado (qa-worker keeps restart-looping):
 
 NOTA OPERACIONAL: QA_CALLBACK_ALLOWED_HOSTS pode ser definido em .env Swarm
 para staging/dev terem URLs diferentes. Producao: default whitelist suficiente.
+
+## WORKER 3 pass 2 (PDP) - AddToCart UX + backend quantity limit
+Auditoria do AddToCart no PDP revelou 2 bugs:
+
+BUG 1 (Security/Overflow):
+- POST /orders/cart/items aceitava quantity SEM max validation
+- Zod era apenas .positive() -> aceitava quantity=99999 ou maior
+- Linha do cart calculava: line_total_cents = price_cents * quantity
+  Com price=199900 (R$1999) * 99999 = 19,989,810,000 cents
+  Ainda cabe em BIGINT mas estressa cart subtotal recalc + UI display.
+- UI cart-drawer ja tinha cap em 99, mas backend nao - inconsistencia.
+- Confirmado em prod: POST com quantity=99999 -> HTTP 201 (silencioso).
+
+BUG 2 (UX):
+- AddToCart catch usava alert('Erro: ' + e.data?.message || e.message)
+- Mostrava codigos de maquina como 'product_not_available' raw para o user
+- alert() popup nativo do browser = UX feio + interrompe fluxo
+
+FIX BACKEND services/order-svc/src/routes/cart.js:
+- Schema Zod: quantity: z.number().int().min(1).max(99).default(1)
+- POST com 99999 -> 400 validation_error com message "Number must be less
+  than or equal to 99" + detail.code='too_big'
+
+FIX UI apps/storefront/src/components/add-to-cart.tsx:
+- Mapper local CART_ERROR_MESSAGES { product_not_available, product_not_found,
+  validation_error, cart_locked, forbidden_role, rate_limited }
+- friendlyCartError(e): inspeciona e.data.error + e.data.details[0] (Zod paths)
+  -> mensagens PT-BR amigaveis
+- Special case validation_error too_big quantity -> "Quantidade maxima por
+  item: 99."
+- Replaces alert() por inline <div role='alert'> com AlertCircle icon + msg
+- Auto-hide apos 5 segundos via setTimeout
+
+VALIDACAO PUBLICA (4 cenarios):
+1) Backend POST quantity=99999 -> 400 validation_error too_big OK
+2) Backend POST quantity=99 (limite) -> 201 OK
+3) UI chunk PDP contem: Produto indisponivel, Quantidade maxima por item,
+   Erro ao adicionar OK
+4) Cleanup cart_items via psql (1 row deletada do test session)
+
+DEPLOY:
+- commit e03c151 pushed
+- order-svc rebuilt via Dockerfile.node SVC=order-svc, converged OK
+- storefront rebuilt via Dockerfile.next, converged OK
