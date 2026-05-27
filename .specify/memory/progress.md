@@ -13810,3 +13810,85 @@ PROXIMA ITER:
 - W7 pass 28: qa-svc callback handling audit (Regra N state machine)
 - W18 pass 7: idx parcial product_views > 90d cron
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
+
+================================================================
+ITER W7 PASS 27 - qa-svc /qa/callback 4 BUGS CRITICOS (2026-05-27)
+================================================================
+ESCOPO: qa-svc POST /qa/callback (recebe veredito n8n/worker LLM)
+FILE: services/qa-svc/src/server.js (linhas 280-482)
+
+CONTEXTO: W7 pass 26 (notification outbox) consolidou state machine
+event-driven. Pass 27 audita qa callback - CRITICAL FRAUD VECTOR
+(callback aprova produto = unlock download/license).
+
+BUGS CORRIGIDOS (4):
+
+1. *** IDEMPOTENCY CATASTROFICO *** sem guard re-process
+- HMAC valido em retry = bypass admin moderation
+- CENARIO FRAUDE REAL:
+  T0: n8n callback {run_id=X, score=0.9} -> APPROVED -> order/license/download
+  T1: Admin REJEITA manualmente (descobriu malware no produto)
+    /admin/qa/runs/:id/reject -> verdict='rejected', product status='rejected'
+  T2: n8n NAO recebeu ack T0 (rede flaky) -> RETRY callback (mesma assinatura HMAC valida!)
+  T3: qaCallbackGuard valida HMAC OK -> entra handler
+  T4: UPDATE product_qa_runs SET verdict='approved' (sobrescreve admin reject)
+  T5: UPDATE products SET status='approved' -> REVERTE rejeicao admin
+  T6: BYPASS de moderation -> produto malware volta a estar approved
+- IMPACTO: critical security event - vector fraude/abuse documentado
+- FIX: SELECT product_qa_runs FOR UPDATE + check verdict ATUAL
+  Se TERMINAL_VERDICTS (approved/rejected/error/timeout): NOOP + log
+
+2. *** Regra N STATE MACHINE *** ALLOWED transitions
+- Pattern W7 pass 22 (payment webhook) consolidou. Aplicado aqui:
+  running -> [approved, rejected, error, timeout]
+  approved -> [] (terminal - re-aprovar nao faz sentido)
+  rejected -> [] (terminal - admin force_approve via endpoint dedicado)
+  timeout -> [] (terminal - cron cancela, retry inicia NOVO run)
+- FIX: TERMINAL_VERDICTS set check no inicio do tx
+  Re-processing = log info + return (sem mutar)
+- n8n retry comportamento: recebe ok=true status='already_processed'
+  permite stop retry (idempotente do ponto de vista n8n)
+
+3. *** Regra K *** SELECT FOR UPDATE em 2 lugares
+- Linha 287: UPDATE product_qa_runs sem SELECT FOR UPDATE upfront
+- Linha 310: SELECT products sem FOR UPDATE
+- 2 callbacks duplicados (Asaas-style retry simultaneo) -> race classic
+- FIX: SELECT FOR UPDATE em ambas tables ANTES do UPDATE
+  Combina com bug 1+2: serializacao automatica via PG row-level lock
+
+4. Regra B products.deleted_at IS NULL
+- Pre-fix: SELECT status FROM products WHERE id=$1 sem filter
+- Callback chega APOS produto soft-deletado (admin moderou entre
+  run start + callback ~5-10min) -> processa indevidamente
+- IMPACTO: product UPDATE de status='approved' em produto deletado
+  -> downstream UI lista pode mostrar produto fantasma
+- FIX: AND deleted_at IS NULL no WHERE + handle quando .rows = []
+  Run marca verdict mas product UPDATE skipped (defensive log)
+
+PATTERN W7 EVENT-DRIVEN COMPLETO (passes 22, 24, 26, 27):
+- Pass 22 webhook payment: state machine + idempotency
+- Pass 24 vault /use: SKIP LOCKED pool allocation
+- Pass 26 notification outbox: state machine + duplicate detection
+- Pass 27 qa callback: state machine + idempotency + ANTI-FRAUDE (esta iter)
+
+REGRA N + IDEMPOTENCY DEFESA EM PROFUNDIDADE:
+- HMAC valida origem (autentica n8n)
+- State machine valida transicao (impede re-process)
+- FOR UPDATE serializa concorrencia (anti-race)
+- Tx atomic garante all-or-nothing
+- 4 camadas independentes - bypass require defeating ALL FOUR
+
+PATTERN W7 18 ENDPOINTS + 17 REGRAS (A-Q):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 8
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 1
+- qa-svc: 1 (/qa/callback esta iter)
+
+PROXIMA ITER:
+- W7 pass 28: qa-svc /qa/run (trigger) audit (Regra A status check)
+- W18 pass 7: idx parcial product_views > 90d cron
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W4: admin /admin/qa-queue refletir Regra Q (re-reject via endpoint dedicado)

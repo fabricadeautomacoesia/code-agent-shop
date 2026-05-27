@@ -278,11 +278,67 @@ app.post('/qa/callback',
     raw_response: z.any().optional(),
   })}),
   asyncHandler(async (req, res) => {
+    // FIX-WORKER-7 pass 27: 4 BUGS CRITICOS aplicando Regras K, N, B + idempotency.
+    //
+    // BUG 1 *** IDEMPOTENCY CATASTROFICO *** sem guard re-process
+    //   Cenario fraude:
+    //   T0: n8n callback {run_id=X, score=0.9} -> APPROVED -> order/license
+    //   T1: Admin REJEITA manualmente via /admin/qa/runs/:id/reject
+    //       -> product_qa_runs.verdict='rejected', products.status='rejected'
+    //   T2: n8n NAO recebeu ack T0 (rede flaky) -> RETRY callback (mesma assinatura HMAC)
+    //   T3: qaCallbackGuard valida HMAC OK -> entra handler
+    //   T4: UPDATE product_qa_runs SET verdict='approved' (sobrescreve admin reject!)
+    //   T5: UPDATE products SET status='approved' -> REVERTE rejeicao admin
+    //   T6: BYPASS de moderation via callback retry - critical fraude vector
+    //
+    // BUG 2 *** Regra N STATE MACHINE *** allowed transitions ausentes
+    //   verdict='running' -> [approved, rejected, error, timeout] OK
+    //   verdict='approved' -> [] terminal
+    //   verdict='rejected' -> [] terminal (admin force_approve via endpoint dedicado)
+    //   verdict='timeout' -> [] terminal (cron cancela, retry inicia novo run)
+    //   FIX: validar transicao antes UPDATE - reprocessamento = noop log info
+    //
+    // BUG 3 *** Regra K *** SELECT FOR UPDATE em product_qa_runs + products
+    //   2 callbacks duplicados Asaas-style retry simultaneo -> race condition
+    //   mesma pattern pass 22 (payment webhook).
+    //
+    // BUG 4 Regra B products.deleted_at IS NULL
+    //   Callback chega apos produto soft-deleted -> processa indevidamente.
     const b = req.body;
     const approved = b.confidence_score >= QA_THRESHOLD;
     const verdict = approved ? 'approved' : 'rejected';
 
+    // ALLOWED TRANSITIONS state machine (Regra N)
+    const TERMINAL_VERDICTS = new Set(['approved', 'rejected', 'error', 'timeout']);
+
+    let stateMachineBlocked = false;
+
     await tx(async (c) => {
+      // FIX bug 3 (Regra K): SELECT FOR UPDATE em product_qa_runs - lock primeiro
+      // FIX bug 1 (idempotency): verifica verdict atual ANTES de UPDATE
+      const runRow = await c.query(
+        `SELECT id, product_id, product_version_id, verdict
+           FROM product_qa_runs
+          WHERE id = $1
+          FOR UPDATE`,
+        [b.run_id]
+      );
+      if (!runRow.rows.length) return; // run nao existe (rare)
+
+      // FIX bug 2 (Regra N + idempotency): se ja em terminal state, NOOP
+      // Cobre: re-callback duplicado, retry pos-admin-reject, race window
+      const currentVerdict = runRow.rows[0].verdict;
+      if (TERMINAL_VERDICTS.has(currentVerdict)) {
+        log.info({
+          run_id: b.run_id,
+          current_verdict: currentVerdict,
+          incoming_verdict: verdict,
+        }, '[qa.callback.transition_blocked] run ja em estado terminal - ignorando reprocessamento');
+        stateMachineBlocked = true;
+        return;
+      }
+
+      // Estado atual = 'running' (unico transicionavel) - UPDATE ok
       // 1. Atualiza run
       await c.query(
         `UPDATE product_qa_runs SET
@@ -293,23 +349,28 @@ app.post('/qa/callback',
            tokens_input = $10, tokens_output = $11,
            cost_usd_cents = $12, duration_ms = $13,
            raw_response = $14::JSONB, finished_at = NOW()
-         WHERE id = $15`,
+         WHERE id = $15 AND verdict = 'running'`,
         [verdict, b.confidence_score, b.sintaxe_ok, b.resolves_problem, b.is_functional,
          b.reasons || null, b.suggestions || null, b.llm_provider, b.llm_model,
          b.tokens_input || null, b.tokens_output || null, b.cost_usd_cents || null,
          b.duration_ms || null, JSON.stringify(b.raw_response || {}), b.run_id]
       );
 
-      const r = await c.query(`SELECT product_id, product_version_id FROM product_qa_runs WHERE id = $1`, [b.run_id]);
-      if (!r.rows.length) return;
-      const { product_id, product_version_id } = r.rows[0];
+      const { product_id, product_version_id } = runRow.rows[0];
 
-      // FIX-WORKER-12 pass 4: capturar status ATUAL antes do UPDATE.
-      // Permite detectar transicao real (rejected->approved ou draft->approved)
-      // vs re-aprovacao de produto ja approved (v2/v3 do mesmo produto).
+      // FIX bug 3+4 (Regra K + B): FOR UPDATE products + deleted_at filter
+      // Lock products row anti-race + soft-delete check defensive
       const prev = await c.query(
-        `SELECT status FROM products WHERE id = $1`, [product_id]
+        `SELECT status FROM products WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [product_id]
       );
+      if (!prev.rows.length) {
+        // Product deletado entre run start e callback - run marcada como
+        // approved/rejected mas product UPDATE skipped (defensive).
+        log.warn({ product_id, run_id: b.run_id },
+          '[qa.callback.product_deleted] callback para produto soft-deleted - run state set, product skip');
+        return;
+      }
       const prevStatus = prev.rows[0]?.status;
 
       // 2. Atualiza produto
@@ -417,6 +478,12 @@ app.post('/qa/callback',
       );
     });
 
+    // FIX-WORKER-7 pass 27: response indicates state machine block.
+    // n8n retry idempotente: recebe ok=true mesmo se bloqueado.
+    // Permite n8n stop retry sem confundir admin com novos eventos.
+    if (stateMachineBlocked) {
+      return res.json({ ok: true, status: 'already_processed', run_id: b.run_id });
+    }
     log.info({ run_id: b.run_id, verdict, confidence: b.confidence_score }, '[qa.callback]');
     res.json({ ok: true, verdict });
   })
