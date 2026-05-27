@@ -5,7 +5,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../../.env'
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, cache } = require('@cas/shared');
 
 const log = logger.child({ svc: 'search-svc' });
 const app = express();
@@ -143,7 +143,10 @@ app.get('/autocomplete', asyncHandler(async (req, res) => {
 // GET /search/top-sellers - mais vendidos POR CATEGORIA (V8 - MLB style)
 // Retorna agrupado: { [category_slug]: [products...] }
 // FIX-WORKER-10: aceita ?category=slug para filtrar uma categoria (antes era ignorado)
-app.get('/top-sellers', asyncHandler(async (req, res) => {
+// FIX-WORKER-18: cache 120s - top-sellers muda pouco (sales_count atualiza por order paid)
+app.get('/top-sellers',
+  cache.cacheMiddleware((req) => `search:top-sellers:per=${req.query.per_category || 4}:cat=${req.query.category || ''}`, 120),
+  asyncHandler(async (req, res) => {
   const perCategory = Math.min(parseInt(req.query.per_category || '4', 10), 12);
   const catFilter = (req.query.category || '').toString().trim();
   const r = await query(
@@ -192,7 +195,10 @@ app.get('/top-sellers/:category', asyncHandler(async (req, res) => {
 }));
 
 // GET /search/trending - top buscas dos ultimos 7 dias
-app.get('/trending', asyncHandler(async (_req, res) => {
+// cache 300s - trending recalcula janela 7 dias
+app.get('/trending',
+  cache.cacheMiddleware(() => 'search:trending', 300),
+  asyncHandler(async (_req, res) => {
   const r = await query(
     `SELECT query_normalized, COUNT(*) AS count
        FROM search_log
@@ -205,7 +211,10 @@ app.get('/trending', asyncHandler(async (_req, res) => {
 }));
 
 // GET /search/categories - mega menu
-app.get('/categories', asyncHandler(async (_req, res) => {
+// cache 900s - categorias mudam raramente (admin only)
+app.get('/categories',
+  cache.cacheMiddleware(() => 'search:categories', 900),
+  asyncHandler(async (_req, res) => {
   const r = await query(
     `SELECT c.*,
        (SELECT json_agg(c2.* ORDER BY c2.sort_order) FROM categories c2 WHERE c2.parent_id = c.id) AS children
@@ -216,7 +225,10 @@ app.get('/categories', asyncHandler(async (_req, res) => {
 }));
 
 // GET /search/facets?category=...&q=... - opcoes para filtros laterais
-app.get('/facets', asyncHandler(async (req, res) => {
+// cache 180s - facets agrega counts em products (muda em new product / order)
+app.get('/facets',
+  cache.cacheMiddleware((req) => `search:facets:cat=${req.query.category || ''}:kind=${req.query.kind || ''}`, 180),
+  asyncHandler(async (req, res) => {
   const r = await query(
     `SELECT
        (SELECT json_agg(json_build_object('kind', kind, 'count', cnt))

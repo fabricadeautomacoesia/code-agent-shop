@@ -13,5 +13,6 @@ module.exports = {
   validate:     require('./validate'),
   rateLimiter:  require('./rate-limiter'),
   llmFallback:  require('./llm-fallback'),
+  cache:        require('./cache'),
   sleep:        (ms) => new Promise((r) => setTimeout(r, ms)),
 };
