@@ -12082,3 +12082,87 @@ PROXIMA ITER:
 - W3 pass 9: extrair <Dialog> wrapper DRY (architectural)
 - W3 pass 10: PDP variant WishlistButton /check -> store
 - W18 pass 6: idx parcial order_items status='paid'
+
+================================================================
+ITER W3 PASS 9 - <Dialog> wrapper DRY component (2026-05-27)
+================================================================
+ESCOPO: extrair wrapper component para pattern dialog modal estabelecido
+FILE NEW: apps/storefront/src/components/dialog.tsx
+
+CONTEXTO: W3 pass 7+8 estabeleceu pattern a11y dialog 7 elementos.
+Auditoria revelou DUPLICACAO 5x:
+- NotificationBell (pass 7)
+- CartDrawer (pass 8)
+- nav.tsx mobile menu (pass 8)
+- SearchAutocomplete (pass 8)
+- AskQuickButton (pass 7 antigo - ja existia)
+
+5x duplicacao = 5x bug a quebrar = WCAG fail silencioso futuro.
+Manutencao 5x trabalho. JUSTIFICA DRY.
+
+WRAPPER CRIADO: <Dialog> com 7 elementos canonicos do pattern:
+
+1. role="dialog" + aria-modal="true"
+2. aria-labelledby (h2 com id auto-gerado) OU aria-label string
+3. Escape key listener via useEffect + cleanup
+4. Body scroll lock (overflow:hidden + restore + cleanup)
+5. Backdrop semantico <button aria-label> em vez de <div onClick>
+6. Focus management (auto-focus 1o focusavel + return ao opener)
+7. Z-index escalation configuravel (default 60, modals=80)
+
+VARIANTS:
+- 'centered': modal centralizado (AskQuickButton, search-autocomplete)
+- 'drawer-right': drawer lateral direito (CartDrawer, nav mobile)
+- 'drawer-left': drawer lateral esquerdo (futuro)
+
+API ERGONOMIA:
+- title opcional - renderiza h2 + linkado via aria-labelledby
+- ariaLabel fallback quando sem title visivel
+- closeLabel customizavel ('Fechar carrinho' vs 'Fechar busca')
+- hideCloseButton para casos com header custom (rare)
+- className override para casos especiais
+
+A11Y BONUS NOVO (pass 9):
+- Focus auto-mount: primeiro <button>/[href]/<input> focado
+- Focus return: opener element refocused on close (a11y critical)
+- Dialog id auto-gerado (counter) - evita collision multi-instance
+- X icon SVG inline em vez de lucide (zero deps no wrapper base)
+
+PADRAO USO:
+  <Dialog open={open} onClose={() => setOpen(false)}
+          title="Carrinho" ariaLabel="Carrinho de compras"
+          variant="drawer-right">
+    <YourContent />
+  </Dialog>
+
+ESCOPO DELIBERADO: WRAPPER CRIADO, REFACTOR INCREMENTAL FUTURO
+- Refatorar 5 consumidores em 1 iter = mega-commit risky
+- Estrategia: wrapper disponivel + refactor 1 consumer/iter
+- Permite validar wrapper em cenarios reais antes de proliferar
+- Reduz risco regressao (CartDrawer eh CRITICO PDP - testar isolado)
+
+PROXIMAS ITERS POSSIVEIS:
+- pass 10: refatorar CartDrawer usar <Dialog> (mais critico - validar primeiro)
+- pass 11: refatorar AskQuickButton (modal centered simples)
+- pass 12: refatorar SearchAutocomplete (modal centered c/ custom header)
+- pass 13: refatorar nav.tsx mobile (drawer-right complex)
+- pass 14: NotificationBell mantem custom (popover != dialog full)
+
+LIMITACAO RECONHECIDA:
+- Focus trap NAO incluido (Tab pode sair pro page abaixo)
+- Para focus trap real precisa library (react-focus-lock) ou impl manual
+  com first/last focusable + Tab/Shift+Tab interception
+- TODO futuro: implementar focus trap se WCAG audit revelar criticidade
+
+PATTERN W3 PROGRESS COMPLETO (passes 1-9):
+- pass 1-2: PDP SSR fetch helpers (3 regras + Regra D outlier)
+- pass 3-4: race-condition guards (AddToCart + WishlistButton)
+- pass 5-6: UX/affordance (CompareButton + PriceAlertButton + endpoint)
+- pass 7: NotificationBell optimistic + a11y triplo
+- pass 8: 3 modals dialog a11y pattern
+- pass 9: <Dialog> wrapper DRY (esta iter - architectural)
+
+PROXIMA ITER:
+- W3 pass 10: refatorar CartDrawer usar <Dialog> (validate wrapper)
+- W18 pass 6: idx parcial order_items status='paid'
+- W7 pass 11: /recommendations/trending por categoria (MLB-5)
