@@ -10979,3 +10979,63 @@ PROXIMA ITER:
 - W7 pass 9: /products/:slug/related pattern (categorias relacionadas dinamicas)
 - W18 pass 7: cache /orders/me historico
 - W3 PDP audit continuado
+
+## WORKER 1 PASS 3 - /redefinir-senha 5 a11y/UX bugs (barra forca + form)
+
+AUDIT /redefinir-senha encontrou 5 bugs cumulativos:
+
+BUG 1 (a11y critical - barra forca sem role):
+  <div className="bg-white/5 rounded-full">
+    <div style={{ width, background }} />
+  </div>
+- Pure visual: SR ignora completamente
+- WCAG 1.3.1 fail
+FIX: role="progressbar" + aria-valuemin/max/now/label dinamico
+
+BUG 2 (color-only):
+- Pure color-coded (red/yellow/green)
+- Color-blind users perdidos
+FIX: span texto pwLabels[score-1] (Fraca/Razoavel/Boa/Forte)
+- Cor + texto = doubly accessible
+
+BUG 3 (err persistente):
+- "Senhas nao coincidem" nao limpava ao corrigir
+FIX: clearErr() helper no onChange ambos inputs
+- Hint inline yellow "Senhas ainda nao coincidem" durante digit
+
+BUG 4 (sem htmlFor + autoComplete):
+- Click no label nao focava input (sem htmlFor/id)
+- Sem autocomplete="new-password" -> browser oferecia senhas antigas
+FIX: id + htmlFor + autoComplete="new-password" + aria-describedby
+
+BUG 5 (err banner sem dismiss):
+- Pattern W3 estabeleceu botao fechar universal
+FIX: botao fechar + role="alert"
+
+BONUS:
+- Lock icon aria-hidden (decorativo)
+- Hint live yellow durante digit confirm
+- aria-describedby linkando inputs ao strength/hint
+
+WCAG 2.1 RESULTADO:
+- 1.3.1 Info & Relationships: PASS
+- 1.4.1 Use of Color: PASS
+- 3.3.1 Error Identification: PASS
+- 3.3.3 Error Suggestion: PASS
+- 4.1.2 Name Role Value: PASS
+
+DEPLOY:
+- commit 7ab931c push main OK
+- 41 insertions, 11 deletions
+- storefront rebuild via VPS cron
+- Componente client-side
+
+W1 AUTH AUDIT PROGRESS:
+- pass 1: NotificationBell load conditional
+- pass 2: /register CPF/phone empty validation
+- pass 3: /redefinir-senha 5 bugs (esta iter)
+
+PROXIMA ITER:
+- W1 pass 4: /esqueci-senha label htmlFor + autoComplete
+- W1 pass 5: /login pwScore meter (Login nao tem mas register tem)
+- W3 PDP audit continuado
