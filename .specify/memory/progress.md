@@ -10501,3 +10501,96 @@ PROXIMA ITER:
 - W9 pass 8: /status, /comparar layouts (verificar se metadata especifica)
 - W3 pass continued: PDP audit deeper
 - W4 polish remaining pages
+
+## WORKER 12 PASS 7 - Cron stuck QA runs + endpoint admin visibility
+
+ENCERRA CICLO QA LIFECYCLE iniciado em W12 pass 6.
+
+CONTEXTO:
+W12 pass 6 introduziu anti-duplicate check (10min window). Runs com
+verdict='running' > 10min sem callback ficam STUCK:
+- Causas: n8n crash mid-dispatch, worker.py travado, callback HTTP fail
+- Sintomas:
+  * products.status='qa_running' indefinido
+  * Seller frustrado, ticket suporte
+  * Anti-duplicate ignora apos 10min, mas sem cleanup = state ambiguo
+
+ENTREGUES:
+
+1. timeoutStuckRuns() cron (5min interval, 60s warmup):
+   - SELECT verdict='running' AND started_at < NOW - 10min LIMIT 20
+   - Para cada stuck:
+     * tx() atomic:
+       - UPDATE verdict='timeout' + finished_at + reasons
+       - UPDATE products status='qa_pending' (libera retry)
+       - INSERT notification in_app seller "QA timeout"
+   - LIMIT 20 batch (evita lock hold grande)
+
+2. GET /qa/runs/stuck (admin/staff):
+   - Lista runs candidatos timeout (verdict='running' + > 5min)
+   - Threshold menor que cron (5min vs 10min) p/ pre-visibility
+   - Admin pode investigar antes do cron auto-acionar
+   - Diagnostica n8n down, worker crash, etc
+
+ATOMICIDADE:
+- tx() previne race com callback chegando durante cron
+- WHERE verdict='running' no UPDATE (skip se ja mudou)
+- WHERE status='qa_running' (idem)
+
+NOTIFICATION:
+- template_code='qa_run_timeout' (novo)
+- Renderiza graciosamente sem template DB (title/body literais)
+- Priority 2 (warn)
+- Payload { product_id, run_id, minutes }
+
+USER FLOW:
+1. Seller envia /qa/run -> run criado verdict='running'
+2. n8n crash mid-dispatch (network/process fail)
+3. 10min depois cron detecta stuck
+4. tx atomic timeout + libera produto + notify seller
+5. Seller NotificationBell: "QA timeout - reenvio liberado"
+6. Reenvia /qa/run (anti-duplicate libera apos timeout)
+
+W12 QA PIPELINE AUDIT (passes 1-7):
+| Pass | Tema |
+|---|---|
+| 1 | Callback handler basico |
+| 2 | HMAC SHA-256 callback |
+| 3 | Timing-safe + raw body |
+| 4 | Counter inflation forward |
+| 5 | Migration reset historico |
+| 6 | Duplicate race + dispatch fail notify |
+| 7 | Cron timeout + admin /runs/stuck (esta iter) |
+
+CICLO QA LIFECYCLE 100% COMPLETO:
+- Dispatch: anti-duplicate + notify fail
+- Run: HMAC + timing-safe + idempotent INSERT
+- Counter: forward fix + reset historico
+- Timeout: cron auto-cleanup + notify
+- Visibility: admin /runs/stuck endpoint
+
+DEPLOY:
+- commit ee735b6 push main OK
+- 102 insertions
+- qa-svc rebuild via VPS cron
+- Sem schema change
+- Notifications template fallback graceful
+
+VALIDACAO POS-DEPLOY:
+- Log [qa.timeout.cron] stuck runs cron started
+- 60s warmup -> primeira execucao
+- GET /api/qa/runs/stuck com Bearer admin -> JSON
+- Manual test: INSERT verdict='running' started_at=NOW-11min
+  -> cron 5min depois -> verdict='timeout' + notif
+
+PADRAO REUSAVEL ESTABELECIDO:
+- Cron stuck/timeout pattern aplicavel a:
+  * payment-svc webhook reconcile (W11 pass 7 ja)
+  * vault-svc rotation (W17 pass 12 ja)
+  * QA runs (W12 pass 7 esta iter)
+  * Futuro: notification outbox stuck, audit_log retention, etc
+
+PROXIMA ITER:
+- W4 pass 14: /admin/qa-queue mostrar runs verdict='timeout' filter
+- W13 pass 8: template qa_run_timeout email seed
+- W18 pass 6: cache /qa/runs/:product_id (history readonly)
