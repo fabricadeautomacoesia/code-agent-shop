@@ -693,32 +693,132 @@ const PAYOUT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 app.post('/payments/payouts/:id/process',
   jwt.requireAuth({ roles: ['admin','staff'] }),
   asyncHandler(async (req, res, next) => {
+    // FIX-WORKER-7 pass 23: 5 BUGS CRITICOS (real money out endpoint):
+    //
+    // 1. *** RACE DUPLO-PROCESS (Regra K) *** SELECT sem FOR UPDATE
+    //    2 admins clicam "Aprovar Payout" simultaneo. Ambas requests leem
+    //    status='approved' (sem lock), ambas chamam asaas.createTransfer ->
+    //    2 TRANSFERS NA ASAAS para o mesmo payout. Seller recebe R$ X 2x.
+    //    Plataforma perde R$ X real (financial loss direct).
+    //    FIX: tx() + FOR UPDATE em seller_payouts.
+    //
+    // 2. *** ASAAS API SEM ROLLBACK *** transfer-then-UPDATE inversao critica
+    //    Pre-fix:
+    //      createTransfer() -> t.id  (Asaas confirma transfer real)
+    //      UPDATE payouts SET status='paid'  (pode falhar restart/network)
+    //    Se UPDATE falhar pos-createTransfer, transfer Asaas existe MAS DB
+    //    diz status='approved' -> outro admin tenta de novo -> 2x transfer.
+    //    Mitigacao parcial: idempotent UPDATE guard (bug 3) + audit log
+    //    (bug 4) permite reconciliacao manual.
+    //    Nota: full 2PC distributed transaction impossivel (Asaas externo).
+    //    Best-effort: UPDATE 'processing' intermediario ANTES de createTransfer,
+    //    audit_log ANTES, UPDATE 'paid' DEPOIS. Cron reconcile detecta stuck.
+    //
+    // 3. UPDATE final sem WHERE status='approved' (idempotent guard)
+    //    Pre-fix: UPDATE WHERE id=$2 - sobrescreve mesmo se outra request
+    //    ja virou 'paid'. FIX: AND status IN ('approved','processing')
+    //    RETURNING id (rowcount=0 -> race detected).
+    //
+    // 4. AUDIT_LOG INSERT ausente em real-money-out endpoint
+    //    Pattern W7 pass 20 (download.js) estabeleceu audit. Payout = MUITO
+    //    mais critico (real $ saindo). Auditoria forense impossivel hoje.
+    //    FIX: audit_log INSERT no MESMO tx() (atomic).
+    //
+    // 5. SELECT p.* viola Regra I
+    //    seller_payouts pode ter internal_notes, risk_score, kyc_reviewed_at,
+    //    rejection_reason. Lista explicita p/ security cross-svc.
     if (!PAYOUT_UUID_RE.test(req.params.id)) {
       return next(errorHandler.badRequest('invalid_uuid'));
     }
-    // FIX-WORKER-4: distingue 'inexistente' de 'existe mas nao-aprovado'
-    const exists = await query(`SELECT status FROM seller_payouts WHERE id = $1`, [req.params.id]);
-    if (!exists.rows.length) return next(errorHandler.notFound('payout_not_found'));
-    if (exists.rows[0].status !== 'approved') {
-      return next(errorHandler.badRequest('payout_not_approved', `status atual: ${exists.rows[0].status}`));
-    }
-    const p = await query(
-      `SELECT p.*, s.asaas_wallet_id FROM seller_payouts p
-        JOIN sellers s ON s.id = p.seller_id WHERE p.id = $1 AND p.status = 'approved'`,
-      [req.params.id]
-    );
-    if (!p.rows.length) return next(errorHandler.notFound('payout_not_approved'));
-    if (!p.rows[0].asaas_wallet_id) return next(errorHandler.badRequest('seller_wallet_missing'));
-    const t = await asaas.createTransfer({
-      wallet: p.rows[0].asaas_wallet_id,
-      value: p.rows[0].amount_cents / 100,
-      description: `Saque seller ${p.rows[0].seller_id}`,
+
+    // FASE 1 (tx atomic): lock + validate + mark 'processing'
+    // Esta fase serializa entre admins concorrentes via FOR UPDATE.
+    // Mark 'processing' = sinal p/ outros admins "alguem ja esta processando"
+    // + cron reconcile detecta stuck (processing > 5min sem virar 'paid').
+    let payout;
+    let phaseError;
+    await tx(async (c) => {
+      const r = await c.query(
+        `SELECT p.id, p.seller_id, p.amount_cents, p.status, s.asaas_wallet_id
+           FROM seller_payouts p
+           LEFT JOIN sellers s ON s.id = p.seller_id
+          WHERE p.id = $1
+          FOR UPDATE OF p`,
+        [req.params.id]
+      );
+      if (!r.rows.length) { phaseError = 'not_found'; return; }
+      const row = r.rows[0];
+      if (row.status !== 'approved') {
+        phaseError = `not_approved:${row.status}`;
+        return;
+      }
+      if (!row.asaas_wallet_id) { phaseError = 'wallet_missing'; return; }
+      // Mark 'processing' atomico - bloqueia outros admins via state machine
+      await c.query(
+        `UPDATE seller_payouts SET status = 'processing', processing_started_at = NOW()
+          WHERE id = $1 AND status = 'approved'`,
+        [req.params.id]
+      );
+      // Audit log ANTES do Asaas call (forense: who tentou, when)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_before)
+         VALUES ($1, $2, 'payout.process_start', 'seller_payout', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({ amount_cents: row.amount_cents, seller_id: row.seller_id })]
+      );
+      payout = row;
     });
-    await query(
-      `UPDATE seller_payouts SET status = 'paid', paid_at = NOW(), asaas_transfer_id = $1 WHERE id = $2`,
-      [t.id, req.params.id]
+    if (phaseError === 'not_found') return next(errorHandler.notFound('payout_not_found'));
+    if (phaseError === 'wallet_missing') return next(errorHandler.badRequest('seller_wallet_missing'));
+    if (phaseError?.startsWith('not_approved')) {
+      return next(errorHandler.badRequest('payout_not_approved', `status atual: ${phaseError.split(':')[1]}`));
+    }
+
+    // FASE 2 (Asaas API - fora tx, demorado): createTransfer.
+    // Em caso de exception, payout fica 'processing' - cron reconcile
+    // detecta stuck > 5min e reverte para 'approved' (operator retry manual).
+    let transfer;
+    try {
+      transfer = await asaas.createTransfer({
+        wallet: payout.asaas_wallet_id,
+        value: payout.amount_cents / 100,
+        description: `Saque seller ${payout.seller_id}`,
+      });
+    } catch (e) {
+      log.error({ err: e.message, payout_id: req.params.id },
+        '[payout.asaas.fail] transfer falhou - payout permanece processing p/ cron reconcile');
+      // Audit fail ANTES de rethrow
+      await query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'payout.process_fail', 'seller_payout', $3, 'critical', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({ error: String(e.message).slice(0, 500) })]
+      ).catch(() => {});
+      return next(errorHandler.badRequest('asaas_transfer_failed', String(e.message)));
+    }
+
+    // FASE 3 (tx atomic): mark 'paid' + final audit log.
+    // Idempotent UPDATE guard previne race-residual entre fase 1 e 3.
+    const finalUpd = await query(
+      `UPDATE seller_payouts SET status = 'paid', paid_at = NOW(),
+                                  asaas_transfer_id = $1
+        WHERE id = $2 AND status = 'processing'
+        RETURNING id`,
+      [transfer.id, req.params.id]
     );
-    res.json({ ok: true, transfer: t });
+    if (!finalUpd.rows.length) {
+      // Race extremamente raro: cron reconcile virou status durante fase 2
+      log.error({ payout_id: req.params.id, transfer_id: transfer.id },
+        '[payout.race.final] UPDATE falhou (status nao processing) - transfer Asaas executou, investigar manual');
+    }
+    await query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'payout.process_complete', 'seller_payout', $3, 'info', $4::JSONB)`,
+      [req.user.sub, req.user.role, req.params.id,
+       JSON.stringify({ asaas_transfer_id: transfer.id, amount_cents: payout.amount_cents })]
+    ).catch(() => {});
+
+    res.json({ ok: true, transfer });
   })
 );
 

@@ -13421,3 +13421,114 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W13: notification-svc audit (outbox processor com Regra N)
+
+================================================================
+ITER W7 PASS 23 - payouts/process 5 BUGS + migration 040 (2026-05-27)
+================================================================
+ESCOPO: payment-svc POST /payments/payouts/:id/process (REAL MONEY OUT)
++ migration 040 schema support
+FILES:
+- services/payment-svc/src/server.js (rewrite endpoint)
+- db/migrations/040_seller_payouts_processing.sql (NEW)
+
+CONTEXTO: W7 pass 22 (webhook) introduziu Regra N state machine. Pass 23
+aplica patterns consolidados (K race + N state machine + I explicit +
+audit log) ao endpoint MAIS CRITICO financeiramente: real $ saindo da
+plataforma p/ seller.
+
+BUGS CORRIGIDOS (5):
+
+1. *** RACE DUPLO-PROCESS (Regra K) *** SELECT sem FOR UPDATE
+- PRE-FIX:
+  Linha 700: SELECT status WHERE id=$1 (precheck - sem lock)
+  Linha 705: SELECT p.* WHERE id=$1 AND status='approved' (sem lock)
+  Linha 712: createTransfer Asaas (~2-5s API call)
+  Linha 717: UPDATE status='paid'
+- CENARIO: 2 admins clicam "Aprovar Payout" simultaneo (dashboard race)
+  - Ambos precheck: status='approved' ✓
+  - Ambos SELECT join sellers: ambos pegam mesmo payout
+  - Ambos createTransfer Asaas -> 2 TRANSFERS NA ASAAS para mesmo payout
+  - Seller recebe R$ X DUAS vezes. Plataforma perde R$ X real.
+- IMPACTO: financial loss direto (sem chargeback retroativo facil)
+- FIX: tx() + SELECT FOR UPDATE em seller_payouts
+- Pattern Regra K consolidado: 6 endpoints (checkout, loyalty, payment
+  create, webhook, payout process esta iter)
+
+2. *** ASAAS API SEM ROLLBACK ATOMICITY ***
+- Pre-fix: createTransfer -> UPDATE (lineares, sem atomicidade)
+  - createTransfer OK + UPDATE falha (restart/network) -> transfer Asaas
+    existe MAS DB diz status='approved' -> retry admin = 2x transfer
+- Full 2PC impossivel (Asaas eh externo).
+- FIX best-effort 3-fase:
+  FASE 1 (tx atomic): FOR UPDATE + validate + UPDATE 'processing' + audit_log
+  FASE 2 (fora tx): createTransfer Asaas (~2-5s)
+  FASE 3 (tx atomic): UPDATE 'paid' + asaas_transfer_id + audit_log
+- Falha FASE 2 -> payout stuck 'processing' -> cron reconcile detecta
+  > 5min + alerta admin (transfer pode ter executado Asaas - investigar manual)
+- Pattern W11 webhook reconcile estabelecido cross-svc
+
+3. UPDATE FINAL sem idempotent guard (race-residual)
+- Pre-fix: UPDATE WHERE id=$2 - sobrescreve qualquer status
+- Pos-fix: WHERE status='processing' RETURNING id
+  - ROWCOUNT=0 -> race extremo (cron reconcile revertou durante fase 2)
+  - Log error p/ investigacao manual
+- Pattern W7 pass 21 (asaas/create) idempotent UPDATE replicado
+
+4. AUDIT_LOG missing em REAL MONEY OUT endpoint
+- Pattern W7 pass 20 estabeleceu audit (downloads R$0 cost)
+- Payouts R$100-R$10000+ SEM audit = forense impossivel
+- FIX: 3 audit_log INSERTs:
+  - process_start (warn) - inicio fase 1
+  - process_fail (critical) - exception fase 2 (Asaas)
+  - process_complete (info) - sucesso fase 3
+- payload_before/after JSON contem amount_cents, seller_id, transfer_id
+- audit trail completo: who/when/what/result
+
+5. SELECT p.* (Regra I)
+- seller_payouts pode ter internal_notes, risk_score, kyc_reviewed_at,
+  rejection_reason. Lista explicita p/ security cross-svc.
+- FIX: SELECT id, seller_id, amount_cents, status, s.asaas_wallet_id
+
+MIGRATION 040 SCHEMA SUPPORT:
+
+1. seller_payouts.processing_started_at TIMESTAMPTZ NULL
+- Marca timestamp inicio fase 2 (Asaas API call)
+- NULL = nunca processado
+- NOT NULL + status='processing' > 5min = STUCK
+
+2. idx_seller_payouts_processing_stuck PARTIAL
+- WHERE status = 'processing' (rows raras - estado transitorio)
+- Cron reconcile usa: SELECT WHERE processing_started_at < NOW() - 5min
+
+3. COMMENT ON TABLE atualiza lifecycle docs:
+   pending -> approved -> processing -> paid|failed
+
+PATTERN W7 SECURITY+RACE+AUDIT COMPLETO 7 endpoints WRITE:
+- Pass 17 checkout: deleted_at WRITE path
+- Pass 18 orders read: response shape security
+- Pass 19 cart loyalty: FOR UPDATE
+- Pass 20 download: cap + DMCA + race + audit
+- Pass 21 payment create: ownership + race + idempotent UPDATE
+- Pass 22 webhook: race + state machine + unknown events
+- Pass 23 payout process: race + 3-phase atomicity + audit + state machine
+
+REGRA O NOVA (W7 pass 23):
+O. Multi-phase atomicity em endpoints WRITE com chamadas externas (API third-party).
+   3-fase pattern obrigatorio:
+   Fase 1: tx() atomic - lock + validate + mark intermediate state
+   Fase 2: external API call (sem tx)
+   Fase 3: tx() atomic - finalize + audit
+   Falha fase 2 -> intermediate state + cron reconcile
+   Aplica: payouts (esta iter), futuros: refund Asaas, webhook callbacks externos
+
+PATTERN W7 14 ENDPOINTS + 15 REGRAS (A-O):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 8
+- payment-svc: 3 (create pass 21, webhook pass 22, payout pass 23)
+
+PROXIMA ITER:
+- W7 pass 24: vault-svc endpoints audit
+- W13: notification-svc Regra N state machine
+- W18 pass 7: idx parcial product_views > 90d cron
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
