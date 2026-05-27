@@ -271,14 +271,37 @@ async function processOutbox() {
   const ids = claimed.rows.map((r) => r.id);
 
   // Carrega payload completo das linhas claimed
+  // FIX-WORKER-7 pass 26 (Regra B): u.deleted_at IS NULL filter.
+  // User soft-deleted (admin moderou) NAO deve receber notifications.
+  // Edge case: admin banne user por abuso, mas notification pending
+  // ja era enviada -> email "Pedido aprovado" para user banido.
+  // Trata como sucesso (sent_status='sent') para nao retry infinito -
+  // user nao existe mais, nao adianta retry.
   const pending = await query(
     `SELECT n.id, n.user_id, n.channel, n.template_code, n.title, n.body, n.body_html,
             n.priority, n.payload, n.retry_count, u.email, u.full_name, u.locale
        FROM notifications n
-       JOIN users u ON u.id = n.user_id
+       JOIN users u ON u.id = n.user_id AND u.deleted_at IS NULL
       WHERE n.id = ANY($1::uuid[])`,
     [ids]
   );
+
+  // FIX-WORKER-7 pass 26: marca notifs orfas (user deletado entre claim
+  // e load) como 'failed' p/ evitar retry infinito + reclaim loop.
+  // Diff de IDs claimed vs IDs retornados pelo JOIN.
+  const loadedIds = new Set(pending.rows.map((r) => r.id));
+  const orphanIds = ids.filter((id) => !loadedIds.has(id));
+  if (orphanIds.length) {
+    await query(
+      `UPDATE notifications
+          SET sent_status = 'failed',
+              failed_reason = 'user_deleted_or_orphan',
+              locked_by = NULL, locked_at = NULL
+        WHERE id = ANY($1::uuid[]) AND sent_status = 'pending'`,
+      [orphanIds]
+    );
+    log.warn({ orphan_count: orphanIds.length }, '[outbox.orphan_marked_failed]');
+  }
 
   for (const n of pending.rows) {
     try {
@@ -310,20 +333,48 @@ async function processOutbox() {
       } else if (n.channel === 'telegram') {
         await sendTelegram(`*${title}*\n${body}`);
       }
-      await query(
+      // FIX-WORKER-7 pass 26 (Regra N + idempotent guard):
+      // UPDATE com WHERE locked_by=worker_id E sent_status='pending'.
+      // Cenario que motivou fix:
+      //   - Worker A claim notif-1 (retry_count=4, lock=A)
+      //   - reclaimOrphanLocks libera lock apos 5min (assume A morto)
+      //     mas A esta vivo, em sendEmail SMTP timeout interno longo
+      //   - Worker B claim notif-1 (lock=B), envia email com sucesso
+      //   - UPDATE B: sent_status='sent', lock=NULL -> OK
+      //   - Worker A volta do SMTP, envia email tambem (2o envio ao user!)
+      //   - UPDATE A: WHERE id=N (sem guard) -> SOBRESCREVE sent_at + (idempotente status)
+      // Email DUPLICADO ao user. UI usuario: "por que recebi 2x?"
+      // FIX: WHERE locked_by = $worker_id AND sent_status='pending'
+      //   - Worker A volta -> ROWCOUNT=0 (lock ja foi pra B) -> nao envia 2o email
+      //     PORQUE: hasta este ponto codigo ja sendEmail acima! Mitigation real:
+      //     SELECT FOR UPDATE dentro do tx() do sendEmail seria ideal mas SMTP
+      //     pode demorar -> impede paralelismo. Pragmatic: post-send guard
+      //     loga warn p/ admin investigar duplicates.
+      const upd = await query(
         `UPDATE notifications
             SET sent_status = 'sent', sent_at = NOW(),
                 locked_by = NULL, locked_at = NULL
-          WHERE id = $1`,
-        [n.id]
+          WHERE id = $1 AND locked_by = $2 AND sent_status = 'pending'
+          RETURNING id`,
+        [n.id, WORKER_ID]
       );
-      log.info({ id: n.id, channel: n.channel, to: mask.text(n.email || '') }, '[notif.sent]');
+      if (!upd.rows.length) {
+        // Race detected: outro worker tomou o lock (reclaim) e processou.
+        // Email JA foi enviado por nos (acima). Loga warn p/ investigacao.
+        log.warn({ id: n.id, worker: WORKER_ID, channel: n.channel },
+          '[notif.race.duplicate_send] outro worker tomou lock - email duplicado possivelmente enviado');
+      } else {
+        log.info({ id: n.id, channel: n.channel, to: mask.text(n.email || '') }, '[notif.sent]');
+      }
     } catch (e) {
       // FIX-13-2 (backoff): proxima tentativa com delay exponencial.
       // 1->30s, 2->2min, 3->10min, 4->1h, 5->terminal failed
       const nextRetry = n.retry_count + 1;
       const backoffSeconds = [30, 120, 600, 3600][n.retry_count] || 3600;
       log.warn({ id: n.id, err: e.message, attempt: nextRetry, backoffSeconds }, '[notif.fail]');
+      // FIX-WORKER-7 pass 26 (Regra N idempotent retry): WHERE guard
+      // previne retry_count DOUBLE-INCREMENT em race scenario (worker A
+      // e B ambos catch + UPDATE -> retry_count incrementa 2x em 1 falha).
       await query(
         `UPDATE notifications
             SET retry_count = retry_count + 1,
@@ -332,8 +383,8 @@ async function processOutbox() {
                 next_retry_at = NOW() + ($2 || ' seconds')::INTERVAL,
                 locked_by = NULL,
                 locked_at = NULL
-          WHERE id = $3`,
-        [e.message.slice(0, 500), String(backoffSeconds), n.id]
+          WHERE id = $3 AND locked_by = $4 AND sent_status = 'pending'`,
+        [e.message.slice(0, 500), String(backoffSeconds), n.id, WORKER_ID]
       );
     }
   }

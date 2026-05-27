@@ -13716,3 +13716,97 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W13: notification-svc outbox SKIP LOCKED pattern
+
+================================================================
+ITER W7 PASS 26 - notification-svc outbox 3 BUGS (Regra N+B) (2026-05-27)
+================================================================
+ESCOPO: notification-svc processOutbox + reclaim cron
+FILE: services/notification-svc/src/server.js (linhas 238-345)
+
+CONTEXTO: W7 pass 25 (vault revoke) consolidou Regra Q idempotent
+terminals. Pass 26 audita notification-svc outbox - sistema event-driven
+mais critical (toca user email + Telegram).
+
+AUDIT inicial: codigo JA EM BOM ESTADO:
+- FOR UPDATE SKIP LOCKED (linha 264) - Regra K + SKIP LOCKED pattern OK
+- reclaimOrphanLocks cron (linha 242-247) - liberacao defensiva 5min OK
+- Backoff exponencial [30s, 2min, 10min, 1h] (linha 325) OK
+- SELECT explicit (linha 275-280) - Regra I OK
+- Cleanup cron 60d (linha 348-351) OK
+
+3 BUGS REMANESCENTES IDENTIFICADOS:
+
+1. *** RACE DUPLICATE SEND *** UPDATE final sem state machine guard
+- Pre-fix (linha 313): WHERE id=$1 (sem lock check)
+- CENARIO CRITICO:
+  T0: Worker A claim notif-1, lock=A, retry_count=4
+  T1: Worker A entra sendEmail SMTP - timeout interno 10min (SMTP slow)
+  T2: reclaimOrphanLocks cron (5min) libera lock A (assume morto)
+  T3: Worker B claim notif-1, lock=B
+  T4: Worker B envia email com sucesso, UPDATE sent_status='sent'
+  T5: Worker A finalmente retorna sendEmail OK
+  T6: Worker A: UPDATE sent_status='sent' WHERE id=N (sem guard)
+      EMAIL DUPLICADO ao user
+- IMPACTO REAL:
+  a. User recebe 2 emails identicos "Pedido aprovado"
+  b. User questiona suporte "por que 2x?"
+  c. Bounce risk se mass-send (SES/SendGrid reputation)
+  d. Templates com link unico (login one-time) -> 2 emails com mesmo
+     token -> 1 expira o outro -> user clica 1o link 410 Gone
+- FIX (Regra N state machine + idempotent):
+  WHERE id=$1 AND locked_by=$worker_id AND sent_status='pending'
+  RETURNING id
+  ROWCOUNT=0 = race detected (B ja processou) -> log warn (email
+  duplicado JA foi enviado por nos, alerta admin)
+- NOTA pragmatica: full prevention impossivel sem reduzir paralelismo
+  (SMTP timeout limit hard 5min). Log warn permite investigacao quando
+  duplicates ocorrem (raros).
+
+2. RETRY DOUBLE-INCREMENT race analogous
+- Pre-fix catch (linha 327): UPDATE retry_count + 1 WHERE id=$3
+- Mesmo cenario bug 1 mas no catch path:
+  Worker A timeout sendEmail (T0-T5)
+  Worker B claim + falha sendEmail tambem (mesmo backend down)
+  Worker A catch: retry_count += 1
+  Worker B catch: retry_count += 1
+  retry_count: 0 -> 2 em 1 backend down event
+  Esgota 5 tentativas em 3 incidents ao inves de 5 incidents
+- FIX: WHERE id=$3 AND locked_by=$4 AND sent_status='pending'
+- B vence (locked_by atual), A perde silenciosamente (rowcount=0)
+
+3. *** REGRA B *** JOIN users sem u.deleted_at IS NULL
+- Pre-fix (linha 277-278): JOIN users u ON u.id = n.user_id
+- User soft-deleted (admin moderou abuso) ainda recebia notifs
+- IMPACTO: email "Bem-vindo!" para conta banida (phishing-like aparencia)
+  ou "Pedido aprovado" para user cujo cadastro foi removido
+- LEGAL: pode contar como contato nao-consentido pos-revogacao
+- FIX: JOIN users u ON u.id = n.user_id AND u.deleted_at IS NULL
+- Marca notifs orfas (user deletado entre claim e load) como 'failed'
+  com reason='user_deleted_or_orphan' p/ evitar retry infinito + log warn
+
+PATTERN W7 EVENT-DRIVEN ENDPOINTS CONSOLIDADO:
+- Pass 22 webhook payment: state machine ALLOWED_TRANSITIONS
+- Pass 24 vault /use: SKIP LOCKED pool allocation
+- Pass 26 notification outbox: state machine + idempotent UPDATE
+                                + SKIP LOCKED claim (pre-existing)
+
+REGRA N STATE MACHINE + IDEMPOTENT UPDATE PATTERN:
+- Workers paralelos: SELECT FOR UPDATE SKIP LOCKED p/ claim
+- Reclaim cron: libera locks orfaos > N min
+- UPDATE final: WHERE state=expected_state AND worker_id=mine RETURNING
+- ROWCOUNT=0 = race detected (outro worker processou ou reclaim)
+- Log warn p/ investigacao (raros mas existem)
+
+PATTERN W7 17 ENDPOINTS + 17 REGRAS (A-Q):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 8
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 1 (outbox processor esta iter)
+
+PROXIMA ITER:
+- W7 pass 27: notification-svc /test endpoint (admin) audit
+- W7 pass 28: qa-svc callback handling audit (Regra N state machine)
+- W18 pass 7: idx parcial product_views > 90d cron
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
