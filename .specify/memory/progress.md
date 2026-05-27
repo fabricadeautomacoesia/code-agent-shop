@@ -58,6 +58,17 @@
 - SSL Lets Encrypt R13 + Backup cron 6h
 - 20 cron workers paralelos para auto-fix continuo
 
+## SEO HARDENING (WORKER 9 - PASS 1)
+- /product/[slug] agora tem generateMetadata dinamica:
+  title "Nome do produto - R$X | Code & Agent Shop"
+  description short_description/description strip HTML 160 chars
+  canonical + openGraph type=website + twitter summary_large_image + robots index/follow
+- /seller/[slug] generateMetadata:
+  title "Loja - Vendedor | Code & Agent Shop"
+  description "Loja oficial X. N vendas - M produtos. Tier Y."
+  canonical + openGraph type=profile + twitter card + robots index/follow
+- VALIDADO HTML servido publicamente contem og:title, og:image, og:type, canonical e twitter:card corretos
+
 ## PENDENCIA UNICA: DNS A pelo usuario
 - cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
 - Sistema 100% acessivel via Host header (curl --resolve) ate la
