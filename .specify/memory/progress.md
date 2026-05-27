@@ -4235,3 +4235,54 @@ PROXIMA ITER:
 - Adicionar phone format mask (libphonenumber-js ou manual via regex)
 - Email duplicate check em real-time (debounce 500ms blur)
 - Password strength meter ja existe (W1 pass 1 V8 23.11)
+
+## WORKER 3 pass 2 (PDP/REVIEW-SVC) - cache invalidation faltando
+
+VETOR DETECTADO (audit E2E QnaForm submit -> tab Q&A):
+- POST /api/qna -> 201 + qna id retornado OK
+- GET /api/products/<slug>/qna -> {qna:[]} VAZIO (60s)
+- User ve sua propria pergunta SUMIR ate TTL expirar
+- UX confuso, parece bug do form de pergunta
+
+ROOT CAUSE:
+product-svc tem cache.cacheMiddleware(60s) em 3 endpoints:
+- /products/:slug (detail)
+- /products/:slug/reviews
+- /products/:slug/qna
+
+Mas review-svc (que roda os POSTs) NUNCA invalidava nada -> cache stale.
+
+FIX (1 arquivo - services/review-svc/src/server.js):
++ import { cache } from @cas/shared destructuring
++ POST /qna -> cache.del('products:qna:<slug>')
++ POST /reviews -> cache.del('products:reviews:<slug>:*' + 'products:detail:<slug>')
+  (detail tambem cai porque avg_rating e review_count mudam)
++ POST /qna/:id/answer -> cache.del('products:qna:<slug>')
++ Async com catch silencioso (cache fail NAO quebra write)
++ slug lookup por product_id apos commit DB
+
+DEPLOY:
+- commit 3fe25f0 pushed
+- review-svc rebuilt + deployed (~2.6s build)
+- Service converged
+
+VALIDACAO PUBLICA (E2E real):
+1. GET /qna -> [1 pergunta antiga]
+2. POST /qna nova "Pergunta W3 pass 2 cache test?" -> 201
+3. GET /qna IMEDIATAMENTE -> [nova + antiga] = 2 perguntas
+   (antes: ainda 1 por 60s ate TTL)
+
+IMPACTO UX:
+- Posts QnA/reviews ficam visiveis IMEDIATAMENTE (real-time)
+- Sellers respondendo veem update instantaneo no PDP
+- avg_rating no detail page atualiza assim que review e postado
+- Mantem performance: cache 60s para reads ainda valido (so invalida em writes)
+
+PADRAO BLUEPRINT V8 documentado:
+SEMPRE invalidar cache do DOWNSTREAM endpoint quando WRITE acontece
+em service diferente. cache.del() async + catch para nao romper write.
+
+GAP DETECTADO (proxima iter):
+- Auditar product-svc me CRUD (PUT /products/:id) - invalida detail?
+- Auditar wishlist add/remove - invalida user wishlist counts?
+- Auditar order-svc - invalida user orders cache se aplicavel
