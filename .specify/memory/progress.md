@@ -12754,3 +12754,102 @@ PROXIMA ITER:
 - W7 pass 18: cart.js loyalty/redeem (similar pattern)
 - W18 pass 7: idx parcial product_views > 90d (cron-based)
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
+
+================================================================
+ITER W7 PASS 17 - order-svc orders.js checkout (CRITICAL WRITE) (2026-05-27)
+================================================================
+ESCOPO: order-svc routes/orders.js POST /checkout
+FILE: services/order-svc/src/routes/orders.js (linhas 35-60)
+
+CONTEXTO: W7 pass 16 corrigiu CRITICAL WRITE em POST /cart/items.
+Mesmo bug se repete em /checkout - severidade MAIOR (orders PERMANENT
+no DB + revenue capturado vs cart transient).
+
+BUGS CORRIGIDOS (1 critico + 1 defensive guard novo):
+
+1. *** CRITICAL WRITE PATH *** JOIN products SEM deleted_at filter
+- Endpoint: POST /orders/checkout (linhas 35-42)
+- PRE-FIX:
+  SELECT ci.*, p.title, p.seller_id, ...
+    FROM cart_items ci
+    JOIN products p ON p.id = ci.product_id
+   WHERE ci.cart_id = $1
+- Sem filtro p.deleted_at IS NULL
+- Sem filtro p.status valido
+
+- CENARIO REAL (mais critico que pass 16):
+  Sequencia:
+  T0: User adiciona produto X ao cart (pre-W7 pass 16, OU produto
+      deletado depois do add MAS antes do checkout)
+  T1: Admin deleta produto X: UPDATE products SET deleted_at=NOW()
+  T2: cart_items orfaos com X.product_id permanecem no DB
+      (sem trigger cascade DELETE cart_items quando product deleted)
+  T3: User volta apos minutos/horas, clica "Finalizar"
+  T4: POST /checkout query items + JOIN products SEM filtros ->
+      produto X aparece nos items com deleted_at!=NULL
+  T5: tx() cria order + order_items com snapshot do produto deletado
+  T6: Payment Asaas captura R$ (sem validacao downstream)
+  T7: order.status='paid' -> download token issue
+  T8: User clica download -> 404 (produto file deletado) OU
+      seller_payouts JOIN falha (seller pode ter sido soft-deleted)
+
+- DIFERENCA SEVERIDADE vs pass 16:
+  Pass 16 (cart/items): produto vai pro cart TRANSIENT
+    - User pode notar no cart drawer "produto indisponivel"
+    - Backend mais ou menos defendia downstream em checkout
+  Pass 17 (checkout): order PERMANENT + revenue captured
+    - Audit log poluido com orders fantasma
+    - Refund manual operacionalmente caro (Asaas API + DB cleanup)
+    - Receita reported errado em /admin/recent stats
+
+- FIX (defesa em profundidade DUPLA):
+  a. WHERE ci.cart_id = $1
+       AND p.deleted_at IS NULL
+       AND p.status IN ('approved','platform_owned')
+  b. NOVO: detect orphan cart_items (count vs filtered)
+     Se items.length < cart_items COUNT total -> badRequest
+     com mensagem PT-BR user-friendly: "Seu carrinho contem produtos
+     que nao estao mais disponiveis. Remova-os e tente novamente."
+  c. User precisa cleanup manual cart -> previne checkout silencioso
+
+2. NOVO PATTERN: ORPHAN DETECTION GUARD em endpoints WRITE
+- Pattern complementar ao Regra B em endpoints que ler tabelas relacionais
+- Quando cart_items tem FK p/ products (sem CASCADE DELETE), products
+  deletado deixa orphans no cart
+- Triggers PG ON DELETE CASCADE NAO podem rodar (soft delete via deleted_at)
+- Solucao: detect orphan no checkout time + bloquear com UX message
+- Aplicavel: order_items->products (snapshot mitiga), wishlist->products,
+  cart_items->products (esta iter), compare_items->products (futuro)
+
+BUGS NAO CORRIGIDOS NESTA ITER (deferidos):
+
+3. GET /orders/ list - ORDER BY sem tiebreaker (Regra D)
+4. GET /orders/:id - SELECT o.* + json_agg(oi.*) viola Regra I
+5. GET /orders/admin/recent - stats COUNT(*) FROM orders sem window
+   temporal -> full scan em escala MLB
+6. GET /orders/ - json_agg snapshot->>'title' sem COALESCE NULL (Regra H)
+
+PROXIMA ITER FOCO: read endpoints orders.js (4 bugs acima).
+
+PATTERN W7 12 ENDPOINTS + 9 REGRAS + 1 PATTERN NOVO:
+- product-svc: 4 endpoints
+- search-svc: 7 endpoints (top-sellers x2, search, autocomplete, facets,
+              categories, trending audit)
+- order-svc: cart.js (3 endpoints W7 pass 16), checkout (esta iter)
+
+NOVA REGRA J: Orphan Detection Guard em WRITE endpoints
+- Pattern: queries com JOIN deveriam validar FK target valido (deleted_at)
+- Se orphans esperados (soft delete pattern), checkout/write rompe
+  graciosamente com UX message em vez de proceder com state inconsistency
+- Documentado: orders/checkout (pass 17 esta iter)
+
+W7 PROGRESS:
+- product-svc: passes 1-10
+- search-svc: passes 11-15
+- order-svc: passes 16 (cart.js WRITE), 17 (checkout WRITE)
+
+PROXIMA ITER:
+- W7 pass 18: orders.js READ endpoints (4 bugs deferidos)
+- W7 pass 19: loyalty/redeem audit (pattern similar)
+- W18 pass 7: idx parcial product_views > 90d
+- W3 pass 10: refatorar CartDrawer usar <Dialog>

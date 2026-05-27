@@ -32,14 +32,44 @@ router.post('/checkout',
       );
       if (!cart.rows.length || cart.rows[0].items_count === 0)
         throw errorHandler.badRequest('empty_cart');
+      // FIX-WORKER-7 pass 17 (CRITICAL WRITE PATH):
+      // Mesmo bug W7 pass 16 (POST /cart/items) repetido aqui em CHECKOUT.
+      // Cenario:
+      //   1. User add produto X ao cart (pre-W7 pass 16 fix permitia deletado)
+      //   2. cart_items orfaos com produto deletado ainda no DB
+      //   3. User faz checkout -> JOIN products SEM deleted_at filter
+      //   4. Order criado com order_items referenciando produto deletado
+      //   5. Payment Asaas captura mas seller_payouts join falha (deleted)
+      //   6. Download URL 404 + suporte ticket
+      // IMPACTO MAIOR que pass 16: orders FANTASMA persistidos no DB
+      // (cart eh transient, order eh permanent + revenue capturado).
+      // FIX defensivo dual: WHERE p.deleted_at IS NULL + status valido.
+      // Se um cart_item orfao escapou (produto deletado pos-add), checkout
+      // ROMPE com badRequest em vez de criar order broken.
       const items = await c.query(
         `SELECT ci.*, p.title, p.seller_id, p.is_platform_owned, p.platform_resale_enabled,
                 s.custom_commission_rate, s.asaas_wallet_id
            FROM cart_items ci
            JOIN products p ON p.id = ci.product_id
            LEFT JOIN sellers s ON s.id = p.seller_id
-          WHERE ci.cart_id = $1`, [cart.rows[0].id]
+          WHERE ci.cart_id = $1
+            AND p.deleted_at IS NULL
+            AND p.status IN ('approved','platform_owned')`, [cart.rows[0].id]
       );
+      // FIX-WORKER-7 pass 17: detectar cart_items orfaos (produto deletado pos-add).
+      // Se items < cart.items_count, alguns produtos foram deletados desde add.
+      // Block checkout + user vai precisar limpar cart manualmente (UX preferivel
+      // a order fantasma).
+      const cartItemCount = await c.query(
+        `SELECT COUNT(*)::INT AS cnt FROM cart_items WHERE cart_id = $1`,
+        [cart.rows[0].id]
+      );
+      if (items.rows.length < cartItemCount.rows[0].cnt) {
+        throw errorHandler.badRequest(
+          'cart_has_unavailable_items',
+          'Seu carrinho contem produtos que nao estao mais disponiveis. Remova-os e tente novamente.'
+        );
+      }
 
       // MLB-4 redeem: se cart tem pontos resgatados, debita IMEDIATAMENTE do balance
       // (pessimistic - se ja foi 'reservado' no cart, debita ao confirmar pedido).
