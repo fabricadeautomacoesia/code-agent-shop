@@ -102,6 +102,46 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## PAYMENT REFUND - WORKER 11 (CRITICAL SIDE-EFFECTS BYPASS)
+Audit em processWebhookEvent revelou bug critico financeiro:
+- PAYMENT_REFUNDED apenas setava orders.status='refunded'.
+- TUDO que paid criou continuava ativo:
+  * license_key + download_token validos 365d (buyer baixa de graca pos-refund)
+  * Loyalty pts ganhos (R$1=1pt + tier mult) nunca eram subtraidos
+  * Pontos resgatados no cart (loyalty_discount_cents) nao voltavam ao saldo
+  * products.sales_count / revenue_cents_total inflados
+  * sellers.total_sales / total_revenue_cents inflados
+  * asaas_splits='processed' sem flag de refund (conciliacao incorreta)
+  * Nenhuma notificacao ao buyer ou sellers do refund
+
+MIGRATION 015:
+- order_items.revoked_at TIMESTAMPTZ + revoked_reason VARCHAR(80)
+- idx_oi_active_license (partial WHERE revoked_at IS NULL)
+
+FIX commitado + deployed (f446b47 + a9d0a35):
+
+PAYMENT_REFUNDED + PAYMENT_CHARGEBACK agora:
+1. UPDATE order_items: revoked_at=NOW(), download_expires_at=NOW(),
+   revoked_reason ('refund' ou 'chargeback'). download.js ja valida expires_at,
+   buyer ve forbidden ao tentar baixar.
+2. Estorna loyalty pts ganhos: para cada loyalty_transactions reason='order_paid'
+   do order, UPDATE user_loyalty - pts (GREATEST(0,...) anti-negativo) +
+   INSERT delta negativo reason='order_refunded'.
+3. Restaura pontos resgatados: UPDATE user_loyalty + pts_redeemed + INSERT
+   reason='order_refund_restore'.
+4. Decrementa counters products + sellers (todos com GREATEST(0,...)).
+5. UPDATE asaas_splits SET status='refunded' (admin estorna transfer manual no Asaas).
+6. Notifica buyer (priority=2 alta) + sellers (template seller_sale_refunded).
+
+BONUS: notificacoes seller_new_sale (no paid) estavam em if(false) orphan,
+movidas para dentro do if(action.paid_at) - agora disparam corretamente.
+
+VALIDADO:
+- Migration 015: 2 columns + idx_oi_active_license criados em prod.
+- Webhook /api/payments/asaas/webhook responde 200 com signature valida.
+- Handler PAYMENT_REFUNDED montado e pronto. Proximo refund real do Asaas
+  vai reverter tudo automaticamente.
+
 ## NOTIFICATION UX - WORKER 13 (UUID 22P02 + IDEMPOTENT MARK-AS-READ)
 Audit em services/notification-svc revelou 2 bugs:
 - POST /:id/read com UUID malformado -> 500 database_error (notification-svc
