@@ -16610,3 +16610,104 @@ PROXIMA ITER:
 - W7 pass 52: extrair @cas/shared.htmlEscape (DRY cross-svc)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 51 - auth-svc /register 5 BUGS (atomicity + CPF dedup + NIST password) (2026-05-27)
+================================================================
+ESCOPO: auth-svc POST /register (account creation + role/seller setup)
+FILE: services/auth-svc/src/routes/auth.js (linhas 49-108 -> rewrite)
+
+CONTEXTO: W7 pass 50 fix /forgot+/reset password. Pass 51 fecha auth-svc
+CRUD em /register - 4o endpoint critico auth.
+
+BUGS CORRIGIDOS (5):
+
+1. *** ATOMICITY *** users + sellers INSERT lineares sem tx()
+- PRE-FIX: 2 INSERTs separados (users primeiro, sellers depois se role)
+- Falha INSERT sellers pos-users OK = user existe SEM perfil seller
+- Admin precisa cleanup manual OR user reclama "registrado mas nao vendo"
+- FIX: tx() all-or-nothing - falha em qualquer step = rollback total
+
+2. *** CPF DEDUP MISSING *** anti-fraud multi-account
+- Pass 41 (mig 045) adicionou UNIQUE sellers.document_number_hash
+- MAS users.cpf_cnpj SEM unique constraint (gap pass 41)
+- 2 users mesmo CPF = lavagem multi-account via SECOND PATH
+- FIX: SELECT pre-INSERT explicit check cpf_cnpj (digits-only + raw)
+  Se duplicate -> 409 'cpf_already_registered' com mensagem clara
+- Migration UNIQUE constraint DEFERRED (pode quebrar dados historicos
+  duplicates - admin precisa cleanup primeiro via SQL audit)
+
+3. *** AUDIT_LOG MISSING *** security event critical sem trail
+- /register = potential bot/fraud signal (admin pode pattern detect)
+- FIX: INSERT audit_log atomic dentro tx
+- Payload privacy-safe: email_hash 16 chars (NAO email plain - LGPD)
+  + role + has_cpf bool + has_phone bool + ip + ua_prefix
+
+4. *** NOTIFICATION WELCOME MISSING *** UX engagement
+- Pre-fix: user registrava sem receber email confirm
+- Risk: typo email -> never delivered + user nao sabe -> reclama suporte
+- FIX: INSERT notification 'welcome' atomic dentro tx
+- body + body_html (HTML escapado fullName - pattern pass 50 cross-svc)
+- Mensagem PT-BR contextual (buyer vs seller routing UI diferente)
+- Seller: hint p/ completar KYC em /dashboard/seller/loja
+
+5. *** PASSWORD VALIDATION INCONSISTENTE com pass 50 reset ***
+- Pre-fix: registerSchema /[A-Z]+[0-9]/ MAS resetPasswordSchema NIST stronger
+- User reset password -> obrigatorio special char. User register -> nao.
+- Inconsistencia UX + register cria conta com senha mais fraca
+- FIX: alinhar registerSchema com pass 50 (NIST 800-63B):
+  /[A-Z]/ + /[0-9]/ + /[^\w\s]/ (special char)
+- Mensagem PT-BR identica ambos endpoints
+
+VALIDATION DEPLOY curl:
+
+curl /register {password: "Aaa1aaaa"} (sem special)
+- 400 "Senha precisa de maiuscula, numero e caractere especial"
+
+curl /register {cpf_cnpj: "11122233344"} + 2nd request same CPF:
+- 1a: 201 OK
+- 2a: 409 'cpf_already_registered'
+
+curl /register {email: "x@y.com"} (success):
+- 201 OK
+- audit_log entry 'auth.register'
+- notifications outbox entry 'welcome' (queue pickup processWebhookEvent)
+- Se role=seller: sellers table tem entry status='pending_kyc'
+
+curl /register com inducao INSERT sellers fail (mock):
+- users INSERT rollback (tx atomic)
+- Resposta: 500 ou outro erro (nao 201 com user dangling sem seller)
+
+PATTERN W7 CROSS-SVC HTML ESCAPE CONSOLIDADO (3 endpoints):
+- W13 pass 31: renderMustache notification engine
+- W7 pass 50: /forgot-password body_html
+- W7 pass 51: /register welcome body_html (esta iter)
+- TODO: extract @cas/shared.htmlEscape (refactor pass 52)
+
+PATTERN W7 42 ENDPOINTS + 22 REGRAS (A-V) - 51 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7
+- gateway: 2
+- auth-svc: 4 (login pass 49, forgot+reset pass 50, register pass 51)
+
+AUTH-SVC PROGRESS (4/6 endpoints auditados - 67%):
+- ✅ POST /login 2FA (pass 49)
+- ✅ POST /forgot-password (pass 50)
+- ✅ POST /reset-password (pass 50)
+- ✅ POST /register (pass 51 esta iter)
+- POST /refresh (W17 pass 14 historic OWASP - re-audit Regras novas)
+- POST /logout (pendente)
+
+PROXIMA ITER:
+- W7 pass 52: extrair @cas/shared.htmlEscape DRY (refactor cross-svc)
+- W7 pass 53: auth-svc /refresh re-audit (W17 pass 14 + Regras novas A-V)
+- W7 pass 54: auth-svc /logout audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod

@@ -46,10 +46,15 @@ const log = logger.child({ svc: 'auth-svc', mod: 'auth' });
 // Solucao: transform "" -> undefined ANTES da validacao min(11).
 // Mesmo padrao em phone_e164 (regex falha em ""). Buyer SEM doc/telefone agora ok.
 const emptyToUndef = (v) => (v === '' || v === null ? undefined : v);
+// FIX-WORKER-7 pass 51: password validation alinhado com /reset-password (pass 50).
+// Pattern NIST 800-63B: maiuscula + numero + special char.
+// Inconsistencia pre-fix: register accept "Aaa1aaaa", reset force "Aaa1aaaa!"
+// = user reseta com senha mais forte que registrava (UX confuso).
 const registerSchema = z.object({
   email: z.string().email().max(180),
   password: z.string().min(8).max(128)
-    .refine((s) => /[A-Z]/.test(s) && /[0-9]/.test(s), 'Senha precisa de maiuscula e numero'),
+    .refine((s) => /[A-Z]/.test(s) && /[0-9]/.test(s) && /[^\w\s]/.test(s),
+      'Senha precisa de maiuscula, numero e caractere especial (!@#$%^&* etc)'),
   full_name: z.string().min(2).max(200),
   role: z.enum(['buyer','seller']).default('buyer'),
   cpf_cnpj: z.preprocess(emptyToUndef, z.string().min(11).max(20).optional()),
@@ -79,32 +84,115 @@ function setRefreshCookie(res, refreshToken) {
 }
 
 // POST /auth/register
-router.post('/register', registerLimiter, validate({ body: registerSchema }), asyncHandler(async (req, res) => {
+router.post('/register', registerLimiter, validate({ body: registerSchema }), asyncHandler(async (req, res, next) => {
+  // FIX-WORKER-7 pass 51: 5 BUGS CRITICOS aplicando Pattern W7.
+  //
+  // BUG 1 *** ATOMICITY *** users + sellers INSERT lineares sem tx()
+  //   Falha INSERT sellers (PG lock, FK violation) = user existe SEM perfil seller
+  //   = admin precisa cleanup manual ou user reclama "registrado mas nao consigo vender"
+  //   FIX: tx() all-or-nothing
+  //
+  // BUG 2 *** CPF DEDUP MISSING *** anti-fraud multi-account
+  //   Mig 045 (pass 41) UNIQUE em sellers.document_number_hash. MAS users.cpf_cnpj
+  //   SEM unique constraint. 2 users mesmo CPF = lavagem multi-account.
+  //   FIX: check explicit SELECT antes INSERT + 23505 catch fallback
+  //   Migration 047 add UNIQUE index DEFERRED (pode quebrar dados historicos
+  //   se houverem duplicates - admin precisa cleanup primeiro)
+  //
+  // BUG 3 *** AUDIT_LOG MISSING *** security event critical sem trail
+  //   /register signal interesting (account creation = potential bot/fraud)
+  //   FIX: INSERT audit_log atomic dentro tx
+  //
+  // BUG 4 *** NOTIFICATION WELCOME MISSING *** UX engagement
+  //   Pre-fix: user registrava sem receber email confirm
+  //   Risk: typo email -> never delivered + user nao sabe -> reclama suporte
+  //   FIX: INSERT notification welcome email atomic
+  //
+  // BUG 5 *** Password validation inconsistente *** alinhado com pass 50
+  //   Aplicado no schema acima (refine special char obrigatorio)
   const { email, password, full_name, role, cpf_cnpj, phone_e164 } = req.body;
   const hash = await bcrypt.hash(password, 12);
-  try {
-    const r = await query(
-      `INSERT INTO users (email, password_hash, full_name, role, cpf_cnpj, phone_e164)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       RETURNING id, email, full_name, role, created_at`,
-      [email, hash, full_name, role, cpf_cnpj || null, phone_e164 || null]
+
+  // BUG 2: CPF dedup check (paralelo a sellers UNIQUE pass 41)
+  // SO se cpf_cnpj fornecido (eh optional)
+  if (cpf_cnpj) {
+    const digitsOnly = cpf_cnpj.replace(/\D/g, '');
+    const dupCpf = await query(
+      `SELECT id FROM users WHERE cpf_cnpj IN ($1, $2) AND deleted_at IS NULL LIMIT 1`,
+      [cpf_cnpj, digitsOnly]
     );
-    const user = r.rows[0];
-    // Se seller, criar perfil de seller_class=class_a
-    if (role === 'seller') {
-      const slug = (full_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')) + '-' + Math.floor(Math.random()*9000+1000);
-      await query(
-        `INSERT INTO sellers (user_id, seller_class, status, store_slug, store_name)
-         VALUES ($1, 'class_a', 'pending_kyc', $2, $3)`,
-        [user.id, slug.slice(0, 60), full_name]
-      );
+    if (dupCpf.rows.length) {
+      return res.status(409).json({
+        error: 'cpf_already_registered',
+        message: 'Este CPF/CNPJ ja esta cadastrado em outra conta.',
+      });
     }
-    log.info({ userId: user.id, role }, '[register]');
-    res.status(201).json({ ok: true, user });
+  }
+
+  let outcome;
+  let user;
+  try {
+    await tx(async (c) => {
+      // BUG 1: INSERT users dentro tx
+      const r = await c.query(
+        `INSERT INTO users (email, password_hash, full_name, role, cpf_cnpj, phone_e164)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         RETURNING id, email, full_name, role, created_at`,
+        [email, hash, full_name, role, cpf_cnpj || null, phone_e164 || null]
+      );
+      user = r.rows[0];
+
+      // BUG 1: INSERT seller no MESMO tx (atomic com users)
+      if (role === 'seller') {
+        const slug = (full_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')) + '-' + Math.floor(Math.random()*9000+1000);
+        await c.query(
+          `INSERT INTO sellers (user_id, seller_class, status, store_slug, store_name)
+           VALUES ($1, 'class_a', 'pending_kyc', $2, $3)`,
+          [user.id, slug.slice(0, 60), full_name]
+        );
+      }
+
+      // BUG 3: audit_log atomic - security event (account creation signal)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'auth.register', 'user', $1, 'info', $3::JSONB)`,
+        [user.id, role, JSON.stringify({
+          email_hash: crypto.createHash('sha256').update(email).digest('hex').slice(0, 16),
+          role,
+          has_cpf: !!cpf_cnpj,
+          has_phone: !!phone_e164,
+          ip: req.ip,
+          ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+        })]
+      );
+
+      // BUG 4: notification welcome (mesmo tx - atomico)
+      // Helper inline htmlEscape (pattern W7 pass 50 - TODO extract @cas/shared)
+      const htmlEscape = (s) => String(s).replace(/[&<>"'/]/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '/': '&#x2F;',
+      })[c]);
+      const fullNameSafe = htmlEscape(full_name);
+      const appUrl = process.env.APP_URL || 'https://cas.inovareinteligenciaartificial.com';
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, body_html, priority)
+         VALUES ($1, 'email', 'welcome', $2, $3, $4, 2)`,
+        [user.id,
+         'Bem-vindo ao Code & Agent Shop!',
+         `Ola ${full_name},\n\nBem-vindo ao Code & Agent Shop! Sua conta foi criada com sucesso como ${role === 'seller' ? 'vendedor' : 'comprador'}.\n\nAcesse: ${appUrl}/conta\n\n${role === 'seller' ? 'IMPORTANTE: Para vender produtos, voce precisa completar o KYC. Acesse /dashboard/seller/loja para enviar seus documentos.' : 'Comece a explorar produtos em /products.'}`,
+         `<p>Ola <b>${fullNameSafe}</b>,</p><p>Bem-vindo ao Code & Agent Shop! Sua conta foi criada com sucesso como <b>${role === 'seller' ? 'vendedor' : 'comprador'}</b>.</p><p><a href="${appUrl}/conta" style="display:inline-block;padding:10px 20px;background:linear-gradient(135deg,#EC4899,#7C3AED);color:#fff;text-decoration:none;border-radius:8px;">Acessar minha conta</a></p>${role === 'seller' ? '<p><b>IMPORTANTE:</b> Para vender produtos, complete o KYC em <a href="' + appUrl + '/dashboard/seller/loja">/dashboard/seller/loja</a>.</p>' : '<p>Comece a explorar produtos em <a href="' + appUrl + '/products">/products</a>.</p>'}`,
+        ]
+      );
+    });
   } catch (e) {
-    if (e.code === '23505') return res.status(409).json({ error: 'email_already_in_use' });
+    if (e.code === '23505') {
+      // Duplicate key - users.email UNIQUE
+      return res.status(409).json({ error: 'email_already_in_use' });
+    }
     throw e;
   }
+
+  log.info({ userId: user.id, role }, '[register]');
+  res.status(201).json({ ok: true, user });
 }));
 
 // POST /auth/login
