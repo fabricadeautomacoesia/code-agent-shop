@@ -84,10 +84,30 @@ export default function CartPage() {
       load();
     }
   }
+  // FIX-WORKER-2 pass 5: applyCoupon robustez
+  // Bugs antes:
+  // 1. coupon nao trimado -> " PROGRESSIVO15 " enviava com espacos -> 400
+  // 2. Sem feedback - input nao limpava apos aplicar com sucesso
+  // 3. Sem prevent de re-aplicar mesmo cupom ja ativo
+  // 4. Erro do backend ("invalid_coupon") nao tinha texto friendly para user
   async function applyCoupon(e: React.FormEvent) {
     e.preventDefault();
-    try { await Api.cartCoupon(token!, coupon); load(); }
-    catch (e: any) { setErr(e.message); }
+    setErr('');
+    const code = coupon.trim().toUpperCase();
+    if (!code) { setErr('Digite um codigo de cupom.'); return; }
+    if (cart?.coupon_code === code) { setErr(`Cupom ${code} ja esta aplicado.`); return; }
+    try {
+      await Api.cartCoupon(token!, code);
+      setCoupon(''); // limpa input apos aplicar OK
+      load();
+    } catch (e: any) {
+      const msg = e.data?.message || e.message || '';
+      // Friendly mapping para erros comuns do backend
+      if (/not_found|inexistente|invalid/i.test(msg)) setErr(`Cupom ${code} nao encontrado ou expirado.`);
+      else if (/min_tier|tier/i.test(msg)) setErr(`Cupom ${code} exclusivo para tier superior.`);
+      else if (/expired/i.test(msg)) setErr(`Cupom ${code} expirou.`);
+      else setErr(msg || `Erro ao aplicar cupom ${code}.`);
+    }
   }
 
   if (!token) {
@@ -162,10 +182,24 @@ export default function CartPage() {
           <aside className="glass p-6 h-fit sticky top-28">
             <h3 className="font-display font-bold text-xl mb-4">Resumo</h3>
 
+            {/* FIX-WORKER-2 pass 5: form cupom acessivel + estados visuais
+                - disabled quando vazio (impede submit sem codigo)
+                - aria-label no botao icone-only
+                - hover state visivel (border-magenta)
+                - uppercase auto no input (cupons sao case-insensitive no backend, mas
+                  visual consistente: "progressivo15" vira "PROGRESSIVO15") */}
             <form onSubmit={applyCoupon} className="flex gap-2 mb-4">
-              <input value={coupon} onChange={(e) => setCoupon(e.target.value)} placeholder="Cupom"
-                className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm focus:border-magenta focus:outline-none" />
-              <button className="px-3 py-2 rounded-lg glass text-sm">
+              <input value={coupon}
+                onChange={(e) => setCoupon(e.target.value)}
+                placeholder="Cupom (ex: PROGRESSIVO15)"
+                aria-label="Codigo do cupom"
+                style={{ textTransform: 'uppercase' }}
+                className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm focus:border-magenta focus:outline-none placeholder:normal-case placeholder:text-white/40" />
+              <button type="submit"
+                disabled={!coupon.trim()}
+                aria-label="Aplicar cupom"
+                title="Aplicar cupom"
+                className="px-3 py-2 rounded-lg glass text-sm hover:border-magenta transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-white/10">
                 <Tag className="w-4 h-4" />
               </button>
             </form>
