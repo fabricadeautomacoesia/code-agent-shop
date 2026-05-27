@@ -593,8 +593,61 @@ app.get('/qna/:id/voted', jwt.requireAuth(),
 );
 
 // GET /qna/seller/pending - perguntas pendentes do seller logado
+// FIX-WORKER-7 pass 57: 5 BUGS aplicando Pattern W7 (Regras A+D+E + LGPD + admin path).
+//
+// BUG 1 *** ADMIN BYPASS *** roles ['seller','admin'] aceita admin
+//   PRE-FIX: JOIN sellers s ON s.user_id = $1 - admin SEM entry sellers retorna
+//   0 rows. Endpoint inutil para admin/staff investigar qna pendente cross-seller.
+//   FIX: isAdmin path opcional ?seller_id filter (sem ownership check).
+//
+// BUG 2 *** Regra A products.status missing *** qna em archived/rejected
+//   PRE-FIX: nenhum check p.status. Seller ve qna pendente em produto que
+//   foi rejeitado/archived - responder eh waste (qna nunca aparece PDP).
+//   FIX: AND p.status IN ('approved','platform_owned') + deleted_at IS NULL.
+//
+// BUG 3 *** Regra D TIEBREAKER MISSING *** ORDER BY asked_at ASC nao determ
+//   2 qna asked_at identicos (script bulk) -> ordem indefinida na fila seller.
+//   FIX: + q.id ASC tiebreaker.
+//
+// BUG 4 *** Regra E PAGINATION MISSING *** hardcoded LIMIT 100
+//   Seller com 500 qnas backlog (produto viral) so ve primeiras 100.
+//   FIX: ?limit (clamp 1-100, default 50) + ?offset (>=0, default 0).
+//
+// BUG 5 *** LGPD PII LEAK asker_email plain text ***
+//   PRE-FIX: u.email full text. Seller pode usar email asker fora-do-app
+//   (contato direto, marketing nao-consentido).
+//   FIX: maskEmail aplicado (seller so precisa display_name p/ contexto).
+//   Admin path vê full (investigacao).
 app.get('/qna/seller/pending', jwt.requireAuth({ roles: ['seller','admin'] }),
   asyncHandler(async (req, res) => {
+    const isAdmin = req.user && req.user.role === 'admin';
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    let whereClause;
+    let params;
+    if (isAdmin) {
+      // Admin path: opcional ?seller_id filter (sem ownership check)
+      const sellerIdFilter = req.query.seller_id || null;
+      if (sellerIdFilter && !QNA_UUID_RE.test(String(sellerIdFilter))) {
+        return res.status(400).json({ error: 'invalid_seller_id' });
+      }
+      whereClause = sellerIdFilter
+        ? `q.seller_id = $1::UUID AND q.answer IS NULL AND q.is_hidden = FALSE
+           AND p.status IN ('approved','platform_owned') AND p.deleted_at IS NULL`
+        : `q.answer IS NULL AND q.is_hidden = FALSE
+           AND p.status IN ('approved','platform_owned') AND p.deleted_at IS NULL`;
+      params = sellerIdFilter ? [sellerIdFilter, limit, offset] : [limit, offset];
+    } else {
+      // Seller path: ownership via JOIN sellers
+      whereClause = `s.user_id = $1::UUID AND q.answer IS NULL AND q.is_hidden = FALSE
+                     AND p.status IN ('approved','platform_owned') AND p.deleted_at IS NULL`;
+      params = [req.user.sub, limit, offset];
+    }
+
+    const limitParamIdx = params.length - 1;
+    const offsetParamIdx = params.length;
+
     const r = await query(
       `SELECT q.id, q.question, q.asked_at, q.upvote_count,
               p.id AS product_id, p.slug AS product_slug, p.title AS product_title, p.cover_image_url,
@@ -603,10 +656,18 @@ app.get('/qna/seller/pending', jwt.requireAuth({ roles: ['seller','admin'] }),
          JOIN products p ON p.id = q.product_id
          JOIN sellers s ON s.id = q.seller_id
          LEFT JOIN users u ON u.id = q.asked_by_user_id
-        WHERE s.user_id = $1 AND q.answer IS NULL AND q.is_hidden = FALSE
-        ORDER BY q.asked_at ASC LIMIT 100`, [req.user.sub]
+        WHERE ${whereClause}
+        ORDER BY q.asked_at ASC, q.id ASC
+        LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`, params
     );
-    res.json({ qna: r.rows });
+
+    // LGPD masking: seller só vê email mascarado (data minimization)
+    const qna = r.rows.map((row) => {
+      if (isAdmin) return row;
+      return { ...row, asker_email: maskEmail(row.asker_email) };
+    });
+
+    res.json({ qna, total: qna.length, limit, offset });
   })
 );
 
@@ -1000,17 +1061,89 @@ app.get('/seller/received',
 );
 
 // GET /admin/reports?status=open (acessada via /api/reviews/admin/reports)
+// GET /admin/reports - listagem admin/staff de reports moderacao.
+// FIX-WORKER-7 pass 57: 6 BUGS aplicando Pattern W7 (Regras D+E+I + LGPD masking).
+//
+// BUG 1 *** Regra E PAGINATION MISSING *** hardcoded LIMIT 200
+//   PRE-FIX: nenhum ?limit/?offset query param. Admin queue 1000+ reports
+//   acumulados (cron de moderacao backlog) -> 200 retornados sempre, restantes
+//   inacessiveis. UX broken para large queues.
+//   FIX: ?limit (clamp 1-200, default 50) + ?offset (>=0, default 0).
+//
+// BUG 2 *** Regra D TIEBREAKER MISSING *** ORDER BY created_at DESC nao determ
+//   2 reports created_at identicos (cron mass-flag) -> ordem indefinida.
+//   FIX: + r.id DESC tiebreaker.
+//
+// BUG 3 *** STATUS ENUM VALIDATION *** req.query.status sem whitelist
+//   PRE-FIX: req.query.status || 'open' aceita qualquer string. Atribui ao $1
+//   PG enum cast falha 500 (vazamento internals query) em vez 400 explicit.
+//   FIX: enum whitelist + 400 invalid_status se fora.
+//
+// BUG 4 *** LGPD PII LEAK *** reporter_email/name plain text
+//   PRE-FIX: SELECT r.*, u.email, u.full_name -> staff (role inferior admin)
+//   recebe PII denunciante full. LGPD principio minimizacao: staff so precisa
+//   mask para investigar; admin vê full p/ acao moderadora.
+//   FIX: isAdmin path skip mask. Staff path aplica maskEmail (jo***@email.com).
+//
+// BUG 5 *** Regra I SELECT explicit fields *** SELECT r.* unsafe
+//   Schema reports.* pode trazer cols sensiveis novas (ip_address?) sem audit.
+//   FIX: enumerar fields explicit + version-safe.
+//
+// BUG 6 *** CACHE MISSING *** admin queue refresh manual sempre hit DB
+//   Pattern pass 56 estabeleceu cache.cacheMiddleware 60s p/ listings.
+//   FIX: cache 30s (admin precisa freshness mais alta que seller).
+const ADMIN_REPORTS_STATUS = new Set(['open','under_review','resolved','dismissed']);
+function maskEmail(email) {
+  if (!email || typeof email !== 'string') return null;
+  const at = email.indexOf('@');
+  if (at < 2) return '***' + (at >= 0 ? email.slice(at) : '');
+  return email.slice(0, 2) + '***' + email.slice(at);
+}
+function maskName(name) {
+  if (!name || typeof name !== 'string') return null;
+  return name.length <= 2 ? name[0] + '***' : name.slice(0, 2) + '***';
+}
+
 app.get('/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware({ ttl: 30, keyPrefix: 'admin-reports', varyByUser: false }),
   asyncHandler(async (req, res) => {
-    const status = req.query.status || 'open';
+    const status = String(req.query.status || 'open');
+    if (!ADMIN_REPORTS_STATUS.has(status)) {
+      return res.status(400).json({ error: 'invalid_status', allowed: Array.from(ADMIN_REPORTS_STATUS) });
+    }
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
     const r = await query(
-      `SELECT r.*, u.email AS reporter_email, u.full_name AS reporter_name
+      `SELECT r.id, r.target_type, r.target_id, r.reason, r.notes,
+              r.status, r.resolution_notes, r.resolved_at, r.resolved_by_user_id,
+              r.reporter_user_id, r.created_at,
+              u.email AS reporter_email, u.full_name AS reporter_name
          FROM reports r
          LEFT JOIN users u ON u.id = r.reporter_user_id
         WHERE r.status = $1
-        ORDER BY r.created_at DESC LIMIT 200`, [status]
+        ORDER BY r.created_at DESC, r.id DESC
+        LIMIT $2 OFFSET $3`, [status, limit, offset]
     );
-    res.json({ reports: r.rows });
+
+    // LGPD masking: admin vê full, staff vê masked (data minimization)
+    const isAdmin = req.user && req.user.role === 'admin';
+    const reports = r.rows.map((row) => {
+      if (isAdmin) return row;
+      return {
+        ...row,
+        reporter_email: maskEmail(row.reporter_email),
+        reporter_name: maskName(row.reporter_name),
+      };
+    });
+
+    res.json({
+      reports,
+      total: reports.length,
+      limit,
+      offset,
+      status,
+    });
   })
 );
 

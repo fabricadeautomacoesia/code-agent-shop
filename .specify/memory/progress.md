@@ -17272,10 +17272,24 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ POST /:id/reply (pass 37) - notif buyer + admin
 - ✅ POST /reports (pass 38) - DoS reputational
 - ✅ POST /reports/:id/resolve (pass 39) - admin terminal
-- ✅ GET /seller/received (pass 56 esta iter) - LGPD + admin + cache
+- ✅ GET /seller/received (pass 56) - LGPD + admin + cache
+- ✅ GET /admin/reports (pass 57 esta iter) - Regra D+E+I + LGPD staff mask
+- ✅ GET /qna/seller/pending (pass 57 esta iter) - admin bypass + Regra A+D+E + LGPD
+
+W7 PASS 57 RESUMO:
+- review-svc 2 listing endpoints auditados (admin+seller)
+- 11 bugs corrigidos no total (6 + 5):
+  * /admin/reports: pagination + tiebreaker + enum whitelist + LGPD staff mask
+    + SELECT explicit fields + cache 30s
+  * /qna/seller/pending: admin bypass + Regra A products.status + tiebreaker
+    + pagination + LGPD seller asker_email mask
+- Helpers locais maskEmail+maskName documentados p/ pass 58 extract @cas/shared
+- Pattern W7 estabelecido em 52 endpoints (+2 esta iter) 23 regras (A-W) - 57 iters
+- LGPD principio data minimization aplicado: role-tier masking
+  (admin = full, staff/seller = masked)
 
 PROXIMA ITER:
-- W7 pass 57: read-only audit /admin/reports + outros listings
-- W7 pass 58: extract @cas/shared.maskPII (refactor cross-svc)
+- W7 pass 58: extract @cas/shared.maskPII (refactor maskEmail/maskName cross-svc)
+- W7 pass 59: audit /admin/* endpoints em outros svcs (seller-svc admin.js, order-svc admin)
 - W3 pass 14: Dialog wrapper e2e tests
 - W14: monitor /aiops/db/dead-indexes prod 2+ semanas
