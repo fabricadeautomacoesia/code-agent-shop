@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, cache } = require('@cas/shared');
 
 const router = express.Router();
 router.use(jwt.requireAuth());
@@ -12,32 +12,128 @@ router.use(jwt.requireAuth());
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // GET /products/wishlist - lista favoritos do user logado
-router.get('/', asyncHandler(async (req, res) => {
-  const r = await query(
-    `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
-            p.cover_image_url, p.price_cents, p.currency, p.is_free,
-            p.avg_rating, p.review_count, p.sales_count, p.is_platform_owned,
-            (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug,
-            (SELECT store_name FROM sellers WHERE id = p.seller_id) AS store_name,
-            (SELECT slug FROM categories WHERE id = p.category_id) AS category_slug,
-            (SELECT reputation_tier FROM sellers WHERE id = p.seller_id) AS reputation_tier,
-            w.created_at AS favorited_at
-       FROM product_wishlist w
-       JOIN products p ON p.id = w.product_id
-      WHERE w.user_id = $1 AND p.status = 'approved' AND p.deleted_at IS NULL
-      ORDER BY w.created_at DESC LIMIT 200`, [req.user.sub]
-  );
-  res.json({ products: r.rows, count: r.rows.length });
-}));
+// FIX-WORKER-7 pass 80: 7 BUGS aplicando Pattern W7 (Regras A+D+E + N+1 + filter + cache + UX).
+//
+// BUG 1 *** Regra A *** p.status = 'approved' exclui platform_owned
+//   User favoritou produto MLB (platform_owned) -> some da lista wishlist.
+//   FIX: status IN ('approved','platform_owned') (mesma classe pass 73-79).
+//
+// BUG 2 *** Regra D *** ORDER BY w.created_at DESC sem tiebreaker
+//   User favoritou bulk script em segundos -> created_at identicos.
+//   FIX: + w.product_id ASC tiebreaker.
+//
+// BUG 3 *** Regra E *** hardcoded LIMIT 200 sem ?limit/?offset
+//   Heavy user 500+ favoritos -> só vê 200 primeiros.
+//   FIX: ?limit (1-200, default 50) + ?offset + total + has_more.
+//
+// BUG 4 *** N+1 SUBQUERIES *** 4 subqueries correlacionadas por row
+//   200 products * 4 subqueries = 800 sub-statements PG por hit.
+//   FIX: LEFT JOIN sellers + categories explicit (1 plan node previsivel).
+//
+// BUG 5 *** ?kind FILTER MISSING *** UX triagem
+//   User 200+ favoritos quer ver SO ai_agent / n8n_workflow.
+//   FIX: ?kind enum whitelist (matches draftSchema).
+//
+// BUG 6 *** CACHE MISSING ***
+//   /conta/favoritos hot path - user volta com frequencia.
+//   Cache 30s per-user (alta freshness pois user pode add/remove).
+//   FIX: cache.cacheMiddleware 30s vary by user+filtros.
+//
+// BUG 7 *** UX count -> total ***
+//   PRE-FIX: response count = retornados (não total absoluto).
+//   FIX: total = COUNT(*) absoluto, count = paginated rows.
+const WISHLIST_KIND_ENUM = new Set([
+  'automation','ai_agent','n8n_workflow','node_script','python_script',
+  'php_script','prompt_pack','template','dataset','other'
+]);
+
+const wishlistCacheKey = (req) => {
+  const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const kind = req.query.kind || '';
+  return `wishlist:${req.user?.sub || 'anon'}:lim=${lim}:off=${off}:k=${kind}`;
+};
+
+router.get('/',
+  cache.cacheMiddleware(wishlistCacheKey, 30),
+  asyncHandler(async (req, res) => {
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    // BUG 5: kind enum whitelist
+    const kindFilter = req.query.kind ? String(req.query.kind) : null;
+    if (kindFilter && !WISHLIST_KIND_ENUM.has(kindFilter)) {
+      return res.status(400).json({ error: 'invalid_kind', allowed: Array.from(WISHLIST_KIND_ENUM) });
+    }
+
+    // Build WHERE
+    const whereParts = [
+      'w.user_id = $1',
+      `p.status IN ('approved','platform_owned')`,
+      'p.deleted_at IS NULL',
+    ];
+    const params = [req.user.sub];
+    let i = 2;
+    if (kindFilter) {
+      whereParts.push(`p.kind = $${i++}`);
+      params.push(kindFilter);
+    }
+    params.push(limit, offset);
+    const limIdx = i++;
+    const offIdx = i++;
+
+    // BUG 4: LEFT JOIN explicit (substitui 4 subqueries)
+    const r = await query(
+      `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
+              p.cover_image_url, p.price_cents, p.currency, p.is_free,
+              p.avg_rating, p.review_count, p.sales_count, p.is_platform_owned,
+              s.store_slug, s.store_name, s.reputation_tier,
+              c.slug AS category_slug,
+              w.created_at AS favorited_at
+         FROM product_wishlist w
+         JOIN products p ON p.id = w.product_id
+         LEFT JOIN sellers s ON s.id = p.seller_id
+         LEFT JOIN categories c ON c.id = p.category_id
+        WHERE ${whereParts.join(' AND ')}
+        ORDER BY w.created_at DESC, w.product_id ASC
+        LIMIT $${limIdx} OFFSET $${offIdx}`,
+      params
+    );
+
+    // BUG 3+7: total count + has_more
+    const countParams = params.slice(0, -2);
+    const totalRes = await query(
+      `SELECT COUNT(*)::INT AS total FROM product_wishlist w
+         JOIN products p ON p.id = w.product_id
+        WHERE ${whereParts.join(' AND ')}`,
+      countParams
+    );
+    const total = totalRes.rows[0].total;
+
+    res.json({
+      products: r.rows,
+      count: r.rows.length,
+      total, limit, offset,
+      has_more: (offset + r.rows.length) < total,
+      kind: kindFilter,
+    });
+  })
+);
 
 // POST /products/wishlist - adiciona aos favoritos
 // FIX-WORKER-7: antes vazava FK violation 500 com nome de constraint Postgres ao cliente.
 // Agora pre-valida existencia do produto -> 404 product_not_found (sem leak).
+// FIX-WORKER-7 pass 80: Regra A no pre-check status whitelist completa.
+//   PRE-FIX: status = 'approved' exclui platform_owned.
+//   User clica favoritar em MLB product PDP -> 404 spurious "product_not_found".
+//   FIX: status IN ('approved','platform_owned').
 router.post('/',
   validate({ body: z.object({ product_id: z.string().uuid() }) }),
   asyncHandler(async (req, res, next) => {
     const exists = await query(
-      `SELECT 1 FROM products WHERE id = $1 AND deleted_at IS NULL AND status = 'approved'`,
+      `SELECT 1 FROM products
+        WHERE id = $1 AND deleted_at IS NULL
+          AND status IN ('approved','platform_owned')`,
       [req.body.product_id]
     );
     if (!exists.rows.length) return next(errorHandler.notFound('product_not_found'));

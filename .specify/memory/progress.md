@@ -17296,7 +17296,34 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc /compare + /flash-promo/active (pass 76) - 9 bugs
 - ✅ product-svc /recommendations/for-me (pass 77) - 5 bugs + cold-start
 - ✅ product-svc /recently-viewed + /:slug/related (pass 78) - 7 bugs
-- ✅ product-svc /:slug/also-bought (pass 79 esta iter) - 3 bugs UX consistency
+- ✅ product-svc /:slug/also-bought (pass 79) - 3 bugs UX consistency
+- ✅ product-svc wishlist.js (pass 80 esta iter) - 8 bugs GET + POST
+
+W7 PASS 80 RESUMO:
+- product-svc/src/routes/wishlist.js 2 endpoints refactor (8 bugs):
+  * GET / (7 bugs):
+    - Regra A: status IN ('approved','platform_owned')
+      (User favoritou MLB product -> some da lista wishlist - silent UX bug)
+    - Regra D: + w.product_id ASC tiebreaker (bulk script favoritar burst)
+    - Regra E: ?limit (1-200) + ?offset (antes hardcoded LIMIT 200)
+    - N+1 FIX: 4 subqueries correlacionadas -> LEFT JOIN sellers + categories
+      (200 products * 4 subqueries = 800 sub-statements -> 1 plan node)
+    - NEW ?kind filter enum whitelist
+      (User 200+ favoritos triagem por ai_agent/n8n_workflow)
+    - Cache 30s vary by user+limit+offset+kind
+    - UX: total = COUNT absoluto, count = paginated rows, + has_more
+  * POST / (1 bug):
+    - Regra A no pre-check: status IN ('approved','platform_owned')
+    - PRE-FIX: User clica favoritar em MLB PDP -> 404 spurious
+- Pattern W7 em 85 endpoints + 23 regras (A-W) - 80 micro-iters
+- Regra A FIX acumulado: 9 endpoints product-svc cross-route
+  (public.js 8: pass 73-79 + wishlist.js 1: pass 80)
+
+PROXIMA ITER:
+- W7 pass 81: product-svc price-alerts.js endpoints audit
+- W7 pass 82: product-svc seller-mgmt.js mutations audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 79 RESUMO:
 - product-svc/src/routes/public.js /:slug/also-bought refactor (3 bugs):
