@@ -102,6 +102,27 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## PERFORMANCE - REDIS CACHE LAYER (WORKER 18)
+Add cache helper em @cas/shared usando ioredis (dep adicionada package.json):
+- Singleton lazy client, fallback graceful no-op se REDIS_URL ausente.
+- get/set/del/withCache/cacheMiddleware exportados via require('@cas/shared').cache.
+- Prefix configuravel REDIS_PREFIX (default 'cas:').
+- Header X-Cache: HIT|MISS para debug.
+
+search-svc com cache em 4 endpoints read-heavy:
+- /top-sellers: 120s (key per_category+category)
+- /trending: 300s
+- /categories: 900s (categorias mudam raramente)
+- /facets: 180s (key category+kind)
+
+VALIDADO E2E publicamente (curl + header parsing):
+- /categories: MISS 213ms -> HIT 37ms (speedup 8.5x)
+- /top-sellers: MISS 39ms -> HIT 27ms
+- /facets: MISS 32ms -> HIT 24ms
+- /trending: MISS 28ms -> HIT 25ms
+
+Modulo cache disponivel para todos os 16 svcs futuros - basta importar.
+
 ## DLP MASS PROPAGATION + WORKER 6 AUTH SMOKE
 Apos WORKER 7 atualizar packages/shared/error-handler.js, mass rebuild dos 11
 svcs restantes para propagar o fix de DLP no errorMiddleware:
