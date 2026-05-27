@@ -391,21 +391,52 @@ async def _call_groq(prompt: str) -> tuple[str, str, str, dict]:
 # Parser tolerante
 # ============================================================
 def parse_score_response(text: str) -> dict:
-    """Extrai JSON do output do LLM (tolerante a markdown wrapping)."""
+    """Extrai JSON do output do LLM (tolerante a markdown wrapping).
+
+    FIX-WORKER-12 pass 2: garante reasons[] e sintaxe_ok/resolves_problem/is_functional
+    defaults sempre populados. Antes: se LLM retornava JSON minimo com so confidence_score,
+    o callback gravava reasons=null no DB e seller via 'Necessario ajustar' sem motivo
+    no email.
+    """
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    # Pega primeiro { ... } valido
     m = re.search(r"\{[\s\S]*\}", text)
     if not m:
-        return {"confidence_score": 0.0, "reasons": ["Falha ao parsear resposta LLM"]}
+        return {
+            "confidence_score": 0.0,
+            "sintaxe_ok": False,
+            "resolves_problem": False,
+            "is_functional": False,
+            "reasons": ["Falha ao parsear resposta do modelo LLM. Tente reenviar."],
+            "suggestions": [],
+        }
     try:
         data = json.loads(m.group(0))
-        data["confidence_score"] = max(0.0, min(1.0, float(data.get("confidence_score", 0))))
+        # Sanitize/normalize todos os campos esperados pelo callback
+        score = float(data.get("confidence_score", 0) or 0)
+        data["confidence_score"] = max(0.0, min(1.0, score))
+        data["sintaxe_ok"] = bool(data.get("sintaxe_ok", False))
+        data["resolves_problem"] = bool(data.get("resolves_problem", False))
+        data["is_functional"] = bool(data.get("is_functional", False))
+        reasons = data.get("reasons") or []
+        data["reasons"] = [str(r)[:300] for r in (reasons if isinstance(reasons, list) else [reasons])][:10]
+        # Se score=0 mas LLM nao deu motivos, adiciona generic para o seller saber
+        if data["confidence_score"] < 0.8 and not data["reasons"]:
+            data["reasons"] = ["LLM rejeitou sem motivos especificos. Revise descricao + codigo."]
+        suggestions = data.get("suggestions") or []
+        data["suggestions"] = [str(s)[:300] for s in (suggestions if isinstance(suggestions, list) else [suggestions])][:5]
         return data
     except Exception as e:
-        return {"confidence_score": 0.0, "reasons": [f"JSON invalido: {e}"]}
+        return {
+            "confidence_score": 0.0,
+            "sintaxe_ok": False,
+            "resolves_problem": False,
+            "is_functional": False,
+            "reasons": [f"JSON invalido do LLM: {str(e)[:200]}"],
+            "suggestions": [],
+        }
 
 
 # ============================================================
@@ -421,9 +452,24 @@ PRICING = {
 
 
 def estimate_cost(provider: str, model: str, usage: dict) -> int:
+    """FIX-WORKER-12 pass 2: fallback pricing por provider se modelo nao mapeado.
+    Antes: model novo (ex 'gpt-4o-2024-08-06') retornava 0 -> custo subnotificado
+    na tabela product_qa_runs.cost_usd_cents (billing nao registrado).
+
+    Fallback por provider usa media historica como estimativa conservadora."""
     p = PRICING.get((provider, model))
     if not p:
-        return 0
+        # Default por provider (estimativa conservadora - prefere superestimar)
+        FALLBACK = {
+            "openai":  {"in": 2.50,  "out": 10.00},  # GPT-4o ballpark
+            "gemini":  {"in": 0.10,  "out": 0.40},   # Flash ballpark
+            "groq":    {"in": 0.59,  "out": 0.79},   # 70b ballpark
+        }
+        p = FALLBACK.get(provider)
+        if not p:
+            print(f"[qa-worker] WARN cost unknown for {provider}/{model}, returning 0", flush=True)
+            return 0
+        print(f"[qa-worker] WARN model '{model}' nao mapeado em PRICING. Usando fallback {provider}", flush=True)
     tin = usage.get("prompt_tokens", 0) / 1_000_000
     tout = usage.get("completion_tokens", 0) / 1_000_000
     usd = tin * p["in"] + tout * p["out"]
