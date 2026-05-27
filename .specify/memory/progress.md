@@ -9034,3 +9034,84 @@ PROXIMA ITER:
 - W4 pass 8: /admin/webhooks UI consume /payments/webhooks/dead
 - W11 pass 8: webhook reprocess endpoint admin (sem psql direct)
 - W14 pass 8: drop dead indices pg_stat_user_indexes (2 semanas)
+
+## WORKER 4 PASS 8 - /admin/webhooks dead letter UI (ENCERRA CICLO PAYMENT)
+
+INTEGRACAO E2E COMPLETA (4 passes encadeados):
+- W11 pass 6: webhook handler popula processed_at/processing_error/retry_count
+- W14 pass 7: idx_asaas_evt_retry (partial composto)
+- W11 pass 7: cron reconciliation 5min + GET /payments/webhooks/dead
+- W4 pass 8 (esta iter): UI admin consume endpoint dead letter
+
+ENTREGUES:
+
+1. /admin/webhooks/page.tsx (153 linhas):
+   - Lista webhooks dead letter (retry_count > 5)
+   - Tabela completa: event, payment_id linked, retries, time, error
+   - Refresh manual (dead letter raros, sem auto-poll)
+   - lastUpdate timestamp + retry button
+   - loadError banner com retry inline
+   - Empty state condicional (sistema saudavel vs erro carrega)
+
+2. /admin/webhooks no nav (layout.tsx):
+   - Icon Webhook lucide-react
+   - Posicao apos /vault (categoria infra/ops)
+
+UX FEATURES UNICAS:
+
+a) Help banner educacional sticky:
+   - Explica conceito dead letter queue
+   - Causas tipicas (order_id orfao, schema, bug)
+   - INSTRUCAO manual reprocess psql:
+     UPDATE asaas_webhook_events SET retry_count = 0 WHERE id = <uuid>
+   - Apos: cron 5min vai capturar de novo
+
+b) asaas_payment_id linkado ao painel Asaas:
+   - https://www.asaas.com/payments/{id}
+   - target=_blank + rel security
+   - Admin abre tx direto sem copy UUID
+
+c) processing_error com line-clamp + tooltip:
+   - Visual compacto na tabela
+   - hover/title mostra mensagem completa
+
+ARCHITECTURE FLOW E2E:
+1. Asaas envia webhook -> payment-svc handler
+2. HMAC valida -> INSERT signature_valid=TRUE processed_at=NULL
+3. setImmediate processa -> success OR error+retry++
+4. Falhas retry 1-5: cron reconciliation 5min re-tenta
+5. Falhas retry > 5: dead letter visivel /admin/webhooks
+6. Admin investiga UI, reprocessa manual via psql se necessario
+
+DEPLOY:
+- commit acefa8d push main OK
+- 2 files: layout.tsx (3 ins) + webhooks/page.tsx (154 ins novo)
+- dashboard-admin rebuild via VPS cron
+- Backend ja tem endpoint /payments/webhooks/dead (W11 pass 7)
+
+VALIDACAO POS-DEPLOY:
+- Admin acessa admin.cas.../webhooks
+- Esperado vazio se sistema saudavel
+- payment-svc loga [reconcile.cron] started
+- Manual: forcar webhook fail -> reaparece apos 25min (5x retries x 5min)
+
+W4 ADMIN AUDIT FINAL (passes 1-8):
+| Pass | Page | Tema |
+|---|---|---|
+| 1-3 | hook + sellers + qa-queue | useAdminAction |
+| 4 | /admin/payouts | Transferir Asaas feature morta |
+| 5 | /admin/qa-queue | 4 bugs UX |
+| 6 | /admin/orders | poll + status fallback |
+| 7 | /admin/reports | 6 fixes security+a11y |
+| 8 | /admin/webhooks | dead letter UI (esta iter) |
+
+COBERTURA ADMIN DASHBOARD:
+- sellers, qa-queue, orders, payouts, reports
+- products, alerts, vault
+- webhooks (NEW W4 pass 8)
+- TOTAL: 9 paginas com UX consistente
+
+PROXIMA ITER:
+- W11 pass 8: POST /payments/webhooks/:id/reset (admin UI button sem psql)
+- W4 pass 9: /admin/vault UI consume idx_vault_usage_failures
+- W17 pass 12: rotacao automatica vault keys
