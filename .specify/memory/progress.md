@@ -102,6 +102,34 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## RECENTLY VIEWED - WORKER 16 NEW MLB FEATURE
+"Vistos recentemente" estilo Mercado Livre - drives re-engagement e conv rate.
+
+BACKEND product-svc/routes/public.js:
+- GET /api/products/recently-viewed?limit=N (max 30, default 12)
+- CTE distinct por product_id (so view mais recente conta)
+- Janela 14 dias para 'recente' (mais relevante que 30d)
+- JWT auth obrigatorio - personalized
+- Schema compativel com /recommendations e /related (reusa cards)
+
+UI storefront/components/recently-viewed.tsx (Client Component):
+- Renderiza null se nao logado ou sem views recentes
+- Fetch /products/recently-viewed?limit=8 quando token disponivel
+- Header Clock icon + 'Vistos recentemente' + link 'Ver todos'
+- Grid 2/3/4 cols mobile/tablet/desktop com cards compactos
+- Image lazy + flash promo badge -% se aplicavel
+
+Embed em homepage ANTES de 'Mais vendidos':
+- Aparece logo apos hero, antes do conteudo evergreen
+- Max re-engagement: user volta -> ve o que estava olhando
+
+VALIDADO E2E publicamente:
+- /recently-viewed sem auth -> 401 missing_token
+- /recently-viewed sem views recentes -> {count:0, products:[]}
+- Pos seed de 5 product_views -> retorna lista cronologica DESC:
+  Email Marketing, Template Dashboard, Scraper, Chatbot RAG, Trader Bot
+- limit=999 cap em 30 OK
+
 ## MEGA DEPLOY POS-OFFLINE - 7 COMMITS DEPLOYADOS + MLB++ TIER COUPON
 
 Rede voltou apos 8h offline. Push de 7 commits + deploy completo:
