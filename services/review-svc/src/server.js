@@ -581,14 +581,59 @@ app.post('/qna/:id/upvote', qnaVoteLimiter, jwt.requireAuth(),
   })
 );
 
-// GET /qna/:id/voted - checa se user votou
+// GET /qna/:id/voted - checa se user votou em qna especifica
+// FIX-WORKER-7 pass 101: 4 BUGS aplicando Pattern W7 (UUID + Regra A + 404 + cache).
+//
+// BUG 1 *** UUID VALIDATE MISSING *** PG 22P02 -> 500 leak
+//   PRE-FIX: req.params.id direto na query - input 'admin' -> PG cast UUID fail.
+//   FIX: VOTED_UUID_RE.test() upfront.
+//
+// BUG 2 *** QnA EXISTENCE / Regra A status check MISSING ***
+//   PRE-FIX: voto check em qna inexistente retorna {voted:false} 200.
+//   - UX confuso: frontend pensa qna existe mas user nao votou
+//   - Info leak: ataque enumeration via repeated requests (timing)
+//   - Voto em qna de product deletado/archived ainda consultavel
+//   FIX: JOIN products + status IN ('approved','platform_owned') + deleted_at IS NULL
+//   -> 404 explicit se qna nao existe ou product inactive.
+//
+// BUG 3 *** UX response shape minimo ***
+//   PRE-FIX: response so {voted: bool}. Frontend nao sabe direcao do voto.
+//   FIX: + vote_direction (1 upvote, null se nao votou).
+//
+// BUG 4 *** No cache *** PDP refresh chama N vezes (1 per qna mostrado)
+//   PRE-FIX: zero cache - 10 qnas no PDP = 10 queries DB cada page refresh.
+//   FIX: cache 60s per-user+qna (votes raros - cache freshness aceitavel).
+const VOTED_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 app.get('/qna/:id/voted', jwt.requireAuth(),
-  asyncHandler(async (req, res) => {
+  cache.cacheMiddleware((req) => `qna:voted:${req.user?.sub || 'anon'}:${req.params.id}`, 60),
+  asyncHandler(async (req, res, next) => {
+    // BUG 1: UUID validate
+    if (!VOTED_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('qna_not_found'));
+    }
+
+    // BUG 2: existence + Regra A check via JOIN products
+    const exists = await query(
+      `SELECT 1 FROM product_qna q
+         JOIN products p ON p.id = q.product_id
+        WHERE q.id = $1::UUID
+          AND p.status IN ('approved','platform_owned')
+          AND p.deleted_at IS NULL
+        LIMIT 1`,
+      [req.params.id]
+    );
+    if (!exists.rows.length) return next(errorHandler.notFound('qna_not_found'));
+
+    // BUG 3: retornar direcao do voto (frontend UX)
     const r = await query(
-      `SELECT 1 FROM product_qna_votes WHERE qna_id = $1 AND user_id = $2`,
+      `SELECT vote FROM product_qna_votes WHERE qna_id = $1::UUID AND user_id = $2::UUID`,
       [req.params.id, req.user.sub]
     );
-    res.json({ voted: r.rows.length > 0 });
+    res.json({
+      voted: r.rows.length > 0,
+      vote_direction: r.rows[0]?.vote || null,
+    });
   })
 );
 

@@ -17317,7 +17317,36 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ auth-svc PATCH /me (pass 97) - 8 bugs validation+race+audit
 - ✅ auth-svc /logout (pass 98) - 4 bugs + MLB revoke_all
 - ✅ seller-svc /:slug/stats + /:slug/products (pass 99) - 9 bugs
-- ✅ W7 MARCO pass 100 esta iter - 100 micro-iters + deploy script + doc
+- ✅ W7 MARCO pass 100 - 100 micro-iters + deploy script + doc
+- ✅ review-svc /qna/:id/voted (pass 101 esta iter) - 4 bugs UUID+Regra A+UX+cache
+
+W7 PASS 101 RESUMO:
+- review-svc/src/server.js GET /qna/:id/voted refactor (4 bugs):
+  * UUID validate missing: PG 22P02 -> 500 leak
+    - PRE-FIX: req.params.id direto - input 'admin' -> PG cast UUID fail
+    - FIX: VOTED_UUID_RE.test() upfront
+  * QnA existence + Regra A status check MISSING:
+    - PRE-FIX: voto check em qna inexistente retorna {voted:false} 200
+      * UX confuso: frontend pensa qna existe
+      * Info leak: enumeration via repeated requests
+      * Voto em qna deletado/archived ainda consultavel
+    - FIX: JOIN products + status IN ('approved','platform_owned')
+      + deleted_at NULL -> 404 explicit
+  * UX response shape minimo:
+    - PRE-FIX: so {voted: bool} - frontend nao sabe direcao
+    - FIX: + vote_direction (1 upvote, null se nao votou)
+  * No cache - PDP refresh = N queries (1 per qna)
+    - PRE-FIX: 10 qnas no PDP = 10 queries DB cada page refresh
+    - FIX: cache 60s per-user+qna (votes raros - freshness aceitavel)
+- Pattern W7 em 109 endpoints + 23 regras (A-W) - 101 micro-iters
+- review-svc 100% W7 (todos endpoints auditados)
+
+PROXIMA ITER:
+- W7 pass 102: vault-svc /use endpoint audit (internal call critical)
+- W7 pass 103: notification-svc /:id/read audit (rate-limit + audit)
+- Operacional: SSH VPS + bash deploy/w7-deploy-validate.sh
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 100 RESUMO (MARCO):
 - docs/W7-MARCO-PASS-100.md NEW - documentacao completa:
