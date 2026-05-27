@@ -7184,3 +7184,63 @@ PROXIMA ITER:
 - Toast component centralizado (banners ok mas toast e melhor UX)
 - W4 admin /admin/qa-queue audit (force-approve, platform-take buttons)
 - W12 pass 5: migration reset total_products_active historico
+
+## WORKER 3 PASS 3 - QnaForm 6 bugs UX + a11y
+
+AUDIT components/qna-form.tsx (form publico no PDP tab Q&A):
+
+BUG 1 (botao sem disabled em pre-validation):
+- User clica sem digitar -> Enter dispara submit -> validation fail rapida
+- Button pisca "Enviando..." brevemente entre setLoading(true)+setErr+setLoading(false)
+- FIX: disabled={!canSubmit} consolidado em 1 var derivado
+
+BUG 2 (erros raw expostos):
+- catch { setErr(e.data?.message || e.message); }
+- Codigos backend "spam_detected", "rate_limited", "duplicate_question" leakavam
+- Inconsistente com add-to-cart.tsx pass 2 padrao friendlyCartError
+- FIX: friendlyQnaError com 7 codigos mapeados + tratamento validation_error
+  com d.code switching (too_small/too_big especificos)
+
+BUG 3 (banners persistentes):
+- setMsg + setErr nunca clearavam sozinhos
+- User via mensagem stale ate F5 manual
+- FIX: setTimeout(() => set*(''), 5000) em ambos
+- BONUS: botao "fechar" em cada banner (dismiss imediato)
+
+BUG 4 (placeholder hardcoded WhatsApp):
+- Mencionava "WhatsApp Business API" + "Brasil"
+- Especifico demais para qualquer produto/kind
+- FIX: placeholder generico tecnico-neutro
+
+BUG 5 (sem contador chars):
+- maxLength=2000 sem feedback visual
+- Submit com excesso -> validation_error raw
+- FIX: contador bottom-right textarea
+  Cores: cinza (vazio) / amarelo (muito curto) / verde (ok) / vermelho (excede)
+
+BUG 6 (msg sem visual destaque):
+- <div text-sm text-green-400> texto solto
+- Inconsistente com cart/checkout que usa box com border
+- FIX: bg-green-500/10 + border + rounded-lg + p-2
+- Mesmo padrao err -> consistencia cross-PDP
+
+BONUS:
+- Constants MIN_LEN/MAX_LEN extraidas (vs magic numbers)
+- Success message inclui "respondera em ate 24h" (expectativa clara)
+- aria role="alert" no erro (screen reader)
+
+DEPLOY:
+- commit 7ff60d6 push main OK
+- 72 insertions, 10 deletions
+- storefront rebuild via VPS cron
+- Componente client-side, sem backend
+
+W3 PDP AUDIT PROGRESS:
+- pass 1: AddToCart funcional + alert() -> friendly errors
+- pass 2: breadcrumb slash orfao quando sem category
+- pass 3: QnaForm 6 bugs (esta iter)
+
+PROXIMA ITER:
+- W3 pass 4: ReviewForm com mesmo pattern friendly error + char counter
+- W3 pass 5: product-tabs.tsx audit (Visao/Pre-req/Changelog/Reviews/Q&A)
+- W8 pass 4: contador char no review form (visual consistency com qna)
