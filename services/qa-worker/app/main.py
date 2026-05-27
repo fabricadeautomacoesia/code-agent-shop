@@ -482,13 +482,44 @@ import hashlib as _hashlib
 
 # Callback
 # ============================================================
+# FIX-WORKER-12 pass 2 (SSRF protection): worker so envia callback para URLs
+# que matchem o pattern interno do qa-svc service mesh. Antes: callback_url
+# vinha do payload (controlled por qa-svc) - se qa-svc fosse comprometido (W12
+# pass 1 ja fechou auth, mas defense-in-depth), atacante podia setar
+# callback_url = http://attacker.com/leak e o worker postaria dados sensiveis.
+# Whitelist: tasks.cas_qa-svc:PORT (service mesh) + override env (dev/test).
+import re as _re
+def _is_callback_url_allowed(url: str) -> bool:
+    if not url:
+        return False
+    allowed_override = os.getenv("QA_CALLBACK_ALLOWED_HOSTS", "")
+    # Default seguro: aceita apenas service mesh interno (tasks.cas_qa-svc) ou
+    # localhost (dev local). Producao deve set QA_CALLBACK_ALLOWED_HOSTS se
+    # outro destino legitimo.
+    default_patterns = [
+        r"^https?://tasks\.cas_qa-svc(:\d+)?(/.*)?$",
+        r"^https?://qa-svc(:\d+)?(/.*)?$",
+        r"^https?://127\.0\.0\.1(:\d+)?(/.*)?$",
+        r"^https?://localhost(:\d+)?(/.*)?$",
+    ]
+    patterns = default_patterns + [p.strip() for p in allowed_override.split(",") if p.strip()]
+    return any(_re.match(p, url) for p in patterns)
+
+
 async def send_callback(url: str, payload: dict):
     """FIX-WORKER-12: callback sempre assinado com HMAC SHA-256 do body
     usando QA_CALLBACK_SECRET (mesma chave em qa-svc). Sem isso, atacantes
     podiam forjar callback aprovando produtos sem QA real.
+
+    FIX-WORKER-12 pass 2: valida callback_url contra whitelist de hosts
+    internos antes do POST (SSRF defense-in-depth).
+
     json.dumps com separators=(',', ':') + sort_keys=False bate com JSON.stringify
     do Node por default. Para evitar divergencia, qa-svc valida sobre o body raw."""
     import json as _json
+    if not _is_callback_url_allowed(url):
+        print(f"[qa-worker] callback_url REJECTED (SSRF protection): {url[:120]}", flush=True)
+        return
     secret = os.getenv("QA_CALLBACK_SECRET", "")
     body_bytes = _json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
     headers = {"Content-Type": "application/json"}
