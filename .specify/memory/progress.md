@@ -2998,3 +2998,43 @@ SINERGIA com W16+W14 anteriores:
 - Usuario clica "Vendendo agora" no dropdown -> lista por last_sale_at DESC
 - Combina com RecentSaleBadge "Vendido hoje" overlay nos cards = social
   proof completo
+
+## WORKER 11 pass 3 (PAYMENT) - commission_rate sem validacao -> payout negativo
+Re-auditoria payment flow apos W11 pass 2 (auth fix). Encontrado bug economico
+serio em order-svc/orders.js linha 83:
+
+VETOR REAL:
+1. Admin configura sellers.custom_commission_rate sem validacao
+2. Schema PG: NUMERIC nullable, SEM CHECK constraint
+3. Admin error: setar 1.5 (150%) -> commission = 1.5 * line_total
+4. payout = line_total - commission = -0.5 * line_total (NEGATIVO)
+5. Asaas split com fixed_value_cents negativo -> ou rejeita OU debita seller
+   (depende do behavior do Asaas API). Seller fica devendo plataforma.
+6. Vetor oposto: custom_commission_rate = -0.18 -> commission negativa ->
+   payout > line_total -> seller recebe MAIS que cobrado do buyer (overpay)
+
+FIX LAYER 1 (JS clamp) - services/order-svc/src/routes/orders.js:83-86:
+- rawRate = Number(custom_commission_rate) || TAKE_RATE (handles NaN/null)
+- rate = Math.max(0, Math.min(1, rawRate)) (clamp 0..1)
+- payout = Math.max(0, line_total - commission) (clamp >= 0)
+
+FIX LAYER 2 (DB CHECK) - migration 026:
+- ALTER TABLE sellers ADD CONSTRAINT chk_sellers_commission_rate
+  CHECK (custom_commission_rate IS NULL OR (0 <= rate <= 1))
+- Tolerante: WHEN duplicate_object ou check_violation existing -> skip + log
+
+VALIDACAO PUBLICA (4 cenarios):
+1) UPDATE sellers SET custom_commission_rate = 1.5 -> check_violation OK
+2) UPDATE sellers SET custom_commission_rate = -0.5 -> check_violation OK
+3) UPDATE sellers SET custom_commission_rate = 0.25 -> aceito (valid range) OK
+4) Cleanup: reset todos rates para NULL
+
+DEPLOY: commit 084b748 pushed
+- migration 026 aplicada via psql -f
+- order-svc rebuilt via Dockerfile.node SVC=order-svc, converged OK
+
+DEFENSE-IN-DEPTH ARCHITECTURE:
+- Layer 1 (JS): clamp + Math.max impede bug propagar mesmo se DB tiver rows legacy
+- Layer 2 (DB CHECK): impede admin error futuro (manual SQL update fora do app)
+- Layer 3 (proxima iter sugerida): admin UI para set custom_commission_rate
+  com input type=number max=1 step=0.01
