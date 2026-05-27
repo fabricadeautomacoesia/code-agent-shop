@@ -15,8 +15,24 @@ const router = express.Router();
 
 // GET /products/recommendations - para voce (MLB-6)
 // Combina: 1) categorias mais vistas pelo user, 2) similar a top-rated, 3) populares globais
+//
+// FIX-WORKER-18 pass 3: cache 60s per-user. Query custosa:
+//   - 3 CTEs (user_categories, viewed, in_cart_or_owned)
+//   - 3 SUBQUERIES por row (sellers JOIN inline x3 - store_slug/name/tier)
+//   - 2 IN subqueries no WHERE
+//   - ORDER BY 3 colunas com NULLS LAST
+// EXPLAIN ANALYZE local: cost ~85 + 12-20ms execucao P50.
+// Endpoint consumido em HOME page + /conta + recommendations carousel
+// = multiplos hits por sessao de cada user logado.
+//
+// Cache key per-user (req.user.sub no JWT). 60s TTL:
+// - User cria nova view -> recomendacao reflete em max 60s (UX OK)
+// - User compra produto -> deveria sumir de "for-me" mas pode aparecer
+//   ate 60s. Aceitavel para recommendations (nao billing).
+// - Logout/login do mesmo user reusa cache (mesma key) -> ainda mais ganho.
 router.get('/recommendations/for-me',
   require('@cas/shared').jwt.requireAuth(),
+  cache.cacheMiddleware((req) => `products:reco:for-me:${req.user.sub}`, 60),
   asyncHandler(async (req, res) => {
     const r = await query(
       `WITH user_categories AS (
@@ -65,8 +81,14 @@ router.get('/recommendations/for-me',
 // MLB-NEW: GET /products/recently-viewed - "Vistos recentemente" estilo Mercado Livre
 // Retorna ultimos N produtos distintos vistos pelo user nos ultimos 14 dias.
 // Distinto por product_id (so a view mais recente conta), ORDER BY DESC.
+// FIX-WORKER-18 pass 3: cache 30s per-user. Query menor que /recommendations
+// mas ainda CTE com MAX + JOIN products + 3 subqueries sellers.
+// TTL 30s pois user pode visitar PDP A entao voltar a /conta esperando ver A no
+// recently. 60s seria muito (notavel). 30s e equilibrio: dois clicks rapidos
+// dividem 1 backend call mas refresh < min mantem UX vivo.
 router.get('/recently-viewed',
   require('@cas/shared').jwt.requireAuth(),
+  cache.cacheMiddleware((req) => `products:recently-viewed:${req.user.sub}:lim=${req.query.limit || 12}`, 30),
   asyncHandler(async (req, res) => {
     const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 30));
     const r = await query(
