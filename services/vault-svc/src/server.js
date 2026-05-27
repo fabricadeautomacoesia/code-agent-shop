@@ -24,6 +24,45 @@ app.get('/health', (_req, res) => res.json({ ok: true, svc: 'vault-svc' }));
 const adminOnly = jwt.requireAuth({ roles: ['admin', 'staff'] });
 const sellerOrAdmin = jwt.requireAuth({ roles: ['seller', 'admin', 'staff'] });
 
+// FIX-WORKER-17 (timing-safe + rate-limit) - definicoes precisam vir ANTES das rotas que as usam
+function vaultUseGuard(req, res, next) {
+  const internalTok = req.headers['x-internal-token'];
+  const expected = process.env.VAULT_INTERNAL_TOKEN;
+  if (expected && internalTok) {
+    let valid = false;
+    try {
+      const a = Buffer.from(String(internalTok));
+      const b = Buffer.from(expected);
+      valid = a.length === b.length && nodeCrypto.timingSafeEqual(a, b);
+    } catch { valid = false; }
+    if (valid) return next();
+    log.warn({
+      ip: req.ip,
+      ua: req.headers['user-agent'],
+      tok_len: String(internalTok).length,
+      expected_len: expected.length,
+    }, '[vault.invalid_internal_token]');
+  }
+  return jwt.requireAuth({ roles: ['admin', 'staff', 'service'] })(req, res, next);
+}
+
+const useRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.VAULT_USE_RATE_LIMIT || '30', 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limit_exceeded' },
+  keyGenerator: (req) => req.headers['x-real-ip'] || req.ip,
+});
+
+const provisionRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limit_exceeded' },
+});
+
 const provisionSchema = z.object({
   seller_id: z.string().uuid().nullable().optional(),
   provider: z.enum(['openai','anthropic','gemini','groq','cohere','mistral','azure-openai','custom']),
@@ -67,54 +106,6 @@ app.get('/keys', adminOnly, asyncHandler(async (req, res) => {
 // FIX SEG-VAULT-1: APENAS admin/staff OU header interno x-internal-token compativel com VAULT_INTERNAL_TOKEN
 // Antes, qualquer JWT valido (incluindo buyer comum) podia chamar este endpoint e
 // receber plain_key da pool da plataforma - vazamento critico.
-// FIX-WORKER-17 (timing-safe): comparacao '===' do token interno era vulneravel
-// a timing attack. Atacante pode descobrir o token caractere por caractere medindo
-// tempo de resposta. crypto.timingSafeEqual com Buffer de mesmo length resolve.
-function vaultUseGuard(req, res, next) {
-  const internalTok = req.headers['x-internal-token'];
-  const expected = process.env.VAULT_INTERNAL_TOKEN;
-  if (expected && internalTok) {
-    let valid = false;
-    try {
-      const a = Buffer.from(String(internalTok));
-      const b = Buffer.from(expected);
-      valid = a.length === b.length && nodeCrypto.timingSafeEqual(a, b);
-    } catch { valid = false; }
-    if (valid) return next();
-    // Token enviado mas invalido -> log para forensics (possivel brute-force)
-    log.warn({
-      ip: req.ip,
-      ua: req.headers['user-agent'],
-      tok_len: String(internalTok).length,
-      expected_len: expected.length,
-    }, '[vault.invalid_internal_token]');
-  }
-  // senao (sem header ou invalido), exige JWT com role privilegiado
-  return jwt.requireAuth({ roles: ['admin', 'staff', 'service'] })(req, res, next);
-}
-
-// FIX-WORKER-17 (rate-limit): /use eh o endpoint que retorna plain_key.
-// 30 reqs/min por IP eh generoso para uso legitimo (LLM calls) mas barra
-// brute-force de VAULT_INTERNAL_TOKEN.
-const useRateLimit = rateLimit({
-  windowMs: 60 * 1000,
-  max: parseInt(process.env.VAULT_USE_RATE_LIMIT || '30', 10),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'rate_limit_exceeded' },
-  // Considera IP do x-forwarded-for (gateway propaga)
-  keyGenerator: (req) => req.headers['x-real-ip'] || req.ip,
-});
-
-// Provisionamento de chaves: 5/min eh suficiente (admin operacao manual)
-const provisionRateLimit = rateLimit({
-  windowMs: 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'rate_limit_exceeded' },
-});
-
 app.post('/use',
   useRateLimit,
   vaultUseGuard,
