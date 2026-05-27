@@ -102,6 +102,28 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## UX HARDENING - WORKER 1 (AUTH UI + NOTIFICATIONS)
+Audit estatico das 4 pages auth + NotificationBell revelou 2 issues UX:
+1. /login nao exibia confirmacao apos register ou reset (silencioso, user confuso).
+2. NotificationBell sem 'Marcar todas como lidas' - botao+endpoint faltavam.
+
+CORRECOES commitadas + deployed (2faa10a):
+
+LOGIN BANNERS:
+- /login?registered=1 -> banner verde 'Conta criada com sucesso! Faca login...'
+- /login?reset=1 -> banner verde 'Senha redefinida! Entre com sua nova senha.'
+- Suspense wrapper (compat Next 15 useSearchParams).
+- /redefinir-senha agora redireciona para /login?reset=1 (era /login).
+
+MARK-ALL-READ:
+- POST /api/notifications/read-all - UPDATE in_app + is_read=FALSE -> TRUE, retorna {marked:N}.
+- NotificationBell header com botao 'Marcar todas' visivel apenas se unread>0.
+- Icon CheckCheck + hover magenta-glow.
+
+VALIDADO:
+- bundle JS de /login contem strings 'Conta criada com sucesso!' + 'Senha redefinida!'
+- POST /api/notifications/read-all (buyer) -> 200 {ok:true, marked:0}
+
 ## PERFORMANCE PASS 2 - CACHE EM PRODUCT-SVC + INVALIDATION (WORKER 18)
 Aplicado cacheMiddleware em product-svc/routes/public.js:
 - GET /products (list): 60s, key composta com 9 filtros (cat/kind/price/etc)
