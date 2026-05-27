@@ -100,10 +100,12 @@ export default function CheckoutPage() {
 
       <div className="glass p-6 mb-6">
         <h3 className="font-display font-bold text-lg mb-4">Forma de pagamento</h3>
-        <div className="grid grid-cols-3 gap-3">
+        {/* FIX-WORKER-15: mobile-first - 1 col em 375px, 3 cols sm:+
+            Antes: grid-cols-3 sempre -> textos cortados/quebrados em 375px (Pixel 5/iPhone SE) */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {(['pix','credit_card','boleto'] as PaymentMethod[]).map((m) => (
             <button key={m} onClick={() => setMethod(m)}
-              className={`p-4 rounded-lg border-2 transition-all ${method === m ? 'border-magenta bg-magenta/10' : 'border-white/10 bg-white/5 hover:border-white/30'}`}>
+              className={`p-4 rounded-lg border-2 text-left sm:text-center transition-all ${method === m ? 'border-magenta bg-magenta/10' : 'border-white/10 bg-white/5 hover:border-white/30'}`}>
               <div className="font-display font-semibold capitalize">{m.replace('_', ' ')}</div>
               <div className="text-xs text-white/50 mt-1">
                 {m==='pix' && 'Aprovacao instantanea'}

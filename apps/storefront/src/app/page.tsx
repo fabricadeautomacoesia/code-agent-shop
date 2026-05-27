@@ -50,10 +50,11 @@ export default async function HomePage() {
                 Vender meus codigos
               </Link>
             </div>
-            <div className="grid grid-cols-3 gap-6 mt-12 text-sm">
-              <div><div className="text-2xl font-display font-bold text-magenta-glow">QA Auto</div><div className="text-white/50">Validacao LLM</div></div>
-              <div><div className="text-2xl font-display font-bold text-magenta-glow">Asaas</div><div className="text-white/50">Split nativo</div></div>
-              <div><div className="text-2xl font-display font-bold text-magenta-glow">2FA</div><div className="text-white/50">Seguranca</div></div>
+            {/* FIX-WORKER-15: text-lg em 375px (cabe sem wrap), gap-4 mobile / gap-6 sm+ */}
+            <div className="grid grid-cols-3 gap-4 sm:gap-6 mt-12 text-sm">
+              <div><div className="text-lg sm:text-2xl font-display font-bold text-magenta-glow">QA Auto</div><div className="text-xs sm:text-sm text-white/50">Validacao LLM</div></div>
+              <div><div className="text-lg sm:text-2xl font-display font-bold text-magenta-glow">Asaas</div><div className="text-xs sm:text-sm text-white/50">Split nativo</div></div>
+              <div><div className="text-lg sm:text-2xl font-display font-bold text-magenta-glow">2FA</div><div className="text-xs sm:text-sm text-white/50">Seguranca</div></div>
             </div>
           </div>
           <div className="relative">
