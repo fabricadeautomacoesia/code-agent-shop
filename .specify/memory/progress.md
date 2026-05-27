@@ -4065,3 +4065,57 @@ PROXIMA ITER:
 - Wire startup validation em order-svc, seller-svc (PG_PASS critico)
 - Audit hardcode em outros packages (Asaas, Redis URL)
 - Pen-test scan automatizado: detect tokens hardcoded via secret-scanning
+
+## WORKER 14 pass 1 (DB SCHEMA/PERF) - migration 028 idx_notif_locked_reclaim
+
+VETOR DETECTADO (pg_stat_user_tables):
+notifications tinha 3303 seq_scan vs 363 idx_scan (9x mais seq que idx).
+Hotspot #1 entre 15 tabelas auditadas.
+
+ROOT CAUSE (EXPLAIN ANALYZE):
+reclaimOrphanLocks() em notification-svc roda cron 1min via setInterval:
+  UPDATE notifications SET locked_by=NULL, locked_at=NULL
+   WHERE locked_at IS NOT NULL AND locked_at < NOW() - INTERVAL '5 min'
+
+Query usa locked_at (sem indice) -> Seq Scan a cada execucao.
+Em prod com 1M+ notifs e 5 replicas: 5x300/h scans completos = CPU dump.
+Em dev com 5 rows: trivial mas pattern errado se propaga.
+
+FIX (1 migration - db/migrations/028_notif_locked_at_index.sql):
+CREATE INDEX idx_notif_locked_reclaim
+  ON notifications (locked_at)
+  WHERE locked_at IS NOT NULL;
+
+Indice PARCIAL:
+- MICRO em disco (apenas rows com claim ativo, normalmente <100 simultaneous)
+- Predicado WHERE matches exato (atomico com query)
+- Index Scan O(log N) substitui Seq Scan O(N)
+- ANALYZE notifications forca planner recalculo
+
+APLICACAO em PRODUCAO:
+- docker exec postgres < 028_notif_locked_at_index.sql
+- CREATE INDEX + ANALYZE = 2 statements OK
+
+VALIDACAO (EXPLAIN ANALYZE):
+- Default (5 rows): planner mantem Seq Scan (custo 1.09 < Index Scan 8.15)
+  Correto - tabela trivial. Index "dormido" ate scale.
+- SET enable_seqscan=off: planner usa idx_notif_locked_reclaim OK
+  -> indice DISPONIVEL e saudavel
+- Em prod com 1M+ rows: planner automaticamente escolhe index (Seq custo escala)
+
+BONUS INSIGHTS (pg_stat_user_indexes notifications):
+- idx_notif_pending: 352 scans (outbox processor OK)
+- idx_notif_outbox_ready: 4 scans (mig 016 ok mas pouco hit ainda)
+- idx_notif_user_unread: 0 scans -> INDICE MORTO
+  W13 pass 4 adicionou /unread-count mas usa
+  idx_notif_user_channel_created (mig 020). Considerar DROP em iter
+  futura para liberar overhead de INSERT.
+- idx_notif_locked_reclaim (novo): 1 scan ja registrado (alive)
+
+COMMIT: 419bc68 pushed.
+
+GAP RESTANTE (proxima iter):
+- Top seq_scan tables: products (639), users (454), sellers (181)
+  -> investigar queries especificas que nao usam idx
+- DROP idx_notif_user_unread (morto desde W13 pass 4)
+- Auditar postgres slow query log para >10ms queries
