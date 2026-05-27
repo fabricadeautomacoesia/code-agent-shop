@@ -103,10 +103,11 @@ router.patch('/items/:id',
 );
 
 // MLB-11: preview do cupom progressivo - retorna tiers ordenados e tier atual baseado em subtotal informado
+// MLB++: tambem retorna min_tier do cupom + tier do user pra UI exibir badge 'Exclusivo Gold'
 router.get('/coupon/:code/preview', asyncHandler(async (req, res, next) => {
   const subtotal = parseInt(req.query.subtotal_cents || '0', 10);
   const c = await query(
-    `SELECT code, discount_type, discount_value, tier_breakpoints, expires_at
+    `SELECT code, discount_type, discount_value, tier_breakpoints, expires_at, min_tier
        FROM coupons
       WHERE code = $1 AND is_active
         AND (starts_at IS NULL OR starts_at <= NOW())
@@ -125,15 +126,30 @@ router.get('/coupon/:code/preview', asyncHandler(async (req, res, next) => {
   const discount = cp.discount_type === 'percentage'
     ? Math.floor(subtotal * (effectiveValue / 100))
     : Math.floor(effectiveValue * 100);
+  // MLB++: check eligibility por tier se aplicavel
+  let eligible = true;
+  let userTier = null;
+  if (cp.min_tier && req.user?.sub) {
+    const ur = await query(`SELECT tier FROM user_loyalty WHERE user_id = $1::UUID`, [req.user.sub]);
+    userTier = ur.rows[0]?.tier || 'starter';
+    const rank = { starter: 0, gold: 1, platinum: 2 };
+    eligible = (rank[userTier] ?? 0) >= (rank[cp.min_tier] ?? 0);
+  }
+
   res.json({
-    coupon: { code: cp.code, discount_type: cp.discount_type, expires_at: cp.expires_at },
+    coupon: { code: cp.code, discount_type: cp.discount_type, expires_at: cp.expires_at, min_tier: cp.min_tier },
     tiers,
     active_tier_index: activeTierIdx,
     effective_value: effectiveValue,
     discount_cents: discount,
     next_tier: tiers[activeTierIdx + 1] || null,
+    eligible,
+    user_tier: userTier,
   });
 }));
+
+// Ranking dos tiers para validar 'min_tier' (mais alto >= min eh OK)
+const TIER_RANK = { starter: 0, gold: 1, platinum: 2 };
 
 router.post('/coupon',
   validate({ body: z.object({ code: z.string() }) }),
@@ -147,6 +163,26 @@ router.post('/coupon',
       [req.body.code]
     );
     if (!c.rows.length) return next(errorHandler.notFound('coupon_invalid'));
+
+    // FIX-WORKER-16 MLB++: cupom segmentado por tier - check elegibilidade do user
+    const coupon = c.rows[0];
+    if (coupon.min_tier) {
+      const userTierRow = await query(
+        `SELECT tier FROM user_loyalty WHERE user_id = $1::UUID`, [req.user.sub]
+      );
+      const userTier = userTierRow.rows[0]?.tier || 'starter';
+      const userRank = TIER_RANK[userTier] ?? 0;
+      const minRank = TIER_RANK[coupon.min_tier] ?? 0;
+      if (userRank < minRank) {
+        return res.status(403).json({
+          error: 'coupon_tier_insufficient',
+          message: `Cupom exclusivo para tier ${coupon.min_tier}+. Seu tier atual: ${userTier}.`,
+          required_tier: coupon.min_tier,
+          your_tier: userTier,
+        });
+      }
+    }
+
     await query(
       `UPDATE carts SET coupon_code = $1, updated_at = NOW() WHERE user_id = $2`,
       [req.body.code, req.user.sub]
@@ -155,7 +191,7 @@ router.post('/coupon',
     if (cart.rows.length) {
       await tx(async (cli) => { await recalcCart(cli, cart.rows[0].id); });
     }
-    res.json({ ok: true, coupon: c.rows[0] });
+    res.json({ ok: true, coupon });
   })
 );
 

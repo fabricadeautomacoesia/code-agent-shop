@@ -215,6 +215,19 @@ export default function CartPage() {
               </div>
             )}
 
+            {/* MLB++ WORKER 16: Cupom tier-segmentado - badge exclusivo */}
+            {couponPreview?.coupon?.min_tier && (
+              <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/5 p-2.5 mb-3 flex items-center gap-2">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-300 font-bold uppercase tracking-wider">
+                  Exclusivo {couponPreview.coupon.min_tier}
+                </span>
+                <span className="text-[11px] text-white/60">
+                  Cupom para tier <strong className="text-yellow-300">{couponPreview.coupon.min_tier}+</strong>
+                  {couponPreview.user_tier && ` (seu: ${couponPreview.user_tier})`}
+                </span>
+              </div>
+            )}
+
             {/* MLB-11: Cupom progressivo - tiers visuais */}
             {couponPreview?.tiers?.length > 0 && (
               <div className="rounded-lg border border-magenta/30 bg-magenta/5 p-3 mb-4">
