@@ -17303,7 +17303,42 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc PATCH /products/me/:id (pass 83) - 6 bugs Regra K+P
 - ✅ product-svc POST /:id/submit (pass 84) - 7 bugs state machine
 - ✅ product-svc POST /:id/versions (pass 85) - 8 bugs versioning
-- ✅ product-svc POST /:id/qna/:qid/answer (pass 86 esta iter) - 9 bugs duplicated route
+- ✅ product-svc POST /:id/qna/:qid/answer (pass 86) - 9 bugs duplicated route
+- ✅ product-svc upload.js endpoints (pass 87 esta iter) - 6 bugs storage DoS
+
+W7 PASS 87 RESUMO:
+- product-svc/src/routes/upload.js POST /package + /media refactor (6 bugs):
+  * NEW uploadLimiter 30/hr/seller (anti-DoS storage exhaustion)
+    - PRE-FIX: bot pwned spawn 1000 uploads 50MB = 50GB/hr ataque sustentado
+  * NEW Regra L quota per seller (MAX_SELLER_STORAGE_BYTES default 5GB)
+    - PRE-FIX: zero cap storage cumulativo - GB+ orfaos por seller
+    - checkSellerQuota() helper sumando product_media.file_size_bytes
+    - 429 storage_quota_exceeded com current_bytes + max_bytes UX
+    - Defensive fallback se schema sem file_size_bytes column
+  * Cleanup helper em erro (storage leak fix):
+    - PRE-FIX: hash falha (IO error) -> file orfao em STORAGE_PATH
+    - FIX: try/catch + cleanupFile() + 400 hash_failed
+  * Regra P audit log atomic em /package:
+    - target_id = sha256 hash (forense binary identification)
+    - payload: filename + size + mime + sha + ip
+    - Compliance: upload pode receber malware/ilicito - trail obrigatorio
+  * /media fileFilter stricter (defesa profundidade)
+    - PRE-FIX: fileFilter global aceita .js/.py/.php em /media (XSS vector)
+    - FIX: MEDIA_ALLOWED_EXT enum whitelist (png/jpg/webp/svg/mp4/webm)
+    - 400 invalid_media_type com allowed[] UX
+  * Quota check em /media tambem (igual /package)
+- Pattern W7 em 93 endpoints + 23 regras (A-W) - 87 micro-iters
+- Regra L cross-svc consolidado:
+  - seller-svc /payout amount cap (pass 40)
+  - product-svc max_products_per_seller (pass 82)
+  - product-svc max_seller_storage_bytes (pass 87 esta iter)
+- Regra P audit cross-svc: 13+ endpoints com forense trail
+
+PROXIMA ITER:
+- W7 pass 88: consolidate qna/answer route duplicate (review-svc vs product-svc)
+- W7 pass 89: notification-svc admin endpoints (se houver)
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 86 RESUMO:
 - product-svc/src/routes/seller-mgmt.js POST /:id/qna/:qid/answer refactor (9 bugs):
