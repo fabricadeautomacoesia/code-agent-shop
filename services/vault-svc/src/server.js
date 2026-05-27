@@ -98,24 +98,111 @@ const provisionSchema = z.object({
   monthly_quota_usd_cents: z.number().int().positive().nullable().optional(),
   is_platform_pool: z.boolean().default(true),
   expires_at: z.string().datetime().optional(),
+  // FIX-WORKER-17 pass 12: rotation_days opcional (default 90d se nao informado)
+  rotation_days: z.number().int().min(1).max(365).optional(),
 });
 
 // POST /api/vault/keys -> admin provisiona chave para pool ou seller especifico
+// FIX-WORKER-17 pass 12: auto-define rotation_due_at = NOW() + rotation_days days
+// (default 90d - boas praticas secrets management Asaas/OpenAI/etc).
+// Tabela tem coluna rotation_due_at + idx_vault_rotation desde mig 003 mas NUNCA
+// foi populado. Agora cada nova key tem prazo de rotacao definido.
 app.post('/keys', provisionRateLimit, adminOnly, validate({ body: provisionSchema }), asyncHandler(async (req, res) => {
-  const { seller_id, provider, key_alias, plain_key, monthly_quota_usd_cents, is_platform_pool, expires_at } = req.body;
+  const { seller_id, provider, key_alias, plain_key, monthly_quota_usd_cents,
+          is_platform_pool, expires_at, rotation_days } = req.body;
   const { encrypted, iv, tag } = cryp.encrypt(plain_key);
   const fp = cryp.sha256(plain_key).slice(0, 16);
+  // 90 days default - alinhado com PCI/SOC2 recomendacoes
+  const rotDays = rotation_days || 90;
   const r = await query(
     `INSERT INTO vault_api_keys
        (seller_id, provider, key_alias, encrypted_key, iv, auth_tag, key_fingerprint,
-        monthly_quota_usd_cents, is_platform_pool, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-     RETURNING id, provider, key_alias, key_fingerprint, is_platform_pool, monthly_quota_usd_cents, created_at`,
-    [seller_id || null, provider, key_alias, encrypted, iv, tag, fp, monthly_quota_usd_cents || null, is_platform_pool, expires_at || null]
+        monthly_quota_usd_cents, is_platform_pool, expires_at, rotation_due_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+             NOW() + ($11 || ' days')::INTERVAL)
+     RETURNING id, provider, key_alias, key_fingerprint, is_platform_pool,
+               monthly_quota_usd_cents, created_at, rotation_due_at`,
+    [seller_id || null, provider, key_alias, encrypted, iv, tag, fp,
+     monthly_quota_usd_cents || null, is_platform_pool, expires_at || null,
+     String(rotDays)]
   );
-  log.info({ provisioned: r.rows[0].id, provider, fp }, '[vault.provision]');
+  log.info({ provisioned: r.rows[0].id, provider, fp, rotation_due_at: r.rows[0].rotation_due_at },
+    '[vault.provision]');
   res.status(201).json(r.rows[0]);
 }));
+
+// FIX-WORKER-17 pass 12: cron diario detecta keys vencendo rotacao em <= 7 dias
+// (warn early) + vencidas (urgent). Cria notification in_app + email para
+// admins. Usa idx_vault_rotation partial (WHERE is_active = TRUE) - barato.
+async function rotationAlertCron() {
+  try {
+    // Keys com rotation_due_at em < 7 dias (warning) e <= NOW() (overdue)
+    const r = await query(
+      `SELECT id, key_alias, provider, rotation_due_at,
+              EXTRACT(EPOCH FROM (rotation_due_at - NOW()))/86400 AS days_remaining
+         FROM vault_api_keys
+        WHERE is_active = TRUE
+          AND rotation_due_at IS NOT NULL
+          AND rotation_due_at < NOW() + INTERVAL '7 days'
+        ORDER BY rotation_due_at ASC
+        LIMIT 50`
+    );
+    if (!r.rows.length) return;
+    // Pega lista de admin user_ids para criar notifications
+    const admins = await query(`SELECT id FROM users WHERE role IN ('admin','staff') AND is_active = TRUE AND is_banned = FALSE`);
+    if (!admins.rows.length) return;
+    log.info({ keys_due: r.rows.length, admins: admins.rows.length }, '[vault.rotation.alert]');
+    for (const key of r.rows) {
+      const days = Math.floor(Number(key.days_remaining));
+      const isOverdue = days < 0;
+      const title = isOverdue
+        ? `Chave ${key.key_alias} VENCIDA (rotacao ha ${-days}d)`
+        : `Chave ${key.key_alias} vence em ${days}d`;
+      const body = `Provider: ${key.provider}. Rotacionar manualmente via /admin/vault para evitar revogacao surpresa pelo upstream.`;
+      // Idempotencia: nao spammar - so 1 notif por key por dia
+      const existing = await query(
+        `SELECT 1 FROM notifications
+          WHERE template_code = 'vault_rotation_due'
+            AND payload->>'key_id' = $1
+            AND created_at > NOW() - INTERVAL '1 day'
+          LIMIT 1`,
+        [key.id]
+      );
+      if (existing.rows.length) continue;
+      for (const a of admins.rows) {
+        await query(
+          `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+           VALUES ($1, 'in_app', 'vault_rotation_due', $2, $3, $4, $5::JSONB)`,
+          [a.id, title, body, isOverdue ? 3 : 1,
+           JSON.stringify({ key_id: key.id, alias: key.key_alias, provider: key.provider, days })]
+        ).catch((e) => log.warn({ err: e.message }, '[vault.rotation.notif.fail]'));
+      }
+    }
+  } catch (e) {
+    log.error({ err: e.message }, '[vault.rotation.cron.fail]');
+  }
+}
+
+// GET /api/vault/keys/rotation-due - lista keys com rotacao prox/vencida
+app.get('/keys/rotation-due', adminOnly, asyncHandler(async (req, res) => {
+  const r = await query(
+    `SELECT id, key_alias, provider, is_platform_pool, rotation_due_at,
+            EXTRACT(EPOCH FROM (rotation_due_at - NOW()))/86400 AS days_remaining
+       FROM vault_api_keys
+      WHERE is_active = TRUE
+        AND rotation_due_at IS NOT NULL
+        AND rotation_due_at < NOW() + INTERVAL '30 days'
+      ORDER BY rotation_due_at ASC LIMIT 100`
+  );
+  res.json({ keys: r.rows, count: r.rows.length });
+}));
+
+// Cron 1x/dia as 09:00 UTC (06:00 BRT) - antes do horario comercial brasileiro
+// setTimeout para 1a execucao 60s apos start (warmup), depois 24h interval
+setTimeout(() => rotationAlertCron().catch(() => {}), 60000);
+setInterval(() => rotationAlertCron().catch((e) => log.error({ err: e.message }, '[rotation.cron.fail]')),
+  24 * 60 * 60 * 1000);
+log.info('[vault.rotation.cron] daily rotation alert cron started');
 
 // GET /api/vault/keys -> lista (mascarado, sem expor plain)
 // FIX-WORKER-17 pass 12 + W4 pass 10: enriquece com error_stats_7d dos ultimos 7 dias.
