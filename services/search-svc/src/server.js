@@ -23,12 +23,16 @@ app.get('/', asyncHandler(async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   const category = req.query.category;
   const kind = req.query.kind;
-  const min_price = req.query.min_price ? parseInt(req.query.min_price, 10) : null;
-  const max_price = req.query.max_price ? parseInt(req.query.max_price, 10) : null;
+  // FIX-WORKER-10 pass 2: NaN -> null silencioso (antes max_price=abc -> PG NaN -> 404)
+  const _minP = req.query.min_price ? parseInt(req.query.min_price, 10) : null;
+  const _maxP = req.query.max_price ? parseInt(req.query.max_price, 10) : null;
+  const min_price = Number.isFinite(_minP) && _minP >= 0 ? _minP : null;
+  const max_price = Number.isFinite(_maxP) && _maxP >= 0 ? _maxP : null;
   const free = req.query.free === 'true';
   const tier = req.query.tier;
   const tag = req.query.tag;
-  const lim = Math.min(parseInt(req.query.limit, 10) || 24, 60);
+  // FIX-WORKER-10 pass 2: Math.max para barrar limit negativo (era 500 do PG LIMIT -5)
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 24, 60));
   const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
   const off = (page - 1) * lim;
 
@@ -62,7 +66,9 @@ app.get('/', asyncHandler(async (req, res) => {
     where.push(`p.last_sale_at IS NOT NULL AND p.last_sale_at > NOW() - INTERVAL '24 hours'`);
   }
 
-  const order = ({
+  // FIX-WORKER-10 pass 2: fallback gracioso para sort invalido (era 500 database_error
+  // quando ORDER BY undefined caia no SQL). Whitelist explicito + default.
+  const SORT_OPTIONS = {
     relevance:    q ? `rank DESC, p.sales_count DESC` : `p.sales_count DESC, p.avg_rating DESC NULLS LAST`,
     newest:       `p.published_at DESC NULLS LAST`,
     price_asc:    `p.price_cents ASC`,
@@ -71,7 +77,9 @@ app.get('/', asyncHandler(async (req, res) => {
     sales:        `p.sales_count DESC`,
     // MLB-NEW WORKER 16: sort por venda mais recente (combina com idx_products_last_sale)
     recent_sales: `p.last_sale_at DESC NULLS LAST, p.sales_count DESC`,
-  })[req.query.sort || 'relevance'];
+  };
+  const sortKey = String(req.query.sort || 'relevance');
+  const order = SORT_OPTIONS[sortKey] || SORT_OPTIONS.relevance;
 
   params.push(lim, off);
   // MLB-NEW WORKER 16: is_top_seller. FIX-WORKER-18 pass 2: trocado MAX OVER PARTITION
