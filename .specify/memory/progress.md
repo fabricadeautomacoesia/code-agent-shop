@@ -102,6 +102,19 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## SECURITY/RELIABILITY HARDENING - DEPLOY E2E VALIDADO (sessao 26/05)
+
+Apos rede do cliente voltar, deploy completo dos 4 fixes acumulados offline:
+- migration 012 (2FA secret_tag) aplicada
+- migration 013 (notif backoff + locking) aplicada
+- ASAAS_WEBHOOK_SECRET + VAULT_INTERNAL_TOKEN gerados em .env (Swarm)
+- 4 services rebuilt + force-updated: auth-svc, vault-svc, payment-svc, notification-svc
+
+VALIDACAO E2E 3/3 via curl --resolve:
+- WORKER 11 webhook forjado (header errado) -> HTTP 401 invalid_signature
+- WORKER 17 buyer comum em /vault/use -> HTTP 403 forbidden_role
+- WORKER 6 /auth/2fa/setup -> HTTP 200 com QR + otpauth + manual_code (2FA funciona pela primeira vez)
+
 ## RELIABILITY HARDENING (WORKER 13 - NOTIFICATION OUTBOX)
 Audit em services/notification-svc/src/server.js revelou 2 bugs:
 
