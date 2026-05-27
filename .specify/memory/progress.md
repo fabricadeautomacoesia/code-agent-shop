@@ -5408,3 +5408,53 @@ GAP DETECTADO (proxima iter):
   (mas opcional para browse-only) - hard UX trade-off
 - Adicionar prompt "complete seu cadastro" no /checkout BEFORE pay click
 - Validar CPF/CNPJ algoritmo no frontend (ja faz length check W1 pass 2)
+
+## WORKER 2 pass 4 (CHECKOUT UX) - CPF check preventivo antes do pay
+
+GAP DETECTADO (proxima iter do W11 pass 4):
+"Adicionar prompt 'complete seu cadastro' no /checkout BEFORE pay click"
+
+W11 pass 4 fixou backend payment-svc para retornar 400 missing_cpf_cnpj.
+UX reativa (erro pos-click). Esta pass adiciona UX PROATIVA.
+
+FIX (1 arquivo - apps/storefront/src/app/checkout/page.tsx):
++ State hasCpf: boolean|null (null = loading initial)
++ useEffect: Api.me(token) -> verifica user.cpf_cnpj
+  - .replace(/\D/g,'').length >= 11 = valid (cobre CPF 11 OR CNPJ 14)
++ Fail-open: erro fetch -> setHasCpf(true) (deixa user tentar)
++ Banner amarelo "Cadastro incompleto" + link /conta se hasCpf=false
++ Pay button: disabled + texto "Complete cadastro para pagar"
+
+UX FLOW:
+1. User entra /checkout sem CPF preenchido
+2. Banner amarelo aparece IMEDIATAMENTE (antes click pay)
+3. Button disabled mostra "Complete cadastro para pagar"
+4. User clica link -> /conta -> preenche CPF -> volta -> banner some
+5. Button volta "Confirmar e pagar" - flow normal
+
+DEFENSE EM DEPTH:
+- Frontend (este pass): UX proativa preventiva
+- Backend (W11 pass 4): 400 missing_cpf_cnpj se passar do client check
+- Padrao Blueprint V8: cliente valida UX, server valida security
+
+DEPLOY:
+- commit 7bd01df pushed
+- storefront rebuilt (~2.8s) + converged
+
+VALIDACAO PUBLICA:
+- /checkout HTML loads 200 OK
+- Bundle JS contem strings: "Cadastro incompleto", "Complete cadastro"
+- Rendering happens client-side (depende de Api.me response)
+- E2E test com teste1 (cpf_cnpj NULL no DB) confirmaria banner amarelo
+
+IMPACTO:
+- User nao perde tempo clicando pay para descobrir que precisa CPF
+- Redirect direto para /conta = path-to-success otimizado
+- Reduce abandonment no checkout pos-frustracao
+- Padrao similar Mercado Livre (verifica perfil completo antes pagamento)
+
+PROXIMA ITER:
+- Validar algoritmo CPF/CNPJ no frontend (lib brazilian-utils ou homebrew)
+  W1 pass 2 ja faz length-only check
+- Adicionar campo edit CPF em /conta (verificar se ja existe form)
+- Considerar form CPF inline no /checkout (sem redirect /conta)
