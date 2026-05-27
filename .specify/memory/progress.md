@@ -3188,3 +3188,48 @@ PADRAO ARQUITETURAL:
 - productLd usa data dinamica do produto (warranty_days), nao hardcoded
 - Sellers podem customizar warranty_days no upload -> reflete no JSON-LD
 - Quando schema.org adicionar 'digital delivery' methods, atualizar
+
+## WORKER 9 pass 3 (SEO) - canonical URLs ausentes em paginas chave
+Audit pos-W9 pass 2 (metadataBase fix): apenas PDP /product/[slug] e
+/seller/[slug] tinham canonical. Outras 5+ paginas SEM canonical = Google
+indexava cada query string como page separada -> duplicate content penalty.
+
+VETOR REAL:
+- /products?sort=sales -> URL canonica
+- /products?sort=newest -> Google indexa como DIFERENTE
+- /products?page=2 -> outra page diferente
+- /products?category=ai_agent&tier=ouro -> outra page
+- Resultado: dezenas de URLs duplicadas competindo no SERP, dilui ranking.
+
+ADICIONADO alternates: { canonical: '/path' } em 5 layouts/pages:
+1. apps/storefront/src/app/layout.tsx (root): canonical '/'
+2. apps/storefront/src/app/products/layout.tsx: canonical '/products'
+3. apps/storefront/src/app/sellers/layout.tsx: canonical '/sellers'
+4. apps/storefront/src/app/promocoes/page.tsx: canonical '/promocoes'
+5. apps/storefront/src/app/categoria/[slug]/layout.tsx: canonical dinamico
+   `/categoria/${slug}` via generateMetadata
+
+metadataBase ja configurado em W9 pass 2 -> Next.js resolve canonicals
+para URLs absolutas (https://cas.inovareinteligenciaartificial.com/...).
+
+VALIDACAO PUBLICA (6 cenarios):
+- / -> canonical = home URL OK
+- /products -> canonical /products OK
+- /products?sort=sales&page=2 -> canonical /products (SEM query strings!) OK
+- /sellers -> canonical /sellers OK
+- /promocoes -> canonical /promocoes OK
+- /categoria/agentes-ia -> canonical /categoria/agentes-ia OK
+
+DEPLOY: commit 8a19855 pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
+
+IMPACTO ESPERADO:
+- Google consolida ranking signals na URL canonica (sem query strings)
+- Sitemap.xml ja tem 37 URLs limpas - canonicals nas pages confirmam
+- /products?sort=X variations nao competem mais com /products no SERP
+- PageRank concentrado em URLs preferidas = melhor posicionamento
+
+GAP RESTANTE (proxima iter):
+- /conta/* paginas private (noindex via robots, mas canonical seria nice-to-have)
+- /comparar?ids=X,Y eh dinamico (canonical deve ser /comparar OU especifico
+  por combinacao - decidir UX)
