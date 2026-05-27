@@ -119,7 +119,8 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
     `SELECT u.id, u.email, u.password_hash, u.full_name, u.role, u.is_active, u.is_banned,
             u.failed_login_count, u.locked_until,
             u2.is_enabled AS twofa_enabled, u2.secret_encrypted,
-            u2.secret_iv AS twofa_iv, u2.secret_tag AS twofa_tag
+            u2.secret_iv AS twofa_iv, u2.secret_tag AS twofa_tag,
+            u2.last_totp_hash, u2.last_totp_used_at
        FROM users u
        LEFT JOIN user_two_factor u2 ON u2.user_id = u.id
        WHERE u.email = $1 AND u.deleted_at IS NULL`, [email]
@@ -161,26 +162,94 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
   }
 
   // 2FA obrigatorio se habilitado - FIX SEG-2FA: passa tag GCM real (sem ele decrypt falha)
+  // FIX-WORKER-7 pass 49: 4 BUGS CRITICOS 2FA path:
+  // 1. *** TOTP REPLAY ATTACK *** RFC 6238 §5.2 violation
+  //    PRE-FIX: authenticator.check retorna true para mesmo TOTP dentro 30s window
+  //    Atacante sniff TOTP -> replay < 30s -> bypass 2FA
+  //    FIX: track last_totp_hash + last_totp_used_at (mig 046)
+  //    Rejeitar se mesmo hash usado < 60s atras (2x window margem clock drift)
+  // 2. *** fail2ban NAO REPORTA FAILURE em twofa_corrupt ***
+  //    PRE-FIX: linha 169/178 return next() sem reportFailure
+  //    Atacante pode probar continua sem cooldown (apos suspeitar 2FA corrupt)
+  //    FIX: reportFailure em todos paths 2FA fail (corrupt, decrypt, invalid)
+  // 3. *** Audit log MISSING *** 2FA fail = security event critical
+  //    Pattern W7: high-impact endpoints sempre audit_log
+  //    FIX: INSERT audit_log async em paths 2FA fail (forense + alert)
+  // 4. *** authenticator.check sem window option ***
+  //    PRE-FIX: default window=0 (so step atual). Clock drift user vs server
+  //    causa false-reject + UX confuso ("codigo errado" para TOTP valido)
+  //    FIX: { window: 1 } = aceitar ±1 step (90s tolerance). RFC 6238 §5.2
+  //    permite ate 5 steps - 1 step balance security vs UX (replay protect
+  //    via hash window 60s cobre 2 time-steps).
   if (user.twofa_enabled) {
     if (!totp) return res.status(206).json({ requires_2fa: true });
     if (!user.twofa_tag) {
       // Estado inconsistente: 2FA ativo sem tag (rows legados da migration 012)
+      req.fail2ban?.reportFailure();  // FIX bug 2
       log.error({ userId: user.id }, '[2fa.missing_tag]');
+      // FIX bug 3: audit log atomic (async fire-and-forget OK p/ login path)
+      query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'system', '2fa.corrupt_state', 'user', $1, 'critical', $2::JSONB)`,
+        [user.id, JSON.stringify({ reason: 'missing_tag', ip: req.ip })]
+      ).catch(() => {});
       return next(errorHandler.unauthorized('twofa_corrupt', 'Reconfigure 2FA - configuracao corrompida'));
     }
+    const crypto = require('node:crypto');
     const { decrypt } = require('@cas/shared').crypto;
     const { authenticator } = require('otplib');
     let secret;
     try {
       secret = decrypt({ encrypted: user.secret_encrypted, iv: user.twofa_iv, tag: user.twofa_tag });
     } catch (e) {
+      req.fail2ban?.reportFailure();  // FIX bug 2
       log.error({ userId: user.id, err: e.message }, '[2fa.decrypt_fail]');
+      query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'system', '2fa.decrypt_fail', 'user', $1, 'critical', $2::JSONB)`,
+        [user.id, JSON.stringify({ err: String(e.message).slice(0, 200), ip: req.ip })]
+      ).catch(() => {});
       return next(errorHandler.unauthorized('twofa_corrupt', 'Reconfigure 2FA'));
     }
-    if (!authenticator.check(totp, secret)) {
+
+    // FIX bug 4: window: 1 (±1 step = 90s tolerance clock drift)
+    // FIX bug 1: anti-replay (RFC 6238 §5.2) - track ultimo TOTP usado
+    if (!authenticator.check(totp, secret, { window: 1 })) {
       req.fail2ban?.reportFailure();
+      query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'system', '2fa.invalid_totp', 'user', $1, 'warn', $2::JSONB)`,
+        [user.id, JSON.stringify({ ip: req.ip, ua_prefix: (req.headers['user-agent'] || '').slice(0, 60) })]
+      ).catch(() => {});
       return next(errorHandler.unauthorized('invalid_totp', 'Codigo 2FA invalido'));
     }
+
+    // FIX bug 1 (replay protection): hash TOTP + check last used
+    const totpHash = crypto.createHash('sha256').update(totp).digest('hex');
+    if (user.last_totp_hash === totpHash && user.last_totp_used_at) {
+      const lastUsedMs = Date.now() - new Date(user.last_totp_used_at).getTime();
+      // 60s = 2x time-step (margem clock drift + replay window 1 step)
+      if (lastUsedMs < 60_000) {
+        req.fail2ban?.reportFailure();
+        log.warn({ userId: user.id, ip: req.ip, lastUsedMs }, '[2fa.replay_blocked]');
+        query(
+          `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+           VALUES ($1, 'system', '2fa.replay_attempt', 'user', $1, 'critical', $2::JSONB)`,
+          [user.id, JSON.stringify({
+            ip: req.ip,
+            last_used_ms_ago: lastUsedMs,
+            ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+          })]
+        ).catch(() => {});
+        return next(errorHandler.unauthorized('totp_replay', 'Este codigo 2FA ja foi usado. Aguarde o proximo.'));
+      }
+    }
+    // Marca TOTP como usado (anti-replay) - update async OK pois validacao ja passou
+    // Tabela CORRETA: user_two_factor (nao users) - mig 046 adiciona cols la
+    query(
+      `UPDATE user_two_factor SET last_totp_hash = $1, last_totp_used_at = NOW() WHERE user_id = $2`,
+      [totpHash, user.id]
+    ).catch((e) => log.warn({ err: e.message, userId: user.id }, '[2fa.replay_track_fail]'));
   }
 
   req.fail2ban?.reportSuccess();

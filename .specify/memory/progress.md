@@ -16386,3 +16386,110 @@ PROXIMA ITER:
 - W7 pass 50: refactor payment-svc -> HTTP /loyalty/earn (consolidation pass 45+46)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 49 - auth-svc /login 2FA 4 BUGS CRITICOS + mig 046 (2026-05-27)
+================================================================
+ESCOPO: auth-svc POST /login handler 2FA path (RFC 6238 §5.2 compliance)
++ migration 046 schema (user_two_factor anti-replay)
+FILES:
+- services/auth-svc/src/routes/auth.js (linhas 163-184 -> rewrite)
+- db/migrations/046_users_2fa_replay_protection.sql (NEW)
+
+CONTEXTO: W7 pass 48 fechou gateway anti-DoS. Pass 49 ataca auth-svc 2FA
+- bug security crit RFC 6238 violation + 3 patterns missing.
+
+BUGS CORRIGIDOS (4 critical security):
+
+1. *** TOTP REPLAY ATTACK *** RFC 6238 §5.2 violation
+- PRE-FIX: authenticator.check(totp, secret) retorna true para QUALQUER
+  TOTP valido dentro time-step window (30s default).
+- Sem tracking ultimo TOTP usado -> atacante:
+  a. Sniff TOTP de network/keylogger/screen-share
+  b. Replay mesmo TOTP < 30s -> login bypass 2FA
+  c. 2FA viraly inutil contra ataque ativo
+- RFC 6238 §5.2 EXPLICIT requirement:
+  "The verifier MUST NOT accept the second attempt of the OTP after the
+   successful validation has been issued for the first OTP"
+- FIX (mig 046 + code):
+  - ADD COLUMN user_two_factor.last_totp_hash + last_totp_used_at
+  - Login compara sha256(totp) vs last_totp_hash
+  - Se mesmo hash usado < 60s atras (2x time-step margem) -> reject 'totp_replay'
+  - UPDATE async pos-success p/ proximo replay attempt blocked
+  - Audit log atomic 'critical' severity em replay attempt detected
+
+2. *** fail2ban NAO REPORTA FAILURE em twofa_corrupt ***
+- PRE-FIX: linha 169/178 (twofa_corrupt + decrypt_fail) return next() sem
+  reportFailure -> atacante pode probar continua sem cooldown
+- FIX: reportFailure em TODOS 4 paths 2FA fail:
+  a. twofa_corrupt missing_tag
+  b. twofa_corrupt decrypt_fail
+  c. invalid_totp (ja tinha)
+  d. totp_replay (novo)
+
+3. *** AUDIT_LOG MISSING em 2FA security events ***
+- Pattern W7 high-impact endpoints: security events sempre audit_log
+- PRE-FIX: 2FA fails so log.error/warn (memoria) - sem trail DB forense
+- FIX: INSERT audit_log async (fire-and-forget OK login path performance):
+  - 2fa.corrupt_state (missing_tag) -> severity critical
+  - 2fa.decrypt_fail -> severity critical
+  - 2fa.invalid_totp -> severity warn
+  - 2fa.replay_attempt -> severity critical (BIGGER alert - ataque ativo)
+- Payload JSON: ip + ua_prefix (60 chars) + last_used_ms_ago (replay)
+- Async catch() OK - 2FA fail UX dominante (user retry)
+
+4. *** authenticator.check SEM window option ***
+- PRE-FIX: default window=0 (so step atual). Clock drift user vs server
+  causa false-reject + UX confuso ("codigo errado" para TOTP valido)
+- FIX: { window: 1 } = aceitar ±1 step (90s tolerance)
+- RFC 6238 §5.2 permite ate 5 steps - 1 step balance security vs UX
+- Replay protect via hash window 60s ja cobre 2 time-steps
+
+MIGRATION 046:
+- user_two_factor.last_totp_hash VARCHAR(64) (sha256 hex)
+- user_two_factor.last_totp_used_at TIMESTAMPTZ
+- Partial idx (last_totp_used_at DESC) WHERE is_enabled=TRUE
+  (admin audit dormant 2FA accounts + replay forensics)
+
+DEPLOY ORDER:
+1. Apply migration 046 (cron auto)
+2. Deploy auth-svc rebuild
+3. Validate via curl: enviar mesmo TOTP 2x consecutivo:
+   - 1a request: 200 OK (login sucesso)
+   - 2a request mesmo TOTP < 60s: 401 totp_replay
+4. Monitor audit_log: filter action='2fa.replay_attempt' p/ ataques detected
+
+PATTERN W7 SECURITY 2FA CONSOLIDADO:
+- Pass 21 cross-user payment hijack
+- Pass 27 qa callback fraud vector
+- Pass 38 reports DoS reputational
+- Pass 45 loyalty earn free money exploit
+- Pass 49 2FA replay attack (esta iter)
+- Pattern: security audit endpoint-por-endpoint catch sutilezas RFC compliance
+
+PATTERN W7 40 ENDPOINTS + 22 REGRAS (A-V) - 49 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7
+- gateway: 2
+- auth-svc: 1 (pass 49 esta iter)
+
+AUTH-SVC PROGRESS (1/6 endpoints auditados):
+- ✅ POST /login 2FA path (pass 49 esta iter)
+- POST /register (pendente)
+- POST /refresh (pass W17 pass 14 historico OWASP cascade - audit Regra novas)
+- POST /logout (pendente)
+- POST /forgot-password (pendente)
+- POST /reset-password (pendente)
+
+PROXIMA ITER:
+- W7 pass 50: auth-svc POST /register (CPF + 2FA setup audit)
+- W7 pass 51: auth-svc /forgot-password + /reset-password (token security)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
