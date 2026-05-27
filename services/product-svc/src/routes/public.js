@@ -322,11 +322,23 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
 // GET /products/:slug/reviews
 // FIX-WORKER-18 pass 4: cache 60s (reviews mudam pouco, novas reviews populam
 // em background). Invalidated on POST /reviews via cache.del em review-svc.
+// FIX-WORKER-7 pass 5: /:slug/reviews retornava 200 {reviews:[]} para slugs
+// inexistentes (inconsistente com /:slug que retorna 404). UI nao distinguia
+// "produto sem avaliacoes" de "produto deletado/inexistente".
+// User com link compartilhado /product/slug-deletado/reviews via "Nenhuma
+// avaliacao" e pensava que produto era novo. Agora: 404 product_not_found
+// igual ao endpoint detail. Sub-query EXISTS evita N+1 e e barata (index slug).
 router.get('/:slug/reviews',
   cache.cacheMiddleware((req) => `products:reviews:${req.params.slug}:lim=${req.query.limit||20}:p=${req.query.page||1}`, 60),
-  asyncHandler(async (req, res) => {
+  asyncHandler(async (req, res, next) => {
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 20, 100));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
+  // Pre-check produto existe (evita 200 enganoso quando slug inexistente)
+  const exists = await query(
+    `SELECT 1 FROM products WHERE slug = $1 AND deleted_at IS NULL LIMIT 1`,
+    [req.params.slug]
+  );
+  if (!exists.rows.length) return next(errorHandler.notFound('product_not_found'));
   const r = await query(
     `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase, r.helpful_count, r.unhelpful_count,
             r.reply_from_seller, r.reply_at, r.created_at,
@@ -343,9 +355,16 @@ router.get('/:slug/reviews',
 
 // GET /products/:slug/qna
 // FIX-WORKER-18 pass 4: cache 60s (qna upvotes mudam mas hot path eh leitura)
+// FIX-WORKER-7 pass 5: 404 product_not_found para slugs inexistentes (mesma
+// motivacao do /reviews acima - UX consistente com endpoint detail).
 router.get('/:slug/qna',
   cache.cacheMiddleware((req) => `products:qna:${req.params.slug}`, 60),
-  asyncHandler(async (req, res) => {
+  asyncHandler(async (req, res, next) => {
+  const exists = await query(
+    `SELECT 1 FROM products WHERE slug = $1 AND deleted_at IS NULL LIMIT 1`,
+    [req.params.slug]
+  );
+  if (!exists.rows.length) return next(errorHandler.notFound('product_not_found'));
   const r = await query(
     `SELECT q.id, q.question, q.answer, q.is_pinned, q.upvote_count,
             q.asked_at, q.answered_at,
