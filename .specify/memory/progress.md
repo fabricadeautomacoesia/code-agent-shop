@@ -6709,3 +6709,79 @@ PROXIMA ITER:
 - W11 pass 7: webhook handler para PAYMENT_REFUNDED com installments
 - W2: checkout UI desabilitar 4-12x temporariamente se split presente
   (defesa em profundidade ate validar fix em prod)
+
+## WORKER 17 PASS 9 - vault-svc /use INSERT duplicado polulava vault_key_usage
+
+BUG encontrado em vault-svc server.js /use endpoint (linha 174-178):
+
+  // log granular assincrono
+  query(`INSERT INTO vault_key_usage
+         (vault_key_id, seller_id, operation, ip_address) VALUES ($1,$2,$3,$4)`,
+        [k.id, seller_id || null, operation || null, req.ip])
+    .catch(...);
+
+PROBLEMA: INSERT fire-and-forget pre-execucao. Schema da tabela:
+  cost_usd_cents BIGINT NOT NULL DEFAULT 0
+  success BOOLEAN NOT NULL DEFAULT TRUE
+Logo cada chamada /use criava registro com cost=0, success=TRUE.
+
+Caller depois chamava POST /usage com set COMPLETO (cost real, tokens,
+duration, success real, error_message). -> 2 rows por call.
+
+IMPACTO METRICAS:
+1. COUNT(*) FROM vault_key_usage = 2x calls reais
+   Dashboards "uso por chave" inflavam pela metade.
+
+2. Success rate enviesada para sucesso:
+   - Call falha apos /use mas antes de /usage: so linha do /use grava,
+     com success=TRUE default. Real success rate parecia 100% mesmo
+     com falhas LLM (timeout Asaas, rate limit OpenAI, etc).
+
+3. Audit forensics confuso: cada call 2 timestamps proximos.
+   Parecia race condition ou retry.
+
+4. Particionamento mensal (roadmap): 2x dados a indexar/manter.
+
+FIX:
+- Remover INSERT do /use completamente.
+- /usage permanece como log unico autoritativo (12 campos incluindo
+  cost_usd_cents, tokens, duration, error_message).
+- UPDATE vault_api_keys.last_used_at + last_used_ip permanece em /use
+  -> signal "key acessada quando" para alertas (key revogada+usada=alarme).
+
+JUSTIFICATIVA:
+- Telemetria pre-execucao (cost=0, success=true) e ruido, nao sinal
+- Caller que esqueca de chamar /usage e bug do caller, agora detectavel
+  (last_used_at recente sem rows correspondentes em vault_key_usage =
+  red flag de instrumentacao)
+- Sem backfill historico (rows antigas inalteradas, futuras corretas)
+
+DEPLOY:
+- commit 0dd1f40 push main OK
+- 11 insertions, 6 deletions (parece pouco mas mata 1 query fire-and-forget por call)
+- vault-svc rebuild via VPS cron
+- DB schema inalterado, API publica inalterada
+- llm-router/product-svc nao precisam mudar nada
+
+VALIDACAO POS-DEPLOY:
+  SELECT vault_key_id, COUNT(*), AVG(success::int) AS success_rate
+    FROM vault_key_usage
+   WHERE created_at > NOW() - INTERVAL '1 hour'
+   GROUP BY vault_key_id;
+  -- Pre-fix: count inflado, success_rate ~1.0 sempre
+  -- Pos-fix: count exato, success_rate real (pode ser 0.7-0.95 normalmente)
+
+VAULT-SVC AUDIT FINAL (passes 1-9):
+- pass 1-2: jwt role enforcement /use (era qualquer JWT)
+- pass 3: fail2ban global + IP banning brute-force token
+- pass 4: DLP - remover tok_len do log (oracle de comprimento)
+- pass 5: timing-safe compare ja existia
+- pass 6: rate-limit 30/min em /use + 5/min em /keys
+- pass 7: startup validate VAULT_AES_KEY 64-char hex
+- pass 8: VAULT_INTERNAL_TOKEN enforceInProd
+- pass 9: INSERT fantasma removido (esta iter)
+
+PROXIMA ITER:
+- W17 pass 10: rotacao automatica de keys (rotation_due_at hoje so visivel)
+- W14: particionamento mensal de vault_key_usage (planejado em comment)
+- W18: cache em /keys list 30s (admin dashboard refresca, baixo churn)
