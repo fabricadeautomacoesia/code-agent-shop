@@ -5,6 +5,7 @@ import { Star, Award, Download, Shield, Clock, Tag, RefreshCw, MessageCircle, Ch
 import { Api } from '@/lib/api';
 import { AddToCart } from '@/components/add-to-cart';
 import { WishlistButton } from '@/components/wishlist-button';
+import { PriceAlertButton } from '@/components/price-alert-button';
 import { ProductTabs } from '@/components/product-tabs';
 import { AskQuickButton } from '@/components/ask-quick-button';
 import { CompareButton } from '@/components/compare-button';
@@ -150,6 +151,11 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
 
             {/* MLB-NEW WORKER 16: Pergunta rapida pre-purchase (Mercado Livre style) */}
             <AskQuickButton productId={product.id} />
+
+            {/* MLB-12 (NEW): Avise-me se baixar (price drop alert) */}
+            <div className="mt-3">
+              <PriceAlertButton productId={product.id} currentPriceCents={product.price_cents} />
+            </div>
 
             {/* MLB-NEW WORKER 16: Adicionar a comparacao (max 4) */}
             <CompareButton variant="pdp" product={{

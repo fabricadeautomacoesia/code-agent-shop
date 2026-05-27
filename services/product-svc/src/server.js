@@ -35,6 +35,8 @@ app.use('/products/me',         require('./routes/seller-mgmt'));
 app.use('/products/admin',      require('./routes/admin'));
 app.use('/products/upload',     require('./routes/upload'));
 app.use('/products/wishlist',   require('./routes/wishlist'));
+// MLB-12 NEW: price drop alerts ("Avise-me se baixar")
+app.use('/products/price-alerts', require('./routes/price-alerts'));
 app.use('/products',            require('./routes/public'));
 
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
