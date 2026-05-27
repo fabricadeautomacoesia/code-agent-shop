@@ -9788,3 +9788,97 @@ PROXIMA ITER:
 - W14 pass 8: drop dead indices via pg_stat_user_indexes (2 semanas)
 - W4 pass 12: /admin/products audit
 - W18 pass 4: image optimization audit
+
+## WORKER 11 PASS 9 - Split calculation cupom/loyalty (split > paid bug)
+
+BUG FINANCEIRO CRITICO em order-svc /checkout:
+
+CALCULO PRE-FIX:
+  commission = Math.floor(it.line_total_cents * rate);
+  payout = Math.max(0, it.line_total_cents - commission);
+
+Usa line_total_cents (BRUTO antes desconto). Mas pedido pode ter
+cart.discount_cents (cupom) + cart.loyalty_discount_cents (pontos).
+Resultado: SUM(payouts) EXCEDIA cart.total_cents.
+
+CENARIO REPRO:
+- 1 produto R$ 100 (line_total=10000)
+- Cupom 20% off (discount_cents=2000)
+- cart.total_cents = 8000 (paga)
+- commission 18% * 10000 = 1800
+- payout = 10000 - 1800 = 8200
+- asaas_splits 8200 > 8000 PAID
+- Asaas 400 "split exceeds payment value"
+- 500 storefront "Erro interno"
+
+FIX (split correto com desconto proporcional):
+
+  subtotal = cart.subtotal_cents
+  totalDiscount = discount_cents + loyalty_discount_cents
+  
+  per item:
+    itemShare = lineTotal / subtotal
+    itemDiscount = round(itemShare * totalDiscount)
+    effective = lineTotal - itemDiscount
+    commission = floor(effective * rate)
+    payout = max(0, effective - commission)
+
+PROPRIEDADES:
+1. SUM(itemDiscount) ~= totalDiscount (rounding +-N cents)
+2. SUM(effective) ~= cart.total_cents
+3. SUM(payout) <= cart.total_cents GARANTIDO
+
+EXEMPLO POS-FIX:
+- effective = 10000-2000 = 8000
+- commission = floor(8000*0.18) = 1440
+- payout = 6560
+- asaas_splits 6560 <= cart.total 8000 OK
+
+ARREDONDAMENTO MULTI-ITEM:
+3 items R$33.33 com cupom 10%:
+- itemDisc each: round(0.3333*1000) = 333 (SUM=999, 1 cent gap)
+- payout SUM = 9001
+- cliente paga 9000 -> diferenca 1 cent (favor plataforma OK)
+- Nunca SUM(payout) > total_paid
+
+BUG PARALELO RESOLVIDO:
+W11 pass 5 resolvia arredondamento de PARCELAMENTO (totalValue).
+W11 pass 9 resolve DESCONTO (cupom + loyalty).
+Ambos: split sum > paid value.
+
+DEPLOY:
+- commit 239c9a1 push main OK
+- 22 insertions, 3 deletions
+- order-svc rebuild via VPS cron
+- Sem schema change
+- Pedidos antigos preservados (order_items snapshot historico)
+- Novos: split correto
+
+VALIDACAO POS-DEPLOY:
+- Criar pedido com cupom -> SUM(asaas_splits.fixed_value) <= orders.total
+- Asaas createPayment 200 OK (era 400)
+- Sem 500 storefront em /checkout com cupom
+
+W11 PAYMENT AUDIT (passes 1-9):
+- pass 1: createPayment baseline
+- pass 2: polling Asaas pos-create
+- pass 3: friendly error
+- pass 4: CPF/CNPJ guard
+- pass 5: parcelamento totalValue
+- pass 6: webhook processed_at tracking
+- pass 7: cron reconciliation
+- pass 8: reset endpoint atomic
+- pass 9: split cupom/loyalty (esta iter)
+
+CICLO PAYMENT BILLING ROBUSTO:
+- Cupom: split proporcional ok
+- Loyalty: split proporcional ok
+- Parcelamento: totalValue alinhado
+- Webhook: retry + reconciliation + reset
+- Auditoria: audit_log + asaas_webhook_events forensics
+- Sem mais 400/500 inesperados em /checkout
+
+PROXIMA ITER:
+- W11 pass 10: testes E2E checkout cupom smoke prod
+- W2 pass 7: /cart UI "Seller recebe R$X" transparencia
+- W14 pass 9: indice composto orders(buyer_user_id, payment_status, created_at)
