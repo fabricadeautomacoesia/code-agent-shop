@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { sellerFetch, fmtBRL, fmtDate } from '@/lib/seller-api';
+import { useSellerAction } from '@/lib/use-seller-action';
 import { TrendingUp, Wallet, ArrowDownToLine, Clock, CheckCircle2, XCircle, Banknote } from 'lucide-react';
 
 // FIX-WORKER-5: mapa visual para status de payouts (estilo MLB extrato)
@@ -15,9 +16,9 @@ const PAYOUT_STATUS: Record<string, { label: string; icon: any; color: string }>
 export default function FinanceiroPage() {
   const [kpi, setKpi] = useState<any>(null);
   const [payouts, setPayouts] = useState<any[]>([]);
-  const [amount, setAmount] = useState(0);
-  const [error, setError] = useState('');
-  const [ok, setOk] = useState('');
+  // FIX-WORKER-5 pass 6: amount como string vazia (placeholder visivel, sem "0" persistente)
+  const [amount, setAmount] = useState<string>('');
+  const [loadError, setLoadError] = useState('');
 
   async function load() {
     try {
@@ -27,25 +28,54 @@ export default function FinanceiroPage() {
       ]);
       setKpi(k.kpi);
       setPayouts(p.payouts || []);
-    } catch (e: any) { setError(e.message); }
+      setLoadError('');
+    } catch (e: any) { setLoadError(e.message); }
   }
   useEffect(() => { load(); }, []);
 
+  // FIX-WORKER-5 pass 6 (FINAL FINAL): /financeiro era ultima page com error/ok
+  // ad-hoc states. Agora migrada para useSellerAction hook (passes 1-5 pattern).
+  // Cobertura dashboard-seller: 6/6 write pages no hook (100% definitivo).
+  const action = useSellerAction(load);
+
   async function requestPayout(e: React.FormEvent) {
     e.preventDefault();
-    setError(''); setOk('');
-    try {
-      await sellerFetch('/sellers/me/payout', { method: 'POST', body: JSON.stringify({ amount_cents: amount * 100 }) });
-      setOk(`Saque de ${fmtBRL(amount*100)} solicitado. Aguardando aprovacao admin.`);
-      setAmount(0);
-      load();
-    } catch (e: any) { setError(e.message); }
+    const value = parseFloat(amount);
+    if (!value || value < 50) {
+      action.run('payout', async () => { throw new Error('Valor minimo R$ 50,00'); });
+      return;
+    }
+    action.run('payout', async () => {
+      // FIX-WORKER-5 pass 6: Math.round evita floating-point (50.5 * 100 = 5050.0000000000005)
+      const amountCents = Math.round(value * 100);
+      await sellerFetch('/sellers/me/payout', {
+        method: 'POST',
+        body: JSON.stringify({ amount_cents: amountCents })
+      });
+      setAmount('');
+      return `Saque de ${fmtBRL(amountCents)} solicitado. Aguardando aprovacao admin.`;
+    });
   }
 
   return (
     <div>
       <h1 className="font-display font-bold text-4xl mb-2">Financeiro</h1>
-      <p className="text-white/60 mb-8">Receita liquida, comissoes e solicitacao de saques</p>
+      <p className="text-white/60 mb-6">Receita liquida, comissoes e solicitacao de saques</p>
+
+      {/* FIX-WORKER-5 pass 6: banners centralizados (era inline no form) */}
+      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando dados: {loadError}</div>}
+      {action.error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.error}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.success}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
 
       <div className="grid md:grid-cols-3 gap-4 mb-8">
         <div className="glass p-6">
@@ -73,15 +103,23 @@ export default function FinanceiroPage() {
         <p className="text-sm text-white/60 mb-4">
           Saque minimo R$ 50,00. Apos aprovacao do admin, a transferencia e processada via Asaas.
         </p>
+        {/* FIX-WORKER-5 pass 6: form com disabled state + amount string (placeholder visivel) */}
         <form onSubmit={requestPayout} className="space-y-3">
           <div>
             <label className="text-xs text-white/60 uppercase">Valor em reais</label>
-            <input type="number" min={50} step="0.01" value={amount} onChange={(e) => setAmount(Number(e.target.value))}
-              className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-lg font-mono" />
+            <input type="number" min={50} step="0.01" inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="50.00"
+              disabled={action.busyKey === 'payout'}
+              className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-lg font-mono focus:border-magenta focus:outline-none disabled:opacity-50" />
+            <div className="text-[11px] text-white/40 mt-1">Saque liquido disponivel: <strong className="text-white/70">{fmtBRL(kpi?.net_payout_cents || 0)}</strong></div>
           </div>
-          <button type="submit" className="btn-primary w-full">Solicitar saque</button>
-          {error && <div className="text-red-400 text-sm">{error}</div>}
-          {ok && <div className="text-green-400 text-sm">{ok}</div>}
+          <button type="submit"
+            disabled={action.busyKey === 'payout' || !amount || parseFloat(amount) < 50}
+            className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed">
+            {action.busyKey === 'payout' ? 'Solicitando...' : 'Solicitar saque'}
+          </button>
         </form>
       </div>
 
