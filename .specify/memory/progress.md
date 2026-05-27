@@ -15152,3 +15152,92 @@ W7+W13+W18+W4 CONSOLIDADO:
 - W13: renderMustache XSS
 - W18: 8 passes
 - W4: 13 admin pages
+
+================================================================
+ITER W7 PASS 35 - review-svc POST /qna 5 BUGS (Regras A+B+J+atomicity) (2026-05-27)
+================================================================
+ESCOPO: review-svc POST /qna (create question - MLB-2 Q&A pergunta)
+FILE: services/review-svc/src/server.js (linhas 243-267)
+
+CONTEXTO: W7 pass 32-34 cobriram race counter em 3 endpoints review-svc.
+Pass 35 muda foco: CREATE endpoint (sem race counter mas sem rate-limit,
+sem Regra A/B, sem atomicity tx).
+
+BUGS CORRIGIDOS (5):
+
+1. *** Regras A+B combinadas *** SELECT products sem status/deleted_at
+- PRE-FIX (linha 247): SELECT seller_id WHERE id=$1 sem filtros
+- CENARIO: produto soft-deletado (DMCA/legal/QA-reject):
+  - User com aba PDP aberta faz pergunta
+  - FK products OK (soft delete via deleted_at) -> INSERT qna entra
+  - Pergunta orfa no DB poluindo audit
+  - Notification ao seller (que pode tambem estar soft-deleted)
+- IMPACT: DB sujo + buyer-seller confuso (pergunta em produto inexistente)
+- FIX: AND status IN ('approved','platform_owned') AND deleted_at IS NULL
+- Pattern Regras A+B consolidado cross-svc (12+ endpoints)
+
+2. *** IDEMPOTENCY ABUSE *** mesmo user N perguntas mesmo produto
+- PRE-FIX: zero cooldown - user pode submeter 100 perguntas/produto
+- MLB pattern: cooldown 24h por user/product
+- AQUI: rate-limit 5/15min/IP (acima do handler) + cooldown 60s
+  user/product check (anti UI double-submit)
+- FIX: SELECT ultimo qna user/product < 60s -> 409 Conflict
+- Mensagem PT-BR clara: "Aguarde 60s antes de fazer outra pergunta"
+
+3. *** ATOMICITY *** 4 queries lineares sem tx()
+- PRE-FIX: SELECT product + INSERT qna + INSERT notif + cache.del
+- Falha INSERT notif = pergunta existe MAS seller nao notificado
+- Seller perde lead venda (qna que poderia ser convertida em compra)
+- FIX: tx() atomic - tudo all-or-nothing (exceto cache.del fora - tolera fail)
+
+4. *** Regra I *** RETURNING *
+- PRE-FIX: RETURNING * expoe is_hidden, moderator_notes (futuros), flagged_at
+- FIX: RETURNING explicit (id, product_id, question, created_at, upvote_count)
+  Campos minimos consumed por UI
+
+5. *** RATE-LIMIT *** zero anti-spam create
+- Bot pode criar 1000 perguntas/min:
+  - 1000 INSERTs product_qna (DB spam)
+  - 1000 notifications seller inbox + email outbox queue
+  - 1000 cache.del invalidations
+  - QnA tab PDP fica inviavel (timeline polluida)
+- FIX: rateLimiter 5/15min/IP (real users < 2 perguntas/produto)
+
+PATTERN W7 CONSOLIDADO CREATE ENDPOINTS:
+Diferenca CREATE vs RACE COUNTER (passes 32-34):
+- CREATE: sem race counter (idempotent INSERT)
+- CREATE: foco em rate-limit anti-spam + Regras A/B + atomicity
+- RACE COUNTER: foco em FOR UPDATE parent row + agregacao atomic
+- Ambos: Regra I (SELECT explicit) + Regra J (orphan detection)
+
+PATTERN W7 26 ENDPOINTS + 18 REGRAS (A-R):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 4 (POST / pass 32, /:id/vote pass 33, /qna/:id/upvote pass 34, /qna pass 35)
+
+REVIEW-SVC PROGRESS (8 endpoints total):
+- ✅ POST / (pass 32 race avg)
+- ✅ POST /:id/vote (pass 33 race counter)
+- ✅ POST /qna/:id/upvote (pass 34 TOCTOU toggle)
+- ✅ POST /qna (pass 35 CREATE - esta iter)
+- POST /qna/:id/answer (seller ownership pendente)
+- POST /:id/reply (seller ownership review reply pendente)
+- POST /reports (pendente - user reporta abuse)
+- POST /reports/:id/resolve (admin pendente)
+
+PROXIMA ITER:
+- W7 pass 36: POST /qna/:id/answer (seller ownership critical)
+- W7 pass 37: POST /:id/reply (review reply seller)
+- W7 pass 38: POST /reports (abuse report - rate-limit critical)
+- W3 pass 14: Dialog wrapper e2e tests Playwright
+
+W7+W13+W18+W4 CONSOLIDADO:
+- W7: 26 endpoints + 18 regras (A-R) - 35 micro-iters
+- W13: renderMustache XSS
+- W18: 8 passes
+- W4: 13 admin pages
