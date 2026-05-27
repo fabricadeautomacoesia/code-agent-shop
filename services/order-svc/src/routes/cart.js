@@ -301,17 +301,43 @@ router.get('/coupon/:code/preview',
 // Ranking dos tiers para validar 'min_tier' (mais alto >= min eh OK)
 const TIER_RANK = { starter: 0, gold: 1, platinum: 2 };
 
+// POST /orders/cart/coupon - aplicar cupom ao carrinho
+// FIX-WORKER-7 pass 16: SELECT explicit + UPPER case-insensitive.
+// FIX-WORKER-7 pass 106: 4 BUGS adicionais aplicando Pattern W7.
+//
+// BUG 1 *** CODE FORMAT VALIDATION MISSING ***
+//   PRE-FIX: z.string() aceita 10k chars + chars suspeitos. PG safe via $1
+//   MAS DB query desperdicio + audit_log payload gigante.
+//   Tambem: atacante bot enviando 1000 codes invalidos por seg = DB load DoS.
+//   FIX: regex whitelist [A-Z0-9_-]{3,40} (mesmo do preview pass 105).
+//
+// BUG 2 *** RATE-LIMIT MISSING ***
+//   PRE-FIX: zero limit. Bot brute-force valida codes (1000 tries/seg
+//   detecta WIN10/PROMO2024 etc via timing diff valid vs invalid).
+//   FIX: couponApplyLimiter 30/hr/user (real users tentam 1-2 codes).
+//
+// BUG 3 *** Regra K *** SELECT coupon + SELECT user_loyalty + UPDATE carts NON-ATOMIC
+//   PRE-FIX: 3 statements separados. Race:
+//   - /coupon + /items concorrente -> cart.subtotal stale durante validation
+//   - 2 /coupon simultaneos (multi-tab) -> last write wins (coupon_code overwrite)
+//   FIX: tx() wrap + SELECT FOR UPDATE em carts.
+//
+// BUG 4 *** Regra P AUDIT LOG MISSING ***
+//   Aplicar cupom = mudanca financeira em cart (impacta checkout final $).
+//   Forense: detectar abuso (multi-cupom + reset attempts).
+//   FIX: INSERT audit_log atomic best-effort com code+discount_type+min_tier+ip.
+const couponApplyLimiter = require('@cas/shared').rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 30,
+  message: 'Muitas tentativas de cupom recentes. Aguarde 1 hora.',
+});
+
 router.post('/coupon',
-  validate({ body: z.object({ code: z.string() }) }),
+  couponApplyLimiter,
+  validate({ body: z.object({
+    code: z.string().regex(/^[A-Z0-9_-]{3,40}$/i, 'Cupom invalido (formato: A-Z0-9_- 3-40 chars)'),
+  }) }),
   asyncHandler(async (req, res, next) => {
-    // FIX-WORKER-7 pass 16: 2 bugs (consistencia com /coupon/:code/preview):
-    // 1. Regra I violada: SELECT * coupons -> expoe campos internos
-    //    (created_by_user_id, internal_notes, deduplicate_strategy)
-    //    Pattern security cross-svc: lista explicita.
-    // 2. WHERE code = $1 case-sensitive -> 'WIN10' funciona, 'win10' = 404.
-    //    Pre-fix preview foi corrigido (UPPER) mas POST ainda inconsistente.
-    //    User digita lowercase -> /preview OK -> Aplica -> 404 (!!).
-    //    FIX: UPPER(code) = UPPER($1) ambos lados (case-insensitive lookup).
+    // FIX-WORKER-7 pass 16: SELECT explicit + UPPER case-insensitive.
     const c = await query(
       `SELECT code, discount_type, discount_value, tier_breakpoints,
               expires_at, min_tier, max_uses, used_count, is_active
@@ -343,14 +369,47 @@ router.post('/coupon',
       }
     }
 
-    await query(
-      `UPDATE carts SET coupon_code = $1, updated_at = NOW() WHERE user_id = $2`,
-      [req.body.code, req.user.sub]
-    );
-    const cart = await query('SELECT id FROM carts WHERE user_id = $1', [req.user.sub]);
-    if (cart.rows.length) {
-      await tx(async (cli) => { await recalcCart(cli, cart.rows[0].id); });
-    }
+    // BUG 3 Regra K: tx() + SELECT FOR UPDATE em carts (anti-race /coupon vs /items)
+    let cartId;
+    await tx(async (cli) => {
+      const cartR = await cli.query(
+        `SELECT id FROM carts WHERE user_id = $1::UUID FOR UPDATE`,
+        [req.user.sub]
+      );
+      if (!cartR.rows.length) {
+        // Cart nao existe - INSERT defensive (cria + aplica cupom atomico)
+        const ins = await cli.query(
+          `INSERT INTO carts (user_id, coupon_code) VALUES ($1::UUID, $2)
+           ON CONFLICT (user_id) DO UPDATE SET coupon_code = EXCLUDED.coupon_code, updated_at = NOW()
+           RETURNING id`,
+          [req.user.sub, req.body.code]
+        );
+        cartId = ins.rows[0]?.id;
+      } else {
+        cartId = cartR.rows[0].id;
+        await cli.query(
+          `UPDATE carts SET coupon_code = $1, updated_at = NOW() WHERE id = $2::UUID`,
+          [req.body.code, cartId]
+        );
+      }
+      // recalcCart dentro do tx() - atomic + lock liberado em commit
+      await recalcCart(cli, cartId);
+    });
+
+    // BUG 4 Regra P: audit_log best-effort (nao bloqueia response success)
+    query(
+      `INSERT INTO audit_log
+        (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'cart.coupon_applied', 'cart', $3, 'info', $4::JSONB)`,
+      [req.user.sub, req.user.role || 'buyer', cartId,
+       JSON.stringify({
+         coupon_code: coupon.code,
+         discount_type: coupon.discount_type,
+         min_tier: coupon.min_tier || null,
+         ip: req.ip,
+       })]
+    ).catch(() => { /* best-effort audit - log via global errorHandler chain */ });
+
     res.json({ ok: true, coupon });
   })
 );

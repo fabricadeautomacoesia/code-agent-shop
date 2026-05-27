@@ -17322,7 +17322,39 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ vault-svc /use endpoint (pass 102) - 3 bugs critical security
 - ✅ notification-svc /:id/read (pass 103) - 3 bugs Regra K+rate+UX
 - ✅ order-svc cart.js GET / + DELETE /items/:id (pass 104) - 7 bugs
-- ✅ order-svc cart.js PATCH /items/:id + coupon/preview (pass 105 esta iter) - 5 bugs
+- ✅ order-svc cart.js PATCH /items/:id + coupon/preview (pass 105) - 5 bugs
+- ✅ order-svc cart.js POST /coupon (pass 106 esta iter) - 4 bugs rate+race+audit
+
+W7 PASS 106 RESUMO:
+- order-svc/src/routes/cart.js POST /coupon refactor (4 bugs):
+  * Code FORMAT validation (regex [A-Z0-9_-]{3,40})
+    - PRE-FIX: z.string() aceita 10k chars - DoS DB query + audit gigante
+    - Bot brute-force 1000 codes/seg invalidos = DB waste
+    - FIX: Zod regex inline (mesmo do preview pass 105)
+  * NEW couponApplyLimiter 30/hr/user (anti brute-force)
+    - PRE-FIX: bot pode descobrir codes via timing diff valid vs invalid
+    - Real users tentam 1-2 codes - 30/hr permissivo
+  * Regra K tx() + SELECT FOR UPDATE em carts
+    - PRE-FIX: 3 statements separados (SELECT coupon + SELECT loyalty + UPDATE carts)
+    - Race: /coupon + /items concorrente = cart.subtotal stale durante validation
+    - Race: 2 /coupon simultaneos (multi-tab) = last write wins
+    - FIX: tx() wrap, INSERT...ON CONFLICT defensive se cart vazio
+  * Regra P audit log best-effort
+    - PRE-FIX: aplicar cupom = mudanca financeira ($) sem trail
+    - Forense: detectar abuso (multi-cupom + reset attempts)
+    - FIX: INSERT audit_log com code+discount_type+min_tier+ip
+- Pattern W7 em 116 endpoints + 23 regras (A-W) - 106 micro-iters
+- order-svc cart.js 100% W7 em 6 mutations:
+  POST /items (16+pass-x existing) + DELETE /items/:id (104)
+  + PATCH /items/:id (105) + POST /coupon (106)
+  + POST /loyalty/redeem (19) + DELETE /loyalty/redeem (existing)
+
+PROXIMA ITER:
+- W7 pass 107: product-svc admin /:id/force-approve audit
+- W7 pass 108: product-svc admin /:id/platform-take audit
+- Operacional: SSH VPS + bash deploy/w7-deploy-validate.sh
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 105 RESUMO:
 - order-svc/src/routes/cart.js 2 endpoints refactor (5 bugs):
