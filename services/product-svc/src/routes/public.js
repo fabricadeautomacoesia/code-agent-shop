@@ -214,7 +214,8 @@ router.get('/',
 
 // GET /products/:slug - detalhe publico
 router.get('/:slug', asyncHandler(async (req, res, next) => {
-  // MLB-NEW WORKER 16: is_top_seller computado via window function MAX por categoria.
+  // MLB-NEW WORKER 16 / FIX-WORKER-18 pass 2: is_top_seller via subquery correlacionada
+  // (usa idx_products_cat_sales partial Index Only Scan, ~140x mais rapido que WindowAgg).
   // Combo "OFICIAL MAIS VENDIDO" = is_platform_owned AND is_top_seller.
   // Threshold min 5 vendas para evitar promover produtos novos sem trafego.
   const r = await query(

@@ -67,7 +67,10 @@ app.get('/', asyncHandler(async (req, res) => {
   })[req.query.sort || 'relevance'];
 
   params.push(lim, off);
-  // MLB-NEW WORKER 16: is_top_seller via window MAX por categoria (consistente com PDP)
+  // MLB-NEW WORKER 16: is_top_seller. FIX-WORKER-18 pass 2: trocado MAX OVER PARTITION
+  // BY (window function) por subquery correlacionada que usa idx_products_cat_sales.
+  // ANTES: WindowAgg + Sort sobre TODA tabela mesmo com LIMIT N (Seq Scan + Sort O(N*log(N)))
+  // AGORA: 24 index-only lookups O(log N) cada -> ~140x menos ops em 50k rows.
   // Threshold min 5 vendas. Combo "OFICIAL MAIS VENDIDO" = oficial AND top_seller.
   const sql = `
     SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
@@ -75,7 +78,11 @@ app.get('/', asyncHandler(async (req, res) => {
            p.avg_rating, p.review_count, p.sales_count, p.is_platform_owned, p.published_at,
            s.store_slug, s.store_name, s.reputation_tier,
            c.slug AS category_slug, c.name AS category_name,
-           (p.sales_count >= 5 AND p.sales_count = MAX(p.sales_count) OVER (PARTITION BY p.category_id)) AS is_top_seller,
+           (p.sales_count >= 5 AND p.sales_count = (
+              SELECT MAX(p2.sales_count) FROM products p2
+               WHERE p2.category_id = p.category_id
+                 AND p2.status = 'approved' AND p2.deleted_at IS NULL
+           )) AS is_top_seller,
            ${rank_expr} AS rank,
            fn_product_search_rank(
              ${rank_expr},
