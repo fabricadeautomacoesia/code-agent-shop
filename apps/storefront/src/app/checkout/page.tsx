@@ -20,10 +20,18 @@ export default function CheckoutPage() {
   const [err, setErr] = useState('');
   const [installments, setInstallments] = useState<any[]>([]);
   const [installmentCount, setInstallmentCount] = useState<number>(1);
+  // FIX-WORKER-2 pass 4: verificacao CPF/CNPJ ANTES do pay click (preventive UX).
+  // Sem CPF: payment-svc W11 pass 4 retorna 400 missing_cpf_cnpj. Em vez de
+  // user clicar pay e levar erro, mostramos banner upfront direcionando para /conta.
+  const [hasCpf, setHasCpf] = useState<boolean | null>(null); // null = loading
 
   useEffect(() => {
     if (!token) { router.push('/login'); return; }
     Api.cart(token).then((r) => setCart(r.cart)).catch(() => {});
+    Api.me(token).then((r: any) => {
+      const cpf = r.user?.cpf_cnpj || '';
+      setHasCpf(cpf.replace(/\D/g, '').length >= 11);
+    }).catch(() => setHasCpf(true)); // erro: deixa user tentar (fail-open client)
   }, [token]);
 
   // MLB-5: ao mudar para credit_card, busca preview de parcelas
@@ -168,8 +176,23 @@ export default function CheckoutPage() {
         </div>
       )}
 
-      <button onClick={pay} disabled={loading || !cart?.items_count} className="btn-primary w-full text-base disabled:opacity-50">
-        {loading ? 'Processando...' : 'Confirmar e pagar'}
+      {/* FIX-WORKER-2 pass 4: prompt cadastro incompleto ANTES do pay (preventive UX).
+          Banner amarelo + link para /conta + desabilita botao se sem CPF. */}
+      {hasCpf === false && (
+        <div className="mb-4 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-sm">
+          <div className="font-semibold text-yellow-300 mb-1">Cadastro incompleto</div>
+          <div className="text-white/80">
+            CPF/CNPJ obrigatorio para pagamento via Asaas. {' '}
+            <Link href="/conta" className="text-magenta underline hover:text-magenta-glow">
+              Completar cadastro &rarr;
+            </Link>
+          </div>
+        </div>
+      )}
+
+      <button onClick={pay} disabled={loading || !cart?.items_count || hasCpf === false}
+        className="btn-primary w-full text-base disabled:opacity-50">
+        {loading ? 'Processando...' : (hasCpf === false ? 'Complete cadastro para pagar' : 'Confirmar e pagar')}
       </button>
       {err && <div className="text-sm text-red-400 mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">{err}</div>}
     </div>
