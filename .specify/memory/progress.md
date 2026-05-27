@@ -9603,3 +9603,78 @@ PROXIMA ITER:
 - W4 pass 11: /admin/vault badge "Renova Xd" (UI consume rotation_due_at)
 - W17 pass 13: POST /keys/:id/rotate (swap chave 1-click)
 - W13 pass 8: templates remaining (vault_overdue_critical p/ 5+ dias overdue)
+
+## WORKER 4 PASS 11 - /admin/vault rotation UI (badge + banner + form)
+
+INTEGRACAO TRIPLA E2E:
+- W17 pass 12: backend rotation_due_at populate + cron + endpoint
+- W13 pass 7: template email + fan-out overdue
+- W4 pass 11 (esta iter): UI badges + alert banner + form input
+
+3 FEATURES UI NOVAS:
+
+1. BADGE "Renova/Vencida" na coluna Status:
+   - Status principal (active/revoked) + badge secundario rotacao
+   - Calc client-side: daysLeft = (rotation_due_at - NOW)/86400000
+   - Cores progressivas:
+     * Vermelho "Vencida Xd" (daysLeft < 0)
+     * Amarelo "Renova Xd" (0 <= daysLeft <= 7)
+     * Cinza "Xd p/ renovar" (daysLeft > 7)
+   - title attribute mostra data exata pt-BR
+   - Sem rotation_due_at = no badge (chaves legacy gracioso)
+
+2. ALERT BANNER topo da page:
+   - Fetch paralelo: GET /vault/keys/rotation-due
+   - Counter overdue + soon
+   - Cor-coded:
+     * Vermelho border-l-4 se overdue > 0
+     * Amarelo se apenas soon
+   - Texto: "N chave(s) com rotacao VENCIDA - acao urgente"
+   - Subtexto: risco + howto rotacionar
+
+3. FORM PROVISIONAR campo rotation_days:
+   - Default 90 (PCI/SOC2 baseline)
+   - min 1 max 365
+   - Hint: "30d criticas, 365d internal-only"
+   - Success: "Chave X provisionada - renova em Yd"
+
+USER FLOW:
+1. Admin abre /admin/vault
+2. Ve banner "3 chaves vencidas + 5 em <=7d"
+3. Scan tabela coluna Status (badges cor-coded)
+4. Provisiona nova chave com rotation_days configurado
+5. Revoga antiga
+6. Banner some quando ok
+
+ARCHITECTURE E2E COMPLETO:
+- Provision: rotation_due_at = NOW + rotation_days (W17)
+- Cron diario: detecta + cria in_app + email overdue (W17 + W13)
+- UI: badges + banner + form (W4 esta iter)
+- LOOP secrets management completo
+
+DEPLOY:
+- commit d02a37d push main OK
+- 67 insertions, 6 deletions
+- dashboard-admin rebuild via VPS cron
+- Backend ja tem endpoint + cron + template
+- Fallback graceful chaves legacy sem rotation_due_at
+
+W4 ADMIN AUDIT (passes 1-11):
+| Pass | Page | Tema |
+|---|---|---|
+| 1-3 | hook + sellers/qa-queue | useAdminAction |
+| 4-9 | payouts/orders/reports/webhooks/vault | UX + security |
+| 10 | /admin/vault | Saude 7d cor-coded |
+| 11 | /admin/vault | Rotation UI (esta iter) |
+
+CICLO MONITORING VAULT 100% COMPLETO:
+- Error rate (W4-10): chaves com problemas operacionais visiveis
+- Rotation (W4-11): chaves vencendo prazo visiveis
+- Alerts proativos email + in_app (W13-7 + W17-12)
+- Provision com prazo configuravel
+- LOOP fechado: detect + alert + UI + action
+
+PROXIMA ITER:
+- W17 pass 13: POST /keys/:id/rotate (swap chave 1-click sem revogar+provisionar separados)
+- W4 pass 12: /admin/products audit (validar existencia ou criar)
+- W18 pass 4: image optimization audit
