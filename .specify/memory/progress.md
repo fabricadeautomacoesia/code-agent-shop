@@ -5961,3 +5961,55 @@ GAP DETECTADO (proxima iter):
 - /products/[id] edit page (PATCH product + submit)
 - /upload (POST create draft)
 - /loja (PATCH profile + KYC)
+
+## WORKER 5 pass 3 (SELLER DASH) - /loja refactor (3/6 DRY)
+
+GAP DETECTADO (proxima iter do W5 pass 2):
+"/products/[id] edit, /upload, /loja, /financeiro"
+
+REFACTORED apps/dashboard-seller/src/app/loja/page.tsx:
+
+2 ACTIONS via useSellerAction hook:
+1. save(e) -> action.run('save-profile', ...): PATCH /sellers/me
+   - Atualiza store_name, description, banner, logo, pix_key, allow_resale
+2. submitKyc(e) -> action.run('submit-kyc', ...): POST /sellers/me/kyc
+   - Submit KYC para validacao admin
+
+UI IMPROVEMENTS:
++ Banners (red error + green success) centralizados no TOPO
+  (era inline no rodape do form - missed quando formulario longo)
++ Buttons disabled durante busy (preveniam double-submit)
++ Texto dinamico:
+  - "Salvando..." durante save-profile
+  - "Enviando KYC..." durante submit-kyc
++ loadError separado (carregamento dados) vs action.error (acao falha)
++ Mensagens success expressivas:
+  * "Perfil da loja atualizado" (concise)
+  * "KYC enviado com sucesso. Sua loja sera ativada apos validacao admin."
+    (clarity sobre proximo passo no fluxo)
+
+DEPLOY:
+- commit b3e0b18 pushed
+- dashboard-seller rebuilt (~3.6s) + converged
+
+VALIDACAO PUBLICA:
+- /loja HTTP 200 OK
+- Bundle JS contem: "Enviando KYC", "Salvando", "busyKey", "save-profile", "submit-kyc"
+  -> hook + textos deployados
+
+PROGRESS METRIC SELLER DASH (3 de ~6 pages):
+- /products (W5 pass 1) ✓
+- /qna (W5 pass 2) ✓ (per-row busy)
+- /loja (W5 pass 3) ✓ <- ESTE
+- Restantes: /products/[id] edit, /upload (criacao), /financeiro (ja decente)
+- /reviews: read-only (sem actions)
+
+PADRAO ESTABELECIDO em ambos dashboards:
+- 6 admin pages + 3 seller pages = 9 pages com hook pattern
+- ~270 linhas DRY (admin) + ~90 linhas DRY (seller)
+- Hook duplicado (admin vs seller) - candidato para mover packages/shared-ui
+
+GAP PROXIMA ITER:
+- /products/[id] edit page (PATCH + submit ja tem try/catch decent mas
+  pode usar hook para texto dinamico + busy)
+- /upload (form criacao - botao Publicar)
