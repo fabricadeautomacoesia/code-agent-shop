@@ -204,7 +204,8 @@ app.get('/top-sellers',
 // FIX-WORKER-10: valida slug + retorna 404 quando inexistente + enriquece com metadata
 // Antes: slug invalido retornava {products:[]} igual a categoria vazia -> UX impossivel de diferenciar.
 app.get('/top-sellers/:category', asyncHandler(async (req, res) => {
-  const lim = Math.min(parseInt(req.query.limit || '12', 10), 50);
+  // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 50));
   // 1) Resolve categoria e valida existencia
   const catR = await query(
     `SELECT id, slug, name, name_singular, description, parent_id

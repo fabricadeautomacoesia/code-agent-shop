@@ -10,7 +10,8 @@ const router = express.Router();
 // GET /sellers - listagem publica (storefront)
 router.get('/', asyncHandler(async (req, res) => {
   const { page = 1, limit = 24, sort = 'rep_desc', tier, search } = req.query;
-  const lim = Math.min(parseInt(limit, 10) || 24, 100);
+  // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
+  const lim = Math.max(1, Math.min(parseInt(limit, 10) || 24, 100));
   const off = (Math.max(parseInt(page, 10) || 1, 1) - 1) * lim;
 
   const where = [`s.status = 'active'`, `s.deleted_at IS NULL`];
@@ -144,7 +145,8 @@ router.get('/:slug/stats', asyncHandler(async (req, res, next) => {
 
 // GET /sellers/:slug/products - produtos publicos do seller
 router.get('/:slug/products', asyncHandler(async (req, res) => {
-  const lim = Math.min(parseInt(req.query.limit, 10) || 24, 100);
+  // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 24, 100));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
   const r = await query(
     `SELECT vp.*

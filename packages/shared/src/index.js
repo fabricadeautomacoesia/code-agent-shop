@@ -14,5 +14,6 @@ module.exports = {
   rateLimiter:  require('./rate-limiter'),
   llmFallback:  require('./llm-fallback'),
   cache:        require('./cache'),
+  paginate:     require('./paginate'),
   sleep:        (ms) => new Promise((r) => setTimeout(r, ms)),
 };

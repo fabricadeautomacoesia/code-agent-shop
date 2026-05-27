@@ -89,7 +89,8 @@ router.get('/sla-risk', asyncHandler(async (req, res) => {
 // Suporta ?status=active|pending_kyc|suspended|banned, ?seller_class=class_a|class_b,
 // ?q=search_term (matches store_name ou email), ?limit, ?page.
 router.get('/all', asyncHandler(async (req, res) => {
-  const lim = Math.min(parseInt(req.query.limit || '30', 10), 100);
+  // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit || '30', 10), 100));
   const off = (Math.max(parseInt(req.query.page || '1', 10), 1) - 1) * lim;
   const where = ['1=1'];
   const params = [];

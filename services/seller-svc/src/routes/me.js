@@ -115,7 +115,8 @@ router.post('/payout',
 // visibilidade do que aconteceu depois (admin aprovou? rejeitou? processou?).
 // Seller ficava no escuro apos solicitar - tinha que perguntar suporte.
 router.get('/payouts', asyncHandler(async (req, res, next) => {
-  const lim = Math.min(parseInt(req.query.limit || '50', 10), 200);
+  // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit || '50', 10), 200));
   const s = await query('SELECT id FROM sellers WHERE user_id = $1', [req.user.sub]);
   if (!s.rows.length) return next(errorHandler.notFound('seller_not_found'));
   const r = await query(

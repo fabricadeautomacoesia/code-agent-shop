@@ -224,7 +224,8 @@ app.get('/status', asyncHandler(async (_req, res) => {
 // FIX-WORKER-10: gateway proxia /api/aiops/* -> /metrics e /alerts (sem o suffix)
 // Mantemos os paths antigos como aliases para nao quebrar consumers existentes.
 const metricsHandler = asyncHandler(async (req, res) => {
-  const lim = Math.min(parseInt(req.query.limit || '60', 10), 500);
+  // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit || '60', 10), 500));
   const r = await query(`SELECT * FROM metrics_history ORDER BY collected_at DESC LIMIT $1`, [lim]);
   res.json({ metrics: r.rows });
 });

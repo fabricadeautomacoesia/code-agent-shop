@@ -28,7 +28,8 @@ router.get('/me', asyncHandler(async (req, res) => {
     bal = await query(`SELECT * FROM user_loyalty WHERE user_id = $1`, [req.user.sub]);
   }
   // MLB-NEW WORKER 16: limit configuravel via query (?limit=50 etc), default 20, max 200
-  const histLimit = Math.min(parseInt(req.query.limit || '20', 10), 200);
+  // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
+  const histLimit = Math.max(1, Math.min(parseInt(req.query.limit || '20', 10), 200));
   const hist = await query(
     `SELECT id, points_delta, reason, reference_type, reference_id, created_at
        FROM loyalty_transactions WHERE user_id = $1

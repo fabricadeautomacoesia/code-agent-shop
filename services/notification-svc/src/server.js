@@ -89,7 +89,8 @@ app.get('/health', (_req, res) => res.json({
 //   (interno), user_id (redundante, ja eh do user authed)
 // Reduz tambem payload size por notif (de ~1.3kb para ~0.5kb).
 app.get('/', jwt.requireAuth(), asyncHandler(async (req, res) => {
-  const lim = Math.min(parseInt(req.query.limit, 10) || 30, 100);
+  // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 30, 100));
   // FIX-WORKER-1: template_code re-incluido (nao e DLP - apenas string interna
   // como 'product_approved'/'welcome_bonus' que o UI precisa para inferir URL fallback
   // quando cta_url e null. Confirmado nao-sensitive em audit-W13).
