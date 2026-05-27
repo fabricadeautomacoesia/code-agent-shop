@@ -9,7 +9,7 @@ const fs = require('node:fs/promises');
 const { exec } = require('node:child_process');
 const { promisify } = require('node:util');
 const { query, healthcheck } = require('@cas/db-client');
-const { logger, errorHandler, asyncHandler } = require('@cas/shared');
+const { logger, errorHandler, asyncHandler, jwt } = require('@cas/shared');
 
 const execP = promisify(exec);
 const log = logger.child({ svc: 'aiops-svc' });
@@ -185,53 +185,54 @@ async function cleanupMetrics() {
 // ============================================================
 // ENDPOINTS PUBLICOS
 // ============================================================
+// FIX-WORKER-10 pass 5: /health publica removeu host (hostname interno) + thresholds
+// (info de tuning interno nao precisa ser publica - reconhecimento)
 app.get('/health', (_req, res) => res.json({
-  ok: true, svc: 'aiops-svc', host: HOST,
-  thresholds: { cpu: CPU_TH, ram: RAM_TH, disk: DISK_TH, autoheal_ram: AUTOHEAL_RAM }
+  ok: true, svc: 'aiops-svc',
 }));
 
-// /api/status - publica (mostrar status page)
+// FIX-WORKER-10 pass 5 (SECURITY DLP): /status era publica E vazava:
+// 1. recent_alerts inteiros (incluindo target_id/payload/source com PII de reporters)
+// 2. hostname interno (HOST = os.hostname() do container)
+// 3. ports map de TODOS os microsservicos internos (reconhecimento facilita ataques)
+//
+// FIX: /status publica retorna so summary sanitizado (cpu/ram/disk apenas - status page legitima)
+// /metrics e /alerts viram admin-only (raw data sensivel).
 app.get('/status', asyncHandler(async (_req, res) => {
   const db = await healthcheck();
   const m = await collectMetrics();
-  const lastAlerts = await query(
-    `SELECT id, severity, code, title, created_at FROM alerts
+  // Sanitiza metrics: so cpu/ram/disk percent + load. SEM hostname, uptime, extras (platform)
+  const sanitized = {
+    cpu_percent: m.cpu_percent,
+    ram_percent: m.ram_percent,
+    disk_percent: m.disk_percent,
+    load_avg_1m: m.load_avg_1m,
+  };
+  // Contador de alertas critical das ultimas 24h (sem expor IDs/conteudo)
+  const alertCount = await query(
+    `SELECT severity, COUNT(*)::INT AS n FROM alerts
       WHERE created_at > NOW() - INTERVAL '24 hours'
-      ORDER BY created_at DESC LIMIT 10`
+      GROUP BY severity`
   );
   res.json({
-    ok: db.ok, host: HOST,
-    metrics: m,
-    db,
-    recent_alerts: lastAlerts.rows,
-    uptime_s: Math.floor(os.uptime()),
-    services: {
-      gateway: process.env.PORT_GATEWAY || 3002,
-      auth: process.env.PORT_AUTH || 3010,
-      seller: process.env.PORT_SELLER || 3011,
-      product: process.env.PORT_PRODUCT || 3012,
-      qa: process.env.PORT_QA || 3013,
-      order: process.env.PORT_ORDER || 3015,
-      payment: process.env.PORT_PAYMENT || 3016,
-      review: process.env.PORT_REVIEW || 3017,
-      notification: process.env.PORT_NOTIFICATION || 3018,
-      search: process.env.PORT_SEARCH || 3019,
-      vault: process.env.PORT_VAULT || 3020,
-    },
+    ok: db.ok,
+    metrics: sanitized,
+    alerts_24h: alertCount.rows.reduce((acc, r) => ({ ...acc, [r.severity]: r.n }), {}),
+    // host + ports map + recent_alerts removidos (DLP)
   });
 }));
 
-// FIX-WORKER-10: gateway proxia /api/aiops/* -> /metrics e /alerts (sem o suffix)
-// Mantemos os paths antigos como aliases para nao quebrar consumers existentes.
+// FIX-WORKER-10 pass 5: /metrics agora admin-only (raw com hostname + extras)
 const metricsHandler = asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
   const lim = Math.max(1, Math.min(parseInt(req.query.limit || '60', 10), 500));
   const r = await query(`SELECT * FROM metrics_history ORDER BY collected_at DESC LIMIT $1`, [lim]);
   res.json({ metrics: r.rows });
 });
-app.get('/metrics', metricsHandler);
-app.get('/metrics/latest', metricsHandler);
+app.get('/metrics', jwt.requireAuth({ roles: ['admin','staff'] }), metricsHandler);
+app.get('/metrics/latest', jwt.requireAuth({ roles: ['admin','staff'] }), metricsHandler);
 
+// FIX-WORKER-10 pass 5: /alerts agora admin-only (vazava reporter UUIDs em payload + target_id)
 const alertsHandler = asyncHandler(async (req, res) => {
   const days = Math.min(parseInt(req.query.days || '7', 10), 90);
   const r = await query(
@@ -240,8 +241,8 @@ const alertsHandler = asyncHandler(async (req, res) => {
   );
   res.json({ alerts: r.rows });
 });
-app.get('/alerts', alertsHandler);
-app.get('/alerts/recent', alertsHandler);
+app.get('/alerts', jwt.requireAuth({ roles: ['admin','staff'] }), alertsHandler);
+app.get('/alerts/recent', jwt.requireAuth({ roles: ['admin','staff'] }), alertsHandler);
 
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
