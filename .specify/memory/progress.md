@@ -10224,3 +10224,79 @@ PROXIMA ITER:
 - W18 pass 5: ainda mais cache opportunities (orders/me?)
 - W18 pass 6: EXPLAIN ANALYZE em query mais lenta restante
 - W16: MLB feature nova
+
+## WORKER 12 PASS 6 - qa-svc /qa/run: duplicate race + dispatch silencioso
+
+AUDIT qa-svc encontrou 2 bugs cumulativos:
+
+BUG 1 (CRITICAL race - duplicate runs paralelos):
+Cenario:
+1. POST /qa/run product_id=X -> INSERT verdict='running'
+2. UPDATE products status='qa_running'
+3. res 202 enviado (cliente desconectado)
+4. setImmediate dispatch n8n/worker (15s-5min)
+5. ENQUANTO processa, outro service chama /qa/run para mesmo X
+6. Nada bloqueia: SEGUNDO run criado
+7. Dois runs paralelos:
+   - LLM custos 2x
+   - Race UPDATE products no callback (last-wins)
+   - audit_log poluido
+
+FIX (anti-duplicate):
+  SELECT product_qa_runs
+   WHERE product_id = $1
+     AND verdict = 'running'
+     AND started_at > NOW() - INTERVAL '10 minutes';
+- Se encontra: 409 conflict + existing_run_id + started_at no response
+- 10min generoso: worker 5min + n8n 15s + buffer ~5min
+- Apos 10min stuck -> libera novo run (W12 pass 7 cron cleanup futuro)
+
+BUG 2 (dispatch failure silencioso):
+Cenario:
+1. /qa/run dispara, dispatch n8n/worker falha (ECONNREFUSED, 500)
+2. catch block UPDATE verdict='error', status='qa_pending'
+3. log.error stdout
+4. Seller NUNCA sabe que falhou
+5. Frontend mostra status='qa_pending' indefinido
+6. Suporte ticket "QA travado"
+
+FIX (notify seller):
+- INSERT notifications channel='in_app'
+- template_code='qa_dispatch_failed'
+- Title: "QA pipeline indisponivel temporariamente"
+- Body com nome do produto + sugestao retry
+- Priority 2 (warn) + payload com product_id/run_id/error
+- Best-effort: try/catch interno nao bloqueia se notif fail
+
+USER FLOW NOVO:
+1. Seller clica "Enviar para QA"
+2. /qa/run -> 202 OK ou 409 (ja em curso < 10min)
+3. Dispatch falha -> verdict='error' + notification in_app
+4. Seller ve sino + msg "QA indisponivel temporariamente"
+5. Reenvia QA (nao bloqueado pois run anterior nao mais 'running')
+
+DEPLOY:
+- commit 91f579a push main OK
+- 56 insertions, 1 deletion
+- qa-svc rebuild via VPS cron
+- Sem schema change (notifications table ja existe)
+- Novo response: 409 qa_run_already_in_progress
+
+W12 QA PIPELINE AUDIT (passes 1-6):
+- pass 1: callback handler basico
+- pass 2: HMAC SHA-256 callback
+- pass 3: timing-safe + raw body
+- pass 4: counter inflation forward
+- pass 5: migration reset historico
+- pass 6: duplicate race + dispatch silencioso (esta iter)
+
+INTEGRACAO COM W13 (notification-svc):
+- notification_templates 'qa_dispatch_failed' nao existe ainda em DB
+- Notification cai em mustache render sem template -> usa title/body literal
+  (funciona graciosamente, sem mustache substitution)
+- Pass 7 roadmap: seed template no DB (channels=in_app+email com vars)
+
+PROXIMA ITER:
+- W12 pass 7: cron stuck runs (verdict='running' > 10min sem callback) -> verdict='timeout'
+- W13 pass 8: template qa_dispatch_failed seed
+- W4 pass 14: /admin/qa-queue mostrar runs com verdict='error' (visibility)
