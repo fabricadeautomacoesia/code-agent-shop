@@ -10594,3 +10594,83 @@ PROXIMA ITER:
 - W4 pass 14: /admin/qa-queue mostrar runs verdict='timeout' filter
 - W13 pass 8: template qa_run_timeout email seed
 - W18 pass 6: cache /qa/runs/:product_id (history readonly)
+
+## WORKER 4 PASS 14 - /admin/qa-queue last_run_verdict + timeout alert banner
+
+INTEGRACAO E2E completa W12 pass 7 (cron timeout) com UI dashboard.
+
+CONTEXTO:
+W12 pass 7 cron auto-cancela runs stuck (verdict='running' > 10min). Apos
+timeout: products.status='qa_pending', product_qa_runs.verdict='timeout'.
+MAS /admin/qa-queue mostrava apenas 'qa_pending' sem diferenciar:
+- Produto novo aguardando 1a analise
+- Produto com pipeline broken (varios timeouts historicos)
+
+BACKEND product-svc GET /products/admin/qa-queue ENRICHED:
+
+3 subqueries adicionadas:
+1. last_run_verdict: ultimo verdict (timeout/error/rejected/approved/running)
+2. last_run_started_at: timestamp do ultimo run
+3. timeout_count: total de timeouts historicos por produto
+
+Usa idx_qa_runs_product_started (W14 pass 6) - 1 scan por product ordenado.
+
+FRONTEND /admin/qa-queue:
+
+1. NOVA COLUNA "Ultima tentativa":
+   - Badge verdict cor-coded:
+     * timeout = orange
+     * error = red
+     * rejected = red
+     * approved = green
+     * running = blue
+   - Subtexto "x N timeout(s)" se timeout_count > 0
+   - title tooltip detalhe
+
+2. ALERT BANNER topo da page (se timeout > 0):
+   - bg-orange-500/10 border-l-4
+   - "N produto(s) com QA timeout recente"
+   - Explica W12 cron + causas (n8n down, worker crash, HTTP fail)
+   - Sugere verificar infra antes de force-approve
+
+UX RESULTADO:
+- Admin abre /admin/qa-queue
+- Banner laranja se ha timeouts (chama atencao imediata)
+- Coluna "Ultima tentativa" por linha
+- Produto x3 timeouts = pipeline definitivamente broken
+- Admin investiga via /qa/runs/stuck (W12 pass 7) ou infra direta
+
+INTEGRACAO COMPLETA QA LIFECYCLE:
+- W12 pass 6: anti-duplicate + notify dispatch fail
+- W12 pass 7: cron auto-timeout + admin /qa/runs/stuck
+- W4 pass 14 (esta iter): dashboard visibility timeouts
+
+DEPLOY:
+- commit 75f85ad push main OK
+- 65 insertions, 3 deletions (2 files)
+- product-svc + dashboard-admin rebuild via VPS cron
+- Sem schema change
+
+W4 ADMIN AUDIT (passes 1-14):
+| Pass | Page/Tema |
+|---|---|
+| 1-3 | hook + sellers/qa-queue |
+| 4 | /payouts Transferir Asaas |
+| 5 | /qa-queue 4 bugs |
+| 6 | /orders poll + status |
+| 7 | /reports 6 fixes |
+| 8 | /webhooks dead letter UI |
+| 9-11 | /vault currency + Saude + rotation |
+| 12 | /audit-log NEW |
+| 13 | /products 6 bugs |
+| 14 | /qa-queue timeout integration (esta iter) |
+
+DASHBOARD ADMIN 10 PAGES 100% AUDITADAS com integracao QA pipeline forensics:
+- /sellers, /qa-queue (W4-14 NOW with timeouts), /orders, /payouts
+- /products (W4-13), /reports, /webhooks, /vault, /audit-log
+- /alerts (W10-5 backend)
+
+PROXIMA ITER:
+- W13 pass 8: templates email qa_run_timeout + qa_dispatch_failed
+- W18 pass 6: cache /qa/runs/:product_id history
+- W3: PDP audit continuado
