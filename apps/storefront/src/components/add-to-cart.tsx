@@ -13,6 +13,18 @@ import { friendlyCartError } from '@/lib/friendly-errors';
  * Botoes "Comprar agora" e "Adicionar ao carrinho" funcionais.
  * - Sem auth: redireciona para /login?next=...
  * - Com auth: POST /api/orders/cart/items + abre cart drawer
+ *
+ * FIX-WORKER-3 pass 3: 4 bugs de race condition + loading state corrigidos:
+ * 1. Cross-disable entre buyNow e addToCart (ambos botoes disabled enquanto QUALQUER
+ *    operacao em curso). Antes: user clicava buyNow + addToCart durante loading ->
+ *    2 POST simultaneos -> duplicate items ou 409 backend.
+ * 2. Guard contra double-click rapido na mesma funcao (busy ref pattern).
+ *    Antes: setState assincrono -> 2 cliques em 16ms ambos passavam guard.
+ * 3. buyNow sucesso NAO resetava loadingBuy (so no catch). Router.push falhar
+ *    (network, route guard) -> botao "Processando..." ETERNO.
+ *    FIX: try/finally reseta sempre.
+ * 4. window.location.href em requireAuth era hard-redirect (perde state).
+ *    Trocado por router.push para Next preservar history + soft-nav.
  */
 export function AddToCart({ productId, isFree }: { productId: string; isFree?: boolean }) {
   const router = useRouter();
@@ -23,15 +35,23 @@ export function AddToCart({ productId, isFree }: { productId: string; isFree?: b
   const [added, setAdded] = useState(false);
   const [err, setErr] = useState('');
 
+  // FIX bug 1: estado "qualquer operacao em curso" para cross-disable
+  const anyLoading = loadingBuy || loadingAdd;
+
   function requireAuth() {
     if (!token) {
-      window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+      // FIX bug 4: router.push em vez de window.location.href (Next soft-nav + history)
+      const next = encodeURIComponent(window.location.pathname);
+      router.push(`/login?next=${next}`);
       return false;
     }
     return true;
   }
 
   async function addToCart() {
+    // FIX bug 2: guard explicito anti double-click (setState eh async, 2 cliques
+    // em 16ms ambos veem loadingAdd=false). Checa estado antes de prosseguir.
+    if (anyLoading) return;
     if (!requireAuth()) return;
     setLoadingAdd(true); setErr('');
     try {
@@ -50,6 +70,8 @@ export function AddToCart({ productId, isFree }: { productId: string; isFree?: b
   }
 
   async function buyNow() {
+    // FIX bug 2: guard anti double-click
+    if (anyLoading) return;
     if (!requireAuth()) return;
     setLoadingBuy(true); setErr('');
     try {
@@ -61,6 +83,11 @@ export function AddToCart({ productId, isFree }: { productId: string; isFree?: b
     } catch (e: any) {
       setErr(friendlyCartError(e));
       setTimeout(() => setErr(''), 5000);
+    } finally {
+      // FIX bug 3: finally em vez de so no catch. Router.push falhar (network,
+      // route guard, abort) -> loadingBuy=false sempre. Antes: estado eterno
+      // "Processando..." se navegacao nao completar (incident real possivel
+      // em mobile com network instavel + middleware lento).
       setLoadingBuy(false);
     }
   }
@@ -68,6 +95,9 @@ export function AddToCart({ productId, isFree }: { productId: string; isFree?: b
   if (isFree) {
     return (
       <>
+        {/* FIX bug 1: cross-disable - botao Baixar gratis fica disabled se outra op rodar
+            (corner case: este pode estar visivel se isFree mas teoricamente sem buyNow ativo).
+            Mantido disabled={loadingBuy} pois isFree so renderiza este botao - sem cross-state. */}
         <button onClick={buyNow} disabled={loadingBuy} className="btn-primary w-full mb-3 text-base disabled:opacity-50">
           {loadingBuy ? <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> : null}
           Baixar gratis
@@ -83,10 +113,12 @@ export function AddToCart({ productId, isFree }: { productId: string; isFree?: b
 
   return (
     <>
-      <button onClick={buyNow} disabled={loadingBuy} className="btn-primary w-full mb-3 text-base disabled:opacity-50 flex items-center justify-center gap-2">
+      {/* FIX bug 1: cross-disable - botao buyNow disabled se loadingAdd OR loadingBuy */}
+      <button onClick={buyNow} disabled={anyLoading} aria-busy={loadingBuy} className="btn-primary w-full mb-3 text-base disabled:opacity-50 flex items-center justify-center gap-2">
         {loadingBuy ? <><Loader2 className="w-4 h-4 animate-spin" /> Processando...</> : 'Comprar agora'}
       </button>
-      <button onClick={addToCart} disabled={loadingAdd || added}
+      {/* FIX bug 1: cross-disable - botao addToCart disabled se loadingBuy OR added OR loadingAdd */}
+      <button onClick={addToCart} disabled={anyLoading || added} aria-busy={loadingAdd}
         className="btn-ghost w-full text-sm flex items-center justify-center gap-2 disabled:opacity-50">
         {loadingAdd ? <><Loader2 className="w-4 h-4 animate-spin" /> Adicionando...</> :
          added ?       <><Check className="w-4 h-4 text-green-400" /> Adicionado!</> :

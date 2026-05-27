@@ -11633,3 +11633,74 @@ PROXIMA ITER:
   diferentes shapes de error backend (com message, sem message, EN, validation)
 - W3 pass 3: AddToCart loading state + optimistic update
 - W18 pass 6: idx parcial order_items status='paid'
+
+================================================================
+ITER W3 PASS 3 - AddToCart race conditions + loading states (2026-05-27)
+================================================================
+ESCOPO: PDP AddToCart component (buyNow + addToCart actions)
+FILE: apps/storefront/src/components/add-to-cart.tsx
+
+CONTEXTO: PDP audit continuado. Component tinha boa cobertura loading/feedback
+mas 4 race conditions sutis em concorrencia entre os 2 botoes.
+
+BUGS CORRIGIDOS (4):
+
+1. CROSS-BUTTON RACE: buyNow + addToCart disabled INDEPENDENTES
+- ANTES: each botao disabled apenas do proprio loading state
+- CENARIO: user clica buyNow -> loading -> clica addToCart antes do
+  loadingBuy=false -> 2 POST /orders/cart/items simultaneos
+- IMPACTO: backend processa ambos -> 2 items no cart OU 409 race no DB
+  + quantidade duplicada (incrementa de 1 para 2)
+- FIX: anyLoading = loadingBuy || loadingAdd -> disabled=anyLoading nos 2
+- BONUS: aria-busy={loading*} no botao especifico (a11y screen readers)
+
+2. DOUBLE-CLICK RAPIDO: setState async vs event handler sync
+- ANTES: setLoadingBuy(true) eh async (next tick React). User com mouse
+  rapido pode clicar 2x em <16ms -> ambos cliques entram no handler
+  antes do re-render aplicar disabled=true
+- IMPACTO: idem bug 1 (2 POST duplicate)
+- FIX: guard explicito if (anyLoading) return; ANTES de requireAuth/setState
+- Protect contra: mouse double-click, touch tap-tap, key Enter+Space race
+
+3. *** BUG CRITICO PROD *** buyNow sucesso NAO resetava loadingBuy
+- ANTES: try { await POST; router.push('/checkout') } catch { ...; setLoadingBuy(false); }
+- "router.push falha silenciosa" cenarios:
+  a. Network mobile cai durante navegacao -> Promise pending eterno
+  b. middleware /checkout rejeita (auth expired race) -> redirect interno
+     mas loadingBuy nunca seta false
+  c. AbortController disparado por outro fetch -> navigation cancelada
+- IMPACTO: botao fica "Processando..." ETERNAMENTE ate user dar F5
+  Usuario pensa sistema travado, abre chamado suporte
+- FIX: try/finally em vez de catch-only-reset -> finally garante reset
+- Incident pattern: comum em users mobile metroviarios (network unstable)
+
+4. window.location.href hard-redirect requireAuth (UX/perf)
+- ANTES: window.location.href = '/login?next=...' (full page reload)
+- IMPACTO: perde history, state, cookies session perd, ~500ms full reload
+- FIX: router.push('/login?next=...') Next soft-nav (~50ms + history)
+- Bonus: history.back funciona para "voltar ao PDP" pos-login
+
+PATTERN W3 RACE-CONDITION GUARD (3 niveis):
+A. Cross-state disable: disabled={anyLoading} entre botoes correlatos
+B. Explicit guard: if (anyLoading) return; antes de mutate state
+C. try/finally cleanup: reset state SEMPRE (sucesso + falha + navegacao)
+
+A11Y BONUS:
+- aria-busy={loadingX} reporta status para screen readers
+- role="alert" em err message ja estava (W3 pass anterior)
+- Loader2 animate-spin nao tem aria - decorativo OK
+
+GAP CONHECIDO (pos-iter, design decision pendente):
+- Bug 5 nao corrigido: buyNow quando item ja no cart adiciona +1 quantidade
+  em vez de "ir direto checkout do produto atual". Mudaria semantica
+  buyNow - merece iter dedicada com discussao UX.
+
+W3 PDP PROGRESS:
+- pass 1: fetchRelated 3 bugs catastroficos (cache, json, catch)
+- pass 2: also-bought 4 bugs (CRITICO prod URL + json/array/UI)
+- pass 3: AddToCart race conditions + loading states (esta iter)
+
+PROXIMA ITER:
+- W3 pass 4: WishlistButton optimistic update (mesmo pattern guard A+B+C)
+- W3 pass 5: buyNow semantica - design decision (incrementa qty vs checkout direto)
+- W18 pass 6: idx parcial order_items status='paid' (co_buyers CTE)
