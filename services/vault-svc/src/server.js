@@ -15,7 +15,10 @@ const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cry
 startup.validateStartupEnv({
   critical: ['PG_PASS', 'VAULT_AES_KEY'],
   minLength: { PG_PASS: 12, VAULT_AES_KEY: 64 },
-  warnIfMissing: ['VAULT_INTERNAL_TOKEN'],
+  // FIX-WORKER-17 pass 8: VAULT_INTERNAL_TOKEN promovido para enforceInProd
+  // product-svc usa para chamar /vault/use buscando API keys. Sem ele, plain_key
+  // nunca retorna - product features dependentes de LLM ficam quebradas silencioso.
+  enforceInProd: ['VAULT_INTERNAL_TOKEN'],
 });
 
 const log = logger.child({ svc: 'vault-svc' });

@@ -16,7 +16,11 @@ const asaas = require('./asaas');
 startup.validateStartupEnv({
   critical: ['PG_PASS'],
   minLength: { PG_PASS: 12, ASAAS_WEBHOOK_SECRET: 16 },
-  warnIfMissing: ['ASAAS_WEBHOOK_SECRET', 'ASAAS_API_KEY', 'PAYMENT_INTERNAL_TOKEN'],
+  warnIfMissing: ['ASAAS_WEBHOOK_SECRET', 'ASAAS_API_KEY'],
+  // FIX-WORKER-17 pass 8: PAYMENT_INTERNAL_TOKEN promovido de warn -> enforceInProd
+  // W2 pass 3 confirmou: sem token, order-svc -> payment-svc falha silencioso 401.
+  // Em PROD + STRICT_INTERNAL_TOKENS=1: fail-closed boot. Senao: warn periodico 10min.
+  enforceInProd: ['PAYMENT_INTERNAL_TOKEN'],
 });
 
 const log = logger.child({ svc: 'payment-svc' });

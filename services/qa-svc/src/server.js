@@ -14,7 +14,10 @@ const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, startup } =
 startup.validateStartupEnv({
   critical: ['PG_PASS'],
   minLength: { PG_PASS: 12, QA_CALLBACK_SECRET: 32 },
-  warnIfMissing: ['QA_CALLBACK_SECRET', 'QA_RUN_INTERNAL_TOKEN'],
+  warnIfMissing: ['QA_CALLBACK_SECRET'],
+  // FIX-WORKER-17 pass 8: QA_RUN_INTERNAL_TOKEN promovido para enforceInProd
+  // Sem ele, product-svc -> qa-svc /qa/run falha silencioso (similar payment-svc).
+  enforceInProd: ['QA_RUN_INTERNAL_TOKEN'],
 });
 
 const log = logger.child({ svc: 'qa-svc' });

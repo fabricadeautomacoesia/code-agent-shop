@@ -3,8 +3,17 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../../../.env') });
 
 const express = require('express');
-const { logger, sanitize, errorHandler } = require('@cas/shared');
+const { logger, sanitize, errorHandler, startup } = require('@cas/shared');
 const { healthcheck } = require('@cas/db-client');
+
+// FIX-WORKER-17 pass 8: order-svc faz fetch para payment-svc/qa-svc com
+// x-internal-token. Sem PAYMENT_INTERNAL_TOKEN configurado, dispatch silencioso 401
+// (W2 pass 3 root cause). enforceInProd warn periodico ate ops configurar.
+startup.validateStartupEnv({
+  critical: ['PG_PASS'],
+  minLength: { PG_PASS: 12 },
+  enforceInProd: ['PAYMENT_INTERNAL_TOKEN'],
+});
 
 const log = logger.child({ svc: 'order-svc' });
 const app = express();

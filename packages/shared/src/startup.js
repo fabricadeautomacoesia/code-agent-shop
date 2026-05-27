@@ -26,10 +26,16 @@ const PROD = process.env.NODE_ENV === 'production';
 function validateStartupEnv(config = {}) {
   const errors = [];
   const warnings = [];
+  const enforces = []; // FIX-WORKER-17 pass 8: warnings que deveriam ser critical
 
   const critical = config.critical || [];
   const minLength = config.minLength || {};
   const warnIfMissing = config.warnIfMissing || [];
+  // FIX-WORKER-17 pass 8: novo conceito - enforce em PROD com STRICT_INTERNAL_TOKENS=1.
+  // Antes: warn one-shot no startup, runtime silencioso depois (W2 pass 3 bug).
+  // Agora: em PROD ainda warn, mas tambem log periodico (cron-like via setInterval).
+  // Ops configura -> mensagens param. Para forçar fail-closed, set STRICT_INTERNAL_TOKENS=1.
+  const enforceInProd = config.enforceInProd || [];
 
   for (const name of critical) {
     const v = process.env[name];
@@ -45,6 +51,18 @@ function validateStartupEnv(config = {}) {
   for (const name of warnIfMissing) {
     if (!process.env[name]) {
       warnings.push(`recommended env missing: ${name}`);
+    }
+  }
+
+  // FIX-WORKER-17 pass 8: enforceInProd com strict mode opt-in
+  const strict = process.env.STRICT_INTERNAL_TOKENS === '1';
+  for (const name of enforceInProd) {
+    if (!process.env[name]) {
+      if (PROD && strict) {
+        errors.push(`enforced env missing in strict mode: ${name}`);
+      } else if (PROD) {
+        enforces.push(`SHOULD-BE-CRITICAL env missing: ${name} (cross-service auth broken)`);
+      }
     }
   }
 
@@ -66,7 +84,20 @@ function validateStartupEnv(config = {}) {
     warnings.forEach((w) => console.warn('  -', w));
   }
 
-  return { errors, warnings, ok: errors.length === 0 };
+  // FIX-WORKER-17 pass 8: enforces aparecem AMBOS no startup E periodicamente (10min)
+  // para forcar ops notar - silencio runtime nao mais aceito apos W2 pass 3 fiasco.
+  if (enforces.length > 0) {
+    console.warn('[startup] WARNING: cross-service tokens missing (will fail silently in fetch):');
+    enforces.forEach((e) => console.warn('  -', e));
+    console.warn('[startup] Set STRICT_INTERNAL_TOKENS=1 to refuse boot until configured.');
+    // Re-emite warning a cada 10min - mata oblivion ops
+    setInterval(() => {
+      console.warn('[startup.periodic] STILL missing cross-service tokens:');
+      enforces.forEach((e) => console.warn('  -', e));
+    }, 10 * 60 * 1000).unref();
+  }
+
+  return { errors, warnings, enforces, ok: errors.length === 0 };
 }
 
 module.exports = { validateStartupEnv };
