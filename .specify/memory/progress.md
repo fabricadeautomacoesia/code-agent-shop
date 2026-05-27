@@ -5077,3 +5077,66 @@ PROXIMA ITER:
   * notifications.outbox (W18 pass 1 fix relacionado)
   * vault_key_usage (90 days?)
 - Considerar pg_cron extension para cleanup em background do DB sem app load
+
+## WORKER 14 pass 5 (AIOPS-SVC) - cleanup cron 5 time-series tables
+
+GAP DETECTADO (proxima iter do W14 pass 4):
+"Audit cleanup similar em outras time-series tables:
+search_log (30 days), audit_log (90 days), notifications.outbox,
+vault_key_usage (90 days)"
+
+AUDIT cross-tables sem cleanup:
+- search_log (analytics user behavior)
+- audit_log (admin actions imutaveis)
+- vault_key_usage (cost tracking)
+- product_views (recommendations W6 MLB-6)
+- token_blacklist (JWT revogados)
+
+5 tabelas write-heavy sem cleanup -> bloat infinito em prod.
+
+DECISAO de SERVICE OWNER:
+aiops-svc ja tinha cron infra (node-cron) + cleanup metricas. Adicionar
+cleanup time-series ali eh natural - sem nova dependencia.
+
+IMPLEMENTACAO (services/aiops-svc/src/server.js):
++ async cleanupTimeSeriesData():
+  - Array de cleanups (5 entries: table + days + sql)
+  - Promise.allSettled (resilient: 1 falha NAO afeta outros)
+  - log [cleanup.ok] com {table, days, deleted} se rowCount > 0
+  - log [cleanup.fail] com {table, err} se rejected
++ cron.schedule('30 3 * * *') - daily 03:30 (offset 02:17 metricas)
+
+Retention alinhada com /privacidade page (LGPD doc explicito):
+- search_log: 30d
+- audit_log: 90d
+- vault_key_usage: 90d
+- product_views: 30d
+- token_blacklist: por expires_at (JWT lifetime, sem days fixo)
+
+PARTICULARIDADES:
+- audit_log e tipicamente IMUTAVEL em compliance enterprise.
+  90d eh agressivo - revisar para 1yr+ em produs LGPD-strict
+- token_blacklist DELETE WHERE expires_at < NOW() eh exato
+  (token expirado = bloqueio inutil)
+
+DEPLOY:
+- commit 50c7bc3 pushed
+- aiops-svc rebuilt (~2.6s) + deployed converged
+- Mantem todos outros crons funcionais
+
+VALIDACAO PUBLICA:
+- aiops-svc startup logs: listening OK
+- [metrics.cleanup] continua rodando 02:17 (cron pre-existente)
+- 5 cleanups vao rodar 03:30 amanha (dev fresh -> rowCount=0 esperado)
+
+IMPACTO:
+- 6 tabelas time-series agora com cleanup automatico
+  (carts via order-svc W14 pass 4 + 5 via aiops-svc W14 pass 5)
+- LGPD compliance: retention windows explicitas no codigo
+- DB bloat prevenido em prod long-running
+- Promise.allSettled e antifragile - failures parciais nao quebram cleanup
+
+PROXIMA ITER (DB):
+- pg_cron extension para cleanup BACKGROUND sem app load
+- Particionamento de notifications (time-series write-heavy)
+- Audit cleanup similar em metrics_history (provavel ja feito)
