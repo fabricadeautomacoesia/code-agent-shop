@@ -51,7 +51,11 @@ export function CompareDrawer() {
             {items.map((p) => (
               <li key={p.id} className="flex items-center gap-3 px-4 py-2.5">
                 {p.cover_image_url ? (
+                  /* FIX-WORKER-18 pass 4: sizes="40px" + loading="lazy".
+                     Sem sizes Next.js servia full-resolution image para thumb 40x40 = waste.
+                     Drawer eh offscreen ate aberto, lazy nao bloqueia render inicial. */
                   <Image src={p.cover_image_url} alt={p.title} width={40} height={40}
+                    sizes="40px" loading="lazy"
                     className="w-10 h-10 object-cover rounded flex-shrink-0" />
                 ) : (
                   <div className="w-10 h-10 bg-gradient-vibe/10 rounded flex-shrink-0" />

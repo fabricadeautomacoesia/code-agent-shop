@@ -86,8 +86,10 @@ export function CartDrawer() {
                       imagem fullsize do CDN para renderizar em 64px + alt vazio em conteudo. */}
                   {it.product?.cover_image_url ? (
                     <div className="w-16 h-16 relative rounded overflow-hidden flex-shrink-0">
+                      {/* FIX-WORKER-18 pass 4: loading="lazy" - drawer offscreen ate setCartOpen(true).
+                          Sem lazy: thumbs carregavam imediatamente no mount mesmo invisivel. */}
                       <Image src={it.product.cover_image_url} alt={it.product.title || 'Produto'}
-                        fill sizes="64px" className="object-cover" />
+                        fill sizes="64px" loading="lazy" className="object-cover" />
                     </div>
                   ) : (
                     <div className="w-16 h-16 bg-gradient-vibe/20 rounded flex items-center justify-center text-xs font-bold flex-shrink-0">CAS</div>

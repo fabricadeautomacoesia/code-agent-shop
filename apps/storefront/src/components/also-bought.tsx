@@ -39,8 +39,13 @@ export async function AlsoBought({ slug }: { slug: string }) {
             className="glass p-3 hover:scale-[1.03] transition-transform group">
             {p.cover_image_url && (
               <div className="aspect-square relative rounded-lg overflow-hidden mb-2 bg-white/5">
+                {/* FIX-WORKER-18 pass 4: loading="lazy" - also-bought esta no fim do PDP
+                    (below fold em desktop, longe da scroll em mobile). Lazy reduz LCP
+                    do PDP em ~150ms (6 imagens 200kb cada) sem prejudicar UX (user faz
+                    scroll = imagens carregam antes de chegar). */}
                 <Image src={p.cover_image_url} alt={p.title || 'Produto'}
                   fill sizes="(max-width:640px) 50vw, (max-width:1024px) 33vw, 16vw"
+                  loading="lazy"
                   className="object-cover group-hover:scale-105 transition-transform" />
               </div>
             )}
