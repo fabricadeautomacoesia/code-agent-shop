@@ -6013,3 +6013,61 @@ GAP PROXIMA ITER:
 - /products/[id] edit page (PATCH + submit ja tem try/catch decent mas
   pode usar hook para texto dinamico + busy)
 - /upload (form criacao - botao Publicar)
+
+## WORKER 5 pass 4 (SELLER DASH) - /products/[id] edit refactor (4/6 DRY)
+
+GAP DETECTADO (proxima iter do W5 pass 3):
+"/products/[id] edit (PATCH + submit ja tem try/catch decent mas pode
+usar hook para texto dinamico + busy)"
+
+REFACTORED apps/dashboard-seller/src/app/products/[id]/page.tsx:
+
+2 ACTIONS migradas para useSellerAction:
+1. save(e) -> action.run('save', ...): PATCH /products/me/:id (edita campos)
+2. submit() -> action.run('submit', ...): POST /products/me/:id/submit (QA)
+
+STATES REMOVIDOS (replaced by hook):
+- saving (boolean) -> action.busyKey === 'save'
+- err (string) -> action.error
+- msg (string) -> action.success
+
+IMPROVEMENTS:
++ Banners centralizados no topo (eram inline scattered no rodape)
++ Mutual exclusion: save e submit nunca simultaneos
+  (clicar Salvar disabled Enviar QA e vice-versa)
++ Texto dinamico: "Salvando..." vs "Enviando QA..."
++ loadError separado de action.error
++ load() reusavel como reload callback (hook auto-chama apos success)
++ Mensagens success expressivas:
+  * "Produto atualizado com sucesso"
+  * "Enviado para QA pipeline"
+
+DEPLOY:
+- commit c974734 pushed
+- dashboard-seller rebuilt (~4.6s) + converged
+
+VALIDACAO PUBLICA:
+- /products/[id] HTTP 200 OK
+- Bundle JS contem: "Enviando QA", "Salvando", "atualizado com sucesso", "busyKey"
+
+PROGRESS METRIC SELLER DASH FINAL: 4 de ~6 pages (67%)
+- /products (W5 pass 1) ✓
+- /qna (W5 pass 2) ✓ (per-row busy)
+- /loja (W5 pass 3) ✓
+- /products/[id] (W5 pass 4) ✓ <- ESTE
+Restantes:
+- /upload (criar produto novo - 1 action submit)
+- /financeiro (ja decente sem alert)
+- /reviews (read-only)
+
+CICLO W5 (passes 1-4) FECHA TEMA SELLER UX:
+- pass 1: useSellerAction hook + /products
+- pass 2: /qna com per-row busy (improvement vs admin)
+- pass 3: /loja (save + KYC)
+- pass 4: /products/[id] edit
+TOTAL: 1 helper hook + 4 pages refactored + ~150 linhas DRY
+
+PROXIMA ITER:
+- /upload (last remaining write action)
+- Considerar mover useSellerAction + useAdminAction para packages/shared-ui
+  (mesmo codigo duplicado em dois apps - DRY cross-app)
