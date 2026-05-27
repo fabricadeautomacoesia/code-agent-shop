@@ -10300,3 +10300,82 @@ PROXIMA ITER:
 - W12 pass 7: cron stuck runs (verdict='running' > 10min sem callback) -> verdict='timeout'
 - W13 pass 8: template qa_dispatch_failed seed
 - W4 pass 14: /admin/qa-queue mostrar runs com verdict='error' (visibility)
+
+## WORKER 18 PASS 5 - Cache 600s em /payments/installments/preview
+
+AUDIT payment-svc encontrou endpoint quente sem cache:
+GET /payments/installments/preview?amount_cents=N&max=12
+
+CONTEXTO:
+- Frontend /checkout chama isto a cada toggle de payment_method
+- User experimenta PIX -> credit_card -> boleto -> credit_card = 4 calls
+- N users x 4 calls/sessao = pressao CPU desnecessaria
+
+QUERY DETERMINISTICA (perfeito p/ cache):
+- amount_cents + max -> always same result
+- monthlyRate 0.0299 constante
+- Math.pow + arredondamento deterministico em JS engine
+- TTL longo seguro (10min vs 60s outros)
+
+CALCULO PER REQUEST (sem cache):
+- Loop 1..12 iter
+- 4-12 iter: Math.pow + Math.round + Math.floor + sprintf
+- ~50us CPU * 12 = ~600us per request
+- 10 users x 4 calls = 24ms CPU/sessao
+- Em pico 100 users = ~240ms CPU constante "queimado"
+
+FIX:
+  cache.cacheMiddleware((req) => {
+    const amount = parseInt(req.query.amount_cents, 10) || 0;
+    const max = Math.min(12, Math.max(1, parseInt(req.query.max || '12', 10)));
+    return `payments:installments:${amount}:${max}`;
+  }, 600)
+
+KEY NORMALIZADA:
+- parseInt: "1000" === "01000" === "+1000" mesma key
+- max clamped 1..12 (evita keys infinitos)
+- Sem auth = cache GLOBAL compartilhado
+
+TTL 600s:
+- Tabela de juros NAO muda ao longo do dia
+- monthlyRate hardcoded (mudar = redeploy)
+- 10min equilibrio invalidacao automatica
+
+ESTIMATIVA POS-DEPLOY:
+- Hit rate esperado: >95% (amounts catalog discretos repetem)
+- CPU economia: ~85% reduction em pico
+- Latency p50: 50us -> 1ms (Redis) - trade-off OK
+- Redis memory: ~2kb/key * 1000 amounts = 2MB trivial
+
+DEPLOY:
+- commit dc3cc78 push main OK
+- 19 insertions, 2 deletions
+- payment-svc rebuild via VPS cron
+- Sem schema change
+- @cas/shared cache module ja disponivel
+- Adicionado import cache nas dependencies
+
+W18 PERFORMANCE AUDIT (passes 1-5):
+- pass 1: search-svc autocomplete (60s) + top-sellers/:category (180s)
+- pass 2: aiops-svc status (5s)
+- pass 3: product-svc reco + recently per-user (60s/30s)
+- pass 4: image lazy + sizes 3 components
+- pass 5: payments installments preview (600s - esta iter)
+
+COBERTURA CACHE PAYMENT-SVC:
+- /installments/preview: SIM (W18-5 esta iter)
+- /asaas/create: NAO (write/state-change)
+- /asaas/webhook: NAO (write)
+- /webhooks/dead: NAO (admin live)
+- /payouts/:id/process: NAO (transactional)
+
+ENDPOINTS COM CACHE TOTAL:
+- search-svc: 6/7 (86%)
+- product-svc: 9/11 (82%)
+- aiops-svc: 1/3 publicos (admin-only sem cache p/ real-time)
+- payment-svc: 1/8 (apenas readonly preview)
+
+PROXIMA ITER:
+- W18 pass 6: EXPLAIN ANALYZE query mais lenta restante
+- W18 pass 7: cache /orders/me historico (per-user TTL 30s)
+- W12 pass 7: cron stuck QA runs
