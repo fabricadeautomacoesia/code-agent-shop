@@ -31,12 +31,16 @@ export default async function PromocoesPage() {
     <div className="container mx-auto px-6 py-8">
       <Link href="/" className="text-sm text-white/60 hover:text-white">&larr; Voltar</Link>
 
+      {/* FIX-WORKER-8 pass 4: header responsive (era text-5xl + Zap w-16 fixed = mobile overflow)
+          - text-3xl em mobile -> sm:text-5xl em >=640px
+          - Zap w-12 mobile -> sm:w-16 desktop
+          - mb-4 -> mb-3 sm:mb-4 (espacamento proporcional) */}
       <div className="mt-4 mb-8 text-center">
-        <Zap className="w-16 h-16 mx-auto text-orange-400 mb-4 animate-pulse" />
-        <h1 className="font-display font-bold text-5xl mb-3 bg-gradient-to-r from-orange-400 to-magenta bg-clip-text text-transparent">
+        <Zap className="w-12 h-12 sm:w-16 sm:h-16 mx-auto text-orange-400 mb-3 sm:mb-4 animate-pulse" aria-hidden="true" />
+        <h1 className="font-display font-bold text-3xl sm:text-5xl mb-3 bg-gradient-to-r from-orange-400 to-magenta bg-clip-text text-transparent">
           Promocoes Relampago
         </h1>
-        <p className="text-white/60">Descontos por tempo limitado - corre antes que acabe!</p>
+        <p className="text-sm sm:text-base text-white/60">Descontos por tempo limitado - corre antes que acabe!</p>
       </div>
 
       {products.length === 0 ? (
@@ -65,12 +69,23 @@ export default async function PromocoesPage() {
                 </Link>
                 <p className="text-sm text-white/60 mb-3">{p.short_description}</p>
                 <FlashPromoTimer endsAt={p.flash_promo_ends_at} discountPct={Number(p.flash_promo_discount_pct)} />
-                <div className="flex items-center gap-4">
-                  <span className="text-white/50 line-through text-lg">{Api.formatBRL(p.price_cents)}</span>
-                  <span className="font-display font-bold text-3xl text-magenta-glow">
+                {/* FIX-WORKER-8 pass 4: row preco+CTA com flex-wrap mobile-safe.
+                    ANTES: flex items-center gap-4 (3 elementos lado a lado)
+                       Em 375px: preco antigo (~70px) + preco novo text-3xl (~120px) +
+                       CTA "Comprar agora" (~150px) = 340px > viewport util ~343px
+                       Visual: overflow horizontal OU squeeze ilegivel
+                    AGORA: flex-wrap + sm:flex-nowrap (mobile flex-wrap, desktop linha)
+                    Tambem: text-2xl mobile -> sm:text-3xl desktop */}
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-4">
+                  <span className="text-white/50 line-through text-base sm:text-lg">{Api.formatBRL(p.price_cents)}</span>
+                  <span className="font-display font-bold text-2xl sm:text-3xl text-magenta-glow">
                     {Api.formatBRL(p.discounted_price_cents)}
                   </span>
-                  <Link href={`/product/${p.slug}`} className="btn-primary text-sm ml-auto">Comprar agora</Link>
+                  <Link href={`/product/${p.slug}`}
+                    aria-label={`Comprar ${p.title} com ${p.flash_promo_discount_pct}% off`}
+                    className="btn-primary text-sm sm:ml-auto w-full sm:w-auto text-center">
+                    Comprar agora
+                  </Link>
                 </div>
               </div>
             </div>
