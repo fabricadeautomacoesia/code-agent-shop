@@ -102,6 +102,31 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## ADMIN ENDPOINTS - WORKER 4 PASS 2 (SLA-RISK + LIST FILTRADO)
+Audit identificou 2 endpoints admin que UI nao tem (mas o painel precisaria
+para gestao completa de sellers):
+
+1. GET /api/sellers/admin/sla-risk?days=3
+   - Sellers Class B com SLA proximo de vencer.
+   - JOIN sellers+users + EXTRACT EPOCH para days_remaining.
+   - Filtra sla_active=TRUE + status NOT IN (suspended,banned).
+   - Default 3 dias, max 30 (?days=N).
+   - Permite admin agir antes da revogacao automatica de API keys.
+
+2. GET /api/sellers/admin/all?status=X&seller_class=Y&q=search&limit=N&page=P
+   - Listing geral paginado com filtros multi-criterio.
+   - Search ILIKE em store_name OR email.
+   - SELECT joined: reputation_tier, total_sales, total_products_active, email.
+   - Retorna {sellers, total, page, limit}.
+
+DEPLOY + VALIDADO E2E:
+- /sla-risk default -> 200 com count + threshold_days
+- /sla-risk?days=30 -> 200 {count:0, threshold_days:30}
+- /all sem filtros -> 200 {total:1, page:1, sellers:[Vendedor Demo Um]}
+- /all?seller_class=class_a -> filtra corretamente
+- /all?q=Vendedor -> search funcionando
+- Buyer comum -> 403 forbidden_role (role check ok)
+
 ## IMAGE OPTIMIZATION - WORKER 18 PASS 3 (NEXT/IMAGE + AVIF/WEBP)
 Auditoria: 13 <img> tags em 10 pages do storefront, todas SEM otimizacao.
 Browsers modernos suportam AVIF (50% menor) e WebP (30% menor) que JPEG.
