@@ -3,7 +3,22 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII } = require('@cas/shared');
+
+// FIX-WORKER-7 pass 60: LGPD role-tier helper.
+// Aplica maskPII em email+full_name p/ role STAFF (admin vê full).
+// PRE-FIX: 3 endpoints admin (/sla-risk, /all, /pending-kyc) retornavam PII
+// plain text p/ STAFF sub-role - viola LGPD Art 6° II (necessidade).
+// Pattern consolidado pass 57/59 cross-svc.
+function maskSellersForStaff(req, rows) {
+  const isAdmin = req.user && req.user.role === 'admin';
+  if (isAdmin) return rows;
+  return rows.map((row) => ({
+    ...row,
+    email: maskPII.email(row.email),
+    full_name: maskPII.name(row.full_name),
+  }));
+}
 
 const router = express.Router();
 const log = logger.child({ svc: 'seller-svc', mod: 'admin' });
@@ -238,7 +253,8 @@ router.get('/sla-risk', asyncHandler(async (req, res) => {
       ORDER BY s.sla_next_deadline_at ASC LIMIT 100`,
     [String(days)]
   );
-  res.json({ at_risk: r.rows, count: r.rows.length, threshold_days: days });
+  // FIX-WORKER-7 pass 60: LGPD role-tier masking
+  res.json({ at_risk: maskSellersForStaff(req, r.rows), count: r.rows.length, threshold_days: days });
 }));
 
 // FIX-WORKER-4: GET /sellers/admin/all - listing geral com filtros + paginacao.
@@ -276,7 +292,8 @@ router.get('/all', asyncHandler(async (req, res) => {
     `SELECT COUNT(*) AS total FROM sellers s JOIN users u ON u.id = s.user_id WHERE ${where.join(' AND ')}`,
     params.slice(0, -2)
   );
-  res.json({ sellers: r.rows, total: parseInt(cnt.rows[0].total, 10), page: parseInt(req.query.page || '1', 10), limit: lim });
+  // FIX-WORKER-7 pass 60: LGPD role-tier masking
+  res.json({ sellers: maskSellersForStaff(req, r.rows), total: parseInt(cnt.rows[0].total, 10), page: parseInt(req.query.page || '1', 10), limit: lim });
 }));
 
 // GET /sellers/admin/pending-kyc
@@ -308,7 +325,17 @@ router.get('/pending-kyc', asyncHandler(async (req, res) => {
         s.id
       LIMIT 100`
   );
-  res.json({ sellers: r.rows });
+  // FIX-WORKER-7 pass 60: LGPD role-tier masking
+  // CRITICAL: /pending-kyc retorna legal_name + address_city/state/zip (cadastro KYC)
+  // Staff só precisa display contexto - admin vê full p/ aprovacao
+  const isAdmin = req.user && req.user.role === 'admin';
+  const sellers = isAdmin ? r.rows : r.rows.map((row) => ({
+    ...row,
+    email: maskPII.email(row.email),
+    full_name: maskPII.name(row.full_name),
+    legal_name: maskPII.name(row.legal_name),
+  }));
+  res.json({ sellers });
 }));
 
 // FIX-WORKER-7 pass 42: NOVO endpoint POST /sellers/admin/:id/kyc/approve

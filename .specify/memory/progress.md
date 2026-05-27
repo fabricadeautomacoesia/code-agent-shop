@@ -17276,7 +17276,27 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ GET /admin/reports (pass 57) - Regra D+E+I + LGPD staff mask
 - ✅ GET /qna/seller/pending (pass 57) - admin bypass + Regra A+D+E + LGPD
 - ✅ @cas/shared.maskPII NEW (pass 58) - LGPD DRY cross-svc
-- ✅ order-svc /admin/recent + /admin/disputes (pass 59 esta iter) - role-tier mask
+- ✅ order-svc /admin/recent + /admin/disputes (pass 59) - role-tier mask
+- ✅ seller-svc /sla-risk + /all + /pending-kyc (pass 60 esta iter) - role-tier mask
+
+W7 PASS 60 RESUMO:
+- seller-svc/src/routes/admin.js refactor cross-endpoint:
+  * /sla-risk: maskSellersForStaff helper (email+full_name)
+  * /all: maskSellersForStaff helper (search by email/store_name ok mask post-query)
+  * /pending-kyc: + legal_name mask (KYC PII GRAVE: cadastro Receita Federal)
+- Helper local maskSellersForStaff(req, rows) DRY 3 endpoints
+- Pattern W7 cross-svc: 7 admin endpoints com LGPD role-tier
+  (review-svc /admin/reports + /qna/seller/pending + /seller/received
+   order-svc /admin/recent + /admin/disputes
+   seller-svc /sla-risk + /all + /pending-kyc)
+- Pattern W7 em 57 endpoints + 23 regras (A-W) - 60 micro-iters
+- payment-svc:194 AUDITADO: u.email/cpf_cnpj uso INTERNO p/ Asaas (não vaza no response) - OK
+
+PROXIMA ITER:
+- W7 pass 61: payment-svc admin endpoints (se houver listings expostos)
+- W7 pass 62: notification-svc admin views audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 59 RESUMO:
 - order-svc/src/routes/orders.js refactor:
