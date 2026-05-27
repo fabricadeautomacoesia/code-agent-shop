@@ -222,18 +222,139 @@ app.post('/:id/vote', voteLimiter, jwt.requireAuth(),
   })
 );
 
-// POST /api/reviews/:id/reply (seller)
-app.post('/:id/reply', jwt.requireAuth({ roles: ['seller','admin'] }),
+// POST /api/reviews/:id/reply (seller responde review)
+// FIX-WORKER-7 pass 37: 7 BUGS aplicando Pattern W7 (paralelo pass 36 /qna/:id/answer).
+//
+// BUG 1 *** Regra Q IDEMPOTENT *** re-reply overwrites silently
+//   Pre-fix: UPDATE SET reply_from_seller=... sem check reply atual
+//   Seller responde 10x mesma review - ultima sobrescreve audit history
+//   FIX: WHERE reply_from_seller IS NULL OR empty + check upfront -> 409
+//
+// BUG 2 *** ADMIN BYPASS *** roles ['seller','admin'] aceita admin mas
+//   JOIN sellers + user_id exige req.user ser SELLER DONO. Admin SEM
+//   entry sellers -> 404 silencioso. Same bug pass 36.
+//   FIX: isAdmin path skip ownership + flag reply_by_admin=TRUE (mig 044)
+//
+// BUG 3 *** NOTIFICATION buyer MISSING *** UX gravissimo
+//   PRE-FIX: reply criado SEM notificar buyer. Buyer perde lead engagement.
+//   Inconsistencia cross-svc: qna answer (pass 36) JA notifica. Review reply NAO.
+//   FIX: INSERT notification 'review_replied' atomic ao buyer.
+//
+// BUG 4 *** SILENT 404 *** UPDATE rowcount=0 + res.json({ok:true})
+//   PRE-FIX: review nao existe OR ownership fail -> 0 rows -> 200 OK.
+//   Seller pensa "respondi" mas review continua sem reply. UX broken.
+//   FIX: RETURNING id + check rowcount -> 404 explicit.
+//
+// BUG 5 *** is_hidden check *** reply em review moderada
+//   Same bug pass 36 - workflow inconsistente.
+//   FIX: SELECT review.is_hidden -> 403 'review_hidden' upfront.
+//
+// BUG 6 *** ATOMICITY *** 2+ queries lineares (UPDATE + INSERT notif futuro)
+//   FIX: tx() atomic.
+//
+// BUG 7 UUID validate + rate-limit
+const replyLimiter = rateLimiter.createLimiter({
+  windowMs: 15 * 60 * 1000, max: 20,
+  message: 'Muitas respostas recentes. Aguarde alguns minutos.',
+});
+const REPLY_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+app.post('/:id/reply',
+  replyLimiter,
+  jwt.requireAuth({ roles: ['seller','admin','staff'] }),
   validate({ body: z.object({ reply: z.string().min(1).max(2000) }) }),
-  asyncHandler(async (req, res) => {
-    await query(
-      `UPDATE product_reviews r
-          SET reply_from_seller = $1, reply_at = NOW(), updated_at = NOW()
-         FROM sellers s
-        WHERE r.id = $2 AND r.seller_id = s.id AND s.user_id = $3`,
-      [req.body.reply, req.params.id, req.user.sub]
-    );
-    res.json({ ok: true });
+  asyncHandler(async (req, res, next) => {
+    if (!REPLY_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('review_not_found'));
+    }
+
+    const isAdmin = ['admin','staff'].includes(req.user.role);
+    let outcome;
+    let result;
+    await tx(async (c) => {
+      // FIX bugs 1+2+5: SELECT FOR UPDATE com checks consolidados
+      // Admin path: skip ownership JOIN. Seller path: enforce dono.
+      const reviewQuery = isAdmin
+        ? `SELECT r.id, r.product_id, r.seller_id, r.is_hidden,
+                  r.reply_from_seller, r.buyer_user_id
+             FROM product_reviews r
+            WHERE r.id = $1::UUID FOR UPDATE OF r`
+        : `SELECT r.id, r.product_id, r.seller_id, r.is_hidden,
+                  r.reply_from_seller, r.buyer_user_id
+             FROM product_reviews r
+             JOIN sellers s ON s.id = r.seller_id AND s.user_id = $2::UUID
+            WHERE r.id = $1::UUID FOR UPDATE OF r`;
+      const params = isAdmin ? [req.params.id] : [req.params.id, req.user.sub];
+      const rev = await c.query(reviewQuery, params);
+      if (!rev.rows.length) {
+        outcome = { error: isAdmin ? 'review_not_found' : 'not_found_or_not_owner' };
+        return;
+      }
+      const r = rev.rows[0];
+
+      // BUG 1 Regra Q: reply ja existe -> 409 (preserva history audit)
+      if (r.reply_from_seller && r.reply_from_seller.trim()) {
+        outcome = {
+          error: 'already_replied',
+          existing_reply: r.reply_from_seller,
+        };
+        return;
+      }
+      // BUG 5: is_hidden check
+      if (r.is_hidden) {
+        outcome = { error: 'review_hidden' };
+        return;
+      }
+
+      // UPDATE idempotent guard - mig 044 colunas reply_by_admin + reply_by_user_id
+      await c.query(
+        `UPDATE product_reviews
+            SET reply_from_seller = $1,
+                reply_at = NOW(),
+                reply_by_admin = $2::BOOLEAN,
+                reply_by_user_id = $3::UUID,
+                updated_at = NOW()
+          WHERE id = $4::UUID
+            AND (reply_from_seller IS NULL OR reply_from_seller = '')`,
+        [req.body.reply, isAdmin, req.user.sub, req.params.id]
+      );
+
+      // BUG 3: notification ao buyer ATOMICA (inconsistencia cross-svc resolvida)
+      if (r.buyer_user_id) {
+        await c.query(
+          `INSERT INTO notifications (user_id, channel, template_code, title, body)
+           VALUES ($1::UUID, 'in_app', 'review_replied',
+                   'Resposta a sua avaliacao',
+                   'O vendedor respondeu a sua avaliacao')`,
+          [r.buyer_user_id]
+        );
+      }
+
+      // Cache slug fetch dentro tx
+      const slugRow = await c.query(`SELECT slug FROM products WHERE id = $1::UUID`, [r.product_id]);
+      result = { ok: true, slug: slugRow.rows[0]?.slug, reply_by_admin: isAdmin };
+    });
+
+    if (outcome?.error === 'review_not_found' || outcome?.error === 'not_found_or_not_owner') {
+      return res.status(404).json({ error: outcome.error });
+    }
+    if (outcome?.error === 'review_hidden') {
+      return res.status(403).json({ error: 'review_hidden',
+        message: 'Esta avaliacao foi moderada.' });
+    }
+    if (outcome?.error === 'already_replied') {
+      return res.status(409).json({
+        error: 'already_replied',
+        message: 'Esta avaliacao ja foi respondida anteriormente.',
+        existing_reply: outcome.existing_reply,
+      });
+    }
+
+    if (result?.slug) {
+      // Invalida cache PDP reviews (reply visivel)
+      await cache.del(`products:reviews:${result.slug}:*`).catch(() => {});
+    }
+    res.json({ ok: true, reply_by_admin: result.reply_by_admin });
   })
 );
 

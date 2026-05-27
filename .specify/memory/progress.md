@@ -15342,3 +15342,101 @@ W7+W13+W18+W4 CONSOLIDADO:
 - W13: renderMustache XSS
 - W18: 8 passes
 - W4: 13 admin pages
+
+================================================================
+ITER W7 PASS 37 - review-svc POST /:id/reply 7 BUGS + mig 044 (2026-05-27)
+================================================================
+ESCOPO: review-svc POST /:id/reply (seller responde review)
++ migration 044 schema support (paralelo a 043)
+FILES:
+- services/review-svc/src/server.js (linhas 225-238 -> rewrite)
+- db/migrations/044_reviews_reply_by_admin.sql (NEW)
+
+CONTEXTO: W7 pass 36 (/qna/:id/answer) consolidou pattern reply seller/
+admin ownership. Pass 37 aplica MESMO pattern ao endpoint /:id/reply
+(product_reviews) + 1 BUG ADICIONAL gravissimo: notification ao buyer
+estava AUSENTE (UX broken inconsistente cross-svc).
+
+BUGS CORRIGIDOS (7):
+
+1. *** Regra Q IDEMPOTENT *** re-reply overwrites silently
+- Mesma classe pass 36 #1. Seller responde 10x = audit history perdida.
+- FIX: WHERE reply_from_seller IS NULL OR empty + check 409 upfront.
+
+2. *** ADMIN BYPASS *** roles admin aceito MAS JOIN bloqueia
+- Same bug pass 36 #2. Admin sem entry sellers -> 404 silencioso.
+- FIX: isAdmin path SKIP ownership + flag reply_by_admin=TRUE (mig 044).
+
+3. *** NOTIFICATION BUYER MISSING *** UX GRAVE inconsistente
+- PRE-FIX: reply criado SEM notificar buyer. Buyer perde lead engagement.
+  Recebe email "produto comprado" mas NUNCA recebe "vendedor respondeu sua review"
+- INCONSISTENCIA CROSS-SVC:
+  pass 36 /qna/:id/answer JA notifica buyer "Sua pergunta foi respondida"
+  pass 37 /:id/reply NAO notifica buyer "Sua review recebeu resposta"
+- IMPACT: engagement broken - buyer nunca sabe que seller respondeu
+- FIX: INSERT notification 'review_replied' atomic ao buyer_user_id
+
+4. *** SILENT 404 *** UPDATE rowcount=0 + res.json({ok:true})
+- PRE-FIX: review nao existe OR ownership fail -> 0 rows -> 200 OK
+- Seller pensa "respondi" mas review continua sem reply (UI broken)
+- FIX: SELECT FOR UPDATE upfront + check rowcount -> 404 explicit
+
+5. *** is_hidden check *** reply em review moderada
+- Same bug pass 36 - workflow inconsistente
+- FIX: 403 'review_hidden' upfront
+
+6. *** ATOMICITY *** queries soltas (UPDATE + INSERT notif)
+- Falha INSERT notif = reply sem alert buyer
+- FIX: tx() atomic (mesmo pattern pass 36)
+
+7. UUID validate + rate-limit (pattern padrao 32-36)
+
+MIGRATION 044 (paralelo 043):
+- product_reviews.reply_by_admin BOOLEAN NOT NULL DEFAULT FALSE
+- product_reviews.reply_by_user_id UUID REFERENCES users(id)
+  (forense - QUEM respondeu, complementa audit_log)
+- Partial idx (reply_at DESC) WHERE reply_by_admin=TRUE
+  (admin auditoria volume SLA tracking)
+
+DEPLOY ORDER:
+1. Migration 044 auto-pickup cron
+2. review-svc rebuild (consume novas colunas)
+3. UI futura: badge "Resposta da plataforma" se reply_by_admin
+
+PATTERN W7 28 ENDPOINTS + 18 REGRAS (A-R):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 6 (/, /:id/vote, /qna/:id/upvote, /qna, /qna/:id/answer, /:id/reply pass 37)
+
+REVIEW-SVC PROGRESS (8 endpoints total - 6/8 = 75%):
+- ✅ POST / (pass 32)
+- ✅ POST /:id/vote (pass 33)
+- ✅ POST /qna/:id/upvote (pass 34)
+- ✅ POST /qna (pass 35)
+- ✅ POST /qna/:id/answer (pass 36)
+- ✅ POST /:id/reply (pass 37 esta iter)
+- POST /reports (abuse - rate-limit critical pendente)
+- POST /reports/:id/resolve (admin terminal pendente)
+
+LESSON LEARNED CROSS-SVC INCONSISTENCY:
+Bug 3 desta iter (notification buyer missing) revela importance de
+AUDIT CROSS-SVC para inconsistencias UX. Pattern aplicado em pass 36
+deveria ter sido aplicado a pass 37 desde o inicio (mesma classe seller-
+response). Lesson: criar matriz cross-svc verifying parity (pass 38 todo?)
+
+PROXIMA ITER:
+- W7 pass 38: POST /reports (abuse rate-limit critical)
+- W7 pass 39: POST /reports/:id/resolve (admin terminal Regra Q)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
+
+W7+W13+W18+W4 CONSOLIDADO:
+- W7: 28 endpoints + 18 regras (A-R) - 37 micro-iters
+- W13: renderMustache XSS
+- W18: 8 passes
+- W4: 13 admin pages
