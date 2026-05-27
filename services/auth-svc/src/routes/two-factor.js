@@ -3,6 +3,7 @@
 const express = require('express');
 const { authenticator } = require('otplib');
 const QRCode = require('qrcode');
+const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const bcrypt = require('bcrypt');
 const crypto = require('node:crypto');
@@ -12,6 +13,53 @@ const { jwt, validate, asyncHandler, errorHandler, crypto: cryp } = require('@ca
 const router = express.Router();
 router.use(jwt.requireAuth());
 
+// FIX-WORKER-17 pass 11: rate-limit em endpoints 2FA TOTP.
+// Antes: TODOS endpoints 2FA sem qualquer rate-limit. Vetores reais:
+//
+// /activate - token 6 digitos = 1M combinacoes
+//   Sem rate-limit + paralelismo permite ~16k tentativas/seg
+//   Cracking em minutos (mesmo com janela TOTP 30s, paralelo passa)
+//   Possivel ativar 2FA com token forjado se segredo vazou + senha capturada
+//
+// /disable - mesma vulnerabilidade (token 6 dig + senha)
+//   Phishing pega senha + brute-force TOTP = bypass 2FA
+//
+// /recovery - mesmo vetor (regenerate codes precisa senha+token)
+//
+// /setup - sem rate-limit permite spam encryption AES-256 + DB UPDATE
+//   1000 setups/seg = DoS interno (key rotation thrashing)
+//
+// /status - read-only mas pode fingerprintar usuarios (enabled vs not)
+//
+// Limits por user_id (key=req.user.sub) - mais preciso que IP
+// (user com 2FA habilitado em multiples devices = IP shared).
+
+const totpKeyByUser = (req) => req.user?.sub || req.ip;
+
+const totpVerifyLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 min
+  max: 10, // 10 tentativas de token / 5min / user (cracking impossivel)
+  message: { error: 'rate_limit_exceeded', message: 'Muitas tentativas de codigo TOTP. Aguarde 5 minutos.' },
+  standardHeaders: true, legacyHeaders: false,
+  keyGenerator: totpKeyByUser,
+});
+
+const totpSetupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1h
+  max: 5, // 5 setups/h/user (user nao re-configura 2FA mais que 1-2x/h)
+  message: { error: 'rate_limit_exceeded', message: 'Muitas configuracoes 2FA. Aguarde 1 hora.' },
+  standardHeaders: true, legacyHeaders: false,
+  keyGenerator: totpKeyByUser,
+});
+
+const totpStatusLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 min
+  max: 30, // 30 reads/min/user (frontend pode ler em /conta/seguranca polling)
+  message: { error: 'rate_limit_exceeded' },
+  standardHeaders: true, legacyHeaders: false,
+  keyGenerator: totpKeyByUser,
+});
+
 // FIX-WORKER-6 pass 1: GET /auth/2fa/status - frontend /conta/seguranca consulta
 // estado 2FA do usuario logado. Antes, frontend confiava em me.twofa_enabled,
 // mas isso so e setado quando is_enabled=true (apos activate). Apos /setup mas
@@ -19,7 +67,7 @@ router.use(jwt.requireAuth());
 // UI nao sabia se ja existia setup pendente, levando usuario a regenerar
 // segredos infinitamente (cada /setup sobrescreve). Status endpoint mostra
 // estado real: has_pending_setup, enabled, recovery_codes_count.
-router.get('/status', asyncHandler(async (req, res) => {
+router.get('/status', totpStatusLimiter, asyncHandler(async (req, res) => {
   const r = await query(
     `SELECT is_enabled, enabled_at, disabled_at, secret_tag IS NOT NULL AS has_secret,
             COALESCE(jsonb_array_length(recovery_codes_hash), 0) AS recovery_count
@@ -40,7 +88,7 @@ router.get('/status', asyncHandler(async (req, res) => {
 }));
 
 // POST /auth/2fa/setup -> retorna QR + secret temporario
-router.post('/setup', asyncHandler(async (req, res) => {
+router.post('/setup', totpSetupLimiter, asyncHandler(async (req, res) => {
   const secret = authenticator.generateSecret();
   const { encrypted, iv, tag } = cryp.encrypt(secret);
   // FIX SEG-2FA: tag GCM (16 bytes) eh obrigatorio para validar integridade do segredo TOTP
@@ -62,6 +110,7 @@ router.post('/setup', asyncHandler(async (req, res) => {
 
 // POST /auth/2fa/activate -> ativa apos primeiro token correto
 router.post('/activate',
+  totpVerifyLimiter,
   validate({ body: z.object({ token: z.string().length(6) }) }),
   asyncHandler(async (req, res, next) => {
     const r = await query('SELECT secret_encrypted, secret_iv, secret_tag FROM user_two_factor WHERE user_id = $1', [req.user.sub]);
@@ -85,6 +134,7 @@ router.post('/activate',
 // Substitui os 10 codigos antigos (que podem ter sido perdidos/usados).
 // V8 4.2: alto risco -> mesmo gate de seguranca que disable.
 router.post('/recovery',
+  totpVerifyLimiter,
   validate({ body: z.object({ password: z.string(), token: z.string().length(6) }) }),
   asyncHandler(async (req, res, next) => {
     const u = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.sub]);
@@ -115,6 +165,7 @@ router.post('/recovery',
 // "2fa_not_enabled" que confundia o frontend (UI mostrava erro generico).
 // Token TOTP nao e exigido nesse caso porque nao ha secret valido.
 router.post('/disable',
+  totpVerifyLimiter,
   validate({ body: z.object({ password: z.string(), token: z.string().length(6).optional() }) }),
   asyncHandler(async (req, res, next) => {
     const u = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.sub]);
