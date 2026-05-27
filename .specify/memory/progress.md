@@ -5354,3 +5354,57 @@ PROXIMA ITER MLB:
   * Lances/oferta vendedor (Mercado Livre BarganhaSegura)
   * "Compre Junto" - bundle deals automaticos baseado em co-purchase
   * Carrinho persistente cross-device (login sync)
+
+## WORKER 11 pass 4 (PAYMENT) - bloqueia checkout sem CPF + UX clara
+
+VETOR DETECTADO (audit code review):
+services/payment-svc/src/server.js linha 158:
+  cpfCnpj: order.cpf_cnpj || '00000000000'
+
+User registra como buyer sem CPF (campo opcional no register schema).
+Tenta checkout -> Asaas createCustomer recebe '00000000000' -> Asaas valida
+algoritmo CPF (recusa CPF zerado) -> 400 invalid_value -> Promise reject ->
+500 errorHandler -> UX retorna "Erro interno do servidor".
+
+Bug ainda nao explodiu em prod (PAYMENT_INTERNAL_TOKEN nao configurado,
+W2 pass 3 confirmou 401 antes). MAS quando ops configurar token,
+100% dos buyers sem CPF terao checkout quebrado.
+
+DB confirmou:
+- teste1@cas.io: cpf_cnpj = NULL <- exato caso bug
+
+FIX em 2 camadas (defense em depth):
+
+1. services/payment-svc/src/server.js:
++ Early validation: !cpf_cnpj OR digits<11 -> 400 'missing_cpf_cnpj' + msg
++ Normaliza CPF antes Asaas: .replace(/\D/g,'') (aceita "123.456.789-00")
++ Bloqueia ANTES de chamar Asaas (evita 500 + UX confuso + denial-of-wallet)
+
+2. apps/storefront/src/lib/auth-errors.ts:
++ FIELD_HINTS expandido: missing_cpf_cnpj, payment_not_pending,
+  order_not_found, empty_cart -> mensagens PT-BR acionaveis
++ "CPF/CNPJ obrigatorio para pagamento. Complete seu cadastro em
+   Minha Conta antes de finalizar."
+
+DEPLOY:
+- commit 1dd3009 pushed
+- payment-svc rebuilt (~2.7s) + converged
+- storefront rebuilt (~3.8s) + converged
+
+VALIDACAO PUBLICA:
+- /api/payments/health -> 200 OK (svc UP)
+- DB: teste1 cpf_cnpj=NULL (caso bug ativo)
+- Endpoint asaas/create exige PAYMENT_INTERNAL_TOKEN (W17 pass 8)
+  E2E test completo aguarda ops configurar token + restart
+
+IMPACTO QUANDO ATIVADO:
+- User sem CPF tenta checkout -> 400 + mensagem clara
+- Em vez de "Erro interno" generico
+- Reduce support tickets "pedido nao saiu"
+- Defense em depth: payment-svc + auth-errors mapping
+
+GAP DETECTADO (proxima iter):
+- Adicionar campo CPF como required em /register para buyers querendo pagar
+  (mas opcional para browse-only) - hard UX trade-off
+- Adicionar prompt "complete seu cadastro" no /checkout BEFORE pay click
+- Validar CPF/CNPJ algoritmo no frontend (ja faz length check W1 pass 2)
