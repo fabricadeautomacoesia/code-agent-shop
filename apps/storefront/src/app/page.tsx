@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
 import { HeroAnimated } from '@/components/hero-animated';
 import { RecentlyViewed } from '@/components/recently-viewed';
+import { ForYou } from '@/components/for-you';
 
 export const revalidate = 60;
 export const dynamic = 'force-dynamic';
@@ -82,6 +83,9 @@ export default async function HomePage() {
 
       {/* MLB-NEW: Vistos recentemente (renderiza vazio se nao logado / sem views) */}
       <RecentlyViewed />
+
+      {/* MLB-NEW WORKER 16: Recomendados para voce (so renderiza se logado E >=4 sugestoes) */}
+      <ForYou />
 
       {/* PRODUTOS EM DESTAQUE */}
       {featured.length > 0 && (
