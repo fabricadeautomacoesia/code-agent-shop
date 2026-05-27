@@ -8794,3 +8794,75 @@ PROXIMA ITER:
 - W11 pass 7: cron reconciliation reprocessar webhooks stuck
 - W4 pass 7: /admin/webhooks UI inspecionar fails
 - Smoke test E2E com order real Asaas
+
+## WORKER 14 PASS 7 - Migration 035: 2 indices partial baseados em queries reais
+
+AUDIT db schema (47 tabelas) extensivo. Hotpath bem coberto (passes 1-6).
+Restam 2 gaps para queries de monitoring/reconciliacao identificados em
+W17 pass 9 e W11 pass 6:
+
+INDEX 1 - idx_vault_usage_failures (W17 pass 9 context):
+  CREATE INDEX ... ON vault_key_usage (vault_key_id, created_at DESC)
+   WHERE success = FALSE;
+
+Query alvo (admin dashboard /admin/vault futuro):
+  SELECT vault_key_id, COUNT(*) FILTER (WHERE NOT success) AS errors
+    FROM vault_key_usage WHERE created_at > NOW() - INTERVAL '7 days'
+    GROUP BY vault_key_id HAVING errors > 0;
+
+- Sem partial: seq scan 70k+ rows/semana
+- Com partial: ~700 rows (~1% error rate tipico)
+- ~100x menos work
+
+INDEX 2 - idx_asaas_evt_retry (W11 pass 6 context):
+  CREATE INDEX ... ON asaas_webhook_events (retry_count DESC, received_at ASC)
+   WHERE retry_count > 0 AND signature_valid = TRUE;
+
+Query alvo (cron reconciliation futuro W11 pass 7):
+  SELECT id, event_type, processing_error, retry_count
+    FROM asaas_webhook_events
+   WHERE retry_count > 0 AND signature_valid
+     AND received_at > NOW() - INTERVAL '24 hours'
+   ORDER BY retry_count DESC, received_at ASC LIMIT 50;
+
+- Sem partial: seq scan 100k+ rows/mes
+- Com partial: ~10-100 rows
+- ORDER BY composto matches index order -> no Sort node
+
+JUSTIFICATIVA PARTIAL:
+- success: 99% TRUE em prod tipico -> partial WHERE FALSE eh 1% data
+- retry_count: >95% rows = 0 -> partial WHERE > 0 eh 5%
+- Partial idx ~100x menor que full + filtros mesma query
+- Postgres planner usa quando WHERE matches partial expression
+
+OUTRAS TABELAS REVISADAS (zero gaps adicionais):
+- product_views (idx_pviews_user_recent ja cobre)
+- audit_log (5 idx em mig 002, sem queries leitura)
+- search_log (4 idx full)
+- notifications (5 idx)
+- seller_payouts (3 idx)
+- product_qa_runs (mig 034 idx started_at)
+- product_wishlist (PK composto basta)
+- order_items (4 idx + license partial)
+
+DEPLOY:
+- commit 7ae93a0 push main OK
+- 79 insertions
+- VPS init aplica auto
+- Sem rebuild svc
+
+W14 DB AUDIT PROGRESS (passes 1-7):
+- pass 1: 16 hotpath indexes (016)
+- pass 2: notifications outbox unlocked (022)
+- pass 3: drop redundant outbox (023)
+- pass 4: carts expires (031)
+- pass 5: seller_payouts composto (032)
+- pass 6: qa_runs started_at composto (034)
+- pass 7: vault_usage_failures + asaas_evt_retry partial (035 - esta iter)
+
+TOTAL INDICES: ~50 indices estrategicos em 47 tabelas (avg 1.06/tabela)
+
+PROXIMA ITER:
+- W14 pass 8: drop dead indices via pg_stat_user_indexes (apos 2 semanas)
+- W11 pass 7: cron reconciliation webhooks stuck
+- W4 pass 8: /admin/vault dashboard error-rate UI
