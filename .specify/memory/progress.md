@@ -1677,3 +1677,59 @@ NOTA OPERACIONAL: QA_RUN_INTERNAL_TOKEN precisa ser configurado em .env
 Swarm para product-svc e qa-svc. Sem isso, dispatcher legitimo cairia
 no JWT path e falharia (product-svc nao tem token JWT de service hoje).
 Configurar antes do proximo deploy.
+
+## WORKER 11 (PAYMENT/ASAAS) - 2 bugs em payment-svc
+Auditoria publica de 7 endpoints payment-svc + leitura completa do server.js
+revelou:
+- /installments/preview era public e tolerante demais
+- /asaas/webhook HMAC + audit ja seguros (W17 fix anterior), mas vazava 500
+  database_error em vez de 400 quando body invalido
+
+BUG 1 (UX + DB error leak): /payments/asaas/webhook retornava HTTP 500
+"database_error" quando body era {} ou nao tinha campo `event`. Causa:
+- Linha 205: INSERT em asaas_webhook_events com event_type=NULL
+- Coluna NOT NULL -> PG 23502 -> caught como erro generico -> 500 vazado
+- Atacante podia distinguir webhook URL valido (500 com payload invalido)
+  de URL inexistente (404) por timing/codes -> info disclosure leve.
+
+BUG 2 (UX): /payments/installments/preview com amount_cents missing/negativo/
+NaN/excessivo silenciava com {amount_cents:0, installments:[]} em vez de
+HTTP 400 explicito. Tambem aceitava amount=Infinity (DoS por loop ate 12 iter
+trivial, mas se max=Infinity via query: loop infinito - nao explorado mas
+endurecido por defesa).
+
+FIX services/payment-svc/src/server.js:
+
+/installments/preview (linhas 34-44):
+- Valida amount_cents obrigatorio -> 400 missing_amount_cents
+- Number.isFinite + >= 0 -> 400 invalid_amount_cents
+- Cap 100_000_000 (R$1M) -> 400 amount_too_large
+- Math.max(1, ...) no parseInt(max) anti-NaN/0
+
+/asaas/webhook (linhas 180-220):
+- Buffer.isBuffer guard antes do toString (defense em depth para CT errado)
+- Pre-valida data.event existe + string antes do INSERT -> 400 invalid_payload
+- Skip idempotencia se data.id ausente
+- Log estruturado [webhook.invalid_payload] para auditoria
+
+VALIDACAO PUBLICA (7 cenarios):
+1) /preview sem amount_cents -> 400 missing_amount_cents OK
+2) /preview amount=-100 -> 400 invalid_amount_cents OK
+3) /preview amount=99999999999 -> 400 amount_too_large OK
+4) /preview amount=19900 -> 200 OK (regressao OK, ja funcionava)
+5) /webhook body {} -> 400 invalid_payload "event field required" (era 500!)
+6) /webhook event valido + sig invalida -> 401 invalid_signature OK
+7) /preview amount=abc (NaN) -> 400 invalid_amount_cents OK
+
+DEPLOY: commit 34d039c pushed, payment-svc rebuilt via Dockerfile.node
+SVC=payment-svc, service updated --force, converged OK.
+
+OBSERVACOES adicionais (audit code review):
+- Asaas split nativo configurado (asaas_splits table)
+- Idempotencia por asaas_event_id (anti-replay)
+- timing-safe HMAC compare
+- audit sempre escreve em asaas_webhook_events (mesmo sig invalida) para forensics
+- processWebhookEvent assincrono + setImmediate (response 200 rapida + processa depois)
+- map de events Asaas->status interno (PAYMENT_RECEIVED/CONFIRMED -> captured/paid)
+- MLB-4 loyalty earn integrado no fluxo paid (Gold +20%, Platinum +50%)
+- Estes ja estavam saudaveis - nada a corrigir nesta iteracao.
