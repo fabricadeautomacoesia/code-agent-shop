@@ -1,9 +1,19 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { adminFetch, fmtDate, fmtBRL } from '@/lib/admin-api';
+import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, KeyRound } from 'lucide-react';
+
+// FIX-WORKER-4 pass 9: usage_this_month_cents e monthly_quota_usd_cents
+// sao em USD CENTS (vault tracks LLM cost - OpenAI/Anthropic em USD), NAO em BRL.
+// Antes: fmtBRL(k.usage_this_month_cents) renderizava "R$ 1.234,56" enganoso.
+// Admin acreditava valor BRL, mas backend usa USD desde W17 schema (cost_usd_cents).
+// Helper formata como "$ 12.34" (USD nativo).
+function fmtUSD(cents: number | string | null | undefined): string {
+  const v = Number(cents || 0) / 100;
+  return v.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
 
 export default function VaultPage() {
   const [keys, setKeys] = useState<any[]>([]);
@@ -52,7 +62,13 @@ export default function VaultPage() {
         <button onClick={() => setShow(true)} className="btn-primary flex items-center gap-2"><Plus className="w-4 h-4" /> Provisionar chave</button>
       </div>
 
-      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+      {/* FIX-WORKER-4 pass 9: loadError com retry (pattern W4 pass 6, 7, 8) */}
+      {loadError && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>Erro carregando lista: {loadError}</span>
+          <button onClick={() => { setLoadError(''); load(); }} className="text-xs hover:underline">retry</button>
+        </div>
+      )}
 
       {/* FIX-WORKER-4 pass 4: banners via useAdminAction (DRY com payouts/qa-queue/sellers/products) */}
       {action.error && (
@@ -112,23 +128,53 @@ export default function VaultPage() {
       )}
 
       <div className="glass p-6 overflow-x-auto">
+        {keys.length === 0 ? (
+          /* FIX-WORKER-4 pass 9: empty state explicit (era tabela vazia silenciosa) */
+          <div className="text-center py-12 text-white/60">
+            <KeyRound className="w-16 h-16 mx-auto mb-4 text-white/20" aria-hidden="true" />
+            {loadError ? 'Nao foi possivel carregar as chaves.' : (
+              <>
+                <p className="text-lg mb-2">Nenhuma chave provisionada ainda.</p>
+                <p className="text-sm">Clique em "Provisionar chave" para adicionar a primeira (OpenAI, Anthropic, etc).</p>
+              </>
+            )}
+          </div>
+        ) : (
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-white/40 uppercase border-b border-white/10">
-            <tr><th className="py-2">Alias</th><th>Provider</th><th>Pool</th><th>Uso/mes</th><th>Quota</th><th>Status</th><th>Criado</th><th></th></tr>
+            <tr>
+              <th className="py-2">Alias</th>
+              <th>Provider</th>
+              <th>Pool</th>
+              {/* FIX-WORKER-4 pass 9: Header USD explicit (era so "Uso/mes" ambiguo BRL/USD) */}
+              <th>Uso mes (USD)</th>
+              <th>Quota (USD)</th>
+              <th>Status</th>
+              <th>Criado</th>
+              <th className="text-right">Acoes</th>
+            </tr>
           </thead>
           <tbody>
             {keys.map((k) => {
               const busy = action.busyKey === `revoke-${k.id}`;
+              // FIX-WORKER-4 pass 9: mascaramento fingerprint p/ DLP screenshot.
+              // fp e sha256.slice(0,16) - 16 chars hex. Mostrar 4 inicio + 4 fim = 8 chars visiveis.
+              const fpMasked = k.key_fingerprint
+                ? `${k.key_fingerprint.slice(0, 4)}...${k.key_fingerprint.slice(-4)}`
+                : '-';
               return (
                 <tr key={k.id} className="border-b border-white/5 hover:bg-white/5">
                   <td className="py-3">
                     <div className="font-mono text-xs">{k.key_alias}</div>
-                    <div className="text-[10px] text-white/40">fp: {k.key_fingerprint}</div>
+                    <div className="text-[10px] text-white/40" title={`fingerprint completa: ${k.key_fingerprint}`}>
+                      fp: {fpMasked}
+                    </div>
                   </td>
                   <td>{k.provider}</td>
                   <td>{k.is_platform_pool ? <span className="text-magenta">platform</span> : <span className="text-white/60">seller</span>}</td>
-                  <td className="font-mono text-xs">{fmtBRL(k.usage_this_month_cents)}</td>
-                  <td className="font-mono text-xs">{k.monthly_quota_usd_cents ? fmtBRL(k.monthly_quota_usd_cents) : '-'}</td>
+                  {/* FIX-WORKER-4 pass 9 CRITICAL: fmtUSD em vez de fmtBRL (currency mismatch) */}
+                  <td className="font-mono text-xs">{fmtUSD(k.usage_this_month_cents)}</td>
+                  <td className="font-mono text-xs">{k.monthly_quota_usd_cents ? fmtUSD(k.monthly_quota_usd_cents) : '-'}</td>
                   <td>
                     {k.is_active
                       ? <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs">active</span>
@@ -138,8 +184,9 @@ export default function VaultPage() {
                   <td className="text-right">
                     {k.is_active && (
                       <button onClick={() => revoke(k.id)} disabled={busy}
+                        aria-label={`Revogar chave ${k.key_alias}`}
                         className="text-red-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
-                        <Trash2 className="w-3 h-3" /> {busy ? '...' : 'Revogar'}
+                        <Trash2 className="w-3 h-3" aria-hidden="true" /> {busy ? '...' : 'Revogar'}
                       </button>
                     )}
                   </td>
@@ -148,6 +195,7 @@ export default function VaultPage() {
             })}
           </tbody>
         </table>
+        )}
       </div>
     </div>
   );
