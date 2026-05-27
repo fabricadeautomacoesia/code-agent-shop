@@ -198,22 +198,57 @@ router.get('/:slug/also-bought',
 
 // GET /products/:slug/related - produtos relacionados (mesma categoria, exclui o atual)
 // FIX-WORKER-18 pass2: cache 300s - related products muda raramente (categoria + same tier)
+// FIX-WORKER-7 pass 9: refactor para CTE pattern (mesmo pass 7/8) + 6 bugs:
+// 1. LIMIT 6 hardcoded ignorava req.query.limit (cache key suportava mas SQL nao)
+// 2. Sem filtro p1.deleted_at IS NULL -> produto fantasma listava relacionados (info leak)
+// 3. Sem filtro p1.status='approved' -> qa_pending/rejected vazavam relacionados via slug
+// 4. Slug invalido retornava {products:[]} identico a "sem relacionados" (frontend nao diferenciava 404 de empty)
+// 5. Subqueries (SELECT ... FROM sellers WHERE id=p2.seller_id) 2x redundantes -> JOIN unico
+// 6. Cache populado em 404 (gastava memoria Redis com slug ruim em loop bot)
 router.get('/:slug/related',
-  cache.cacheMiddleware((req) => `products:related:${req.params.slug}:lim=${req.query.limit || 6}`, 300),
-  asyncHandler(async (req, res) => {
-  const r = await query(
-    `SELECT p2.id, p2.slug, p2.title, p2.subtitle, p2.short_description, p2.kind,
-            p2.cover_image_url, p2.price_cents, p2.currency, p2.is_free,
-            p2.tech_stack, p2.avg_rating, p2.review_count, p2.sales_count,
-            p2.is_platform_owned, p2.flash_promo_active,
-            (SELECT store_slug FROM sellers WHERE id = p2.seller_id) AS store_slug,
-            (SELECT reputation_tier FROM sellers WHERE id = p2.seller_id) AS reputation_tier
-       FROM products p1
-       JOIN products p2 ON p2.category_id = p1.category_id AND p2.id <> p1.id
-      WHERE p1.slug = $1 AND p2.status = 'approved' AND p2.deleted_at IS NULL
-      ORDER BY p2.sales_count DESC LIMIT 6`, [req.params.slug]
+  cache.cacheMiddleware((req) => `products:related:${req.params.slug}:lim=${Math.min(parseInt(req.query.limit) || 6, 24)}`, 300),
+  asyncHandler(async (req, res, next) => {
+  // FIX bug 1: validar e clampear limit (default 6, max 24 - evita scrape massivo)
+  const limit = Math.min(Math.max(parseInt(req.query.limit) || 6, 1), 24);
+
+  // FIX bug 4: verificar produto pai existe + status valido ANTES de buscar relacionados
+  // Diferencia 404 (slug inexistente / deletado / pending) de 200 [] (sem relacionados na categoria)
+  const parent = await query(
+    `SELECT id, category_id, status FROM products
+      WHERE slug = $1 AND deleted_at IS NULL AND status IN ('approved','platform_owned')
+      LIMIT 1`, [req.params.slug]
   );
-  res.json({ products: r.rows });
+  if (!parent.rows.length) {
+    // FIX bug 6: nao cachear 404 (errorHandler nao popula cache, cacheMiddleware so cacheia 2xx)
+    return next(errorHandler.notFound('product_not_found'));
+  }
+
+  // FIX bug 5: JOIN sellers unico (era 2 subqueries por linha = N*2 scans)
+  // FIX-WORKER-7 pass 9: CTE related_pool + JOIN sellers eficiente
+  const r = await query(
+    `WITH related_pool AS (
+       SELECT p2.id, p2.slug, p2.title, p2.subtitle, p2.short_description, p2.kind,
+              p2.cover_image_url, p2.price_cents, p2.currency, p2.is_free,
+              p2.tech_stack, p2.avg_rating, p2.review_count, p2.sales_count,
+              p2.is_platform_owned, p2.flash_promo_active, p2.seller_id
+         FROM products p2
+        WHERE p2.category_id = $1
+          AND p2.id <> $2
+          AND p2.status = 'approved'
+          AND p2.deleted_at IS NULL
+        ORDER BY p2.sales_count DESC NULLS LAST, p2.avg_rating DESC NULLS LAST
+        LIMIT $3
+     )
+     SELECT rp.id, rp.slug, rp.title, rp.subtitle, rp.short_description, rp.kind,
+            rp.cover_image_url, rp.price_cents, rp.currency, rp.is_free,
+            rp.tech_stack, rp.avg_rating, rp.review_count, rp.sales_count,
+            rp.is_platform_owned, rp.flash_promo_active,
+            s.store_slug, s.reputation_tier
+       FROM related_pool rp
+       LEFT JOIN sellers s ON s.id = rp.seller_id`,
+    [parent.rows[0].category_id, parent.rows[0].id, limit]
+  );
+  res.json({ products: r.rows, limit });
 }));
 
 // GET /products/compare?ids=uuid,uuid,uuid - comparar ate 4 produtos (MLB-7)

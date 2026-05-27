@@ -11135,3 +11135,67 @@ PROXIMA ITER:
 - W1 pass 6: /register revisao final (autoComplete tel/cpf + clearErr cascade)
 - W3 PDP audit (AddToCart loading state? WishlistButton optimistic?)
 - W7 pass 9: /products/:slug/related CTE filter (pattern reusable)
+
+================================================================
+ITER W7 PASS 9 - /products/:slug/related CTE refactor (2026-05-27)
+================================================================
+ESCOPO: product-svc GET /products/:slug/related
+FILE: services/product-svc/src/routes/public.js (linhas 199-247)
+
+PATTERN: CTE filter reusable (W7 pass 7/8 estabeleceu) +
+parent existence check (pattern W7 pass 8 user_categories CTE).
+
+BUGS CORRIGIDOS (6):
+1. LIMIT 6 HARDCODED ignorava req.query.limit
+- Cache key suportava (lim=) mas SQL ignorava
+- FIX: Math.min(Math.max(parseInt(limit)||6,1),24) clamped + binding $3
+
+2. Sem filtro p1.deleted_at IS NULL (info leak)
+- Produto deletado ainda listava relacionados via slug ressuscitado
+- FIX: parent check explicit deleted_at IS NULL
+
+3. Sem filtro p1.status valido
+- Produtos qa_pending/rejected/archived vazavam relacionados via slug
+- (atacante: tentar slugs guess para ver categoria privada)
+- FIX: parent.status IN ('approved','platform_owned')
+
+4. 404 nao diferenciado de "sem relacionados" (UX)
+- Slug invalido retornava {products:[]} == produto com 0 relacionados
+- Frontend nao mostrava "produto nao existe", mostrava "sem relacionados"
+- FIX: parent check upfront -> next(errorHandler.notFound('product_not_found'))
+
+5. Subqueries redundantes (perf)
+- (SELECT store_slug FROM sellers WHERE id=p2.seller_id) 2x por linha
+- = N produtos * 2 scans extras sellers (sequencial)
+- FIX: WITH related_pool + LEFT JOIN sellers final (1 scan unico)
+
+6. Cache 404 (Redis memoria desperdicada)
+- cacheMiddleware ja gateia 2xx (linha 123 packages/shared/src/cache.js)
+- Verificado: errorHandler.notFound -> res.statusCode=404 -> nao cacheia
+- Bonus pre-existing protection, agora documentada
+
+OUTROS:
+- ORDER BY p2.sales_count DESC NULLS LAST, avg_rating DESC NULLS LAST
+  (antes so sales_count - empate aleatorio)
+- LIMIT clamp 24 anti-scrape massivo (default 6)
+- Response { products, limit } - frontend pode validar
+
+PATTERN W7 ESTABELECIDO (3 endpoints):
+- pass 7: /recently-viewed CTE filter inside
+- pass 8: /recommendations/for-me CTE user_categories + viewed orphan
+- pass 9: /related CTE related_pool + parent check + JOIN sellers
+
+REUSO: aplicavel a /also-bought (MLB-13) - mesmo refactor pendente.
+
+W7 PRODUCT-SVC PROGRESS:
+- pass 1-4: fixes diversos public.js
+- pass 5: invalidateProductCache productId-specific
+- pass 6: validate UUID compare
+- pass 7: /recently-viewed CTE
+- pass 8: /recommendations/for-me CTE + viewed
+- pass 9: /related CTE + parent check (esta iter)
+
+PROXIMA ITER:
+- W7 pass 10: /also-bought MLB-13 CTE refactor (mesmo pattern)
+- W3 PDP audit (related deveria diferenciar 404 do empty no UI agora)
+- W18 pass 6: idx_products_category_sales_rating partial p/ ORDER BY novo
