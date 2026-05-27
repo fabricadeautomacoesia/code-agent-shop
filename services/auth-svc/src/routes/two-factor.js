@@ -80,6 +80,35 @@ router.post('/activate',
   })
 );
 
+// FIX-WORKER-6 pass 2: POST /auth/2fa/recovery - regenera codigos de recuperacao
+// Exige senha + token TOTP atual (mesmo nivel de seguranca de /disable).
+// Substitui os 10 codigos antigos (que podem ter sido perdidos/usados).
+// V8 4.2: alto risco -> mesmo gate de seguranca que disable.
+router.post('/recovery',
+  validate({ body: z.object({ password: z.string(), token: z.string().length(6) }) }),
+  asyncHandler(async (req, res, next) => {
+    const u = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.sub]);
+    if (!u.rows.length || !(await bcrypt.compare(req.body.password, u.rows[0].password_hash))) {
+      return next(errorHandler.unauthorized('invalid_password'));
+    }
+    const r = await query(
+      'SELECT secret_encrypted, secret_iv, secret_tag FROM user_two_factor WHERE user_id = $1 AND is_enabled',
+      [req.user.sub]
+    );
+    if (!r.rows.length || !r.rows[0].secret_tag) return next(errorHandler.notFound('2fa_not_enabled'));
+    const secret = cryp.decrypt({ encrypted: r.rows[0].secret_encrypted, iv: r.rows[0].secret_iv, tag: r.rows[0].secret_tag });
+    if (!authenticator.check(req.body.token, secret)) return next(errorHandler.unauthorized('invalid_token'));
+
+    const recovery = Array.from({ length: 10 }, () => crypto.randomBytes(5).toString('hex'));
+    const hashed = await Promise.all(recovery.map((c) => bcrypt.hash(c, 10)));
+    await query(
+      `UPDATE user_two_factor SET recovery_codes_hash = $1::JSONB, updated_at = NOW() WHERE user_id = $2`,
+      [JSON.stringify(hashed), req.user.sub]
+    );
+    res.json({ recovery_codes: recovery, warn: 'Codigos antigos invalidados. Guarde os novos com seguranca.' });
+  })
+);
+
 // POST /auth/2fa/disable -> exige senha + token (V8 4.2)
 router.post('/disable',
   validate({ body: z.object({ password: z.string(), token: z.string().length(6) }) }),

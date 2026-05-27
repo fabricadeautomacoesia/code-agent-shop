@@ -73,6 +73,19 @@ export default function SegurancaPage() {
     finally { setLoading(false); }
   }
 
+  // FIX-WORKER-6 pass 2: regenera recovery codes (caso user perdeu os antigos)
+  async function regenerateRecovery() {
+    setLoading(true); setError(''); setOk('');
+    try {
+      const r: any = await Api.api('/auth/2fa/recovery', { method: 'POST', auth: token!, body: JSON.stringify({ password, token: token2fa }) });
+      setRecoveryCodes(r.recovery_codes);
+      setOk('Novos codigos gerados! Codigos antigos foram invalidados.');
+      setPassword(''); setToken2fa('');
+      refreshStatus();
+    } catch (e: any) { setError(friendlyAuthError(e)); }
+    finally { setLoading(false); }
+  }
+
   if (!me) return <div className="container mx-auto px-6 py-16 text-center text-white/60">Carregando...</div>;
 
   return (
@@ -166,6 +179,21 @@ export default function SegurancaPage() {
               <Shield className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
               <p className="text-sm text-white/80">Sua conta esta protegida com 2FA.</p>
             </div>
+            {/* FIX-WORKER-6 pass 2: regenerar recovery codes (mesmo gate de seguranca) */}
+            <details className="text-sm">
+              <summary className="cursor-pointer text-magenta-glow hover:underline">Gerar novos codigos de recuperacao (invalida os antigos)</summary>
+              <div className="mt-3 space-y-2">
+                <p className="text-xs text-white/60">Use se voce perdeu os codigos antigos. Os 10 codigos atuais ficarao invalidos.</p>
+                <input type="password" placeholder="Senha atual" value={password} onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
+                <input type="text" maxLength={6} placeholder="Codigo 2FA" value={token2fa} onChange={(e) => setToken2fa(e.target.value)}
+                  className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm text-center font-mono" />
+                <button onClick={regenerateRecovery} disabled={loading || !password || token2fa.length !== 6}
+                  className="btn-primary w-full disabled:opacity-50">
+                  Gerar novos codigos
+                </button>
+              </div>
+            </details>
             <details className="text-sm">
               <summary className="cursor-pointer text-red-400 hover:underline">Desativar 2FA (requer senha + token)</summary>
               <div className="mt-3 space-y-2">
