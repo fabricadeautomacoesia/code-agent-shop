@@ -13030,3 +13030,113 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W14: migration outras tabelas (vault, qa_runs idx)
+
+================================================================
+ITER W7 PASS 20 - download.js 5 BUGS SECURITY (download_token) (2026-05-27)
+================================================================
+ESCOPO: order-svc routes/download.js (consumo download_token)
+FILE: services/order-svc/src/routes/download.js (rewrite completo)
+
+CONTEXTO: W7 pass 18 evitou LEAK do download_token em /orders/:id.
+Pass 20 audita endpoint de CONSUMO do token (defense-in-depth).
+Audit revelou 5 bugs CRITICOS de seguranca + race condition.
+
+BUGS CORRIGIDOS (5 CRITICOS):
+
+1. *** SECURITY GRAVE *** sem download_count LIMIT (era INFINITO)
+- PRE-FIX: backend incrementava download_count mas NUNCA verificava cap
+- CENARIO: user compra produto R$100, baixa 10.000 vezes, distribui torrent
+- IMPACTO:
+  a. Loss of revenue (1 venda = N downloads = perda monetizacao)
+  b. DMCA risk: seller pode acionar plataforma por nao limitar abuso
+  c. Bandwidth/storage cost CDN
+  d. Reputation: power-users abusam, sellers nao publicam
+- FIX: DEFAULT_DOWNLOAD_LIMIT = 50 (suficient HD swap/OS reinstall/
+  multi-device/family share, mas impede distribuicao em massa)
+- Pos-limit: 403 download_limit_exceeded + limit/count na response
+- BONUS: downloads_remaining na response (UI mostra "X/50 disponiveis")
+- TODO futuro: products.max_downloads col p/ override por produto
+- Pattern MLB/Steam/Adobe: caps similares 10-100
+
+2. *** RACE CONDITION (Regra K) *** SELECT + UPDATEs sem FOR UPDATE
+- PRE-FIX: SELECT + UPDATE order_items + UPDATE orders em 3 queries soltas
+- CENARIO bypass cap: count=49 (pre-cap). User dispara 100 downloads
+  simultaneos -> 100 SELECTs leem count=49 (todos pre-cap) -> 100 UPDATEs
+  incrementam -> count = 149 mas TODOS 100 receberam package_url
+- BYPASS de qualquer limite por race
+- FIX: tx() atomic + SELECT FOR UPDATE OF oi (lock pessimistico)
+- Segunda request bloqueia ate primeira terminar
+- Pattern W7 Regra K (orders.js checkout + cart.js redeem) consolidado
+
+3. *** SECURITY DMCA *** JOIN products SEM deleted_at filter
+- CENARIO CRITICO: produto deletado por:
+  - Violacao DMCA (denuncia copyright valida)
+  - Decisao judicial (conteudo ilegal)
+  - QA-reject pos-pagamento (descoberta fraude/malware)
+- Buyer com download_token ainda ativo continuava recebendo package_url
+- IMPACTO: plataforma distribui conteudo banido APOS sabido como problematic
+  -> liability legal (sabia mas continuou distribuindo)
+- FIX: AND p.deleted_at IS NULL no JOIN
+- Buyer recebe 410 Gone 'product_unavailable' com mensagem PT-BR
+- Refund manual via /orders/:id/dispute (existente)
+
+4. UUID validation faltando (PG 22P02 -> 500 generico)
+- PRE-FIX: req.params.token raw no SQL ($1 UUID)
+- User envia 'abc' (typo URL) -> PG 22P02 invalid input syntax
+- errorHandler converte para 500 generic database_error
+- UX broken: 500 sugere bug servidor, mas era so URL invalida
+- FIX: UUID_RE.test() upfront -> 404 'download_not_found' limpo
+- Pattern W4/W7 cross-svc consolidado
+
+5. UPDATEs separados em queries distintas
+- PRE-FIX:
+  await query('UPDATE order_items ...');  // separado
+  await query('UPDATE orders ...');        // separado
+- Se primeiro OK mas segundo falhar (network/lock/restart),
+  state inconsistente: count++ MAS order status nao virou 'fulfilled'
+- Race window: outro endpoint pode ver count incrementado MAS order ainda 'paid'
+- FIX: ambos UPDATEs dentro do MESMO tx() - atomico (all-or-nothing)
+- BONUS: audit_log INSERT no MESMO tx() - registro de cada download
+  - Permite admin investigar abuso (50 downloads em 5min suspeito)
+  - Permite seller ver downloads (transparencia/confianca)
+  - try-catch grace (audit fail NAO quebra download path)
+
+ERROR HANDLING DEFENSIVE (mesmo pattern cart.js pass 19):
+- response.error switch com 5 codigos mapeados
+- 410 Gone p/ product_unavailable (DMCA/legal scenarios)
+- 403 p/ download_limit_exceeded (rejeicao policy)
+- Fallback 500 anti-novel-error
+
+PATTERN W7 CONSOLIDADO 13 ENDPOINTS + 11 REGRAS (A-K):
+- product-svc: 4 endpoints
+- search-svc: 5 endpoints
+- order-svc: cart.js (3 endpoints), orders.js (4 endpoints incl checkout),
+             download.js (esta iter)
+
+SECURITY LICOES PASSES 13-20 CONSOLIDADAS:
+- Regra G: SQL LIKE wildcard escape (pass 13)
+- Regra I: SELECT explicit fields (pass 15) - evitou download_token leak
+- Pass 17 CRITICAL WRITE: deleted_at em endpoints write
+- Pass 18 SECURITY: response shape security (download_token excluido)
+- Pass 19 RACE: FOR UPDATE em recursos mutaveis
+- Pass 20 DOWNLOAD: cap + race + DMCA + audit (esta iter)
+- Defense-in-depth: pass 18 (token nao vaza) + pass 20 (mesmo se vazar,
+  cap+expiracao+deleted_at limita dano)
+
+NOVA REGRA L (W7 pass 20):
+L. Resource consumption caps em recursos pagos/scarcos.
+   - download_count cap (esta iter)
+   - api_calls cap (futuro per-tenant)
+   - storage_bytes cap (futuro per-seller)
+   Padrao: lifetime OU time-window. Politica clara documentada na response.
+
+W7 PROGRESS:
+- product-svc: passes 1-10
+- search-svc: passes 11-15
+- order-svc: passes 16-20 (cart.js + orders.js + download.js COMPLETO)
+
+PROXIMA ITER:
+- W7 pass 21: payment-svc audit (Asaas integration)
+- W18 pass 7: idx parcial product_views > 90d (cron-based)
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W14: adicionar col products.max_downloads (override DEFAULT_DOWNLOAD_LIMIT)
