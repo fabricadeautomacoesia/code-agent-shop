@@ -249,6 +249,14 @@ app.post('/qa/callback',
       if (!r.rows.length) return;
       const { product_id, product_version_id } = r.rows[0];
 
+      // FIX-WORKER-12 pass 4: capturar status ATUAL antes do UPDATE.
+      // Permite detectar transicao real (rejected->approved ou draft->approved)
+      // vs re-aprovacao de produto ja approved (v2/v3 do mesmo produto).
+      const prev = await c.query(
+        `SELECT status FROM products WHERE id = $1`, [product_id]
+      );
+      const prevStatus = prev.rows[0]?.status;
+
       // 2. Atualiza produto
       if (approved) {
         await c.query(
@@ -272,11 +280,20 @@ app.post('/qa/callback',
             WHERE p.id = $1 AND p.seller_id = s.id AND s.seller_class = 'class_b' AND s.sla_active = TRUE`,
           [product_id]
         );
-        // Incrementa contador de produtos ativos do seller
-        await c.query(
-          `UPDATE sellers SET total_products_active = total_products_active + 1
-             WHERE id = (SELECT seller_id FROM products WHERE id = $1)`, [product_id]
-        );
+        // FIX-WORKER-12 pass 4: BUG counter inflado.
+        // Antes: total_products_active += 1 a CADA QA approved callback.
+        // QA roda multiplas vezes no mesmo produto (v1, v2, v3, etc) ->
+        // counter inflava sem teto. Seller com 1 produto + 5 versoes virava
+        // total_products_active=5 -> ranking errado, KPIs admin errados,
+        // "Top Sellers" leaderboard tendencioso.
+        // Agora: so incrementa em TRANSICAO real (prevStatus != 'approved').
+        // Re-aprovacao de v2 do mesmo produto = noop counter.
+        if (prevStatus !== 'approved') {
+          await c.query(
+            `UPDATE sellers SET total_products_active = total_products_active + 1
+               WHERE id = (SELECT seller_id FROM products WHERE id = $1)`, [product_id]
+          );
+        }
       } else {
         await c.query(
           `UPDATE products SET
@@ -288,6 +305,15 @@ app.post('/qa/callback',
           [b.confidence_score, (b.reasons || []).join('; ').slice(0, 1000),
            b.reasons || null, product_id]
         );
+        // FIX-WORKER-12 pass 4: simetrico ao incremento - decrementar quando
+        // produto sai de approved -> rejected (v2 falhou QA, produto desaparece
+        // da vitrine). GREATEST(0, x-1) impede underflow se counter ja zerou.
+        if (prevStatus === 'approved') {
+          await c.query(
+            `UPDATE sellers SET total_products_active = GREATEST(0, total_products_active - 1)
+               WHERE id = (SELECT seller_id FROM products WHERE id = $1)`, [product_id]
+          );
+        }
       }
 
       // 3. Atualiza version se aplicavel
