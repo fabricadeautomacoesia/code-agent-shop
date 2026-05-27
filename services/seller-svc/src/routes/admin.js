@@ -45,43 +45,177 @@ router.post('/:id/promote-class-b',
   })
 );
 
+// FIX-WORKER-7 pass 44: 8 BUGS aplicando Pattern W7 (Regra Q terminal + audit + tx).
+const SUSPEND_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // POST /sellers/admin/:id/suspend (Kill Switch)
+// BUGS CORRIGIDOS (4):
+// 1. UUID validate (anti PG 22P02 -> 500 generico)
+// 2. Regra Q idempotent terminal: suspend de ja-suspended = 409 (preserva audit timeline)
+// 3. Regra K FOR UPDATE + tx() atomic (UPDATE seller + revoke sessions + audit_log all-or-nothing)
+// 4. Silent UPDATE rowcount=0 -> 404 explicit (seller id inexistente)
+// + Notification ao seller (UX - sabe que foi suspenso + reason)
 router.post('/:id/suspend',
   validate({ body: z.object({ reason: z.string().min(5).max(500) }) }),
-  asyncHandler(async (req, res) => {
-    await query(
-      `UPDATE sellers SET status = 'suspended', updated_at = NOW()
-       WHERE id = $1`, [req.params.id]
-    );
-    // revoga sessoes do usuario
-    await query(
-      `UPDATE user_sessions SET is_revoked = TRUE, revoked_reason = 'seller_suspended', revoked_at = NOW()
-       WHERE user_id = (SELECT user_id FROM sellers WHERE id = $1)`,
-      [req.params.id]
-    );
-    // audit
-    await query(
-      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-       VALUES ($1,$2,'seller.suspend','seller',$3,'warn', $4::JSONB)`,
-      [req.user.sub, req.user.role, req.params.id, JSON.stringify({ reason: req.body.reason })]
-    );
+  asyncHandler(async (req, res, next) => {
+    if (!SUSPEND_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+
+    let outcome;
+    await tx(async (c) => {
+      // FIX bug 3+4 (Regra K + 404): SELECT FOR UPDATE + existence + status check
+      const cur = await c.query(
+        `SELECT id, user_id, status FROM sellers
+          WHERE id = $1::UUID FOR UPDATE`, [req.params.id]
+      );
+      if (!cur.rows.length) { outcome = { error: 'not_found' }; return; }
+      const s = cur.rows[0];
+
+      // FIX bug 2 (Regra Q): idempotent terminal - SO non-terminal pode suspend
+      // 'suspended','banned' = ja terminal. 'kyc_rejected' = ja blocked.
+      if (s.status === 'suspended' || s.status === 'banned') {
+        outcome = { error: 'already_suspended', current_status: s.status };
+        return;
+      }
+
+      // UPDATE atomic com idempotent guard
+      await c.query(
+        `UPDATE sellers SET status = 'suspended', updated_at = NOW()
+          WHERE id = $1::UUID AND status NOT IN ('suspended','banned')`,
+        [req.params.id]
+      );
+      // Revoga sessoes (mesmo tx)
+      await c.query(
+        `UPDATE user_sessions SET is_revoked = TRUE,
+                                   revoked_reason = 'seller_suspended', revoked_at = NOW()
+          WHERE user_id = $1::UUID AND is_revoked = FALSE`,
+        [s.user_id]
+      );
+      // Audit log atomic
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'seller.suspend', 'seller', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({ reason: req.body.reason, previous_status: s.status, ip: req.ip })]
+      );
+      // Notification ao seller (UX - sabe motivo)
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body)
+         VALUES ($1::UUID, 'email', 'seller_suspended',
+                 'Sua conta foi suspensa',
+                 $2)`,
+        [s.user_id, `Motivo: ${req.body.reason}. Entre em contato com o suporte para mais informacoes.`]
+      );
+    });
+
+    if (outcome?.error === 'not_found') return next(errorHandler.notFound('seller_not_found'));
+    if (outcome?.error === 'already_suspended') {
+      return res.status(409).json({
+        error: 'already_suspended',
+        message: `Seller ja esta em status '${outcome.current_status}'.`,
+        current_status: outcome.current_status,
+      });
+    }
+
     log.warn({ actor: req.user.sub, target: req.params.id, reason: req.body.reason }, '[seller.suspend]');
-    // FIX-WORKER-18 pass 6: invalida cache (suspend muda status -> some da listagem publica)
     await invalidateSellerCache(req.params.id);
-    res.json({ ok: true });
+    res.json({ ok: true, new_status: 'suspended' });
   })
 );
 
 // POST /sellers/admin/:id/reactivate
-router.post('/:id/reactivate', asyncHandler(async (req, res) => {
-  await query(
-    `UPDATE sellers SET status = 'active', updated_at = NOW() WHERE id = $1`,
-    [req.params.id]
-  );
-  // FIX-WORKER-18 pass 6: invalida cache (reactivate volta a aparecer na listagem)
-  await invalidateSellerCache(req.params.id);
-  res.json({ ok: true });
-}));
+// FIX-WORKER-7 pass 44: 4 BUGS CRITICOS (compliance bypass + missing audit + missing reason)
+//
+// BUG 1 *** COMPLIANCE BYPASS *** reactivate aceita qualquer status -> active
+//   PRE-FIX: UPDATE SET status='active' WHERE id=$1 (sem status check)
+//   CENARIO BYPASS:
+//   - Seller submete KYC fake -> admin REJECT -> status='kyc_rejected'
+//   - Admin "reactivate" -> status='active' (sem re-aprovar KYC!)
+//   - BYPASS TOTAL do flow KYC estabelecido pass 41/42
+//   Pattern correto: reactivate SO suspended -> active.
+//   Para approve KYC pos-reject: endpoint dedicado /kyc/approve (pass 42)
+//   FIX: WHERE status = 'suspended' (idempotent guard exato)
+//
+// BUG 2 *** AUDIT_LOG MISSING *** suspend tem, reactivate NAO - assimetria forense
+//   Pattern security cross-endpoint: ambos mutation high-impact = ambos audit_log
+//   FIX: INSERT audit_log atomic (sym a suspend)
+//
+// BUG 3 *** REASON BODY MISSING *** forense incompleta
+//   Admin reactivate sem registrar PORQUE - timeline forense vazia
+//   FIX: validate body { reason: string min 5 max 500 }
+//
+// BUG 4 *** Notification ao seller MISSING *** UX
+//   Seller suspenso recebe email "suspenso" mas NAO recebe "reativada"
+//   Inconsistencia UX. FIX: INSERT notification email atomic
+router.post('/:id/reactivate',
+  validate({ body: z.object({ reason: z.string().min(5).max(500) }) }),
+  asyncHandler(async (req, res, next) => {
+    if (!SUSPEND_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+
+    let outcome;
+    await tx(async (c) => {
+      const cur = await c.query(
+        `SELECT id, user_id, status FROM sellers
+          WHERE id = $1::UUID FOR UPDATE`, [req.params.id]
+      );
+      if (!cur.rows.length) { outcome = { error: 'not_found' }; return; }
+      const s = cur.rows[0];
+
+      // BUG 1 critical: SO suspended pode ser reactivated (anti compliance bypass)
+      // banned = terminal severe (admin manual via SQL se necessario)
+      // kyc_rejected = use /kyc/approve dedicated endpoint
+      // active = noop (idempotent)
+      // pending_kyc/kyc_submitted = nao precisam reactivate
+      if (s.status !== 'suspended') {
+        outcome = { error: 'invalid_state', current_status: s.status };
+        return;
+      }
+
+      await c.query(
+        `UPDATE sellers SET status = 'active', updated_at = NOW()
+          WHERE id = $1::UUID AND status = 'suspended'`,
+        [req.params.id]
+      );
+
+      // BUG 2: audit_log atomic (simetrico a suspend)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'seller.reactivate', 'seller', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({ reason: req.body.reason, previous_status: s.status, ip: req.ip })]
+      );
+
+      // BUG 4: notification ao seller (UX engagement)
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body)
+         VALUES ($1::UUID, 'email', 'seller_reactivated',
+                 'Sua conta foi reativada',
+                 'Sua conta seller foi reativada. Voce pode voltar a publicar produtos e solicitar saques.')`,
+        [s.user_id]
+      );
+    });
+
+    if (outcome?.error === 'not_found') return next(errorHandler.notFound('seller_not_found'));
+    if (outcome?.error === 'invalid_state') {
+      return res.status(409).json({
+        error: 'invalid_state',
+        message: outcome.current_status === 'banned'
+          ? 'Seller banido nao pode ser reativado via este endpoint.'
+          : outcome.current_status === 'kyc_rejected'
+            ? 'Use POST /:id/kyc/approve para aprovar KYC pos-rejeicao.'
+            : `Status atual '${outcome.current_status}' - reactivate aplica SO a 'suspended'.`,
+        current_status: outcome.current_status,
+      });
+    }
+
+    log.warn({ actor: req.user.sub, target: req.params.id, reason: req.body.reason }, '[seller.reactivate]');
+    await invalidateSellerCache(req.params.id);
+    res.json({ ok: true, new_status: 'active' });
+  })
+);
 
 // FIX-WORKER-4: GET /sellers/admin/sla-risk - sellers Classe B proximos do deadline SLA.
 // Critical para admin agir antes da revogacao automatica de API keys.

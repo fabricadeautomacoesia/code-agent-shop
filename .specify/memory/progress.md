@@ -15908,3 +15908,96 @@ PROXIMA ITER:
 - W7 pass 45: GET /sellers/me read audit (Regra I explicit)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 44 - seller-svc /suspend|reactivate 8 BUGS (compliance bypass) (2026-05-27)
+================================================================
+ESCOPO: seller-svc admin POST /:id/suspend + /:id/reactivate
+FILE: services/seller-svc/src/routes/admin.js (linhas 48-84 -> rewrite)
+
+CONTEXTO: W7 pass 43 (PATCH /sellers/me) completou seller-svc me.js.
+Pass 44 fecha 2 endpoints admin terminais (suspend/reactivate).
+Descoberta: bug COMPLIANCE BYPASS GRAVE em /reactivate.
+
+BUGS CORRIGIDOS (8 total - 4 suspend + 4 reactivate):
+
+POST /:id/suspend (4 bugs):
+1. UUID validate (anti PG 22P02)
+2. Regra Q idempotent terminal: suspend ja-suspended/banned = 409 + current_status
+3. Regra K FOR UPDATE + tx() atomic (3 queries soltas -> all-or-nothing):
+   - UPDATE seller + UPDATE user_sessions + INSERT audit_log
+4. Silent 404 (rowcount=0) -> error explicit
++ Bonus: notification email seller 'seller_suspended' com reason
+
+POST /:id/reactivate (4 BUGS CRITICOS):
+1. *** COMPLIANCE BYPASS GRAVE *** reactivate aceita QUALQUER status -> active
+   CENARIO:
+   - Seller submete KYC fake -> admin REJECT -> status='kyc_rejected'
+   - Admin "reactivate" -> status='active' DIRETO (sem re-aprovar KYC!)
+   - BYPASS TOTAL do flow KYC pass 41/42 (Layer 2 admin review)
+   - Combo COM bug suspended->banned bypass: forense corrupto
+   FIX: WHERE status = 'suspended' (idempotent guard exato)
+   - banned = terminal severe (admin manual SQL se needed)
+   - kyc_rejected = use /kyc/approve dedicated (pass 42)
+   - active = noop
+   - pending_kyc/kyc_submitted = nao precisam reactivate
+   Mensagens contextuais (hint user qual endpoint correto usar)
+
+2. *** AUDIT_LOG MISSING *** assimetria forense
+   suspend tem audit, reactivate NAO. Pattern security cross-endpoint:
+   ambas mutations high-impact = ambas audit_log.
+   FIX: INSERT atomic simetrico a suspend
+
+3. *** REASON BODY MISSING *** forense incompleta
+   Admin reactivate sem registrar PORQUE - timeline forense vazia
+   FIX: validate body { reason: string min 5 max 500 }
+
+4. *** Notification ao seller MISSING *** UX inconsistencia
+   Seller suspenso recebeu email "suspenso", reativado NAO recebia
+   FIX: INSERT notification email 'seller_reactivated' atomic
+
+PATTERN W7 ADMIN-TERMINAL 7 ENDPOINTS COMPLETO:
+- Pass 25 vault revoke
+- Pass 31 dispute resolve
+- Pass 36 qna answer
+- Pass 37 review reply
+- Pass 39 reports resolve
+- Pass 42 kyc approve/reject
+- Pass 44 seller suspend/reactivate (esta iter)
+
+DEFESA EM PROFUNDIDADE COMPLIANCE FLOW (4 layers):
+- Layer 1: seller submit /kyc (pass 41) -> kyc_submitted
+- Layer 2: admin /kyc/approve|reject (pass 42) -> active|kyc_rejected
+- Layer 3: pass 40 /payout SO status='active'
+- Layer 4: pass 44 reactivate BLOQUEADO de kyc_rejected (anti-bypass)
+  Reactivate SO suspended -> active (pattern rigido)
+
+Bypass kyc requer defeat de TODAS 4 layers.
+
+PATTERN W7 35 ENDPOINTS + 18 REGRAS (A-R) - 44 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 6 (pass 40-44)
+
+SELLER-SVC PROGRESS (6 endpoints auditados):
+- ✅ POST /sellers/me/payout (pass 40)
+- ✅ POST /sellers/me/kyc (pass 41)
+- ✅ POST /sellers/admin/:id/kyc/approve|reject (pass 42)
+- ✅ PATCH /sellers/me (pass 43)
+- ✅ POST /sellers/admin/:id/suspend|reactivate (pass 44 esta iter)
+- ✅ GET /sellers/admin/pending-kyc (fix pass 42)
+- GET /sellers/me + read-onlys (pendente)
+- /loyalty endpoints (pendente)
+- /sellers (public) endpoints (pendente)
+
+PROXIMA ITER:
+- W7 pass 45: seller-svc /loyalty endpoints (POS award/redeem similar pass 19)
+- W7 pass 46: GET /sellers/me read audit (Regra I explicit)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
