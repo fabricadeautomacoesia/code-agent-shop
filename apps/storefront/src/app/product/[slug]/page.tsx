@@ -128,13 +128,17 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                 {Math.floor(Number(product.wishlist_count) / 10) * 10}+ favoritaram
               </div>
             )}
-            <h1 className="font-display font-bold text-3xl mb-2">{product.title}</h1>
+            {/* FIX-WORKER-15 pass 4: text-2xl sm:text-3xl + break-words.
+                Titulos longos (>40 chars) em 375px com text-3xl quebravam layout (overflow horizontal). */}
+            <h1 className="font-display font-bold text-2xl sm:text-3xl mb-2 break-words">{product.title}</h1>
             {product.subtitle && <p className="text-white/60 mb-4">{product.subtitle}</p>}
-            <div className="flex items-center gap-3 mb-6 text-sm">
+            {/* FIX-WORKER-15 pass 4: flex-wrap evita overflow horizontal em 375px com
+                review_count + sales_count grandes (ex: "4.8 (127 reviews) | 412 vendas"). */}
+            <div className="flex items-center gap-3 mb-6 text-sm flex-wrap">
               <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
               <span className="font-semibold">{product.avg_rating ? Number(product.avg_rating).toFixed(1) : '-'}</span>
               <span className="text-white/40">({product.review_count} reviews)</span>
-              <span className="text-white/40">|</span>
+              <span className="text-white/40 hidden sm:inline">|</span>
               <span className="text-white/60">{product.sales_count} vendas</span>
             </div>
             <div className="text-4xl font-display font-bold text-magenta-glow mb-6">
