@@ -42,9 +42,32 @@ export function productLd(product: any, reviews: any[] = []) {
       priceCurrency: product.currency || 'BRL',
       price: product.is_free ? '0.00' : (product.price_cents / 100).toFixed(2),
       availability: product.status === 'approved' ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+      // FIX-WORKER-16/SEO: itemCondition obrigatorio para Google Shopping
+      itemCondition: 'https://schema.org/NewCondition',
+      // FIX-WORKER-16/SEO: priceValidUntil (1 ano apos publicacao - Google sugere)
+      priceValidUntil: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().split('T')[0],
       seller: {
         '@type': 'Organization',
         name: product.is_platform_owned ? 'Code & Agent Shop' : (product.store_name || 'Vendedor CAS'),
+      },
+      // FIX-WORKER-16/SEO: shippingDetails para produto digital (entrega instantanea)
+      shippingDetails: {
+        '@type': 'OfferShippingDetails',
+        shippingRate: { '@type': 'MonetaryAmount', value: '0.00', currency: product.currency || 'BRL' },
+        deliveryTime: {
+          '@type': 'ShippingDeliveryTime',
+          handlingTime: { '@type': 'QuantitativeValue', minValue: 0, maxValue: 0, unitCode: 'HUR' },
+          transitTime: { '@type': 'QuantitativeValue', minValue: 0, maxValue: 0, unitCode: 'HUR' },
+        },
+      },
+      // FIX-WORKER-16/SEO: hasMerchantReturnPolicy usando warranty_days do produto (default 30)
+      hasMerchantReturnPolicy: {
+        '@type': 'MerchantReturnPolicy',
+        applicableCountry: 'BR',
+        returnPolicyCategory: 'https://schema.org/MerchantReturnFiniteReturnWindow',
+        merchantReturnDays: Number(product.warranty_days ?? 30),
+        returnMethod: 'https://schema.org/ReturnByMail',
+        returnFees: 'https://schema.org/FreeReturn',
       },
     },
     aggregateRating: aggRating,
