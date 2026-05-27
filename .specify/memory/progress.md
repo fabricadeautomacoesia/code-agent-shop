@@ -8557,3 +8557,79 @@ PROXIMA ITER:
 - W3 pass 10: extrair friendly-error mappers DRY (qna/review/cart -> lib/)
 - W3 pass 11: CompareButton.tsx audit (drawer + toggle hybrid)
 - W3 pass 12: AddToCart melhor visualizar "+N produtos no carrinho"
+
+## WORKER 5 PASS 7 - /reviews ULTIMA page seller dash com alert() removido
+
+CONTEXTO: W5 pass 6 declarou "ciclo fechado 6/6 write pages" mas /reviews
+(read-only com 1 write action "reply") ainda tinha alert() + setLoading global.
+Audit final desta iter completou cobertura 100% DEFINITIVA.
+
+BUGS encontrados em /reviews:
+
+BUG 1 (alert() browser-blocking):
+  catch (e: any) { alert(e.message); }
+- Ultima page restante com alert() no dashboard-seller
+- Pattern feio: bloqueia browser thread + sem dismiss customizado
+FIX: action.run('reply-${id}', ...) + banners centralizados
+
+BUG 2 (loading state GLOBAL):
+  setLoading(true) (single bool)
+- Clicar "Responder" em row A travava TODOS os botoes da pagina
+- Bug paralelo ao W5 pass 2 (qna pre-fix)
+FIX: action.busyKey === `reply-${r.id}` per-row
+- Multiplas replies podem ser despachadas em paralelo
+
+BUG 3 (img sem next/image + alt vazio):
+  <img src={...} alt="" />
+- Mesmo bug que W8 corrigiu em cart-drawer/pedidos/comparar
+- alt="" a11y ruim
+FIX: next/image fill sizes="48px" + alt={r.product_title}
+
+BUG 4 (stale closure setReplies):
+  setReplies({ ...replies, [id]: '' })
+- Race condition se 2 replies despachadas simultaneamente
+FIX: setReplies((p) => ({ ...p, [id]: '' })) functional
+
+BONUS a11y:
+- role="img" + aria-label nas estrelas (era flex sem semantica)
+- aria-hidden em Star + ExternalLink + Send + MessageSquare
+- aria-label no textarea
+- loadError banner com retry button
+- Mensagem "no reviews" condicional (loadError vs vazio real)
+
+COBERTURA dashboard-seller FINAL (7/7 = 100% DEFINITIVO):
+- /products (W5 pass 1) submitQA per-row
+- /qna (pass 2) answer per-row + alert removido
+- /loja (pass 3) save-profile + submit-kyc
+- /products/[id] (pass 4) save + submit mutex
+- /upload (pass 5) create-draft + upload guard
+- /financeiro (pass 6) payout + 5 UX bugs
+- /reviews (pass 7 ESTA ITER) reply per-row + alert removido
+
+VALIDACAO: grep "alert(" em apps/dashboard-seller/src/
+- 4 matches apenas em COMENTARIOS referenciando o passado
+- ZERO ocorrencias em codigo executavel
+- alert() extinto no dashboard-seller
+
+DEPLOY:
+- commit 26e0df8 push main OK
+- 66 insertions, 28 deletions
+- dashboard-seller rebuild via VPS cron
+
+W5 SELLER DASH CICLO TOTAL (passes 1-7):
+- 1 hook useSellerAction (50 linhas - DRY base)
+- 7 pages refactored (100% das write pages)
+- ~300 linhas de ad-hoc state removidas
+- alert() 0 ocorrencias em codigo
+- Padrao consistente: busyKey + error + success + clear + run
+
+SIMETRIA DASHBOARDS FINAL:
+- dashboard-admin: 6/7 (1 read-only por design) usa useAdminAction
+- dashboard-seller: 7/7 (100%) usa useSellerAction
+- 2 hooks identicos em estrutura -> candidatos packages/shared-ui
+
+PROXIMA ITER:
+- Mover useSellerAction + useAdminAction para packages/shared-ui (DRY cross-app)
+- Toast component centralizado (banners ok mas toast e melhor UX)
+- W4 pass 7: /admin/reports KPI dashboard
+- W14 pass 7: partition vault_key_usage mensal
