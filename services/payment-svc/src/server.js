@@ -519,34 +519,90 @@ async function processWebhookEvent(evt) {
       // marca splits como processed
       await c.query(`UPDATE asaas_splits SET status = 'processed', processed_at = NOW() WHERE order_id = $1`, [order.id]);
       // MLB-4: Loyalty earn - 1 ponto por R$ 1 do total pago (Gold +20%, Platinum +50%)
+      // FIX-WORKER-7 pass 46: 3 BUGS replicados pass 45 (consolidando logica payment-svc <-> seller-svc):
+      // - BUG idempotency reference_id (replay webhook = 2x earn)
+      // - BUG tier promotion notification missing (UX)
+      // - BUG audit_log missing (financial mutation compliance)
+      // NOTA: payment-svc faz INSERT DIRETO (nao HTTP /loyalty/earn) - bypass
+      // do serviceTokenGuard pass 45. Refactor consolidado merece iter dedicada.
       try {
-        const totRow = await c.query(`SELECT total_cents FROM orders WHERE id = $1`, [order.id]);
-        const totalCents = totRow.rows[0]?.total_cents || 0;
-        const tierRow = await c.query(`SELECT tier FROM user_loyalty WHERE user_id = $1`, [order.buyer_user_id]);
-        const curTier = tierRow.rows[0]?.tier || 'starter';
-        const mult = curTier === 'platinum' ? 1.5 : (curTier === 'gold' ? 1.2 : 1.0);
-        const basePts = Math.floor(totalCents / 100); // R$1 = 1 pt
-        const pts = Math.floor(basePts * mult);
-        if (pts > 0) {
-          await c.query(
-            `INSERT INTO user_loyalty (user_id, points_balance, points_lifetime)
-             VALUES ($1, $2, $2)
-             ON CONFLICT (user_id) DO UPDATE SET
-               points_balance = user_loyalty.points_balance + $2,
-               points_lifetime = user_loyalty.points_lifetime + $2,
-               updated_at = NOW()`,
-            [order.buyer_user_id, pts]
+        // FIX bug idempotency: check existing loyalty_transactions p/ este order
+        const dup = await c.query(
+          `SELECT id FROM loyalty_transactions
+            WHERE user_id = $1::UUID AND reason = 'order_paid'
+              AND reference_type = 'order' AND reference_id = $2::TEXT
+            LIMIT 1`,
+          [order.buyer_user_id, order.id]
+        );
+        if (dup.rows.length) {
+          log.info({ order_id: order.id, existing_tx: dup.rows[0].id },
+            '[loyalty.earn.skip_duplicate] webhook replay - pontos ja creditados');
+          // Skip earn (idempotent webhook handling)
+        } else {
+          const totRow = await c.query(`SELECT total_cents FROM orders WHERE id = $1`, [order.id]);
+          const totalCents = totRow.rows[0]?.total_cents || 0;
+          // FIX: SELECT FOR UPDATE user_loyalty antes ler tier (Regra K race)
+          const tierRow = await c.query(
+            `SELECT tier, points_lifetime FROM user_loyalty
+              WHERE user_id = $1::UUID FOR UPDATE`,
+            [order.buyer_user_id]
           );
-          await c.query(
-            `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
-             VALUES ($1, $2, 'order_paid', 'order', $3::text)`,
-            [order.buyer_user_id, pts, order.id]
-          );
-          // recalcula tier
-          const lt = await c.query(`SELECT points_lifetime FROM user_loyalty WHERE user_id = $1`, [order.buyer_user_id]);
-          const lifetime = Number(lt.rows[0].points_lifetime);
-          const newTier = lifetime >= 3000 ? 'platinum' : (lifetime >= 500 ? 'gold' : 'starter');
-          await c.query(`UPDATE user_loyalty SET tier = $1 WHERE user_id = $2`, [newTier, order.buyer_user_id]);
+          const curTier = tierRow.rows[0]?.tier || 'starter';
+          const prevLifetime = parseInt(tierRow.rows[0]?.points_lifetime || 0, 10);
+          const mult = curTier === 'platinum' ? 1.5 : (curTier === 'gold' ? 1.2 : 1.0);
+          const basePts = Math.floor(totalCents / 100);
+          const pts = Math.floor(basePts * mult);
+          if (pts > 0) {
+            await c.query(
+              `INSERT INTO user_loyalty (user_id, points_balance, points_lifetime)
+               VALUES ($1, $2, $2)
+               ON CONFLICT (user_id) DO UPDATE SET
+                 points_balance = user_loyalty.points_balance + $2,
+                 points_lifetime = user_loyalty.points_lifetime + $2,
+                 updated_at = NOW()`,
+              [order.buyer_user_id, pts]
+            );
+            await c.query(
+              `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
+               VALUES ($1, $2, 'order_paid', 'order', $3::text)`,
+              [order.buyer_user_id, pts, order.id]
+            );
+            // Calc novo tier (dentro mesmo tx - serializado por FOR UPDATE acima)
+            const newLifetime = prevLifetime + pts;
+            const newTier = newLifetime >= 3000 ? 'platinum' : (newLifetime >= 500 ? 'gold' : 'starter');
+            await c.query(`UPDATE user_loyalty SET tier = $1 WHERE user_id = $2`, [newTier, order.buyer_user_id]);
+
+            // FIX bug tier promotion notification (UX engagement)
+            const tierRank = { starter: 0, gold: 1, platinum: 2 };
+            if ((tierRank[newTier] || 0) > (tierRank[curTier] || 0)) {
+              await c.query(
+                `INSERT INTO notifications (user_id, channel, template_code, title, body)
+                 VALUES ($1::UUID, 'in_app', 'loyalty_tier_up',
+                         $2, $3)`,
+                [order.buyer_user_id,
+                 `Voce subiu para o tier ${newTier.toUpperCase()}!`,
+                 `Voce agora tem ${newLifetime} pontos lifetime e beneficios exclusivos do tier ${newTier}.`]
+              );
+            }
+
+            // FIX bug audit_log atomic (financial mutation - LGPD compliance)
+            await c.query(
+              `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+               VALUES (NULL, 'service', 'loyalty.earn', 'user_loyalty', $1::UUID, 'info', $2::JSONB)`,
+              [order.buyer_user_id, JSON.stringify({
+                points_delta: pts,
+                reason: 'order_paid',
+                reference_type: 'order',
+                reference_id: order.id,
+                prev_tier: curTier,
+                new_tier: newTier,
+                tier_promoted: (tierRank[newTier] || 0) > (tierRank[curTier] || 0),
+                multiplier: mult,
+                total_cents: totalCents,
+                source: 'payment-svc.webhook',
+              })]
+            );
+          }
         }
       } catch (e) {
         log.error({ err: e.message, order_id: order.id }, '[loyalty.earn.fail]');

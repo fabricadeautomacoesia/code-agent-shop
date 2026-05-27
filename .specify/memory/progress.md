@@ -16106,3 +16106,89 @@ PROXIMA ITER:
 - W7 pass 47: gateway audit (pathRewrite + middleware)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 46 - payment-svc loyalty earn inline 4 BUGS (consolidando pass 45) (2026-05-27)
+================================================================
+ESCOPO: payment-svc processWebhookEvent loyalty earn inline logic
+FILE: services/payment-svc/src/server.js (linhas 518-555 -> rewrite)
+
+CONTEXTO: W7 pass 45 corrigiu /loyalty/earn endpoint (seller-svc).
+DESCOBERTA durante audit: payment-svc faz INSERT DIRETO loyalty NAO via HTTP
+- bypass total do serviceTokenGuard pass 45
+- duplicacao logica payment-svc <-> seller-svc
+
+OPCOES:
+A. Refactor payment-svc -> HTTP call /loyalty/earn (consolida, mas grande)
+B. Aplicar mesmos fixes pass 45 INLINE em payment-svc (rapido, deferred consolidacao)
+
+DECISAO: Opcao B (esta iter) - aplicar fixes inline.
+Opcao A para iter dedicada futura (refactor consolidation pass 47+).
+
+BUGS CORRIGIDOS (4 + 1 bonus race):
+
+1. *** IDEMPOTENCY reference_id MISSING *** webhook replay = 2x earn
+- Asaas envia PAYMENT_CONFIRMED + PAYMENT_RECEIVED em sequencia
+- Sem check, ambos processam loyalty earn -> user ganha 2x pontos
+- W7 pass 22 (state machine) ja resolve PARTE - so transitions allowed
+  resolvem reach loyalty block. MAS reach inicial sem state machine
+  guard upstream = exposicao
+- FIX: SELECT existing loyalty_transactions(user_id, reason='order_paid',
+  reference_id=order.id) ANTES INSERT - duplicate -> skip + log.info
+
+2. *** RACE Regra K *** SELECT tier sem FOR UPDATE
+- Pre-fix: SELECT tier FROM user_loyalty WHERE user_id=$1 (no lock)
+- Outro webhook concurrent pode ler mesmo tier+lifetime -> race calc
+- FIX: SELECT tier, points_lifetime FOR UPDATE (serializa)
+
+3. *** TIER PROMOTION notification MISSING *** UX engagement
+- User passa starter->gold->platinum via order paid mas nao notificado
+- Replicar pass 45 #5 logic: detect prevTier vs newTier rank
+- FIX: INSERT notification 'loyalty_tier_up' atomic se promotion
+
+4. *** AUDIT_LOG missing *** LGPD/compliance financial mutation
+- Pre-fix: 0 audit log p/ mutation balance loyalty no payment-svc
+- FIX: INSERT atomic + payload JSON detalhado
+  - points_delta, reason, reference, prev_tier, new_tier, tier_promoted
+  - multiplier (gold 1.2x, platinum 1.5x), total_cents
+  - source='payment-svc.webhook' (distingue de seller-svc service call)
+- actor_user_id NULL + actor_role='service' (svc-level)
+
+GAP DOCUMENTADO PARA FUTURO REFACTOR:
+- payment-svc + seller-svc TEM duplicate loyalty earn logic
+- payment-svc: INSERT direto (esta iter pass 46)
+- seller-svc: HTTP endpoint /loyalty/earn (pass 45 com serviceTokenGuard)
+- IDEAL: payment-svc -> fetch /loyalty/earn com X-Service-Token header
+  - Single source of truth (1 lugar para fix bugs)
+  - serviceTokenGuard ja protege
+  - Mas requires:
+    a. Internal HTTP client com retry
+    b. Configure LOYALTY_SERVICE_SECRET env across svcs
+    c. Test failure modes (seller-svc down -> retry queue)
+- DEFERIDO: iter dedicada W7 pass 50+ consolidation
+
+NOTA SEGURANCA pass 45+46:
+- pass 45 serviceTokenGuard protege HTTP endpoint /loyalty/earn
+- pass 46 fixes inline payment-svc (NAO precisa token - direct DB)
+- AMBOS necessarios cobertura completa loyalty earn paths
+- User exploit via HTTP /loyalty/earn = 403 (pass 45)
+- User NAO pode exploit payment-svc inline (so callback Asaas HMAC-validated)
+- Defesa em profundidade complete
+
+PATTERN W7 37 ENDPOINTS + 19 REGRAS (A-S) - 46 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4 (create pass 21, webhook pass 22, payout pass 23,
+                  webhook-loyalty pass 46 esta iter)
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7
+
+PROXIMA ITER:
+- W7 pass 47: refactor payment-svc -> HTTP /loyalty/earn (consolidacao)
+- W7 pass 48: gateway audit (pathRewrite + middleware)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
