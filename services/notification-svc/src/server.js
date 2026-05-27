@@ -57,21 +57,47 @@ function renderMustache(template, ctx, isHtml = false) {
   });
 }
 
+// FIX-WORKER-13 pass 5: defesa simetrica ao Telegram - se SMTP nao configurado,
+// throw cedo em vez de nodemailer dar erro confuso "ECONNREFUSED 127.0.0.1:587".
+// Outbox processor pega no catch + retry/fail backoff exponencial existente.
 async function sendEmail(to, subject, body, html) {
+  if (!process.env.SMTP_HOST) {
+    throw new Error('email_not_configured: SMTP_HOST ausente');
+  }
+  if (!to) {
+    throw new Error('email_missing_recipient: user sem coluna email no DB');
+  }
   return mailer.sendMail({ from: FROM, to, subject, text: body, html: html || undefined });
 }
 
+// FIX-WORKER-13 pass 5: 2 bugs criticos resolvidos no envio Telegram.
+// BUG-A: env vars ausentes -> retornava null silenciosamente. processOutbox
+//   nao detectava isso e marcava notif como 'sent'. Notifs Telegram somem.
+//   Admin pensava que recebia alertas mas nao chegavam.
+// BUG-B: HTTP error (token revogado, bot bloqueado, chat invalido) tambem
+//   passava silencioso porque r.json() nao throw em status 4xx/5xx.
+//   Telegram retorna {ok:false, error_code:401, description:"Unauthorized"}
+//   mas codigo retornava o JSON normalmente -> notif marcada 'sent' sem envio.
+// FIX: throw em ambos os casos -> outbox processor pega no catch e retry/fail
+//   com backoff exponencial existente.
 async function sendTelegram(message) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chat = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chat) return null;
+  if (!token || !chat) {
+    throw new Error('telegram_not_configured: TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID ausente');
+  }
   const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chat, text: message.slice(0, 4000), parse_mode: 'Markdown' }),
     signal: AbortSignal.timeout(10000),
   });
-  return r.json();
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok || body.ok === false) {
+    const desc = body.description || `HTTP ${r.status}`;
+    throw new Error(`telegram_api_error: ${desc}`);
+  }
+  return body;
 }
 
 // ============================================================
