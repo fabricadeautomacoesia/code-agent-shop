@@ -2,9 +2,44 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Bell, X, Check, CheckCheck } from 'lucide-react';
+import { Bell, X, Check, CheckCheck, ExternalLink } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
+
+// FIX-WORKER-1: infere URL para template quando cta_url eh null (~99% das notifs hoje).
+// Mercado Livre: sino sempre tem onde clicar -> reduz friccao + aumenta engajamento.
+function inferCtaUrl(n: any): string | null {
+  if (n.cta_url) return n.cta_url;
+  const p = n.payload || {};
+  switch (n.template_code) {
+    case 'product_approved':
+    case 'product_rejected':
+      return p.slug ? `/product/${p.slug}` : '/conta';
+    case 'product_new_version':
+      return p.slug ? `/product/${p.slug}` : null;
+    case 'order_paid':
+    case 'order_fulfilled':
+      return p.order_id ? `/conta/pedidos/${p.order_id}` : '/conta/pedidos';
+    case 'product_qna_new':
+    case 'product_qna_answered':
+      return p.slug ? `/product/${p.slug}#qna` : null;
+    case 'product_review_new':
+      return p.slug ? `/product/${p.slug}#reviews` : null;
+    case 'payout_approved':
+    case 'payout_paid':
+    case 'payout_rejected':
+      return 'https://seller.cas.inovareinteligenciaartificial.com/financeiro';
+    case 'welcome_bonus':
+    case 'loyalty_tier_up':
+      return '/conta/pontos';
+    case 'wishlist_back_in_stock':
+      return '/conta/favoritos';
+    case 'test_bell':
+      return '/conta';
+    default:
+      return null;
+  }
+}
 
 /**
  * Sininho de notificacoes in_app. Polling a cada 60s.
@@ -93,25 +128,39 @@ export function NotificationBell() {
                   Nenhuma notificacao
                 </div>
               ) : (
-                notifs.map((n) => (
-                  <div key={n.id}
-                    onClick={() => !n.is_read && markRead(n.id)}
-                    className={`p-4 border-b border-white/5 cursor-pointer hover:bg-white/5 ${
-                      !n.is_read ? 'bg-magenta/5 border-l-2 border-l-magenta' : ''
-                    }`}>
+                notifs.map((n) => {
+                  // FIX-WORKER-1: cta_url ou fallback por template -> wrap em Link clicavel.
+                  const url = inferCtaUrl(n);
+                  const isExternal = url?.startsWith('http');
+                  const onClickItem = () => {
+                    if (!n.is_read) markRead(n.id);
+                    if (isExternal) setOpen(false); // external Link nao re-renderiza
+                  };
+                  const inner = (
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-semibold truncate">{n.title}</div>
                         <div className="text-xs text-white/60 mt-1 line-clamp-2">{n.body}</div>
-                        <div className="text-[10px] text-white/40 mt-1">
+                        <div className="text-[10px] text-white/40 mt-1 flex items-center gap-1.5">
                           {new Date(n.created_at).toLocaleString('pt-BR')}
+                          {url && <span className="text-magenta">- {n.cta_label || 'Abrir'} <ExternalLink className="w-2.5 h-2.5 inline" /></span>}
                         </div>
                       </div>
                       {n.is_read ? <CheckCheck className="w-3 h-3 text-white/30 flex-shrink-0" />
                                  : <Check className="w-3 h-3 text-magenta flex-shrink-0" />}
                     </div>
-                  </div>
-                ))
+                  );
+                  const cls = `block p-4 border-b border-white/5 cursor-pointer hover:bg-white/5 ${
+                    !n.is_read ? 'bg-magenta/5 border-l-2 border-l-magenta' : ''
+                  }`;
+                  if (url && !isExternal) {
+                    return <Link key={n.id} href={url} onClick={onClickItem} className={cls}>{inner}</Link>;
+                  }
+                  if (url && isExternal) {
+                    return <a key={n.id} href={url} onClick={onClickItem} target="_blank" rel="noopener" className={cls}>{inner}</a>;
+                  }
+                  return <div key={n.id} onClick={onClickItem} className={cls}>{inner}</div>;
+                })
               )}
             </div>
 

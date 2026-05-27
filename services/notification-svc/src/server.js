@@ -79,8 +79,11 @@ app.get('/health', (_req, res) => res.json({
 // Reduz tambem payload size por notif (de ~1.3kb para ~0.5kb).
 app.get('/', jwt.requireAuth(), asyncHandler(async (req, res) => {
   const lim = Math.min(parseInt(req.query.limit, 10) || 30, 100);
+  // FIX-WORKER-1: template_code re-incluido (nao e DLP - apenas string interna
+  // como 'product_approved'/'welcome_bonus' que o UI precisa para inferir URL fallback
+  // quando cta_url e null. Confirmado nao-sensitive em audit-W13).
   const r = await query(
-    `SELECT id, channel, title, body, body_html, cta_label, cta_url, icon,
+    `SELECT id, channel, template_code, title, body, body_html, cta_label, cta_url, icon,
             priority, payload, is_read, read_at, created_at
        FROM notifications
       WHERE user_id = $1 AND channel = 'in_app'
