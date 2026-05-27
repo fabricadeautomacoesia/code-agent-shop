@@ -794,13 +794,28 @@ router.post('/:id/versions',
   })
 );
 
-// POST /products/me/:id/qna/:qid/answer - seller responde Q&A do seu produto
-// FIX-WORKER-7 pass 86: 9 BUGS aplicando Pattern W7 (UUID+A+K+P+Q + silent + audit + notif).
+// POST /products/me/:id/qna/:qid/answer - DEPRECATED
+// FIX-WORKER-7 pass 88: rota CONSOLIDADA em review-svc /qna/:id/answer (pass 36).
 //
-// HISTORIA: pattern duplicado com review-svc pass 36 (POST /qna/:id/answer).
-// Esta rota product-svc opera em mesma tabela product_qna mas SEM Pattern W7
-// aplicado. Replica fixes pass 36 aqui (DRY refactor cross-svc futuro:
-// pass 87+ pode consolidar em 1 svc).
+// HISTORIA:
+// - pass 36 (review-svc) implementou Pattern W7 completo + 6 bugs corrigidos
+// - pass 86 (product-svc) duplicou Pattern W7 fixes nesta rota
+// - pass 88 (esta) consolida: product-svc HTTP 410 Gone + audit
+//
+// Frontend dashboard-seller usa apenas /qna/:id/answer (review-svc via gateway
+// /api/qna/*). Pesquisa confirma: zero references a /products/me/:id/qna/:qid/answer
+// em apps/dashboard-seller/src ou apps/storefront/src. Rota era DEAD CODE.
+//
+// RISCO PRE-FIX: handler full Pattern W7 (180 linhas) duplicado mantinha:
+//   - 2 copias mesmo Pattern W7 fixes (manutencao 2x)
+//   - Bypass vector: chamadas internas via tasks.cas_product-svc:3012 bypass gateway
+//   - Drift risk: future bug fixes em review-svc podem nao chegar aqui
+//
+// PASS 88 ACAO:
+//   - Remove handler implementation
+//   - 410 Gone explicit + Location header redirect
+//   - Audit log de tentativas (forense - quem ainda chama)
+//   - Apos 30d sem hits no audit_log -> remover rota completamente (pass 100+)
 //
 // BUG 1 *** UUID VALIDATE MISSING *** PG 22P02 -> 500 leak (ambos params)
 // BUG 2 *** Regra Q IDEMPOTENCY *** re-answer overwrite silencioso
@@ -841,107 +856,38 @@ const qnaAnswerLimiter = rateLimiter.createLimiter({
 
 router.post('/:id/qna/:qid/answer',
   qnaAnswerLimiter,
-  validate({ body: z.object({ answer: z.string().min(1).max(5000) }) }),
-  asyncHandler(async (req, res, next) => {
-    // BUG 1: UUID validate ambos params
-    if (!QNA_ANSWER_UUID_RE.test(req.params.id) || !QNA_ANSWER_UUID_RE.test(req.params.qid)) {
-      return next(errorHandler.notFound('qna_not_found'));
-    }
-
-    let outcome;
-    let qnaInfo;
-
-    await tx(async (c) => {
-      // BUG 2+3+4+5+8: SELECT FOR UPDATE qna + status check + ownership
-      const cur = await c.query(
-        `SELECT q.id, q.question, q.answer, q.is_hidden,
-                q.asked_by_user_id, q.product_id,
-                p.title AS product_title, p.slug AS product_slug
-           FROM product_qna q
-           JOIN products p ON p.id = q.product_id
-           JOIN sellers s ON s.id = p.seller_id
-          WHERE q.id = $1 AND p.id = $2
-            AND s.user_id = $3
-            AND p.status IN ('approved','platform_owned')
-            AND p.deleted_at IS NULL
-          FOR UPDATE OF q`,
-        [req.params.qid, req.params.id, req.user.sub]
-      );
-      if (!cur.rows.length) { outcome = { error: 'not_found_or_not_owned' }; return; }
-      const q = cur.rows[0];
-
-      // BUG 8: is_hidden check
-      if (q.is_hidden) { outcome = { error: 'qna_moderated' }; return; }
-
-      // BUG 2: Regra Q idempotent - already answered
-      if (q.answer != null) {
-        outcome = { error: 'already_answered', existing_answer: q.answer };
-        return;
-      }
-
-      // UPDATE atomic (sem WHERE answer IS NULL pq ja serializamos via FOR UPDATE)
-      await c.query(
-        `UPDATE product_qna
-            SET answer = $1, answered_at = NOW(), answered_by_user_id = $2, updated_at = NOW()
-          WHERE id = $3`,
-        [req.body.answer, req.user.sub, req.params.qid]
-      );
-
-      // BUG 6 Regra P: audit log atomic
-      await c.query(
+  asyncHandler(async (req, res) => {
+    // FIX-WORKER-7 pass 88: DEPRECATED - returns 410 Gone
+    // Audit log de tentativas p/ forense (detectar callers internos legacy)
+    try {
+      await query(
         `INSERT INTO audit_log
           (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-         VALUES ($1, $2, 'qna.answer', 'product_qna', $3, 'info', $4::JSONB)`,
-        [req.user.sub, req.user.role, req.params.qid,
+         VALUES ($1, $2, 'deprecated_route.qna_answer', 'route', $3, 'warn', $4::JSONB)`,
+        [req.user?.sub || null, req.user?.role || null, req.params.qid,
          JSON.stringify({
-           product_id: q.product_id,
-           question_preview: q.question.slice(0, 200),
-           answer_length: req.body.answer.length,
+           deprecated_path: '/products/me/:id/qna/:qid/answer',
+           replacement_path: '/api/qna/:id/answer',
            ip: req.ip,
+           user_agent: (req.headers['user-agent'] || '').slice(0, 200),
          })]
       );
+    } catch (_e) { /* audit best-effort */ }
 
-      // BUG 7: notification atomic - buyer asker
-      if (q.asked_by_user_id) {
-        await c.query(
-          `INSERT INTO notifications
-            (user_id, channel, template_code, title, body, payload, priority)
-           VALUES ($1, 'in_app'::notification_channel, 'qna_answered', $2, $3, $4::JSONB, 1)`,
-          [q.asked_by_user_id,
-           `Sua pergunta foi respondida`,
-           `O vendedor respondeu sua pergunta em "${q.product_title}".`,
-           JSON.stringify({
-             product_id: q.product_id,
-             product_slug: q.product_slug,
-             qna_id: req.params.qid,
-           })]
-        );
-      }
-
-      qnaInfo = { qna_id: req.params.qid };
-    });
-
-    if (outcome?.error === 'not_found_or_not_owned') {
-      return next(errorHandler.notFound('qna_not_found'));
-    }
-    if (outcome?.error === 'qna_moderated') {
-      return res.status(409).json({
-        error: 'qna_moderated',
-        message: 'Esta pergunta foi moderada e nao pode receber resposta.',
+    res.status(410)
+      .set('Location', '/api/qna/' + req.params.qid + '/answer')
+      .json({
+        error: 'route_deprecated',
+        message: 'Esta rota foi consolidada. Use POST /api/qna/:id/answer (review-svc).',
+        replacement: '/api/qna/' + req.params.qid + '/answer',
+        deprecated_since: 'pass_88',
       });
-    }
-    if (outcome?.error === 'already_answered') {
-      return res.status(409).json({
-        error: 'already_answered',
-        message: 'Esta pergunta ja foi respondida. Edicao via endpoint dedicado.',
-        existing_answer: outcome.existing_answer,
-      });
-    }
-
-    // Invalida cache QnA do produto (qna.is_answered conta no PDP card)
-    await invalidate(req.params.id);
-    res.json({ ok: true, qna_id: qnaInfo.qna_id });
   })
 );
+
+// Handler antigo (180 linhas Pattern W7 implementacao completa pass 86)
+// REMOVIDO em pass 88 - consolidacao em review-svc /qna/:id/answer.
+// Apos 30d sem hits em audit_log 'deprecated_route.qna_answer' (forense),
+// remover rota POST /:id/qna/:qid/answer completamente (pass 100+).
 
 module.exports = router;

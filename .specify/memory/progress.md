@@ -17304,7 +17304,37 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc POST /:id/submit (pass 84) - 7 bugs state machine
 - ✅ product-svc POST /:id/versions (pass 85) - 8 bugs versioning
 - ✅ product-svc POST /:id/qna/:qid/answer (pass 86) - 9 bugs duplicated route
-- ✅ product-svc upload.js endpoints (pass 87 esta iter) - 6 bugs storage DoS
+- ✅ product-svc upload.js endpoints (pass 87) - 6 bugs storage DoS
+- ✅ product-svc qna/answer DEPRECATED (pass 88 esta iter) - consolidate review-svc
+
+W7 PASS 88 RESUMO:
+- product-svc POST /products/me/:id/qna/:qid/answer DEPRECATED:
+  * Pesquisa frontend confirmou: ZERO references em apps/storefront ou
+    apps/dashboard-seller. Rota era DEAD CODE.
+  * Pass 36 (review-svc) ja implementava Pattern W7 completo na rota oficial
+    /qna/:id/answer (gateway proxia /api/qna/* -> review-svc)
+  * Pass 86 duplicou Pattern W7 fixes em product-svc (180 linhas dup)
+  * PASS 88 (esta) consolida: 410 Gone + audit log forense
+- Implementacao:
+  * Handler antigo (180 linhas) REMOVIDO
+  * Stub: 410 Gone + Location header /api/qna/:qid/answer (redirect hint)
+  * Audit log de tentativas (severity=warn) p/ detectar callers internos legacy
+  * Apos 30d sem hits em audit -> remover rota completamente (pass 100+)
+- Bypass vector eliminado:
+  * PRE: chamadas internas via tasks.cas_product-svc:3012/me/:id/qna/:qid/answer
+    bypass gateway + executavam handler full Pattern W7
+  * POS: 410 Gone explicit + forense trail
+- Pattern W7 em 93 endpoints + 23 regras (A-W) - 88 micro-iters
+- DRY consolidation cross-svc primeira vez aplicada:
+  * Pattern W7 estabelece guidelines de implementacao
+  * Pattern W7+ (pass 88+) estabelece consolidation patterns
+    para deduplicar rotas legacy
+
+PROXIMA ITER:
+- W7 pass 89: notification-svc admin endpoints audit
+- W7 pass 90: aiops-svc /status endpoint audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 87 RESUMO:
 - product-svc/src/routes/upload.js POST /package + /media refactor (6 bugs):
