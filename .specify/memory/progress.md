@@ -17278,7 +17278,28 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ @cas/shared.maskPII NEW (pass 58) - LGPD DRY cross-svc
 - ✅ order-svc /admin/recent + /admin/disputes (pass 59) - role-tier mask
 - ✅ seller-svc /sla-risk + /all + /pending-kyc (pass 60) - role-tier mask
-- ✅ payment-svc /payments/webhooks/dead (pass 61 esta iter) - Regra D+E+I + DLP
+- ✅ payment-svc /payments/webhooks/dead (pass 61) - Regra D+E+I + DLP
+- ✅ notification-svc GET / (pass 62 esta iter) - Regra D+E+I + DLP + UX
+
+W7 PASS 62 RESUMO:
+- notification-svc/src/server.js GET / refactor (6 bugs):
+  * Regra D: + id DESC tiebreaker (mass-insert burst welcome/tier promotion)
+  * Regra E: ?offset adicionado (default 0) + response shape consistente
+  * NEW ?unread_only=true server-side filter (UI tab nao-lidas) -> usa
+    idx_notif_user_unread (mig 029)
+  * Total count + has_more (UX "Carregar mais" suporta paginacao)
+  * DLP mask.obj() recursive em payload JSONB (defense-in-depth:
+    welcome bonus pode ter cpf, order notif pode ter Bearer, reset_password
+    pode ter token plain text)
+- Pattern W7 em 59 endpoints + 23 regras (A-W) - 62 micro-iters
+- Resource optimization: idx_notif_user_unread (mig 029) agora EFETIVO
+  quando UI passar ?unread_only=true (antes mig idx era dead - W18 audit)
+
+PROXIMA ITER:
+- W7 pass 63: aiops-svc /admin endpoints DLP mask metrics/alerts
+- W7 pass 64: search-svc /admin endpoints (se houver)
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 61 RESUMO:
 - payment-svc/src/server.js /payments/webhooks/dead refactor:

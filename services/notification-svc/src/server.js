@@ -164,21 +164,86 @@ app.get('/health', (_req, res) => res.json({
 //   (state machine), sent_status/sent_at (irrelevante para in_app), template_code
 //   (interno), user_id (redundante, ja eh do user authed)
 // Reduz tambem payload size por notif (de ~1.3kb para ~0.5kb).
+// GET /api/notifications - listing in_app do user
+// FIX-WORKER-7 pass 62: 6 BUGS aplicando Pattern W7 (Regras D+E+I + DLP + UX).
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING *** ORDER BY created_at DESC nao determ
+//   Notifications mass-insert (loop welcome bonus + tier promotion + order
+//   confirmation) podem ter created_at identicos -> ordem indefinida.
+//   Idx idx_notif_user_channel_created (mig 020) ja inclui created_at; +id DESC
+//   determ scan.
+//   FIX: + id DESC tiebreaker.
+//
+// BUG 2 *** Regra E OFFSET MISSING *** ?limit clamped mas sem ?offset
+//   User com 500 notifs historicas so vê primeiras 100. UX "Carregar mais"
+//   sem suporte server-side.
+//   FIX: ?offset (>=0, default 0).
+//
+// BUG 3 *** ?unread_only FILTER MISSING *** UI tab "Nao lidas" filtra client-side
+//   Frontend NotificationBell tab "Nao lidas" filtra apos fetch all - desperdicio
+//   payload + DB. Endpoint dedicado /unread-count existe MAS lista nao.
+//   FIX: ?unread_only=true filtro server-side.
+//
+// BUG 4 *** Regra E response shape *** {notifications} sem total/limit/offset
+//   UX paginacao nao sabe quando "no more" - UI tem que tentar fetch e ver
+//   empty array. Fix shape consistente.
+//   FIX: + total + limit + offset + has_more.
+//
+// BUG 5 *** DLP payload JSONB EXPOSURE ***
+//   payload pode conter cpf (welcome bonus migration), buyer_email (order
+//   notification), tokens (reset_password). Embora user veja SUAS proprias
+//   notifs, defense-in-depth: aplicar mask.obj() (DLP recursive).
+//   Edge cases: payload sql query log em error notif -> Bearer leak.
+//   FIX: mask.obj() recursivo em payload pre-response.
+//
+// BUG 6 *** is_read=FALSE skip idx coverage ***
+//   Sem ?unread_only filter, query escana too many rows quando user tem
+//   1000+ read + 5 unread. Idx mig 029 (idx_notif_user_unread) existe
+//   especificamente p/ partial WHERE is_read=FALSE. Filter explicit usa idx.
 app.get('/', jwt.requireAuth(), asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
-  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 30, 100));
+  const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 30, 100));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const unreadOnly = String(req.query.unread_only || '').toLowerCase() === 'true';
+
   // FIX-WORKER-1: template_code re-incluido (nao e DLP - apenas string interna
   // como 'product_approved'/'welcome_bonus' que o UI precisa para inferir URL fallback
   // quando cta_url e null. Confirmado nao-sensitive em audit-W13).
+  const whereExtra = unreadOnly ? ' AND is_read = FALSE' : '';
   const r = await query(
     `SELECT id, channel, template_code, title, body, body_html, cta_label, cta_url, icon,
             priority, payload, is_read, read_at, created_at
        FROM notifications
-      WHERE user_id = $1 AND channel = 'in_app'
-      ORDER BY created_at DESC LIMIT $2`,
-    [req.user.sub, lim]
+      WHERE user_id = $1 AND channel = 'in_app'${whereExtra}
+      ORDER BY created_at DESC, id DESC
+      LIMIT $2 OFFSET $3`,
+    [req.user.sub, limit, offset]
   );
-  res.json({ notifications: r.rows });
+
+  // FIX-WORKER-7 pass 62: DLP mask.obj em payload (defense-in-depth)
+  // Embora user veja SUAS notifs, payload pode ter sensitive data:
+  // welcome bonus -> cpf raw; order notification -> Bearer; reset_password -> token
+  const notifications = r.rows.map((row) => ({
+    ...row,
+    payload: row.payload ? mask.obj(row.payload) : null,
+  }));
+
+  // Total count para UX has_more / "Carregar mais"
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM notifications
+      WHERE user_id = $1 AND channel = 'in_app'${whereExtra}`,
+    [req.user.sub]
+  );
+  const total = totalRes.rows[0].total;
+
+  res.json({
+    notifications,
+    total,
+    limit,
+    offset,
+    has_more: (offset + notifications.length) < total,
+    unread_only: unreadOnly,
+  });
 }));
 
 // FIX-WORKER-13 pass 4: GET /api/notifications/unread-count
