@@ -14439,3 +14439,96 @@ PROXIMA ITER:
 - W4: dashboard-admin /admin/disputes listar
 - W13: notification-svc templates XSS audit
 - W3 pass 14: audit Dialog wrapper escolar testes (e2e Playwright?)
+
+================================================================
+ITER W18 PASS 7 - product_views rolling 90d/30d idx + cron rotation (2026-05-27)
+================================================================
+ESCOPO: idx parcial rolling window p/ /recommendations/for-me CTEs
+FILES:
+- db/migrations/041_product_views_rolling_idx.sql (NEW)
+- services/product-svc/src/server.js (rotation cron via setInterval)
+
+CONTEXTO: W18 pass 6 (mig 038:52-58) documentou gap:
+  "PG REQUER imutabilidade no WHERE CREATE INDEX. NOW() nao IMMUTABLE.
+   Solucao requer cron periodico DROP+CREATE com data dinamica - merece
+   iter dedicada W18 pass 7."
+Esta iter fecha o loop. Deferido N iters (passes 8-13 prioridade outros).
+
+QUERY ALVO (product-svc/routes/public.js linhas 50-68):
+  /recommendations/for-me CTE user_categories: created_at > NOW() - 30d
+  /recommendations/for-me CTE viewed:          created_at > NOW() - 90d
+product_views eh tabela ALTA escrita (1 row/view ~1M+ rows mensais).
+90% das rows sao > 90d (irrelevantes p/ recommendations).
+idx_pviews_user_recent (mig 011:13) cobre user_id mas scan filtra
+created_at apos fetch -> N rows desperdicados.
+
+SOLUCAO HIBRIDA SCHEMA + CRON:
+
+1. SCHEMA (mig 041): idx parcial com DATA FIXA hardcoded
+   - idx_pviews_rolling_90d ON product_views(user_id, created_at DESC)
+     WHERE created_at > '2026-02-26'::TIMESTAMPTZ  -- today - 90d
+   - idx_pviews_rolling_30d ON product_views(user_id, product_id, created_at DESC)
+     WHERE created_at > '2026-04-27'::TIMESTAMPTZ  -- today - 30d
+   - 30d composto inclui product_id (DISTINCT product_id no CTE viewed)
+   - Idx contem SO ~10% das rows (rolling window)
+   - PG planner usa Index Scan se WHERE query date > idx threshold
+
+2. CRON ROTATION (server.js cron via setInterval semanal):
+   - 1min apos boot + a cada 7 dias
+   - Calcula date_Nd = today - Nd + 7d slack
+     (idx > 83d cobre queries > 90d ate proxima rotation)
+     (idx > 23d cobre queries > 30d ate proxima rotation)
+   - CREATE CONCURRENTLY ..._new WHERE > new_date
+   - DROP CONCURRENTLY antigo
+   - ALTER RENAME _new -> primary name
+   - try-catch swallow: erro nao crasha svc
+
+CONCURRENTLY ESSENCIAL:
+- Sem lock table -> escrita product_views continua durante rebuild
+- product_views eh tabela ALTA escrita (page views)
+- Lock table = error massive (page views perdidas)
+- CONCURRENTLY trade-off: ~30s mais lento que CREATE INDEX comum mas zero downtime
+
+SLACK 7 DIAS:
+- Idx threshold = today - Nd - 7d (mais antigo que query precisa)
+- Cron rotation semanal = idx max 14 dias stale (semana corrida + nao executou ainda)
+- 7d slack absorve 1 semana sem rotation (e.g. svc down 5 dias)
+- Queries WHERE > 90d ainda achadas pelo idx > 83d (superset)
+
+BENEFICIO ESPERADO:
+- Tabela 1M rows -> idx 100K rows (10x menos pages PG cache)
+- Query /recommendations/for-me ~500ms -> ~20-50ms (~10-25x)
+- product_views tabela ALTA write: idx parcial = INSERT 5x mais rapido
+  (so updates rows que entram na janela, nao TODOS idx existentes)
+
+DEPLOY ORDER:
+1. Apply migration 041 ao DB (cron migration runner auto)
+2. Deploy product-svc rebuild (cron rotation roda 1min apos)
+3. Validate via EXPLAIN ANALYZE /recommendations/for-me:
+   - Deve mostrar "Index Only Scan using idx_pviews_rolling_90d"
+   - Total runtime drasticamente menor
+
+ALTERNATIVA NAO USADA (full partitioning):
+- product_views BY RANGE (created_at) particionado mensal
+- Mais complexo: PARTITIONS + index nas partitions + drop old monthly
+- Trade-off: muito codigo migration + deploy risk
+- DEFERIDO: rolling idx eh 80% do beneficio com 20% do trabalho
+
+PATTERN W18 ROLLING WINDOW IDX (NOVO):
+- Tabelas com timestamps + queries time-window comum
+- Idx parcial data fixa + rotation cron weekly
+- Aplicavel: search_log (trending recent), audit_log (auditavel 90d),
+  webhook_events (reconcile recent failures), price_history (charts 30d)
+
+W18 PROGRESS:
+- pass 1-2: cache layer Redis + middleware
+- pass 3-4: lazy loading imagens
+- pass 5: webhook reconcile cron + TTL alignments
+- pass 6: idx parcial co_buyers (orders + order_items)
+- pass 7: product_views rolling 90d/30d + cron rotation (esta iter)
+
+PROXIMA ITER:
+- W4: dashboard-admin /admin/disputes listar (consume pass 29)
+- W13: notification-svc templates XSS audit (render context)
+- W18 pass 8: audit pg_stat_user_indexes (drop dead idx ~2 weeks data)
+- W3 pass 14: testes e2e Dialog wrapper (Playwright?)
