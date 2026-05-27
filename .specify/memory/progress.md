@@ -5521,3 +5521,65 @@ PROXIMA ITER:
   em auth-errors.ts (UX PT-BR final)
 - Form de edicao CPF na page /conta (verificar se ja existe form de profile)
 - Considerar mascara automatica CPF no input (UX MLB-style)
+
+## WORKER 1 pass 3 (PROFILE) - /conta/perfil form + CPF mask + UX completo
+
+GAP DETECTADO (proxima iter do W2 pass 5):
+"Mapping invalid_cpf/cnpj em auth-errors.ts; form CPF edit em /conta"
+
+FLUXO E2E COMPLETO (3 passes cumulativos):
+- W2 pass 4: /checkout banner preventivo (frontend reativo)
+- W2 pass 5: auth-svc GET cpf + PATCH algoritmo (backend completo)
+- W1 pass 3 (este): /conta/perfil form completo + mask + validation client
+
+5 ARQUIVOS MODIFICADOS:
+
+1. apps/storefront/src/lib/auth-errors.ts:
++ invalid_cpf: 'CPF invalido (algoritmo Receita Federal)'
++ invalid_cnpj: 'CNPJ invalido (algoritmo Receita Federal)'
++ invalid_cpf_cnpj_length: 'CPF 11 digitos ou CNPJ 14 digitos'
+
+2. apps/storefront/src/app/conta/perfil/page.tsx (NOVO):
++ Form: email (disabled-readonly), full_name, cpf_cnpj, phone_e164
++ maskCpfCnpj() automatica: detecta 11 OR 14 digits e aplica formato
+  - CPF: 000.000.000-00
+  - CNPJ: 00.000.000/0000-00
++ isValidCpf/isValidCnpj algoritmo CLIENT (mesmo do backend - defense em depth)
++ Validacao preventiva ANTES submit (UX snappy)
++ Submit normaliza apenas digits (CPF mascarado funciona)
++ Success toast verde + redirect /conta apos 1.5s
+
+3. apps/storefront/src/app/conta/perfil/layout.tsx (NOVO):
++ Metadata noindex (page privada autenticada)
+
+4. apps/storefront/src/app/checkout/page.tsx:
++ Banner link atualizado: /conta -> /conta/perfil (direct to form)
+
+5. apps/storefront/src/app/conta/page.tsx:
++ Novo card "Editar perfil" no dashboard (User icon)
++ Desc dinamico: cpf existe -> "Nome, CPF, telefone"
+                  cpf NULL  -> "Complete CPF para pagar" (CTA visivel)
+
+DEPLOY:
+- commit c74aa19 pushed
+- storefront rebuilt (~3.2s) + deployed converged
+
+VALIDACAO PUBLICA:
+- /conta/perfil HTTP 200 OK
+- Title: "Editar perfil - Code & Agent Shop"
+- Robots: noindex, nofollow (privacy correct)
+- Bundle /conta inclui: "Editar perfil", "/conta/perfil", "Complete CPF"
+- Form renderiza client-side (depende de Api.me state)
+
+CICLO W2 (passes 1-5) + W1 pass 3 FECHA TEMA CPF END-TO-END:
+- Frontend register length-only (W1 pass 2)
+- Backend PATCH /me algoritmo (W2 pass 5)
+- Backend payment-svc length (W11 pass 4)
+- Frontend banner preventivo (W2 pass 4)
+- Frontend form + mask + validacao (W1 pass 3)
+- 5 camadas defesa em depth, UX completo, Asaas-safe
+
+PROXIMA ITER:
+- Considerar verificacao CPF/CNPJ via Receita Federal API (anti-fraud)
+- Implementar verificacao email apos PATCH (se trocou email - hoje email locked)
+- Audit /admin/users edit perfil (admin pode setar CPF p/ qualquer user?)
