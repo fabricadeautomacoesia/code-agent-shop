@@ -13625,3 +13625,94 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d cron
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W13: notification-svc Regra N+SKIP LOCKED pattern
+
+================================================================
+ITER W7 PASS 25 - vault-svc /revoke 5 BUGS (forense + race + audit) (2026-05-27)
+================================================================
+ESCOPO: vault-svc POST /keys/:id/revoke (revoga key crypto - critical sec event)
+FILE: services/vault-svc/src/server.js (linhas 378-388 -> rewrite)
+
+CONTEXTO: W7 pass 24 cobriu /use (load balancing). Pass 25 audita /revoke.
+Audit revelou /rotate (linhas 418-497) JA EM EXCELENTE estado (Regra O
+multi-phase + audit_log + FOR UPDATE pre-existente). Foco em /revoke
+simples-aparente mas com 5 bugs GRAVES.
+
+BUGS CORRIGIDOS (5):
+
+1. UUID validation faltando (PG 22P02 -> 500)
+- Pre-fix: req.params.id raw no SQL -> 'abc' = 500 generico
+- Pattern W4/W7 cross-svc consolidado
+- FIX: REVOKE_UUID_RE.test() upfront -> 400 explicit
+
+2. *** RACE Regra K *** sem FOR UPDATE
+- 2 admins clicam revoke simultaneo
+- UPDATE concorrente: is_active=FALSE OK mas revoked_reason last-write-wins
+- PIOR: /use concorrente pode SELECT key ANTES do UPDATE revoke chegar
+  -> plain_key retornado a request em curso enquanto admin revoga
+  -> 1 request "vaza" key pos-revoke (race window)
+- FIX: SELECT FOR UPDATE pessimistic lock (combina com FIX pass 24 em /use
+  que tambem usa SELECT FOR UPDATE SKIP LOCKED)
+
+3. *** IDEMPOTENCY BUG GRAVE *** FORENSE TIMELINE CORRUPTION
+- Pre-fix: UPDATE WHERE id=$2 SEM is_active check
+- CENARIO CATASTROFICO COMPLIANCE:
+  T0 (10:00) Admin A revoga key reason="leak suspected"
+    -> revoked_at=10:00, revoked_reason="leak suspected"
+    -> Audit log EXTERNO (SIEM, splunk) registra incident
+  T1 (10:00-14:00) Forense iniciada, response team investiga
+  T2 (14:00) Admin B revoga MESMA key reason="rotation schedule"
+    -> UPDATE sobrescreve: revoked_at=14:00, revoked_reason="rotation schedule"
+  T3 (16:00) Forense olha DB
+    -> Historico do incident 10:00 APAGADO no DB
+    -> DB diverge do audit log externo
+    -> Timeline forense corrompido
+    -> Compliance critical: nao consegue provar "quando soubemos do leak"
+- FIX: WHERE is_active = TRUE (idempotent guard)
+  - ROWCOUNT=0 se ja revogada -> 409 Conflict + revoked_at original + reason original
+  - Preserva timeline forense IMUTAVEL no DB
+  - Pattern compliance: revoke eh OPERACAO TERMINAL (sem re-revoke)
+
+4. AUDIT_LOG missing
+- Security event crit (vault key revoke) sem trail no DB
+- Pattern W7 pass 23 (payouts) estabeleceu audit em high-impact endpoints
+- Revoke key crypto = security event mesmo nivel (forense/compliance)
+- FIX: INSERT audit_log no MESMO tx() (atomic with UPDATE)
+- payload_after JSON: provider, key_alias, fingerprint, reason, ip
+- Backwards-compat: payload nao inclui encrypted_key/iv/tag (Regra P)
+
+5. RETURNING check missing -> 404 ghost
+- Pre-fix: UPDATE id=$2 + res.json({ok:true})
+- UUID valido mas id nao existe no DB -> ROWCOUNT=0 mas client OK 200
+- Cliente "sucesso" mas DB nao mudou nada
+- FIX: SELECT FOR UPDATE upfront -> rowcount=0 -> 404 next(notFound)
+
+PATTERN W7 SEC EVENT ENDPOINTS COMPLETOS:
+- Pass 17 checkout: deleted_at WRITE
+- Pass 18 orders read: download_token nao vaza
+- Pass 19 cart loyalty: FOR UPDATE
+- Pass 20 download: cap + DMCA + audit
+- Pass 21 payment create: ownership + race + idempotent
+- Pass 22 webhook: race + state machine + unknown events
+- Pass 23 payout process: multi-phase + audit + state machine
+- Pass 24 vault /use: SELECT explicit crypto + SKIP LOCKED pool
+- Pass 25 vault /revoke: idempotent + forense + audit (esta iter)
+
+NOVA REGRA Q (W7 pass 25):
+Q. Idempotent guards em operacoes TERMINAIS (revoke, refund, archive,
+   ban-user). WHERE state = active_state (impede re-execucao).
+   ROWCOUNT=0 -> 409 Conflict com state ORIGINAL (preserva timeline).
+   Anti-pattern: UPDATE sem state guard -> last-write-wins -> compliance break.
+   Aplica: vault revoke (esta iter), futuros: refund, archive_product, ban_user
+
+PATTERN W7 16 ENDPOINTS + 17 REGRAS (A-Q):
+- product-svc: 4
+- search-svc: 5
+- order-svc: 8
+- payment-svc: 3
+- vault-svc: 2 (/use pass 24, /revoke pass 25; /rotate audit clean)
+
+PROXIMA ITER:
+- W7 pass 26: notification-svc audit (Regra N state machine)
+- W18 pass 7: idx parcial product_views > 90d
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W13: notification-svc outbox SKIP LOCKED pattern

@@ -376,13 +376,103 @@ app.post('/use',
 );
 
 // POST /api/vault/keys/:id/revoke
+// FIX-WORKER-7 pass 25: 5 BUGS GRAVES em endpoint critical security
+// (revoga key crypto - forense + compliance + race).
+//
+// 1. UUID validation faltando -> 'abc' = PG 22P02 -> 500 generico
+//    Pattern W4/W7 cross-svc consolidado.
+//
+// 2. *** RACE Regra K *** sem FOR UPDATE
+//    2 admins revoke simultaneo: UPDATE concorrente (idempotente parcial -
+//    is_active=FALSE OK mas revoked_reason sobrescreve last write wins).
+//    Pior: /use concurrente em outra request pode SELECT key ANTES do
+//    UPDATE chegar -> retorna plain_key + revoga LATER -> race vazamento.
+//
+// 3. *** IDEMPOTENCY BUG GRAVE *** WHERE id=$2 sem is_active check
+//    Cenario forense catastrofico:
+//    - 10:00 Admin A revoga key reason="leak suspected" -> revoked_at=10:00
+//    - 10:00-14:00: forense iniciada, audit log externo registra incident
+//    - 14:00 Admin B revoga MESMA key reason="rotation schedule" -> SOBRESCREVE
+//    - DB agora diz: revoked_at=14:00, reason="rotation schedule"
+//    - Forense 16:00 olha DB -> historico do incident 10:00 APAGADO
+//    - Compliance issue critical: timeline forense corrompido
+//    - Audit_log externo ainda tem record, mas DB <-> audit_log divergem
+//    FIX: WHERE is_active = TRUE -> ROWCOUNT=0 se ja revogada -> 409 Conflict
+//    com info "already_revoked_at" + reason original (preserva historico).
+//
+// 4. AUDIT_LOG missing - security event crit sem trail
+//    Pattern W7 pass 23 (payouts) estabeleceu audit em real-money-out.
+//    Revoke key crypto = sec event mesmo nivel (forense/compliance).
+//    FIX: INSERT audit_log dentro do tx() (atomic with UPDATE).
+//
+// 5. RETURNING check missing -> client recebe {ok:true} mesmo se id valido
+//    UUID mas nao existir no DB.
+//    FIX: RETURNING id + 404 se rowcount=0.
+const REVOKE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 app.post('/keys/:id/revoke', adminOnly,
-  validate({ body: z.object({ reason: z.string().max(200) }) }),
-  asyncHandler(async (req, res) => {
-    await query(
-      `UPDATE vault_api_keys SET is_active = FALSE, revoked_at = NOW(), revoked_reason = $1 WHERE id = $2`,
-      [req.body.reason, req.params.id]
-    );
+  validate({ body: z.object({ reason: z.string().min(3).max(200) }) }),
+  asyncHandler(async (req, res, next) => {
+    if (!REVOKE_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+
+    // FASE 1 (tx atomic): lock + idempotent UPDATE + audit_log
+    let outcome;
+    await tx(async (c) => {
+      // Lock pessimistico + verifica state ANTES de mutate
+      const cur = await c.query(
+        `SELECT id, is_active, revoked_at, revoked_reason, provider, key_alias, key_fingerprint
+           FROM vault_api_keys
+          WHERE id = $1::UUID
+          FOR UPDATE`,
+        [req.params.id]
+      );
+      if (!cur.rows.length) { outcome = { error: 'not_found' }; return; }
+      const k = cur.rows[0];
+      if (!k.is_active) {
+        // Ja revogada - retorna 409 Conflict + info original (forense intact)
+        outcome = {
+          error: 'already_revoked',
+          revoked_at: k.revoked_at,
+          revoked_reason: k.revoked_reason,
+        };
+        return;
+      }
+      // Idempotent UPDATE (defense-in-depth - mesmo com FOR UPDATE acima)
+      await c.query(
+        `UPDATE vault_api_keys
+            SET is_active = FALSE, revoked_at = NOW(), revoked_reason = $1
+          WHERE id = $2::UUID AND is_active = TRUE`,
+        [req.body.reason, req.params.id]
+      );
+      // Audit log no MESMO tx (atomic with UPDATE)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'vault.revoke', 'vault_api_key', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({
+           provider: k.provider,
+           key_alias: k.key_alias,
+           fingerprint: k.key_fingerprint,
+           reason: req.body.reason,
+           ip: req.ip,
+         })]
+      );
+      outcome = { ok: true };
+    });
+
+    if (outcome?.error === 'not_found') {
+      return next(errorHandler.notFound('key_not_found'));
+    }
+    if (outcome?.error === 'already_revoked') {
+      // 409 Conflict - preserva timeline forense
+      return res.status(409).json({
+        error: 'already_revoked',
+        message: 'Chave ja foi revogada anteriormente.',
+        revoked_at: outcome.revoked_at,
+        revoked_reason: outcome.revoked_reason,
+      });
+    }
     res.json({ ok: true });
   })
 );
