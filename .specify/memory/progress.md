@@ -9258,3 +9258,101 @@ PROXIMA ITER:
 - W4 pass 10: /admin/vault error rate column usando W14-7 indice
 - W11 pass 8: POST /payments/webhooks/:id/reset (sem psql)
 - W3 pass 12: AddToCart enhancement
+
+## WORKER 11 PASS 8 - POST /payments/webhooks/:id/reset + UI button
+
+ENCERRA INTEGRACAO PAYMENT WEBHOOK FULL CYCLE (5 passes):
+- W11 pass 6: tracking processed_at/error/retry_count
+- W14 pass 7: idx_asaas_evt_retry partial composto
+- W11 pass 7: cron reconciliation 5min + GET /dead endpoint
+- W4 pass 8: UI /admin/webhooks consume /dead
+- W11 pass 8 (esta iter): reset endpoint + UI button (SELF-SERVICE)
+
+BACKEND (payment-svc):
+
+POST /payments/webhooks/:id/reset:
+- jwt.requireAuth admin/staff
+- PAYMENT_UUID_RE valida format upfront (anti PG 22P02)
+- tx() bloco com SELECT FOR UPDATE (atomicidade)
+- Pre-checks:
+  * not_found -> 404
+  * signature_valid=FALSE -> 400 (anti-fraude)
+  * processed_at NOT NULL -> 400 (idempotente)
+- UPDATE retry_count=0, processing_error=NULL
+- Audit log: action='webhook.reset' + previous_retry_count
+- setImmediate processWebhookEvent IMEDIATAMENTE (nao espera cron)
+- Success: UPDATE processed_at=NOW() + order_id linked
+- Fail: UPDATE processing_error + retry_count++ (volta a dead letter)
+
+ATOMICIDADE:
+- SELECT FOR UPDATE evita:
+  * Cron reconciliation processar simultaneamente -> double-process
+  * Admin clicar Reset 2x rapido -> double-process
+- setImmediate roda APOS commit (lock ja liberado)
+
+FRONTEND (/admin/webhooks):
+
+- useAdminAction hook (pattern W4 consolidado)
+- action.run('reset-${id}', ...) por botao
+- Banners action.error + action.success
+- RefreshCw icon com animate-spin durante request
+- confirm() antes (acao admin sensitiva)
+- Help banner atualizado: psql -> botao Reset
+
+USER FLOW COMPARISON:
+
+ANTES (workflow psql, ~10min):
+1. SSH VPS
+2. su postgres + psql -d cas
+3. SELECT id FROM ... WHERE retry_count > 5;
+4. Copy UUID
+5. UPDATE asaas_webhook_events SET retry_count=0;
+6. Aguardar 5min cron
+7. SELECT validar processed_at
+- Sem audit log
+- Skills SSH/psql exigidas
+- 5 etapas manuais
+
+DEPOIS (self-service, ~5s):
+1. /admin/webhooks
+2. Identifica webhook problema
+3. Click Reset -> confirm -> spinner 1-2s
+4. Banner verde "Webhook resetado, reprocessando"
+5. Sai da dead letter automaticamente
+- Audit log automatico
+- Sem SSH/psql
+- 1 click
+
+GANHOS:
+- Tempo: 10min -> 5s (~120x faster)
+- Audit: forensics automatic (quem/quando)
+- Acessibilidade: qualquer staff/admin, sem skill psql
+
+DEPLOY:
+- commit 2207398 push main OK
+- 140 insertions, 4 deletions (2 files)
+- payment-svc + dashboard-admin rebuild via VPS cron
+- Sem mudanca schema (campos ja em mig 006)
+
+W11 PAYMENT AUDIT FINAL (passes 1-8):
+- pass 1: createPayment + split baseline
+- pass 2: polling Asaas pos-create
+- pass 3: friendly error mapping
+- pass 4: CPF/CNPJ guard preventive
+- pass 5: parcelamento totalValue
+- pass 6: webhook processed_at tracking
+- pass 7: cron reconciliation 5min + /dead
+- pass 8: reset endpoint + UI button (esta iter)
+
+CICLO PAYMENT WEBHOOK FULL E2E:
+- Receive: HMAC valida + insert audit
+- Process: tentativa + tracking
+- Retry: cron 5min auto (1-5 attempts)
+- Dead letter: visibility UI admin
+- Reset: 1-click self-service + audit log
+- Reprocess: imediato + atomico
+
+PROXIMA ITER:
+- W4 pass 10: /admin/vault error rate column (W14-7 indice)
+- W12 pass 6: qa-svc audit confidence threshold edge cases
+- W11 pass 9: webhook event_type por tipo (filter UI)
