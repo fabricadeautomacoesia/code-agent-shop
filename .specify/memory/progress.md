@@ -102,6 +102,23 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## SELLER DASH - WORKER 5 (UPLOAD STALE CLOSURE FIX)
+Audit estatico em dashboard-seller revelou bug subtil em /upload:
+- handleFile usava setUploading({...uploading, [field]: true}) e finally false.
+- Closure captura 'uploading' no momento do call. Uploads cover+pkg paralelos
+  sobrescreviam o flag um do outro silenciosamente.
+- Spinners poderiam desaparecer prematuramente, dando impressao de upload
+  completo enquanto ainda processando o outro arquivo.
+- Mesmo bug em setForm que poderia perder cover_image_url se pkg sobrescreve.
+
+FIX commitado + deployed (1470f96):
+- setUploading((p) => ({ ...p, [field]: ... })) functional setState
+- setForm((p) => ({ ...p, [targetField]: r.url })) idem
+- Padrao React canonical para state-merge em updates assincronos.
+
+VALIDADO: /upload page rebuilt + bundle contem cover_image_url e package_url.
+Race condition resolvida (testavel via paralelos uploads no browser).
+
 ## PDP TABS - WORKER 3 (TABS DECORATIVAS -> FUNCIONAIS)
 Audit em /product/[slug] revelou bug critico:
 - 5 tabs (Visao Geral, Pre-requisitos, Changelog, Reviews, Q&A) eram <button> SEM onClick.
