@@ -5186,3 +5186,56 @@ GAP DETECTADO (proxima iter):
 - Audit autocomplete tem rate-limit? Pode ser hammered por bots
 - Considerar fuzzy search com q=2 chars + indication "did you mean..."
 - search-svc tem timeout em queries lentas? PG statement_timeout configured?
+
+## WORKER 10 pass 6 (SEARCH+DB) - rate-limit + statement_timeout defensivos
+
+GAP DETECTADO (proxima iter do W10 pass 5):
+1. "Audit autocomplete tem rate-limit? Pode ser hammered por bots"
+2. "search-svc tem timeout em queries lentas? PG statement_timeout configured?"
+
+FIX (2 arquivos):
+
+1. services/search-svc/src/server.js - rate-limit por IP:
++ import { rateLimiter } from @cas/shared
++ app.set('trust proxy', 1) - IP real do X-Forwarded-For
++ searchLimiter (30 req/min/IP) - 1 req/2s sustentado
++ autocompleteLimiter (60 req/min/IP) - 1 req/s, typing rapido OK
++ Aplicado em GET / + GET /autocomplete
++ Response: 429 rate_limit_exceeded + retry_after_ms
+
+Limites generous para humanos legit (1 req/s autocomplete cobre typing
+muito rapido) mas barram bots scraping (geram 100s req/s tipicamente).
+
+2. packages/db-client/src/index.js - PG statement_timeout:
++ Pool config statement_timeout: 10000 (10s default)
++ Configuravel via PG_STATEMENT_TIMEOUT_MS env
++ Defensive: query > 10s -> PG ERROR cancela statement
++ Mata runaway loops, queries cartesianas, full scans em prod
++ Pool nao locked indefinidamente em query lenta
++ Affects ALL services (db-client e shared) - rebuild natural ao deploy normal
+
+DEPLOY:
+- commit 3193079 pushed
+- search-svc rebuilt (~3.1s) + deployed converged
+- Outros services: PG_STATEMENT_TIMEOUT efetivo apos proximo rebuild
+  (mudanca em packages/db-client requer rebuild todos consumers)
+
+VALIDACAO PUBLICA (3 cenarios):
+- /api/search smoke -> 200 OK
+- /api/search/autocomplete smoke -> 200 OK
+- Burst test 70 autocomplete em loop:
+  * 59 success (HTTP 200)
+  * 11 rate-limited (HTTP 429)
+  * Total 70 ✓ - limit ~60 + extras 429 (sliding window correto)
+
+IMPACTO:
+- Rate-limit: bots scraping search publica nao causam load infinito
+- statement_timeout: queries runaway nao bloqueiam pool DB
+- 2 niveis defesa em depth: L7 (rate-limit) + L5 (PG timeout)
+- Limites configuraveis via env (operacional pode ajustar sem redeploy)
+
+GAP PROXIMA ITER:
+- Rate-limit similar em outros endpoints publicos (sellers list, products)
+- Replicar statement_timeout config nos outros 12 services Node
+  (rebuild natural ou batch deploy)
+- Considerar Redis-backed rate-limit para multi-pod prod scale
