@@ -38,9 +38,28 @@ export default function CheckoutPage() {
     setLoading(true); setErr('');
     try {
       const order: any = await Api.checkout(token!, method, method === 'credit_card' ? installmentCount : undefined);
-      // chama payment-svc via gateway (assincrono pelo backend, mas confirmamos com /orders/:id)
-      const polled: any = await Api.api(`/orders/${order.order.id}`, { auth: token!, cache: 'no-store' });
-      setPaymentResult({ order: order.order, asaas: polled.order });
+      // FIX-WORKER-2 pass 2: payment-svc cria Asaas via setImmediate no backend (async).
+      // Antes: 1 GET imediato -> asaas_pix_qrcode=null, UI mostra "Pedido criado!" sem QR.
+      // Agora: poll com backoff 500ms..3s, 8 tentativas (~14s timeout) ate receber payment.
+      // Boleto/invoice tem mesma logica (campos diferentes por metodo).
+      const isReady = (o: any) => {
+        if (method === 'pix') return !!o.asaas_pix_qrcode;
+        if (method === 'credit_card') return !!o.asaas_invoice_url;
+        if (method === 'boleto') return !!o.asaas_boleto_url;
+        return !!o.asaas_payment_id;
+      };
+      let polled: any = null;
+      const delays = [500, 800, 1200, 1800, 2400, 3000, 3000, 3000];
+      for (const d of delays) {
+        await new Promise((r) => setTimeout(r, d));
+        const r: any = await Api.api(`/orders/${order.order.id}`, { auth: token!, cache: 'no-store' });
+        polled = r.order;
+        if (isReady(polled)) break;
+      }
+      if (!isReady(polled)) {
+        setErr('Pagamento esta demorando mais do que o esperado. Veja em "Meus pedidos" - o pagamento sera atualizado em segundos.');
+      }
+      setPaymentResult({ order: order.order, asaas: polled });
     } catch (e: any) {
       setErr(e.data?.message || e.message);
     } finally { setLoading(false); }
@@ -53,6 +72,15 @@ export default function CheckoutPage() {
         <div className="glass p-8">
           <h1 className="font-display font-bold text-3xl mb-2">Pedido {o.order_number} criado!</h1>
           <p className="text-white/60 mb-6">Conclua o pagamento abaixo:</p>
+
+          {/* FIX-WORKER-2 pass 2: fallback se Asaas demorou (raro mas possivel) */}
+          {!o.asaas_payment_id && (
+            <div className="p-4 rounded-lg bg-orange-500/10 border border-orange-500/30 mb-4">
+              <p className="text-sm text-orange-200">
+                Estamos preparando seu pagamento. Aguarde alguns segundos e atualize a pagina de <Link href={`/conta/pedidos/${o.id}`} className="underline">Meus pedidos</Link>.
+              </p>
+            </div>
+          )}
 
           {method === 'pix' && o.asaas_pix_qrcode && (
             <div className="space-y-4">
