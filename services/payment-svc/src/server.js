@@ -32,8 +32,21 @@ app.get('/health', (_req, res) => res.json({
 //   2-3x-> sem juros (parcela minima R$5)
 //   4-12x -> juros 2.99% a.m. (composto), parcela minima R$10
 app.get('/payments/installments/preview', asyncHandler(async (req, res) => {
-  const amount = parseInt(req.query.amount_cents || '0', 10);
-  const max = Math.min(12, parseInt(req.query.max || '12', 10));
+  // FIX-WORKER-11: amount_cents agora valida explicitamente (antes silenciava
+  // param invalido/ausente como amount=0 -> {installments:[]} confuso).
+  // Tambem rejeita negativos e amounts absurdos para evitar DoS via huge loop.
+  const raw = req.query.amount_cents;
+  if (raw === undefined || raw === '') {
+    return res.status(400).json({ error: 'missing_amount_cents', message: 'Param amount_cents obrigatorio' });
+  }
+  const amount = parseInt(raw, 10);
+  if (!Number.isFinite(amount) || amount < 0) {
+    return res.status(400).json({ error: 'invalid_amount_cents', message: 'amount_cents deve ser inteiro >= 0' });
+  }
+  if (amount > 100_000_000) {
+    return res.status(400).json({ error: 'amount_too_large', message: 'amount_cents excede R$ 1.000.000,00' });
+  }
+  const max = Math.min(12, Math.max(1, parseInt(req.query.max || '12', 10)));
   if (amount < 100) return res.json({ amount_cents: amount, installments: [] });
   const monthlyRate = 0.0299;
   const minNoFee = 500;   // R$5 - minimo por parcela sem juros
@@ -184,7 +197,9 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
     return res.status(503).json({ error: 'webhook_not_configured' });
   }
 
-  const raw = req.body.toString('utf8');
+  // FIX-WORKER-11: req.body pode nao ser Buffer se express.raw nao montou
+  // (rota chamada com Content-Type diferente). Garante toString seguro.
+  const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
   const sig = req.headers['asaas-access-token'] || '';
   // timing-safe compare (precisa mesmo length)
   let valid = false;
@@ -197,9 +212,19 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
   let data;
   try { data = JSON.parse(raw); } catch { return res.status(400).json({ error: 'invalid_json' }); }
 
-  // Idempotencia
-  const exists = await query('SELECT 1 FROM asaas_webhook_events WHERE asaas_event_id = $1', [data.id]);
-  if (exists.rows.length) return res.json({ ok: true, duplicate: true });
+  // FIX-WORKER-11: valida shape do payload antes do DB. Antes: body vazio `{}`
+  // causava INSERT com event_type=NULL -> PG 23502 (not_null_violation) -> 500.
+  // Atacantes podiam usar isso para descobrir DB internals via 500 vs 401.
+  if (!data || typeof data !== 'object' || !data.event || typeof data.event !== 'string') {
+    log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[webhook.invalid_payload]');
+    return res.status(400).json({ error: 'invalid_payload', message: 'event field required' });
+  }
+
+  // Idempotencia (so se tiver event_id)
+  if (data.id) {
+    const exists = await query('SELECT 1 FROM asaas_webhook_events WHERE asaas_event_id = $1', [data.id]);
+    if (exists.rows.length) return res.json({ ok: true, duplicate: true });
+  }
 
   // Audita SEMPRE (mesmo invalido) para investigacao de tentativas de fraude
   await query(
