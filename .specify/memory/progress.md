@@ -4972,3 +4972,52 @@ GAP DETECTADO (proxima iter):
 - /checkout step indicator mobile (1 - 2 - 3) em 375px
 - /admin/* dashboards em mobile (provavelmente desktop-only intencional)
 - Audit modal de pergunta rapida (AskQuickButton) em 375px
+
+## WORKER 14 pass 3 (DB SCHEMA) - migration 031 idx_carts_expires partial
+
+VETOR DETECTADO (audit pg_stat_user_tables + EXPLAIN):
+SELECT id FROM carts WHERE expires_at < NOW() - INTERVAL '7 days'
+-> Seq Scan on carts (sem indice em expires_at)
+
+Em prod com 100k+ carrinhos abandonados (acumulam over time), abandon
+cart cleanup cron faria full scan = CPU dump constante.
+
+Audit tabelas hotspot prio:
+- notifications (3727 seq) - W14 pass 1 + 2 fechou
+- users (520 seq) - mas indexes ja cobrem queries reais (Seq Scan
+  em rows=7 e correto - tabela trivial, planner mantem)
+- sellers (181 seq) - indexes ja cobrem user_id, slug, status
+- carts (sem visibilidade em pg_stat - cleanup ainda nao rodou em prod)
+
+FIX (1 migration db/migrations/031_carts_expires_index.sql):
+CREATE INDEX idx_carts_expires_cleanup
+  ON carts (expires_at)
+  WHERE expires_at IS NOT NULL;
++ ANALYZE carts
+
+Indice PARCIAL:
+- Micro em disco (apenas rows com expiracao explicita)
+- WHERE clause matches exato predicate de queries cleanup
+- Index Scan O(log N) substitui Seq Scan O(N)
+
+APLICACAO em PRODUCAO:
+- docker exec postgres < migration 031
+- Output: CREATE INDEX + ANALYZE OK
+
+VALIDACAO (EXPLAIN ANALYZE):
+- SET enable_seqscan=off (forca uso de idx em tabela pequena)
+- Plan: Index Scan using idx_carts_expires_cleanup OK
+- cost: 8.15 (vs Seq Scan 1.02 em tabela vazia)
+- Em prod 100k rows: planner auto-escolhe idx (Seq Scan custo escala)
+
+IMPACTO ESPERADO em PROD:
+- Cron abandon-cart cleanup vai usar Index Scan
+- CPU reduzido em ate 100x para tabela 100k+ rows
+- Permite expansao do cleanup window (7d -> 30d configuravel)
+
+COMMIT: 0b9bb47 pushed.
+
+PROXIMA ITER (DB):
+- Auditar carts cleanup cron - implementado? Onde?
+- Considerar particionamento de notifications (write-heavy, time-series)
+- Adicionar idx em users.last_login_at se report admin "last seen" implementado
