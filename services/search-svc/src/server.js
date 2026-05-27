@@ -236,6 +236,13 @@ app.get('/top-sellers/:category', asyncHandler(async (req, res) => {
 
 // GET /search/trending - top buscas dos ultimos 7 dias
 // cache 300s - trending recalcula janela 7 dias
+// FIX-WORKER-10 pass 3: bug detectado por audit - SQL injection/XSS attempts
+// apareciam como trending publicos. Ex: "'; drop table products;--" exibido na home.
+// Filtros aplicados:
+// 1. CHAR_LENGTH >= 3 (queries 1-2 chars sao lixo/typo)
+// 2. NOT LIKE '%''%' AND NOT LIKE '%--%' AND NOT LIKE '%<%' (filtra SQLi/XSS)
+// 3. ~ '^[\w\s\-]+$' (apenas alphanum + espaco + hifen via regex POSIX)
+// 4. COUNT >= 2 (1 ocorrencia nao e trend - reduz spam de bot)
 app.get('/trending',
   cache.cacheMiddleware(() => 'search:trending', 300),
   asyncHandler(async (_req, res) => {
@@ -244,7 +251,12 @@ app.get('/trending',
        FROM search_log
       WHERE created_at > NOW() - INTERVAL '7 days'
         AND query_normalized != ''
+        AND CHAR_LENGTH(query_normalized) >= 3
+        AND query_normalized !~ '[''"<>;\\\\]'
+        AND query_normalized NOT ILIKE '%--%'
+        AND query_normalized NOT ILIKE '%/*%'
       GROUP BY query_normalized
+      HAVING COUNT(*) >= 2
       ORDER BY count DESC LIMIT 20`
   );
   res.json({ trending: r.rows });
