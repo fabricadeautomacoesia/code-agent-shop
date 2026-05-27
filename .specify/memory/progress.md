@@ -102,6 +102,31 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## ADMIN AUDIT - WORKER 4 (UUID 22P02 LEAK FIX)
+Audit dos endpoints admin via curl com token role=admin revelou:
+- GET /api/orders/admin -> HTTP 500 'database_error'
+- Log do server-side mostrou erro PG 22P02 (invalid input syntax for type uuid: 'admin')
+- Causa: rota /:id capturava qualquer slug nao-/admin/recent e tentava cast para UUID.
+
+FIX DEFESA EM PROFUNDIDADE commitado + deployed (b609100):
+
+1. order-svc/routes/orders.js GET /:id:
+   - Regex UUID antes do query.
+   - Param invalido -> 404 limpo sem ir ao Postgres.
+
+2. @cas/shared/error-handler.js (afeta TODOS os 16 svcs):
+   - PG 22P02 capturado globalmente -> 404 'not_found' + 'Recurso nao encontrado'.
+   - Padrao se aplica a qualquer /:uuid em qualquer svc - se param malformado,
+     resposta limpa em vez de leak.
+
+REBUILT 4 SVCS (order/product/seller/auth) com shared atualizado.
+
+VALIDADO E2E:
+- /api/orders/admin -> 404 order_not_found (antes era 500)
+- /api/orders/not-a-uuid-here -> 404 (antes era 500)
+- /api/orders/admin/recent -> 200 (rota real preservada)
+- /api/orders/<uuid-valido-mas-inexistente> -> 404 normal
+
 ## MOBILE RESPONSIVE - WORKER 15 (NAV HAMBURGER MENU)
 Audit em 375px mobile: Nav escondia todos os 6 nav links em lg:flex - mobile users
 viam apenas logo + 3 icones. Icone Menu de lucide importado mas nunca usado.
