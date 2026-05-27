@@ -215,6 +215,16 @@ app.post('/qna/:id/answer', jwt.requireAuth({ roles: ['seller','admin'] }),
 // ============================================================
 // REPORTS
 // ============================================================
+// FIX-WORKER-6 pass 2: target_id existencia + dedup user/target/reason
+// Antes: qualquer buyer podia flood reports + alerts table com UUIDs fake.
+// Cada denuncia gerava alerta DB para admin = DoS por noise + crescimento DB.
+const TARGET_TABLE_MAP = {
+  product: 'products',
+  seller: 'sellers',
+  review: 'product_reviews',
+  user: 'users',
+  qna: 'product_qna',
+};
 app.post('/reports', jwt.requireAuth(),
   validate({ body: z.object({
     target_type: z.enum(['product','seller','review','user','qna']),
@@ -223,7 +233,27 @@ app.post('/reports', jwt.requireAuth(),
     description: z.string().max(2000).optional(),
     evidence_urls: z.array(z.string().url()).optional(),
   })}),
-  asyncHandler(async (req, res) => {
+  asyncHandler(async (req, res, next) => {
+    const tbl = TARGET_TABLE_MAP[req.body.target_type];
+    // 1. Valida existencia do target (anti-spam UUID fake)
+    const exists = await query(
+      `SELECT 1 FROM ${tbl} WHERE id = $1 LIMIT 1`,
+      [req.body.target_id]
+    );
+    if (!exists.rows.length) {
+      return next(errorHandler.notFound('target_not_found'));
+    }
+    // 2. Dedup: mesmo user nao pode reportar o mesmo target+reason 2x em 7 dias
+    const dup = await query(
+      `SELECT 1 FROM reports
+        WHERE reporter_user_id = $1 AND target_type = $2 AND target_id = $3
+          AND reason_code = $4 AND created_at > NOW() - INTERVAL '7 days'
+        LIMIT 1`,
+      [req.user.sub, req.body.target_type, req.body.target_id, req.body.reason_code]
+    );
+    if (dup.rows.length) {
+      return next(errorHandler.conflict('duplicate_report', 'Voce ja reportou este item nos ultimos 7 dias'));
+    }
     const r = await query(
       `INSERT INTO reports (reporter_user_id, target_type, target_id, reason_code, description, evidence_urls)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
