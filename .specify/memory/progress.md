@@ -17309,7 +17309,32 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ notification-svc /read-all (pass 89) - 4 bugs DoS+audit+cap
 - ✅ aiops-svc /status (pass 90) - 4 bugs DLP recon + tier-split
 - ✅ search-svc /search (pass 91) - 4 bugs enums + DLP
-- ✅ search-svc /autocomplete (pass 92 esta iter) - 3 bugs DLP cache + limit + parallel
+- ✅ search-svc /autocomplete (pass 92) - 3 bugs DLP cache + limit + parallel
+- ✅ search-svc /top-sellers + /top-sellers/:category + /trending (pass 93 esta iter) - 6 bugs
+
+W7 PASS 93 RESUMO:
+- search-svc/src/server.js 3 endpoints refactor (6 bugs):
+  * /top-sellers (2 bugs):
+    - Regra I SELECT p.* -> explicit fields whitelist
+      (era vazando qa_verdict/submitted_at/approved_by/qa_run_id)
+    - Regra D: + p.id final tiebreaker no PARTITION BY ORDER
+      (rn arbitrario para products novos sales=0/rating=NULL/published_at=now)
+  * /top-sellers/:category (1 bug):
+    - Regra D: + p.id final tiebreaker em PARTITION + outer ORDER BY
+  * /trending (4 bugs):
+    - Regra D: + query_normalized ASC tiebreaker
+      (2 trends mesmo count -> UX home salta entre cache evictions)
+    - NEW ?limit (1-50, default 20) + cache key vary
+    - DLP mask.text() em response (defesa adicional p/ legacy rows
+      pre-pass-91 que podem ter tokens sk-/Bearer raw em query_normalized)
+    - Cache key inclui :lim (PRE-FIX: mesma key p/ todos ?limit values)
+- Pattern W7 em 99 endpoints + 23 regras (A-W) - 93 micro-iters
+
+PROXIMA ITER:
+- W7 pass 94: search-svc /facets + /categories audit
+- W7 pass 95: payment-svc remaining endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 92 RESUMO:
 - search-svc/src/server.js /autocomplete refactor (3 bugs):

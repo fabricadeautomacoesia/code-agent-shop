@@ -340,12 +340,30 @@ app.get('/top-sellers',
   //    -> produtos da plataforma INVISIVEIS em top-sellers global
   // 2. ORDER BY sales_count DESC sem tiebreaker -> empate arbitrario entre
   //    produtos novos com sales_count=0 (mudava entre cache evictions)
+  // FIX-WORKER-7 pass 93: 2 BUGS aplicando Pattern W7 (Regra I + D).
+  //
+  // BUG 1 *** Regra I SELECT p.* *** vaza colunas internas
+  //   products.* expoe qa_verdict / submitted_at / approved_by / qa_run_id.
+  //   Mesma classe pass 74 (/:slug detail) e pass 77 (/reco).
+  //   FIX: explicit fields whitelist (positiva, sem blacklist fragil).
+  //
+  // BUG 2 *** Regra D tiebreaker residual no PARTITION ORDER ***
+  //   ROW_NUMBER() OVER ORDER BY sales_count DESC, avg_rating DESC NULLS LAST,
+  //   published_at DESC NULLS LAST - 3 levels mas products novos (sales=0,
+  //   rating=NULL, published_at=now() identicos burst) -> rn arbitrario.
+  //   FIX: + p.id final tiebreaker em PARTITION ORDER.
   const r = await query(
     `WITH ranked AS (
-       SELECT p.*, c.slug AS cat_slug, c.name AS cat_name,
+       SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
+              p.cover_image_url, p.price_cents, p.currency, p.is_free,
+              p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
+              p.is_platform_owned, p.published_at,
+              p.category_id,
+              c.slug AS cat_slug, c.name AS cat_name,
               ROW_NUMBER() OVER (
                 PARTITION BY p.category_id
-                ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST
+                ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST,
+                         p.published_at DESC NULLS LAST, p.id
               ) AS rn
          FROM products p
          JOIN categories c ON c.id = p.category_id
@@ -360,7 +378,7 @@ app.get('/top-sellers',
             CASE WHEN rn = 1 THEN TRUE ELSE FALSE END AS is_top_seller
        FROM ranked
       WHERE rn <= $1
-      ORDER BY cat_name, rn`, [perCategory, catFilter || null]
+      ORDER BY cat_name, rn, id`, [perCategory, catFilter || null]
   );
   const grouped = {};
   for (const p of r.rows) {
@@ -405,14 +423,14 @@ app.get('/top-sellers/:category',
             p.is_platform_owned, p.published_at,
             s.store_slug, s.store_name, s.reputation_tier,
             ROW_NUMBER() OVER (
-              ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST
+              ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id
             ) AS sales_rank
        FROM products p
        LEFT JOIN sellers s ON s.id = p.seller_id
       WHERE p.status IN ('approved','platform_owned')
         AND p.deleted_at IS NULL
         AND p.category_id = $1
-      ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST
+      ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id
       LIMIT $2`, [cat.id, lim]
   );
   res.json({
@@ -431,9 +449,35 @@ app.get('/top-sellers/:category',
 // 2. NOT LIKE '%''%' AND NOT LIKE '%--%' AND NOT LIKE '%<%' (filtra SQLi/XSS)
 // 3. ~ '^[\w\s\-]+$' (apenas alphanum + espaco + hifen via regex POSIX)
 // 4. COUNT >= 2 (1 ocorrencia nao e trend - reduz spam de bot)
+// FIX-WORKER-7 pass 93: 4 BUGS aplicando Pattern W7 (Regra D + ?limit + DLP + cache key).
+//
+// BUG 1 *** Regra D TIEBREAKER MISSING ***
+//   ORDER BY count DESC sem query_normalized ASC -> 2 trends mesmo count
+//   -> ordem indefinida entre cache evictions (UX home page salta).
+//   FIX: + query_normalized ASC tiebreaker.
+//
+// BUG 2 *** ?limit MISSING ***
+//   PRE-FIX: hardcoded 20. Mobile pode preferir 10, desktop 30.
+//   FIX: ?limit (1-50, default 20) + cache key vary.
+//
+// BUG 3 *** DLP query_normalized public exposure ***
+//   PRE-FIX: trending lista query_normalized publicamente. Embora regex
+//   filtra SQLi/XSS, NAO filtra tokens API (sk-/Bearer/JWT). User cola
+//   acidentalmente "sk-abc123" -> via auto-fill URL bar -> aparece em
+//   /search/trending publico (qualquer visitor ve).
+//   Note: pass 91 ja aplicou mask.text() em search_log.query e query_normalized,
+//   mas legacy rows pre-pass-91 podem ter raw tokens.
+//   FIX: defesa em camada API: mask.text() em response (defesa adicional
+//   p/ proteger legacy log entries).
+//
+// BUG 4 *** Cache key NAO VARIA por limit ***
+//   PRE-FIX: cache key fixa 'search:trending' - ?limit=10 vs ?limit=30
+//   retornam mesmo cached payload (limit=20 default).
+//   FIX: cache key include :lim.
 app.get('/trending',
-  cache.cacheMiddleware(() => 'search:trending', 300),
-  asyncHandler(async (_req, res) => {
+  cache.cacheMiddleware((req) => `search:trending:lim=${Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20))}`, 300),
+  asyncHandler(async (req, res) => {
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const r = await query(
     `SELECT query_normalized, COUNT(*) AS count
        FROM search_log
@@ -445,9 +489,18 @@ app.get('/trending',
         AND query_normalized NOT ILIKE '%/*%'
       GROUP BY query_normalized
       HAVING COUNT(*) >= 2
-      ORDER BY count DESC LIMIT 20`
+      ORDER BY count DESC, query_normalized ASC
+      LIMIT $1`,
+    [limit]
   );
-  res.json({ trending: r.rows });
+
+  // BUG 3 DLP: mask.text defesa adicional p/ legacy rows pre-pass-91
+  const trending = r.rows.map((row) => ({
+    ...row,
+    query_normalized: row.query_normalized ? mask.text(row.query_normalized) : row.query_normalized,
+  }));
+
+  res.json({ trending, count: trending.length, limit });
 }));
 
 // GET /search/categories - mega menu
