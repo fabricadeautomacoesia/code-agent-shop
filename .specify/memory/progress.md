@@ -1012,3 +1012,23 @@ Tabela user_two_factor tem 0 rows em prod (audit confirmou) - sem impacto em usu
 - DNS A pelo usuario: cas, api.cas, admin.cas, seller.cas .inovareinteligenciaartificial.com -> 209.145.60.53
 - VPS+GitHub temporariamente inacessiveis do cliente (rede local 100% packet loss em 8.8.8.8 e 209.145.60.53)
 - Quando connectivity voltar: git push commit 4f32e82 + aplicar migration 012 + rebuild auth-svc
+
+## WORKER 16 (MLB-NEW) - AskQuickButton modal pergunta rapida PDP
+Mercado Livre exibe atalho "Fazer pergunta" prominente no funil de compra
+para reduzir abandono por incerteza tecnica. CAS reproduzido:
+
+NOVO COMPONENTE: apps/storefront/src/components/ask-quick-button.tsx
+- Client Component (useState modal open/close)
+- Botao "Tem alguma duvida? Pergunte ao vendedor" largura cheia logo abaixo CTA+Wishlist
+- Modal z-[80] centralizado glass-strong com backdrop blur, click-outside + X fecha
+- Embeda QnaForm existente (reuse, sem DRY violation) -> onSubmitted fecha modal 1500ms
+- Mensagem de transparencia: "Respondida em ate 48h. Sera publica."
+
+INTEGRACAO: apps/storefront/src/app/product/[slug]/page.tsx
+- Import AskQuickButton + render entre WishlistButton e Trust Signals.
+
+VALIDACAO PUBLICA (chunk JS por ser 'use client'):
+- _next/static/chunks/app/product/[slug]/page-2cdd52262d0b6af1.js contem:
+  AskQuickButton / Fazer pergunta / Pergunte ao vendedor / Tem alguma duvida -> OK
+
+DEPLOY: commit e882b50 pushed, storefront image rebuilt + service replicas atualizadas.
