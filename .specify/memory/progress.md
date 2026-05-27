@@ -7306,3 +7306,80 @@ PROXIMA ITER:
 - W4 pass 6: /admin/orders audit (deve ser read-only por design, validar)
 - W4 pass 7: /admin/sellers tier promotion buttons
 - W4 pass 8: /admin/reports KPIs dashboard
+
+## WORKER 3 PASS 4 - ReviewForm 8 bugs UX + a11y
+
+AUDIT components/review-form.tsx (form pos-compra usado em /conta/pedidos/[id]).
+Encontrado MESMO pattern bugs que qna-form pre-pass 3. Aplicado fix template.
+
+8 BUGS resolvidos:
+
+BUG 1 (err persistente sem auto-clear)
+  setErr('...') sem setTimeout -> mensagem stale ate F5
+  FIX: showErr() helper com setTimeout 5s
+
+BUG 2 (mapper friendly incompleto)
+  if (e.data?.error === 'already_reviewed') ... else raw e.message
+  6 codigos backend vazavam: forbidden_not_buyer, order_not_paid,
+  order_not_fulfilled, product_not_found, rate_limited, spam_detected,
+  validation_error
+  FIX: friendlyReviewError com 7 codigos + tratamento validation_error
+  com switching d.code+field (too_big/invalid_type por field)
+
+BUG 3 (banner visual inconsistente)
+  <div bg-red-500/10 p-2 rounded> simples vs qna-form que tem
+  border + flex justify-between + role=alert + botao fechar
+  FIX: padronizado mesmo visual cross-component
+
+BUG 4 (title sem contador chars)
+  maxLength=200 hard limit sem feedback
+  FIX: contador absolute right (hide vazio / amarelo>90% / red>max)
+
+BUG 5 (body sem contador chars)
+  Mesmo bug em textarea maxLength=5000
+  FIX: contador absolute bottom-right consistente com qna-form
+
+BUG 6 (botao disabled incompleto)
+  disabled = loading || rating===0
+  Submetia com title.length>200 -> backend rejeitava com validation_error
+  FIX: canSubmit = !loading && rating in 1..5 && titleOk && bodyOk
+  Disabled completo previne submit invalido
+
+BUG 7 (estrelas sem a11y)
+  <button>{Star}</button> sem aria-label
+  Screen reader: "button" x 5 sem contexto
+  FIX: aria-label="Avaliar N estrelas" + aria-pressed
+  + focus-visible:outline-2 outline-magenta (keyboard nav)
+
+BUG 8 (rating=0 erro persistente)
+  setErr('Selecione uma nota') sem clear apos selecao
+  FIX: showErr() helper auto-clear 5s
+
+CONSTANTS extraidas:
+- TITLE_MAX = 200
+- BODY_MAX = 5000
+(consistente com qna-form MIN_LEN/MAX_LEN pattern)
+
+DEPLOY:
+- commit 300d6d3 push main OK
+- 81 insertions, 12 deletions
+- storefront rebuild via VPS cron
+
+W3 PDP AUDIT PROGRESS:
+- pass 1: AddToCart funcional + friendly errors
+- pass 2: breadcrumb slash orfao
+- pass 3: QnaForm 6 bugs UX
+- pass 4: ReviewForm 8 bugs UX + a11y (esta iter)
+
+CICLO PDP FORMS UNIFICADOS:
+- friendlyXxxError mapper pattern
+- showErr() helper com auto-clear 5s
+- Contador chars com cores progressivas
+- canSubmit derivado completo
+- aria-label + role=alert
+- Banners box-style com botao fechar
+
+PROXIMA ITER:
+- W3 pass 5: product-tabs.tsx audit (Visao/Pre-req/Changelog/Reviews/Q&A)
+- W3 pass 6: WishlistButton.tsx audit
+- Mover friendly error mappers para lib/friendly-errors.ts (DRY)
