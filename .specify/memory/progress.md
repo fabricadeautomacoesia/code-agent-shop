@@ -102,6 +102,28 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## QA PARSER + FAIL2BAN CRITICAL (WORKERS 12+6 - PUSH PENDENTE)
+
+WORKER 12 pass 2 (commit local 95bfbbd):
+- parse_score_response sempre popula reasons[], sintaxe_ok, resolves_problem,
+  is_functional (antes podia gravar null no DB e seller via 'Necessario ajustar'
+  sem motivo no email).
+- estimate_cost com fallback por provider (openai/gemini/groq) para modelos
+  novos nao mapeados em PRICING dict (antes retornava 0 -> billing subnotificado).
+
+WORKER 6 CRITICAL (commit local 7d4ec82):
+- BUG: auth-svc sem app.set('trust proxy', 1). req.ip lia IP do gateway
+  (interno Swarm) em vez de IP real do cliente. fail2ban acumulava ban no
+  IP do gateway = 5 logins falhos em qualquer lugar BANIAM TODOS OS USUARIOS.
+- FIX 1: app.set('trust proxy', 1) em auth-svc.
+- FIX 2 (defesa em profundidade): fail2ban middleware agora prefere
+  x-forwarded-for[0] OU x-real-ip ANTES de req.ip.
+
+DEPLOY PENDENTE: rede do cliente offline novamente. Commits locais salvos,
+push assim que connectivity voltar. Quando deployado, rebuild:
+- cas_qa-worker (W12)
+- cas_auth-svc + cas_gateway + svcs com fail2ban (W6 via shared)
+
 ## ADMIN ENDPOINTS - WORKER 4 PASS 2 (SLA-RISK + LIST FILTRADO)
 Audit identificou 2 endpoints admin que UI nao tem (mas o painel precisaria
 para gestao completa de sellers):
