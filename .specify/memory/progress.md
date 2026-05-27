@@ -5297,3 +5297,60 @@ PROXIMA ITER (Performance/Security):
 - Redis-backed rateLimiter para multi-pod scale (in-memory hoje)
 - Audit metrics_history table tem cleanup? (W14 pass 5 cobriu 5 outras)
 - Monitoring: alert quando statement_timeout dispara > N/h
+
+## WORKER 16 / MLB-13 (NEW) - Collaborative Filtering "Quem comprou isto"
+
+CONTEXTO:
+12 features MLB anteriores ja completas. Esta e a 13a feature - equivalente
+Amazon "Customers also bought" e Mercado Livre "Quem comprou tambem comprou".
+
+DIFERENCIAL vs /related (MLB-6 ja existente):
+- /related: produtos da MESMA CATEGORIA (fallback estatico, content-based)
+- /also-bought: produtos efetivamente CO-COMPRADOS por mesmos buyers
+  -> recomendacao DINAMICA baseada em comportamento real
+  -> Collaborative Filtering verdadeiro vs static categoria match
+
+IMPLEMENTACAO E2E (3 arquivos):
+
+1. services/product-svc/src/routes/public.js:
++ GET /products/:slug/also-bought CTE 3-step:
+  - src CTE: produto atual via slug
+  - co_buyers CTE: DISTINCT buyer_user_id que pagaram pelo src.id
+  - also_bought CTE: outros produtos comprados por co_buyers
+    agregado COUNT(DISTINCT buyer) ORDER BY DESC LIMIT N
++ Cache 600s (co-occurrences mudam devagar - mesmo signal por horas)
++ Lim clamp 1..12 (Math.max + Math.min - padrao W7 pass 4)
+
+2. apps/storefront/src/components/also-bought.tsx:
++ Server component async (cache: revalidate 600)
++ Fallback gracioso: null se 0 results (produto novo sem co-buyers)
++ Grid 2/3/6 cols responsivo
++ Card mostra co_buyers count se > 1 ("3 compradores em comum")
++ Reveal-up animation + hover scale
+
+3. apps/storefront/src/app/product/[slug]/page.tsx:
++ Import AlsoBought
++ Mount ANTES do /related (priority: collaborative > category-based)
+
+DEPLOY:
+- commit 39cc22d pushed
+- product-svc rebuilt (~2.6s) + converged
+- storefront rebuilt (~2.8s) + converged
+
+VALIDACAO PUBLICA:
+- /api/products/<slug>/also-bought -> 200 OK
+- Response em dev: {products:[]} (esperado - so 1 buyer com 1 produto = sem co-occurrence)
+- PDP HTML: AlsoBought retorna null (graceful, sem section vazia)
+- Em prod com diverse traffic: query CTE retornara recomendacoes reais
+
+DATASET ATUAL em DEV:
+- 1 buyer (teste1) com 1 produto comprado
+- Sem dados para collaborative filtering produzir resultados
+- Mecanismo CTE validado via EXPLAIN: usa idx_oi_order, idx_oi_product
+
+PROXIMA ITER MLB:
+- 13 features completas! Considerar:
+  * Mensagens internas seller-buyer (pre-purchase chat)
+  * Lances/oferta vendedor (Mercado Livre BarganhaSegura)
+  * "Compre Junto" - bundle deals automaticos baseado em co-purchase
+  * Carrinho persistente cross-device (login sync)
