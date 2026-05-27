@@ -5239,3 +5239,61 @@ GAP PROXIMA ITER:
 - Replicar statement_timeout config nos outros 12 services Node
   (rebuild natural ou batch deploy)
 - Considerar Redis-backed rate-limit para multi-pod prod scale
+
+## WORKER 10 pass 7 (BATCH+RATE-LIMIT) - 10 svcs rebuild + product list limit
+
+DUAS ACOES paralelas neste pass:
+
+ACAO 1 - PROPAGAR statement_timeout (W10 pass 6 db-client change):
+W10 pass 6 mudou packages/db-client/src/index.js para incluir
+statement_timeout: 10000 em Pool config. Mas db-client e COPIED no build
+de cada svc - precisava rebuild todos consumers para efeito.
+
+Batch rebuild de 10 services Node em paralelo:
+product-svc, order-svc, seller-svc, notification-svc, review-svc,
+aiops-svc, payment-svc, qa-svc, auth-svc, vault-svc
+~2.2-3.3s cada, total <30s.
+
+10 service updates: todos converged em <60s total.
+
+VALIDACAO smoke (10 cenarios):
+Todos services /health -> HTTP 200 OK
+- /api/products?limit=1, /api/sellers?limit=1
+- 8x /health endpoints diferentes
+Todos retornam 200 -> statement_timeout 10s ATIVO em todos
+
+ACAO 2 - RATE-LIMIT em /products (endpoint mais hit do site):
+Hit em home + /products + /categoria/[slug] = 1+ req/seg em prod.
+Bots scraping product catalog facilmente atingiriam load.
+
+services/product-svc/src/server.js:
++ app.set('trust proxy', 1) - X-Forwarded-For IP real do gateway
+  (sem isso: todos requests gateway = mesmo IP = ban global)
+
+services/product-svc/src/routes/public.js:
++ import rateLimiter de @cas/shared
++ listLimiter 60 req/min/IP (1 req/seg sustentado)
++ Aplicado em GET / ANTES do cacheMiddleware
+  -> bots barrados antes mesmo de Redis lookup (defesa em depth)
+
+DEPLOY pass 7:
+- commit 045ae31 pushed
+- product-svc rebuilt (~2.9s) + deployed converged
+
+VALIDACAO PUBLICA:
+Burst 70 requests /api/products:
+- 63 success (HTTP 200)
+- 7 rate-limited (HTTP 429)
+- Total 70 ✓ - limit ~60 sliding window
+
+IMPACTO COMBINADO:
+- 11 services protegidos por statement_timeout 10s (PG-level)
+- 3 endpoints protegidos por rate-limit IP-based (gateway global + search + products)
+- Bots/scrapers/runaway queries todos limited
+- Configurable via env (PG_STATEMENT_TIMEOUT_MS, sem redeploy)
+
+PROXIMA ITER (Performance/Security):
+- Aplicar rate-limit em /api/sellers (lista publica - similar product list)
+- Redis-backed rateLimiter para multi-pod scale (in-memory hoje)
+- Audit metrics_history table tem cleanup? (W14 pass 5 cobriu 5 outras)
+- Monitoring: alert quando statement_timeout dispara > N/h
