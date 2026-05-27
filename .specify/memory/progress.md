@@ -1465,3 +1465,48 @@ DEPLOY: commit 9b1fd2c pushed,
 - product-svc rebuilt via Dockerfile.node SVC=product-svc (contexto root)
 - storefront rebuilt via Dockerfile.next (contexto apps/storefront)
 - ambos --force update, converged OK.
+
+## WORKER 13 (NOTIFICATION) - DLP fix bandeja in-app vazava campos internos
+Auditoria publica de 6 endpoints notification-svc revelou:
+- /api/notifications GET (bandeja in-app): HTTP 200 OK
+- /api/notifications/:id/read POST: 404 correto para UUID malformado, 404 para inexistente
+- /api/notifications/read-all POST: 200 ok com count marked
+- /api/notifications/test POST: 403 forbidden_role (acesso restrito a admin OK)
+- Sem token -> 401 OK
+
+BUG ENCONTRADO (DLP / Privacy):
+GET /api/notifications usava SELECT * retornando 16 campos da row inteira:
+- user_id (redundante, ja eh do user autenticado)
+- locked_by, locked_at (mutex do outbox worker - irrelevante)
+- next_retry_at, retry_count, failed_reason (state machine do outbox)
+- sent_status, sent_at (relevante apenas para channels email/telegram)
+- template_code (nome interno do template)
+
+Vazamento de campos internos da arquitetura outbox + payload 60% maior que
+necessario.
+
+FIX: services/notification-svc/src/server.js linha 75-84
+- SELECT * substituido por explicit cols (13 campos UI-relevant):
+  id, channel, title, body, body_html, cta_label, cta_url, icon, priority,
+  payload, is_read, read_at, created_at
+- Performance bonus: index idx_notif_user_channel_created (criado em
+  migration 020 anterior) cobre exatamente esses filtros + ORDER BY.
+
+VALIDACAO PUBLICA:
+- Fields ANTES: 16 campos incluindo user_id, locked_*, next_retry_at, retry_count,
+  failed_reason, sent_*, template_code
+- Fields DEPOIS: 13 campos sem leaks (todos UI-relevant ja consumidos pelo
+  componente NotificationBell ou disponiveis para enriquecimento futuro)
+- 9 campos internos GONE (grep retornou empty para padroes vazados)
+- 13 campos UI-relevant preservados
+- Payload sample ~500 chars (antes ~1.3kb por row)
+
+DEPLOY: commit 8b7a672 pushed, notification-svc rebuilt via Dockerfile.node
+SVC=notification-svc, service updated --force, converged OK.
+
+OBSERVACAO ADICIONAL DA AUDITORIA (cron + outbox - tudo saudavel):
+- processOutbox usa UPDATE ... RETURNING + FOR UPDATE SKIP LOCKED (anti-race)
+- reclaimOrphanLocks libera locked_at > 5min (worker crashou)
+- backoff exponencial: 30s -> 2min -> 10min -> 1h -> failed (apos 5 tentativas)
+- Cron schedules: outbox a cada 30s, reclaim a cada 1min, cleanup 60d diario
+- Mustache rendering implementado anti-XSS minimo + defense vazio title/body
