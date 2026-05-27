@@ -343,9 +343,13 @@ async function processWebhookEvent(evt) {
         log.error({ err: e.message, order_id: order.id }, '[loyalty.earn.fail]');
       }
       // contadores de produto e seller
+      // FIX-WORKER-14 pass 2: products.last_sale_at agora atualizado (era NULL sempre!)
+      // Coluna existia desde mig inicial mas zero code path escrevia -> features tipo
+      // "hot deals", "trending por recencia", stale detection ficavam impossiveis.
       await c.query(
         `UPDATE products p SET sales_count = sales_count + oi.quantity,
-                               revenue_cents_total = revenue_cents_total + oi.line_total_cents
+                               revenue_cents_total = revenue_cents_total + oi.line_total_cents,
+                               last_sale_at = NOW()
            FROM order_items oi WHERE oi.order_id = $1 AND oi.product_id = p.id`, [order.id]
       );
       await c.query(
