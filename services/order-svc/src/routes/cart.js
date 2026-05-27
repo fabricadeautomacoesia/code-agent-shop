@@ -82,12 +82,14 @@ router.patch('/items/:id',
   asyncHandler(async (req, res, next) => {
     let cartId;
     await tx(async (c) => {
-      // FIX: cart_items nao tem coluna updated_at no schema (apenas created_at).
+      // FIX: cart_items nao tem coluna updated_at (apenas created_at).
+      // FIX: cast explicito INT para evitar PG 42P08 (bigint vs integer) quando $1 eh usado em
+      // duas expressoes com tipos diferentes (quantity=int, line_total=bigint).
       const r = await c.query(
         `UPDATE cart_items SET
-            quantity = $1,
-            line_total_cents = unit_price_cents * $1
-          WHERE id = $2 AND cart_id IN (SELECT id FROM carts WHERE user_id = $3)
+            quantity = $1::INT,
+            line_total_cents = unit_price_cents * $1::INT
+          WHERE id = $2::UUID AND cart_id IN (SELECT id FROM carts WHERE user_id = $3::UUID)
           RETURNING cart_id`,
         [req.body.quantity, req.params.id, req.user.sub]
       );
