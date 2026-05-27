@@ -82,6 +82,8 @@ export const Api = {
     api('/orders/cart/items', { method: 'POST', auth: token, body: JSON.stringify({ product_id, quantity }) }),
   cartDel:     (token: string, item_id: string) =>
     api(`/orders/cart/items/${item_id}`, { method: 'DELETE', auth: token }),
+  cartSetQty:  (token: string, item_id: string, quantity: number) =>
+    api(`/orders/cart/items/${item_id}`, { method: 'PATCH', auth: token, body: JSON.stringify({ quantity }) }),
   cartCoupon:  (token: string, code: string) =>
     api('/orders/cart/coupon', { method: 'POST', auth: token, body: JSON.stringify({ code }) }),
   checkout:    (token: string, payment_method: 'pix'|'credit_card'|'boleto', installment_count?: number) =>

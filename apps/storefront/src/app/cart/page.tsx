@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, Tag, TrendingUp } from 'lucide-react';
+import { Trash2, Tag, TrendingUp, Plus, Minus } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
@@ -39,6 +39,24 @@ export default function CartPage() {
   async function remove(id: string) {
     await Api.cartDel(token!, id);
     load();
+  }
+
+  // FIX-WORKER-2: alterar quantidade via PATCH com optimistic update
+  async function setQty(id: string, qty: number) {
+    if (qty < 1) return remove(id);
+    if (qty > 99) return;
+    // Optimistic UI: atualiza local antes da resposta
+    setCart((c: any) => c ? ({
+      ...c,
+      items: c.items?.map((it: any) => it.id === id ? { ...it, quantity: qty, line_total_cents: it.unit_price_cents * qty } : it) || c.items,
+    }) : c);
+    try {
+      await Api.cartSetQty(token!, id, qty);
+      load(); // recarrega totals reais (subtotal/discount podem mudar com cupom progressivo)
+    } catch (e: any) {
+      setErr(e.message);
+      load();
+    }
   }
   async function applyCoupon(e: React.FormEvent) {
     e.preventDefault();
@@ -84,8 +102,23 @@ export default function CartPage() {
                     {it.product?.title}
                   </Link>
                   <div className="text-sm text-white/60">{it.product?.seller_name}</div>
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="text-sm text-white/70">Qtde: {it.quantity}</div>
+                  <div className="flex items-center justify-between mt-2 gap-2">
+                    {/* FIX-WORKER-2: controles +/- de quantidade */}
+                    <div className="inline-flex items-center rounded-lg border border-white/10 bg-white/5">
+                      <button onClick={() => setQty(it.id, it.quantity - 1)}
+                        aria-label="Diminuir quantidade"
+                        className="p-1.5 hover:bg-white/10 rounded-l-lg transition-colors disabled:opacity-30"
+                        disabled={it.quantity <= 1}>
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="px-3 text-sm font-mono font-semibold min-w-[32px] text-center">{it.quantity}</span>
+                      <button onClick={() => setQty(it.id, it.quantity + 1)}
+                        aria-label="Aumentar quantidade"
+                        className="p-1.5 hover:bg-white/10 rounded-r-lg transition-colors disabled:opacity-30"
+                        disabled={it.quantity >= 99}>
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                     <div className="font-display font-bold text-magenta-glow">{Api.formatBRL(it.line_total_cents)}</div>
                   </div>
                 </div>
