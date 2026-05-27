@@ -1954,3 +1954,48 @@ VALIDACAO PUBLICA (TRIPLA):
 DEPLOY: commit 91ff7c7 pushed,
 - notification-svc rebuilt via Dockerfile.node SVC=notification-svc, converged OK
 - storefront rebuilt via Dockerfile.next, converged OK
+
+## WORKER 3 (PDP) - Reviews tab UX bugs
+Auditoria de /product/[slug] (componente ProductTabs) revelou 3 bugs visuais
+e estruturais no tab Reviews:
+
+AUDIT geral PDP (todos sao OK):
+- AddToCart (Client Component, useCart hook) - OK
+- WishlistButton (W7 ja fixado UUID guard) - OK
+- QnaForm + AskQuickButton (W16 ja implementado) - OK
+- Tabs Visao/Pre-requisitos/Changelog/Reviews/Q&A (5 abas) - OK
+- Preco/badges/seller link (OfficialBadge W16, Installments W17, etc) - OK
+
+3 BUGS em Reviews tab:
+
+BUG 1 (Visual): Array.from({length: r.rating}).map -> renderiza N estrelas.
+Review de 3/5 mostrava SO 3 estrelas amarelas, sem as 2 vazias para indicar
+"3 de 5". Confuso para o user que precisa CONTAR para entender o rating.
+
+BUG 2 (Conteudo): r.buyer_name renderizado direto. Quando user nao tem
+display_name -> u.display_name e NULL -> JOIN retorna NULL -> div vazia
+abaixo da review. Real em producao: review "Excelente prompt pack" de
+teste1@cas.io (sem display_name) -> buyer_name: null no JSON.
+
+BUG 3 (Conteudo ignorado): Payload inclui reply_from_seller, reply_at,
+helpful_count, unhelpful_count - mas UI NAO renderizava nada disso.
+Vendedor podia responder review mas resposta nunca aparecia (gap MLB).
+
+FIX: apps/storefront/src/components/product-tabs.tsx tab 'reviews'
+- 5 estrelas sempre: Array.from({length:5}) + i<r.rating ? amarela : cinza
+- aria-label="X de 5 estrelas" para accessibility
+- buyer_name fallback: {r.buyer_name || 'Usuario CAS'}
+- Inclui date de review + helpful_count se > 0
+- Bloco reply_from_seller com borda magenta + label "Resposta do vendedor"
+  + reply_at formatada
+
+VALIDACAO PUBLICA (PDP chunk):
+- _next/static/chunks/app/product/[slug]/page-1839ce76ba04f1e4.js contem:
+  Usuario CAS, Resposta do vendedor, estrelas, fill-white/10,
+  reply_from_seller, util -> TUDO OK
+
+Reviews tab eh content de Client Component que renderiza apos hydration
+(active==='reviews'), mas todas as strings de fix estao no chunk.
+
+DEPLOY: commit e6ff02e pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
