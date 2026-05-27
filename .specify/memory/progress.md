@@ -16001,3 +16001,108 @@ PROXIMA ITER:
 - W7 pass 46: GET /sellers/me read audit (Regra I explicit)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 45 - seller-svc /loyalty/earn 5 BUGS (FREE MONEY EXPLOIT) (2026-05-27)
+================================================================
+ESCOPO: seller-svc POST /loyalty/earn (internal endpoint financial mutation)
+FILE: services/seller-svc/src/routes/loyalty.js (linhas 62-87 -> rewrite)
+
+CONTEXTO: W7 pass 44 fechou seller-svc admin terminals. Pass 45 audita
+loyalty/earn - INTERNAL ENDPOINT EXPOSTO EM PROD. Bug FREE MONEY
+EXPLOIT GRAVE descoberto.
+
+BUGS CORRIGIDOS (5 + 1 helper novo):
+
+1. *** FREE MONEY EXPLOIT *** INTERNAL ENDPOINT EXPOSED
+- PRE-FIX: comentario linha 62 diz "sistema interno (order-svc)" MAS
+  router.use(jwt.requireAuth()) linha 8 aceita QUALQUER user autenticado.
+- ATAQUE TRIVIAL:
+  User autenticado -> POST /loyalty/earn {points: 1000000, reason: 'free'}
+  -> 1M pontos balance -> resgate ate 30% checkout cap
+  = R$ 10.000 desconto via 1 request HTTP
+- IMPACT: revenue loss massivo + lavagem dinheiro vector (compra fake +
+  refund chargeback + saldo loyalty intact)
+- FIX: serviceTokenGuard middleware (NOVO helper):
+  - X-Service-Token header timing-safe compare LOYALTY_SERVICE_SECRET env
+  - order-svc internal call DEVE configurar header
+  - User direto sem header -> 403 service_token_required
+  - Fail-closed: secret ausente env -> 503 (anti misconfigured)
+
+2. *** IDEMPOTENCY reference_id MISSING ***
+- User replay POST mesma reference_id 10x -> earn 10x pontos do mesmo order
+- Cliente legitimo order-svc retry tambem podia disparar dupla credito
+- FIX: SELECT existing loyalty_transactions (user_id+reason+reference_id)
+  DENTRO tx. Se ja processado -> 200 OK { duplicate: true, existing_tx_id }
+  NAO 409 - cliente order-svc retry deve receber OK (idempotent design)
+
+3. *** Validate Zod MISSING ***
+- Pre-fix: if(!points||points<1) - aceita points=1000000 sem max
+- reason arbitrary string XSS risk se renderizado UI futuro
+- FIX: Zod schema strict:
+  - user_id UUID (target NAO req.user.sub - vindo de order-svc)
+  - points int min 1 max 100000 (anti exploit + sanity cap)
+  - reason enum whitelist (purchase|referral|promo|admin_adjust|review_bonus)
+  - reference_type enum (order|referral|manual)
+  - reference_id string max 100
+
+4. *** AUDIT_LOG missing *** financial mutation sem trail
+- LGPD/compliance: balance mutation = audit obrigatorio
+- FIX: INSERT audit_log atomic dentro tx
+- payload JSON: points_delta, reason, reference, new_lifetime, new_tier,
+  tier_promoted, ip
+- actor_user_id NULL + actor_role 'service' (chamada de svc, nao user)
+
+5. *** TIER PROMOTION notification missing *** UX engagement
+- User passa starter->gold->platinum mas nunca eh notificado
+- Detect: prev_tier vs new_tier rank promotion
+- FIX: INSERT notification 'loyalty_tier_up' atomic SE tier mudou
+  Mensagem: "Voce subiu para o tier GOLD!" + lifetime + beneficios
+
+NOVO HELPER serviceTokenGuard:
+- Pattern fail-closed: secret ausente -> 503 (anti misconfigured production)
+- timingSafeEqual (Buffer length match + crypto.timingSafeEqual)
+- Logs warn detalhado (ip, user, ua) p/ investigation se invalid
+- Reusable: aplicar em outros endpoints internal-only (futuro audit)
+
+DEPLOY ORDER:
+1. Set env var LOYALTY_SERVICE_SECRET no .env (random 64-char hex)
+2. order-svc deve configurar header X-Service-Token: $LOYALTY_SERVICE_SECRET
+   em fetch() para /loyalty/earn
+3. Deploy seller-svc rebuild
+4. Validar: curl direto user-token -> 403 service_token_required ✓
+5. order-svc internal call -> 200 OK ✓
+
+PATTERN W7 INTERNAL ENDPOINT PROTECTION (NOVO Regra S):
+S. Service-token timing-safe + fail-closed env check em endpoints
+   internal-only (called by other svcs, NUNCA por user direto).
+   Header X-Service-Token + JWT user opcional sobre.
+   Aplicavel: qa-svc callback (ja tem - pass 27), payment webhook,
+   notification outbox internal mutations, loyalty earn (esta iter).
+
+PATTERN W7 36 ENDPOINTS + 19 REGRAS (A-S) - 45 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 3
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7 (pass 40-45)
+
+SELLER-SVC PROGRESS (7 endpoints auditados):
+- ✅ POST /sellers/me/payout (pass 40)
+- ✅ POST /sellers/me/kyc (pass 41)
+- ✅ POST /sellers/admin/:id/kyc/approve|reject (pass 42)
+- ✅ PATCH /sellers/me (pass 43)
+- ✅ POST /sellers/admin/:id/suspend|reactivate (pass 44)
+- ✅ POST /loyalty/earn (pass 45 esta iter)
+- ✅ GET /sellers/admin/pending-kyc (fix pass 42)
+- GET /loyalty/me + GET /sellers/me + public /sellers (pendente)
+
+PROXIMA ITER:
+- W7 pass 46: GET endpoints read audit (Regra I explicit massive)
+- W7 pass 47: gateway audit (pathRewrite + middleware)
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod
