@@ -6,6 +6,7 @@ import { Api } from '@/lib/api';
 import { AddToCart } from '@/components/add-to-cart';
 import { WishlistButton } from '@/components/wishlist-button';
 import { PriceAlertButton } from '@/components/price-alert-button';
+import { AlsoBought } from '@/components/also-bought';
 import { ProductTabs } from '@/components/product-tabs';
 import { AskQuickButton } from '@/components/ask-quick-button';
 import { CompareButton } from '@/components/compare-button';
@@ -242,7 +243,10 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
         </aside>
       </div>
 
-      {/* MLB-6: Produtos relacionados */}
+      {/* MLB-13 (NEW): Quem comprou isto, tambem comprou (collaborative filtering real) */}
+      <AlsoBought slug={slug} />
+
+      {/* MLB-6: Produtos relacionados (categoria-based fallback) */}
       {related.length > 0 && (
         <section className="mt-16">
           <h2 className="font-display font-bold text-2xl mb-6">Voce tambem pode gostar</h2>

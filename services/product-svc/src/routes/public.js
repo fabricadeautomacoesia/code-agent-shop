@@ -97,6 +97,55 @@ router.get('/recently-viewed',
   })
 );
 
+// MLB-13 (NEW): GET /products/:slug/also-bought
+// "Quem comprou isto, tambem comprou" - collaborative filtering real.
+// Diferencial vs /related (categoria-based): usa co-occurrence em order_items.
+// Algoritmo:
+//   1. Acha buyers que compraram este produto (DISTINCT buyer_user_id em orders.paid)
+//   2. Para cada buyer, pega OUTROS produtos que ele comprou
+//   3. Agrega por product_id + ORDER BY frequencia DESC
+//   4. Filtra approved, deleted_at NULL, ID != atual
+// Cache 600s (10min) - co-occurrences mudam devagar.
+router.get('/:slug/also-bought',
+  cache.cacheMiddleware((req) => `products:also-bought:${req.params.slug}:lim=${req.query.limit || 6}`, 600),
+  asyncHandler(async (req, res) => {
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 6, 12));
+  const r = await query(
+    `WITH src AS (
+       SELECT id FROM products WHERE slug = $1 AND status = 'approved'
+     ),
+     co_buyers AS (
+       SELECT DISTINCT o.buyer_user_id
+         FROM order_items oi
+         JOIN orders o ON o.id = oi.order_id
+         JOIN src ON src.id = oi.product_id
+        WHERE o.status IN ('paid','fulfilled')
+     ),
+     also_bought AS (
+       SELECT oi.product_id, COUNT(DISTINCT o.buyer_user_id) AS co_buyers
+         FROM order_items oi
+         JOIN orders o ON o.id = oi.order_id
+         JOIN co_buyers cb ON cb.buyer_user_id = o.buyer_user_id
+        WHERE o.status IN ('paid','fulfilled')
+          AND oi.product_id NOT IN (SELECT id FROM src)
+        GROUP BY oi.product_id
+        ORDER BY co_buyers DESC, oi.product_id LIMIT $2
+     )
+     SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
+            p.cover_image_url, p.price_cents, p.currency, p.is_free,
+            p.tech_stack, p.avg_rating, p.review_count, p.sales_count,
+            p.is_platform_owned, p.flash_promo_active,
+            ab.co_buyers,
+            (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug
+       FROM also_bought ab
+       JOIN products p ON p.id = ab.product_id
+      WHERE p.status = 'approved' AND p.deleted_at IS NULL
+      ORDER BY ab.co_buyers DESC`,
+    [req.params.slug, lim]
+  );
+  res.json({ products: r.rows });
+}));
+
 // GET /products/:slug/related - produtos relacionados (mesma categoria, exclui o atual)
 // FIX-WORKER-18 pass2: cache 300s - related products muda raramente (categoria + same tier)
 router.get('/:slug/related',
