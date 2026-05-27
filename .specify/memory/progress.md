@@ -1863,3 +1863,42 @@ VALIDACAO PUBLICA:
 DEPLOY: commit da24f0d pushed,
 - seller-svc rebuilt via Dockerfile.node SVC=seller-svc, converged OK
 - dashboard-seller rebuilt via Dockerfile.next, converged OK
+
+## WORKER 2 (CHECKOUT) - installment_count semanticamente solto
+Auditoria E2E com teste1@cas.io: /cart -> /checkout -> /conta/pedidos via curl
+publica revelou flow saudavel + 1 UX bug semantico.
+
+ENDPOINTS TESTADOS:
+- GET /orders/cart -> 200 (cart persiste + cupom aplicado)
+- POST /orders/cart/items -> 201 (adiciona produto OK)
+- POST /orders/checkout payment_method=pix -> 201 (checkout OK, cart limpo)
+- POST /orders/checkout sem body -> 400 validation_error (campo required)
+- POST /orders/checkout cart vazio -> 400 empty_cart
+- GET /orders -> 200 (lista historico)
+- GET /orders/:id UUID inexistente -> 404 order_not_found OK
+- GET /orders/:id UUID malformado -> 404 order_not_found (UUID_RE guard OK)
+- GET /orders/2da840b7-... existente -> 200 com full payload
+
+BUG ENCONTRADO (UX semantica):
+- Schema aceita {payment_method:'pix', installment_count:12} -> retorna 201
+- Linha 120 do route silencia DROP do installment_count (so usa se credit_card)
+- Usuario achava que receberia 12x parcelas no PIX/boleto, mas pedido nasce
+  sem parcelamento. Inconsistencia entre expectativa e realidade.
+
+FIX: services/order-svc/src/routes/orders.js linha 16-23
+- Adicionado .refine() na Zod schema:
+  installment_count > 1 exige payment_method = 'credit_card'
+  message: 'installment_count > 1 requer payment_method=credit_card'
+- installment_count = 1 OU undefined continua valido em qualquer metodo
+  (1x significa "a vista", semanticamente OK)
+
+VALIDACAO PUBLICA (5 cenarios):
+1) PIX + installments=12 -> 400 com msg "installment_count > 1 requer
+   payment_method=credit_card" OK (era 201 silencioso)
+2) Regression: PIX sem installments -> 201 OK
+3) Regression: PIX com installments=1 -> 201 OK (a vista permitido)
+4) Regression: credit_card + installments=12 -> 201 OK
+5) Boleto + installments=3 -> 400 (boleto nao tem parcelas) OK
+
+DEPLOY: commit aa15d4a pushed, order-svc rebuilt via Dockerfile.node
+SVC=order-svc, service updated --force, converged OK.
