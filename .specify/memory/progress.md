@@ -5908,3 +5908,56 @@ GAP DETECTADO (proxima iter):
 - Refactor /loja (PATCH profile + KYC)
 - Refactor /financeiro (POST payout request)
 - Considerar mover hook para packages/shared-ui (DRY entre admin+seller)
+
+## WORKER 5 pass 2 (SELLER DASH) - /qna refactor - useSellerAction + per-row busy
+
+VETOR DETECTADO (audit dashboard-seller/qna):
+2 bugs encadeados em apps/dashboard-seller/src/app/qna/page.tsx:
+
+BUG 1: alert('Erro: ' + e.message) na catch da reply()
+- Browser-blocking + ininterruptivel + feio
+- Mesmo pattern que /products (W5 pass 1 fixou la)
+
+BUG 2 (mais grave): loading state GLOBAL
+- 1 boolean controla TODOS botoes Responder
+- Seller clica Responder em row A -> ALL botoes disabled
+- Em queue de 10 perguntas, seller tem que esperar 10x sequencial
+- UX terrivel (Mercado Livre permite responder paralelo)
+
+FIX (apps/dashboard-seller/src/app/qna/page.tsx):
++ useSellerAction hook (W5 pass 1)
++ reply(id) -> action.run(`answer-${id}`, ...)
++ Per-row busy state: action.busyKey === `answer-${q.id}`
++ 2 banners (red + green) com clear
++ textarea + button disabled APENAS naquela row durante busy
++ Texto dinamico ("Enviando..." vs "Responder")
+
+UX IMPROVEMENT vs admin:
+Per-row busy permite seller batch-respond - clica Responder em 10
+perguntas rapidamente, todas processam em paralelo. Padrao Mercado Livre.
+
+DEPLOY:
+- commit b25481f pushed
+- dashboard-seller rebuilt (~4.4s) + converged
+
+VALIDACAO PUBLICA:
+- /qna HTTP 200 OK
+- Bundle JS contem: "Enviando", "Falha:", "answer-", "busyKey"
+  -> hook + per-row keys deployados
+
+PROGRESS METRIC SELLER DASH:
+2 de ~6 pages com hook (~33%):
+- /products (W5 pass 1)
+- /qna (W5 pass 2) <- ESTE
+Restantes: /products/[id] edit, /upload, /loja, /financeiro (ja decente)
+            /reviews (verificar)
+
+PADRAO BUSCADO: comparar pattern admin vs seller:
+- admin: 6/7 pages (1 read-only)
+- seller: 2/6 pages estimadas (33%)
+- Proximas iters seguir refactor restantes
+
+GAP DETECTADO (proxima iter):
+- /products/[id] edit page (PATCH product + submit)
+- /upload (POST create draft)
+- /loja (PATCH profile + KYC)
