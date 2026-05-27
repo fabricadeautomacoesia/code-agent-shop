@@ -1144,3 +1144,41 @@ PROXIMOS GAPS MLB (remanescentes):
 - Loyalty UI redeem button na cart (backend ja existe seller-svc/loyalty.js)
 - Widget cupom progressivo na cart (calc dinamico based on subtotal)
 - Mercado Pontos extrato historico em /conta/pontos
+
+## WORKER 16 (MLB-NEW) - ProgressiveCouponTeaser proativo na /cart
+Pagina /cart ja tinha widget de cupom progressivo mas SO renderizava APOS
+o user aplicar manualmente um codigo. Mercado Livre exibe a escada de
+descontos ANTES de o user pensar em cupom - aumenta AOV ao mostrar
+"adicione +R$X para ganhar -Y%".
+
+NOVO COMPONENTE: apps/storefront/src/components/progressive-coupon-teaser.tsx
+- 'use client', recebe (token, subtotalCents, alreadyApplied, onApplied, defaultCode='PROGRESSIVO15')
+- useEffect: fetcha /orders/cart/coupon/<code>/preview?subtotal_cents=N
+- Skip render se: !preview, alreadyApplied, !tiers.length, sem token, subtotal=0
+- Layout:
+  * Header: TrendingUp + "GANHE DESCONTO PROGRESSIVO" + chip codigo
+  * Lista tiers com Check verde se atingido, circulo vazio se nao
+  * Footer "+R$X para ganhar -Y%" mostrando next_tier
+  * CTA gradient-vibe "Aplicar -R$X agora" 1-click se active>=0
+  * Estado disabled "Atinja primeiro tier" se subtotal<menor tier
+
+INTEGRACAO: apps/storefront/src/app/cart/page.tsx
+- Import + render apos form de cupom manual, antes do bloco de subtotal
+- alreadyApplied={!!cart?.coupon_code} evita duplicacao com widget legacy
+- onApplied={load} reusa funcao de reload do cart
+
+VALIDACAO PUBLICA (DUAL):
+1) Chunk _next/static/chunks/app/cart/page-208d870498c86300.js:
+   ProgressiveCouponTeaser, GANHE DESCONTO PROGRESSIVO, PROGRESSIVO15,
+   Aplicar -, Atinja o primeiro tier, para ganhar -> TUDO OK
+2) Backend GET /api/orders/cart/coupon/PROGRESSIVO15/preview?subtotal_cents=50000
+   (auth teste1@cas.io): retorna 3 tiers (R$100/5%, R$300/10%, R$800/15%),
+   active_tier_index=1, discount_cents=5000 (R$50 -10%), next_tier R$800/15% OK.
+
+DEPLOY: commit 8406f7c pushed, build storefront via Dockerfile.next,
+service updated --force, converged OK.
+
+PROXIMOS GAPS MLB (remanescentes):
+- Loyalty UI redeem ja existe na cart (vista no audit), gap eh extrato historico
+  em /conta/pontos com lista de transactions ledger
+- Quantidade vendida "+N vendidos" badge esta no PDP, mas falta no card
