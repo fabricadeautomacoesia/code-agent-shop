@@ -30,8 +30,14 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 // POST /orders/cart/items
+// FIX-WORKER-3 pass 2: quantity max 99 (era apenas positive() -> aceitava 99999+,
+// permitindo abuse para inflar line_total_cents BIGINT + DoS cart calc).
+// UI cart-drawer ja tinha cap em 99, agora backend valida tambem.
 router.post('/items',
-  validate({ body: z.object({ product_id: z.string().uuid(), quantity: z.number().int().positive().default(1) })}),
+  validate({ body: z.object({
+    product_id: z.string().uuid(),
+    quantity: z.number().int().min(1).max(99).default(1),
+  })}),
   asyncHandler(async (req, res, next) => {
     const p = await query(
       `SELECT id, price_cents, currency, status, title FROM products WHERE id = $1`,
