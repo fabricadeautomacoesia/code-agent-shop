@@ -1510,3 +1510,62 @@ OBSERVACAO ADICIONAL DA AUDITORIA (cron + outbox - tudo saudavel):
 - backoff exponencial: 30s -> 2min -> 10min -> 1h -> failed (apos 5 tentativas)
 - Cron schedules: outbox a cada 30s, reclaim a cada 1min, cleanup 60d diario
 - Mustache rendering implementado anti-XSS minimo + defense vazio title/body
+
+## WORKER 16 (MLB-NEW) - Combo selo "OFICIAL MAIS VENDIDO" (gold gradient)
+Mercado Livre exibe um selo especial dourado quando um produto e SIMULTANEAMENTE
+oficial (marca registrada do MP) + mais vendido (#1 na categoria). E o maior
+signal de social proof do site - maior conversao MLB documentada.
+
+GAP IDENTIFICADO:
+- PDP /api/products/:slug nao retornava is_top_seller -> nunca podia exibir
+  badge "mais vendido" no detalhe.
+- Frontend mostrava 2 badges separadas (Oficial / MAIS VENDIDO) sem combo
+  especial nem semantica gradient gold.
+
+BACKEND product-svc/src/routes/public.js linha 218-228:
+- ADDED computed column:
+  (p.sales_count >= 5 AND p.sales_count = MAX subquery por categoria) AS is_top_seller
+- Threshold min 5 vendas evita promover produtos novos sem trafego.
+- Subquery MAX por p.category_id retorna #1 sales globais da categoria.
+
+BACKEND search-svc/src/server.js linha 71-86:
+- ADDED window function inline para consistencia com PDP:
+  (p.sales_count >= 5 AND p.sales_count = MAX(p.sales_count) OVER (PARTITION BY p.category_id))
+  AS is_top_seller
+- Cobre /api/search (catalog, home, related, etc).
+
+NOVO UI: apps/storefront/src/components/official-badge.tsx
+- Server Component (zero JS bundle).
+- 3 estados: combo (Crown + gradient gold-to-magenta), so-oficial (Award magenta),
+  so-top-seller (TrendingUp gradient yellow-orange).
+- Variants: pdp (full rounded-full pill) | card (absolute overlay top-left).
+- 'Oficial mais vendido' uppercase tracking-wide para destaque maximo.
+
+INTEGRACOES:
+- apps/storefront/src/app/product/[slug]/page.tsx -> substitui block antigo
+  is_platform_owned por <OfficialBadge variant="pdp">
+- apps/storefront/src/components/product-card.tsx -> substitui 2 blocos
+  separados (Oficial + MAIS VENDIDO) por <OfficialBadge variant="card"> +
+  fallback standalone MAIS VENDIDO quando NAO eh combo
+
+VALIDACAO PUBLICA (4 cenarios):
+1) /api/products/agente-rag-documentos-cas-004 (412 sales, top de agentes-ia,
+   is_platform_owned=true) -> is_top_seller=true OK
+2) /api/products/agente-whatsapp-rag-cas-001 (247 sales, mesma categoria mas
+   #2) -> is_top_seller=false OK
+3) PDP HTML do produto top renderiza "Oficial mais vendido" combo OK
+   (HTML antes mostrava "Produto Oficial CAS" standalone)
+4) Catalog HTML /products renderiza 12 combo badges "Oficial mais vendido"
+   + 12 icones lucide-crown OK
+
+DEPLOY:
+- product-svc rebuilt via Dockerfile.node SVC=product-svc (commit 2d85c2b)
+- storefront rebuilt via Dockerfile.next (commit 2d85c2b)
+- search-svc rebuilt via Dockerfile.node SVC=search-svc (commit dae0904)
+- todos --force update, converged OK.
+
+PROXIMO GAP MLB:
+- Sales count badge no PDP ja existia, agora tem combo OFICIAL MAIS VENDIDO no topo
+  para reforco maximo social proof
+- Quase todas as 11 features MLB do cron ja implementadas: 1,3,4,5,6,7,8,9,10,11
+- Sobra: refinamentos visuais / mobile responsive / SEO
