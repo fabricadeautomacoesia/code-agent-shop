@@ -69,6 +69,11 @@ function ResetInner() {
 
   const pwColors = ['#ef4444','#f59e0b','#eab308','#22c55e'];
   const pwWidths = ['25%','50%','75%','100%'];
+  // FIX-WORKER-1 pass 3: text label para SR + visual reforco
+  const pwLabels = ['Fraca','Razoavel','Boa','Forte'];
+
+  // FIX-WORKER-1 pass 3: clear err quando user comeca a corrigir (era persistente)
+  function clearErr() { if (err) setErr(''); }
 
   return (
     <div className="container mx-auto px-6 py-16 max-w-md">
@@ -77,26 +82,51 @@ function ResetInner() {
 
       <form onSubmit={submit} className="glass p-8 space-y-5">
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">Nova senha</label>
+          <label htmlFor="pw-new" className="text-sm text-white/70 mb-1.5 block">Nova senha</label>
           <div className="relative">
-            <Lock className="w-4 h-4 absolute left-3 top-3.5 text-white/40" />
-            <input type="password" required value={password} onChange={(e) => onPass(e.target.value)}
+            <Lock className="w-4 h-4 absolute left-3 top-3.5 text-white/40" aria-hidden="true" />
+            <input id="pw-new" type="password" required value={password}
+              onChange={(e) => { onPass(e.target.value); clearErr(); }}
+              aria-describedby="pw-strength"
+              autoComplete="new-password"
               className="w-full px-10 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
           </div>
-          <div className="mt-2 h-1.5 bg-white/5 rounded-full overflow-hidden">
-            <div className="h-full transition-all" style={{
-              width: password.length > 0 ? (pwWidths[pwScore-1] || '10%') : '0',
-              background: password.length > 0 ? (pwColors[pwScore-1] || '#ef4444') : 'transparent',
-            }} />
+          {/* FIX-WORKER-1 pass 3: progressbar role + text label SR-friendly */}
+          <div id="pw-strength" className="mt-2 flex items-center gap-2">
+            <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden"
+              role="progressbar"
+              aria-valuemin={0} aria-valuemax={4} aria-valuenow={pwScore}
+              aria-label={password.length > 0 ? `Forca da senha: ${pwLabels[pwScore-1] || 'Muito fraca'}` : 'Forca da senha (digite a senha)'}>
+              <div className="h-full transition-all" style={{
+                width: password.length > 0 ? (pwWidths[pwScore-1] || '10%') : '0',
+                background: password.length > 0 ? (pwColors[pwScore-1] || '#ef4444') : 'transparent',
+              }} />
+            </div>
+            {password.length > 0 && (
+              <span className="text-xs text-white/60 min-w-[60px] text-right" style={{ color: pwColors[pwScore-1] || '#ef4444' }}>
+                {pwLabels[pwScore-1] || 'Muito fraca'}
+              </span>
+            )}
           </div>
         </div>
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">Confirmar senha</label>
-          <input type="password" required value={confirm} onChange={(e) => setConfirm(e.target.value)}
+          <label htmlFor="pw-confirm" className="text-sm text-white/70 mb-1.5 block">Confirmar senha</label>
+          <input id="pw-confirm" type="password" required value={confirm}
+            onChange={(e) => { setConfirm(e.target.value); clearErr(); }}
+            aria-describedby="pw-confirm-hint"
+            autoComplete="new-password"
             className="w-full px-3 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
+          {confirm.length > 0 && password !== confirm && (
+            <div id="pw-confirm-hint" className="text-xs text-yellow-400 mt-1">Senhas ainda nao coincidem</div>
+          )}
         </div>
 
-        {err && <div className="text-sm text-red-400 bg-red-500/10 p-3 rounded-lg">{err}</div>}
+        {err && (
+          <div role="alert" className="text-sm text-red-400 bg-red-500/10 p-3 rounded-lg flex items-center justify-between">
+            <span>{err}</span>
+            <button type="button" onClick={() => setErr('')} className="text-xs hover:underline">fechar</button>
+          </div>
+        )}
 
         <button type="submit" disabled={loading} className="btn-primary w-full disabled:opacity-50">
           {loading ? 'Salvando...' : 'Redefinir senha'}
