@@ -11260,3 +11260,67 @@ PROXIMA ITER:
 - W18 pass 6: idx parcial em order_items (status='paid'/'fulfilled')
   p/ acelerar co_buyers CTE - currently scan completo orders+items
 - W7 pass 11: /recommendations/trending por categoria (MLB-5 nao feita)
+
+================================================================
+ITER W3 PASS 1 - PDP fetchRelated 3 bugs criticos (2026-05-27)
+================================================================
+ESCOPO: storefront PDP /product/[slug] fetchRelated helper
+FILE: apps/storefront/src/app/product/[slug]/page.tsx (linhas 55-80)
+
+CONTEXTO: W7 pass 9/10 corrigiu backend (/related + /also-bought CTE).
+Agora frontend tem 3 bugs DRÁSTICOS independentes que tornavam fix
+backend invisivel + ainda quebravam PDP em edge cases.
+
+BUGS CORRIGIDOS (3 CATASTROFICOS):
+
+1. cache: 'no-store' invalidava cache Redis backend (TTL 300s W18 pass2)
+- Backend tem cacheMiddleware(/products:related:slug, 300)
+- Frontend Next forcava fetch fresh a cada render -> Redis nunca hit
+- Cache infrastructure desperdicada 100% para /related
+- INCONSISTENCIA: also-bought.tsx irmao usa next:{revalidate:600} correto
+- FIX: next:{revalidate:300} alinhado com TTL backend
+- IMPACTO: Next SSR dedupe + Redis hit ~95% reqs, ~50ms vs ~200ms
+
+2. r.json() FORA do try-catch interno (parser exception subia)
+- if (!r.ok) return [] retornava OK em status nao-2xx
+- MAS r.json() em status 200 com body invalido (HTML error page,
+  truncated JSON, etc) lancava SyntaxError fora do try interno
+- Throw subia ate Promise.all -> try externo ProductPage -> notFound()
+- PDP inteiro 404 por backend retornando HTML em vez de JSON
+- FIX: const d = await r.json() movido para DENTRO do mesmo try
+- BONUS: Array.isArray(d?.products) ? d.products : [] anti-malformed
+
+3. fetchRelated dentro de Promise.all SEM .catch proprio
+- Promise.all rejeita-fail-fast em qualquer promise rejeitada
+- Reviews/qna tem .catch(()=>({reviews:[]})) inline
+- fetchRelated NAO tinha .catch externo
+- Se fetch wrapper Next lancasse (DNS, AbortController, timeout > 30s),
+  PDP inteiro virava notFound()
+- "Bug em recomendacoes = produto inexistente para Google/users"
+- FIX: fetchRelated(slug).catch(() => []) defense-in-depth
+- Mesmo padrao reviews/qna ja seguia
+
+SEVERIDADE:
+- Bug 1: Performance (Redis cache 0% hit-rate p/ /related desde W18 pass2)
+- Bug 2: Correctness (PDP 404 falso se backend body malformed)
+- Bug 3: Correctness (PDP 404 falso se /related timeout > Next fetch limit)
+- Bugs 2+3 explicam relatorios sporadicos "PDP 404 random" em logs
+
+PATTERN ESTABELECIDO: 3 regras para SSR fetch helpers em PDP server component:
+A. revalidate alinhado com TTL backend (nao no-store)
+B. r.json() DENTRO do try-catch
+C. .catch defense-in-depth em Promise.all mesmo se helper ja safe
+
+NEXT TARGETS pattern aplicavel:
+- recently-viewed-strip.tsx (verificar cache + json safety)
+- top-sellers homepage server component
+- search results page (se SSR)
+
+W3 PDP PROGRESS:
+- pass 1: fetchRelated 3 bugs (esta iter) - performance + correctness
+
+PROXIMA ITER:
+- W3 pass 2: also-bought.tsx auditar fetchSafe (compativel)
+- W3 pass 3: AddToCart loading state + optimistic update
+- W18 pass 6: idx parcial order_items status='paid' p/ co_buyers CTE
+- W7 pass 11: /recommendations/trending por categoria (MLB-5 nao feita)

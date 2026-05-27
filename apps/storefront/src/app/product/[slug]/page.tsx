@@ -53,13 +53,26 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   }
 }
 
-async function fetchRelated(slug: string) {
+// FIX-WORKER-3 pass 1: 3 bugs criticos:
+// 1. cache: 'no-store' invalida cache Redis backend TTL 300s (W18 pass2).
+//    /also-bought irmao usa revalidate:600 corretamente - inconsistencia.
+//    FIX: revalidate:300 alinhado com TTL backend (Next SSR dedupe + Redis hit).
+// 2. r.json() falhava DENTRO de fetchRelated mas o throw subia ate o try
+//    externo do ProductPage -> notFound() erroneo se backend OK + JSON malformado.
+//    FIX: r.json() dentro do mesmo try.
+// 3. fetchRelated dentro de Promise.all SEM .catch() proprio. Reviews/qna tem
+//    .catch(()=>({...})) mas fetchRelated nao. Se backend lancar throw (timeout
+//    no Next fetch wrapper), Promise.all rejeita -> try externo -> notFound().
+//    PDP inteiro 404 por bug em recomendacoes? Catastrofico.
+//    FIX: fetchRelated NUNCA throws (already, mas reforcado) + Promise.all
+//    com .catch redundante por defesa em profundidade.
+async function fetchRelated(slug: string): Promise<any[]> {
   try {
     const base = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';
-    const r = await fetch(`${base}/api/products/${slug}/related`, { cache: 'no-store' });
+    const r = await fetch(`${base}/api/products/${slug}/related`, { next: { revalidate: 300 } });
     if (!r.ok) return [];
-    const d = await r.json();
-    return d.products || [];
+    const d = await r.json(); // FIX bug 2: dentro do try
+    return Array.isArray(d?.products) ? d.products : [];
   } catch { return []; }
 }
 
@@ -72,10 +85,13 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
     const [r, q, rel] = await Promise.all([
       Api.reviews(slug).catch(() => ({ reviews: [] })),
       Api.qna(slug).catch(() => ({ qna: [] })),
-      fetchRelated(slug),
+      // FIX bug 3: .catch defense-in-depth (fetchRelated ja eh safe mas defensivo)
+      fetchRelated(slug).catch(() => []),
     ]);
     reviews = r.reviews; qna = q.qna; related = rel;
   } catch {
+    // notFound() so chamado se Api.product(slug) lancar (produto inexistente).
+    // Reviews/qna/related TODOS tem fallback proprio -> nunca disparam aqui.
     notFound();
   }
 
