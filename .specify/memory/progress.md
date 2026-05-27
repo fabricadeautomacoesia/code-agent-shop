@@ -8477,3 +8477,83 @@ PROXIMA ITER:
 - W13 pass 7: notification preferences (opt-out por template_code)
 - W17 pass 12: rotacao vault keys
 - W4 pass 7: /admin/reports KPI dashboard
+
+## WORKER 3 PASS 9 - PriceAlertButton 5 bugs a11y/UX/state
+
+AUDIT components/price-alert-button.tsx (MLB-12 "Avise-me se baixar"):
+
+Mesmo pattern bugs do WishlistButton pre-W3 pass 6. Aplicado fix template
+consolidado (3o componente toggle com mesmo padrao agora).
+
+BUG 1 (CRITICAL a11y):
+- <button> sem aria-label nem aria-pressed
+- WCAG fail - estado toggle invisivel ao screen reader
+FIX:
+- aria-label dinamico (active/inactive states)
+- aria-pressed={active}
+- focus-visible:outline-2 outline-magenta
+
+BUG 2 (a11y icons):
+- Bell + BellRing sem aria-hidden
+- SR podia anunciar SVG como ruido
+FIX: aria-hidden="true" em ambos icons
+
+BUG 3 (silent failure):
+  catch {} finally { setLoading(false); }
+- Sem console.error e sem feedback visual
+- User clica, nada acontece, frustracao
+FIX: errorFlash state + setTimeout 2s
+- ring-2 ring-red-500 animate-pulse 2s
+- console.error para debug
+- 404 em DELETE: estado ja correto
+
+BUG 4 (sem rollback robusto):
+- setActive APOS request = delay 200-400ms
+- Erro nao revertia state
+FIX: optimistic flip + rollback
+- wasActive capturado pre-flip
+- setActive(!wasActive) imediato
+- catch: setActive(wasActive) + errorFlash
+
+BUG 5 (currentPriceCents unused):
+- Prop declarada mas nunca usada
+- Provavel intencao: enviar como reference_price ao backend
+FIX: renomeado para _unused (indicate intentional)
+- NAO removido para preservar contract API
+- Pass 10 roadmap: implementar reference_price feature
+
+DEPLOY:
+- commit 985aa4e push main OK
+- 34 insertions, 9 deletions
+- storefront rebuild via VPS cron
+
+W3 PDP AUDIT PROGRESS (passes 1-9):
+- pass 1: AddToCart funcional + friendly errors
+- pass 2: breadcrumb slash orfao
+- pass 3: QnaForm 6 bugs UX
+- pass 4: ReviewForm 8 bugs UX + a11y
+- pass 5: ProductTabs WAI-ARIA
+- pass 6: WishlistButton 5 bugs a11y/UX/state
+- pass 7: AskQuickButton modal WCAG 2.1
+- pass 8: comparar consume errors granulares
+- pass 9: PriceAlertButton 5 bugs (esta iter)
+
+PADRAO TOGGLE BUTTONS CONSOLIDADO (PriceAlert + Wishlist + AskQuick):
+- aria-pressed + aria-hidden + aria-label dinamico
+- optimistic flip + rollback no catch
+- errorFlash visual (ring-red 2s)
+- focus-visible outline-magenta
+- 404 em DELETE = estado ja sincronizado
+
+CICLO PDP COMPLETO:
+- Forms: AddToCart, QnaForm, ReviewForm (W3 passes 1,3,4)
+- Navigation: Breadcrumb, ProductTabs (passes 2,5)
+- Toggles: Wishlist, PriceAlert (passes 6,9)
+- Modal: AskQuickButton (pass 7)
+- Cross-page: comparar errors (pass 8)
+- TOTAL: 9 components com a11y + UX + state hardening
+
+PROXIMA ITER:
+- W3 pass 10: extrair friendly-error mappers DRY (qna/review/cart -> lib/)
+- W3 pass 11: CompareButton.tsx audit (drawer + toggle hybrid)
+- W3 pass 12: AddToCart melhor visualizar "+N produtos no carrinho"
