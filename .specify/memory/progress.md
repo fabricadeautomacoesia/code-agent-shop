@@ -3084,3 +3084,58 @@ PADRAO ARQUITETURAL CAPTURADO:
   (analytics, logs) que devem ROOM SEMPRE
 - cacheMiddleware(keyFn, ttl): use quando handler eh pure (read-only)
 - Ambos sao gracioso se Redis off (no-op fallback)
+
+## WORKER 18 pass 5 (PERFORMANCE) - cache.js singleton retry + withCache destructuring
+Continuacao operacional do W18 pass 4. Investigacao do "Redis nao funciona"
+revelou 2 bugs distintos:
+
+BUG 1 (cache singleton): packages/shared/src/cache.js getClient
+- enableOfflineQueue: false fazia ioredis lancar 'Stream isn't writeable'
+  IMEDIATAMENTE em qualquer blip de network/restart Redis
+- Mesmo com Redis ONLINE (confirmado via teste direto in-container), o
+  singleton inicializado durante startup do svc ficava num estado bad e
+  recusava todos os comandos seguintes
+- Sem retryStrategy: ioredis nao recuperava da falha inicial
+
+FIX 1:
+- enableOfflineQueue: true (enfileira comandos brevemente durante reconnect)
+- retryStrategy: exponential backoff (50ms, 100ms, 200ms... max 2s)
+- reconnectOnError: detecta READONLY/ECONNRESET/EPIPE e reconecta
+- Event 'ready' loggado para visibility quando conexao estabiliza
+- connectTimeout aumentado 3s -> 5s (tolerancia inicial maior)
+
+BUG 2 (auto-introduzido em W18 pass 4): withCache contract
+- withCache(key, ttl, loader) retorna {value, hit} object
+- Eu fiz: const product = await cache.withCache(...) -> product = {value, hit}
+- Response do PDP virou {"product": {"value": {real_data}, "hit": false}}
+- Frontend quebraria ao ler product.id direto. Confirmed em prod test.
+
+FIX 2: services/product-svc/src/routes/public.js
+- const { value: product } = await cache.withCache(...) destructuring
+
+VALIDACAO PUBLICA:
+- PDP shape: '{"product":{"id":"...","slug":"...",...' (correto, nao nested)
+- /reviews 1a GET: X-Cache: MISS
+- /reviews 2a GET: X-Cache: HIT (cache funcional!)
+- /search/trending 1a GET: MISS / 2a GET: HIT
+- Logs cas_product-svc: '[cache.redis_ready]' presente 2x (apos restart)
+- Warnings antigos 'Stream isn't writeable' nao aparecem mais
+
+IMPACTO ATIVADO:
+- Todos os caches W18 pass 1-4 agora funcionam:
+  * /products/:slug/related (300s)
+  * /products/:slug (60s) - PDP detalhe
+  * /products/:slug/reviews (60s)
+  * /products/:slug/qna (60s)
+  * /products/flash-promo/active (60s)
+  * /products (60s)
+  * /search/top-sellers (120s)
+  * /search/trending (300s)
+  * /search/categories (900s)
+  * /search/facets (180s)
+- 10 endpoints publicos cached, reduzindo carga PG significativamente
+
+DEPLOY:
+- commit c25811e (fix cache.js retry)
+- commit 5c859de (fix withCache destructuring)
+- product-svc + search-svc rebuilt e convergidos
