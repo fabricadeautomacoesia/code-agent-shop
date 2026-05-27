@@ -4789,3 +4789,84 @@ PROXIMA ITER:
 - Audit /api/orders/cart (GET) - ja autenticado, key=user
 - Considerar SSE para invalidate cache real-time quando coupon used_count muda
 - Audit qa-svc /qa/runs/:product_id (admin/seller dashboard hit)
+
+## WORKER 16 / MLB-12 (NEW) - Price Drop Alert "Avise-me se baixar"
+
+CONTEXTO:
+11 features MLB anteriores ja completas (100% lista inicial). Esta e a
+12a feature - equivalente Mercado Livre "Quero ser avisado quando baixar
+o preco". User ativa alerta no PDP, sistema notifica quando price_cents
+cai.
+
+IMPLEMENTACAO COMPLETA E2E (5 arquivos):
+
+1. db/migrations/030_price_alerts.sql:
+   + CREATE TABLE product_price_alerts (user_id, product_id, threshold_cents)
+   + UNIQUE (user_id, product_id) -> upsert via ON CONFLICT
+   + 2 indices: idx_price_alerts_product (lookup em trigger), idx_price_alerts_user (lista user)
+   + CREATE FUNCTION fn_price_drop_notify() PL/pgSQL:
+     - Sai se OLD.price IS NULL ou NEW.price >= OLD.price
+     - FOR alert IN SELECT WHERE product_id matches AND threshold OK AND last_notified > 24h
+     - INSERT notifications (template=price_drop, payload com old+new prices)
+     - UPDATE last_notified_at = NOW()
+   + CREATE TRIGGER AFTER UPDATE OF price_cents ON products
+
+2. services/product-svc/src/routes/price-alerts.js:
+   + jwt.requireAuth() global no router
+   + GET / -> lista alertas + JOIN products (slug, title, current_price, cover)
+   + POST / {product_id, threshold_cents?} -> upsert
+   + DELETE /:product_id -> remove (404 se nao tinha)
+
+3. services/product-svc/src/server.js:
+   + app.use('/products/price-alerts', require('./routes/price-alerts'))
+   + Antes do /products catch-all (priority Express)
+
+4. apps/storefront/src/components/price-alert-button.tsx:
+   + Component client com toggle (state active)
+   + Sem auth: redirect /login?return=...
+   + Active state via GET inicial filtrando por productId
+   + Bell/BellRing icon + cores diferenciadas
+
+5. apps/storefront/src/app/product/[slug]/page.tsx:
+   + import PriceAlertButton
+   + Mount abaixo de AskQuickButton (MLB-2)
+
+DEPLOY:
+- commit 154992e pushed
+- Migration aplicada: CREATE TABLE + 2 CREATE INDEX + CREATE FUNCTION + CREATE TRIGGER
+- product-svc rebuilt (~3.5s) + converged
+- storefront rebuilt (~3.9s) + converged
+
+VALIDACAO E2E COMPLETA:
+1. POST /products/price-alerts product_id -> 201 + alert id OK
+2. GET /products/price-alerts -> 200 + lista com produto info OK
+3. DELETE /price-alerts/<id> -> 200 ok:true OK
+4. TRIGGER REAL:
+   - Re-cria alert para user teste1 + produto c524758a
+   - UPDATE products SET price_cents=15000 WHERE id=c524758a (era 19900)
+   - GET /notifications -> NOVA notification top:
+     * template_code: 'price_drop'
+     * title: 'Preco baixou no produto que voce queria!'
+     * body: 'Era R$ 199.00, agora R$ 150.00'
+     * cta_url: '/product/agente-rag-documentos-cas-004'
+     * payload: { old_price_cents:19900, new_price_cents:15000, slug, product_id }
+     * priority: 1 (above default)
+5. Preco restaurado para 19900 (cleanup)
+
+ANTI-SPAM CONFIRMADO:
+- INTERVAL '24 hours' previne flood se preco oscila
+- UPDATE last_notified_at = NOW() apos cada INSERT
+- Segunda queda em <24h NAO gera notification (designed)
+
+IMPACTO MLB-12:
+- Feature completa Mercado Livre parity (12/12 features)
+- Database-level trigger -> sempre dispara, mesmo se admin altera price via SQL direto
+- Anti-spam 24h - boa UX
+- threshold_cents opcional - user pode setar "so me avise se baixar 50%+"
+- Padrao reutilizavel para outras price-related events (estoque, promo)
+
+PROXIMA ITER MLB:
+- 12 features completas! Considerar features adicionais MLB:
+  * Mercado Pago (vs Asaas Brasil-only)
+  * Mensagens internas seller-buyer (chat)
+  * Sistema de Recommendations baseado em coletivo (collaborative filtering)
