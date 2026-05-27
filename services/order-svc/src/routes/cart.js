@@ -182,8 +182,9 @@ router.post('/loyalty/redeem',
       const cap = Math.floor(subtotal * 0.30);
       const effectivePoints = Math.min(req.body.points, cap);
       // grava pendencia no cart (pontos NAO sao debitados ainda - apenas no checkout)
+      // FIX 42P08: $1 usado em INT e BIGINT - cast explicito em ambas posicoes.
       await c.query(
-        `UPDATE carts SET loyalty_points_redeemed = $1, loyalty_discount_cents = $1
+        `UPDATE carts SET loyalty_points_redeemed = $1::INT, loyalty_discount_cents = $1::BIGINT
           WHERE id = $2::UUID`,
         [effectivePoints, cart.rows[0].id]
       );
@@ -254,10 +255,10 @@ async function recalcCart(client, cart_id) {
   }
   const total = Math.max(0, subtotal - discount - loyaltyCents);
   await client.query(
-    `UPDATE carts SET items_count = $1, subtotal_cents = $2, discount_cents = $3,
-                       loyalty_points_redeemed = $4, loyalty_discount_cents = $5,
-                       total_cents = $6, updated_at = NOW()
-     WHERE id = $7`,
+    `UPDATE carts SET items_count = $1::INT, subtotal_cents = $2::BIGINT, discount_cents = $3::BIGINT,
+                       loyalty_points_redeemed = $4::INT, loyalty_discount_cents = $5::BIGINT,
+                       total_cents = $6::BIGINT, updated_at = NOW()
+     WHERE id = $7::UUID`,
     [cnt, subtotal, discount, loyaltyPts, loyaltyCents, total, cart_id]
   );
 }
