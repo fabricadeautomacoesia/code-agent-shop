@@ -5749,3 +5749,55 @@ PROXIMA ITER:
 - /admin/orders (refund, dispute)
 - /admin/reports (resolve, dismiss)
 - Considerar Toast component centralizado (vs banners inline per page)
+
+## WORKER 4 pass 4 (ADMIN) - vault page refactored via useAdminAction
+
+GAP DETECTADO (proxima iter do W4 pass 3):
+"/admin/vault (revoke keys) + /admin/orders + /admin/reports"
+
+REFACTORED apps/dashboard-admin/src/app/vault/page.tsx:
+
+ACTIONS migradas para useAdminAction hook:
+1. create(e) -> action.run('create-key', ...):
+   - Form provisionar nova API key
+   - Inclui reset form state apos success (closes panel + clears)
+   - Submit button disabled + texto "Provisionando..." durante busy
+2. revoke(id) -> action.run(`revoke-${id}`, ...):
+   - Per-row revoke com prompt motivo
+   - Button disabled apenas naquela row durante busy
+
+UI improvements:
+- 2 banners (error + success) com clear() callback
+- loadError separado de action.error (lista vs action)
+- Per-row busy state independente
+- Form submit text-feedback: "Provisionar" -> "Provisionando..."
+
+PROGRESS METRIC:
+5 de 7 admin pages com hook (71% cobertura DRY):
+- /admin/payouts (W4 pass 1 -> pass 3)
+- /admin/qa-queue (W4 pass 2)
+- /admin/sellers (W4 pass 2)
+- /admin/products (W4 pass 3)
+- /admin/vault (W4 pass 4) <- ESTE
+Restantes (2): /admin/orders, /admin/reports
+(provavel ja sao read-only ou usam pattern proprio - audit proxima iter)
+
+DEPLOY:
+- commit 472ca8a pushed
+- dashboard-admin rebuilt (~4.7s) + converged
+
+VALIDACAO PUBLICA:
+- /vault HTTP 200 OK
+- Bundle JS contem: "Provisionando", "busyKey", "create-key", "revoke-"
+  -> hook + form messages deployados
+
+IMPACTO:
+- 5 pages admin agora UX consistent (banners + busy state + disabled)
+- ~30 linhas eliminadas por page (DRY achieved)
+- Padrao reutilizavel em features future
+- Vault: high-stake operations (chaves criptograficas) com feedback claro
+
+GAP PROXIMA ITER:
+- Audit /admin/orders + /admin/reports (provavel read-only)
+- Toast component centralizado (vs banners por page - W4 pass 2 mentioned)
+- Considerar useToast() context provider (toast list global)
