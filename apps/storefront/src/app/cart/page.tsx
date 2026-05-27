@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation';
 import { Trash2, Tag, TrendingUp, Plus, Minus, Star } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
+import { ProgressiveCouponTeaser } from '@/components/progressive-coupon-teaser';
 
 export default function CartPage() {
   const router = useRouter();
@@ -156,13 +157,21 @@ export default function CartPage() {
           <aside className="glass p-6 h-fit sticky top-28">
             <h3 className="font-display font-bold text-xl mb-4">Resumo</h3>
 
-            <form onSubmit={applyCoupon} className="flex gap-2 mb-6">
+            <form onSubmit={applyCoupon} className="flex gap-2 mb-4">
               <input value={coupon} onChange={(e) => setCoupon(e.target.value)} placeholder="Cupom"
                 className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm focus:border-magenta focus:outline-none" />
               <button className="px-3 py-2 rounded-lg glass text-sm">
                 <Tag className="w-4 h-4" />
               </button>
             </form>
+
+            {/* MLB-NEW WORKER 16: cupom progressivo proativo (skip se ja ha cupom aplicado) */}
+            <ProgressiveCouponTeaser
+              token={token}
+              subtotalCents={cart?.subtotal_cents || 0}
+              alreadyApplied={!!cart?.coupon_code}
+              onApplied={load}
+            />
 
             <div className="space-y-2 text-sm border-b border-white/10 pb-4 mb-4">
               <div className="flex justify-between"><span className="text-white/60">Subtotal</span><span>{Api.formatBRL(cart?.subtotal_cents || 0)}</span></div>
