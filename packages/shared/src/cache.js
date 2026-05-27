@@ -22,14 +22,29 @@ function getClient() {
   if (!url) { disabled = true; return null; }
   try {
     const Redis = require('ioredis');
+    // FIX-WORKER-18 pass 5: enableOfflineQueue=true + retryStrategy. Era false ->
+    // 'Stream isn't writeable' a cada blip de network/restart Redis -> cache.get_fail
+    // warnings constantes em prod mesmo com Redis online. Agora ioredis enfileira
+    // brevemente + reconecta automaticamente em network errors.
     client = new Redis(url, {
       lazyConnect: false,
-      maxRetriesPerRequest: 2,
-      enableOfflineQueue: false,
-      connectTimeout: 3000,
+      maxRetriesPerRequest: 3,
+      enableOfflineQueue: true,     // queue commands during reconnect (~50ms typical)
+      connectTimeout: 5000,
+      retryStrategy: (times) => {
+        // exponential backoff: 50ms, 100ms, 200ms, max 2s
+        return Math.min(50 * Math.pow(2, times - 1), 2000);
+      },
+      reconnectOnError: (err) => {
+        const targetErrors = ['READONLY', 'ECONNRESET', 'EPIPE'];
+        return targetErrors.some((e) => err.message.includes(e));
+      },
     });
     client.on('error', (err) => {
       logger.warn({ err: err.message }, '[cache.redis_error]');
+    });
+    client.on('ready', () => {
+      logger.info('[cache.redis_ready]');
     });
     return client;
   } catch (e) {
