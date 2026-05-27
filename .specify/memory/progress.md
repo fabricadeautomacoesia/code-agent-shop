@@ -9356,3 +9356,83 @@ PROXIMA ITER:
 - W4 pass 10: /admin/vault error rate column (W14-7 indice)
 - W12 pass 6: qa-svc audit confidence threshold edge cases
 - W11 pass 9: webhook event_type por tipo (filter UI)
+
+## WORKER 4 PASS 10 - /admin/vault Saude 7d (consume idx_vault_usage_failures)
+
+INTEGRACAO 4 PASSES (E2E completo):
+- W14 pass 7: idx_vault_usage_failures partial composto criado
+- W17 pass 9: removido INSERT fantasma (data integrity)
+- W4 pass 9: currency fix USD em /admin/vault
+- W4 pass 10 (esta iter): coluna "Saude 7d" usando indice
+
+BACKEND vault-svc GET /keys ENRICHED:
+
+3 SUBQUERIES adicionadas:
+1. calls_7d - COUNT chamadas ultimos 7d
+2. errors_7d - COUNT WHERE success = FALSE
+3. last_error_at - MAX(created_at) WHERE success = FALSE
+
+W14-7 INDICE USADO:
+- idx_vault_usage_failures (vault_key_id, created_at DESC) WHERE success = FALSE
+- Em vez de seq scan ~70k rows/semana -> partial scan ~700 rows
+- ~100x menos work
+
+App layer calcula error_rate = errors/calls (cleaner que PG NUMERIC division).
+
+FRONTEND /admin/vault coluna "Saude 7d":
+
+Logica cor-coded baseada em error_rate:
+- calls_7d=0 -> cinza "Idle" (sem uso)
+- error_rate=0 -> verde "OK"
+- 0-5% -> amarelo "Watch X%"
+- >=5% -> vermelho "Issues X%"
+
+title attribute mostra detalhe hover:
+  "5/127 chamadas falharam (3.9%) nos ultimos 7 dias"
+
+VALOR OPERACIONAL:
+- Admin ve IMEDIATAMENTE chaves com problemas
+- Token revogado upstream (OpenAI) -> 100% errors visivel
+- Antes: query manual psql GROUP BY
+- Agora: dashboard self-service, 1 olhada
+
+PADRAO MONITORING ESTABELECIDO (reusavel):
+- W14: indice partial pre-criado
+- Backend: enriquece response com aggregate
+- Frontend: health badge cor-coded com tooltip
+- Aplicavel a: orders, qa_runs, payouts, vault_key_usage, etc
+
+DEPLOY:
+- commit f765cf1 push main OK
+- 56 insertions, 6 deletions (2 files)
+- vault-svc + dashboard-admin rebuild via VPS cron
+- DB indice ja criado (mig 035)
+
+VALIDACAO POS-DEPLOY:
+- GET /api/vault/keys com Bearer admin
+- Response inclui calls_7d, errors_7d, error_rate
+- /admin/vault renderiza coluna "Saude 7d" cor-coded
+
+W4 ADMIN AUDIT (passes 1-10):
+| Pass | Page | Tema |
+|---|---|---|
+| 1-3 | hook + sellers/qa-queue | useAdminAction |
+| 4 | /admin/payouts | Transferir Asaas |
+| 5 | /admin/qa-queue | 4 bugs |
+| 6 | /admin/orders | poll + status |
+| 7 | /admin/reports | 6 fixes |
+| 8 | /admin/webhooks | dead letter UI |
+| 9 | /admin/vault | currency fix |
+| 10 | /admin/vault | Saude 7d (esta iter) |
+
+CICLO MONITORING VAULT COMPLETO:
+- Indice partial W14-7
+- INSERT correto W17-9
+- Currency display W4-9
+- Health badge W4-10
+- Pronto p/ alerts proativos (cron futuro W17-13)
+
+PROXIMA ITER:
+- W4 pass 11: /admin/products (validar existencia ou criar)
+- W17 pass 12: rotacao automatica keys (rotation_due_at)
+- W14 pass 8: drop dead indices apos 2 semanas
