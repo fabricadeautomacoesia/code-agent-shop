@@ -1,6 +1,6 @@
 import './globals.css';
 import Link from 'next/link';
-import { LayoutDashboard, Users, Package, ShoppingCart, AlertTriangle, DollarSign, Activity, KeyRound, Shield } from 'lucide-react';
+import { LayoutDashboard, Users, Package, ShoppingCart, AlertTriangle, DollarSign, Activity, KeyRound, Shield, Webhook } from 'lucide-react';
 
 export const metadata = { title: 'Admin - Code & Agent Shop' };
 
@@ -14,6 +14,8 @@ const NAV = [
   { href: '/reports',     Icon: AlertTriangle,   label: 'Denuncias' },
   { href: '/alerts',      Icon: Activity,        label: 'Alertas AIOps' },
   { href: '/vault',       Icon: KeyRound,        label: 'Vault (API keys)' },
+  // FIX-WORKER-4 pass 8: webhooks dead letter (consume /payments/webhooks/dead - W11 pass 7)
+  { href: '/webhooks',    Icon: Webhook,         label: 'Webhooks Asaas' },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
