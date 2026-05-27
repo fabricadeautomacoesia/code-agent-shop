@@ -3825,3 +3825,55 @@ IMPACTO:
 
 LICAO: bugs sutis se propagam por copy-paste. Helper compartilhado +
 greps regulares por anti-pattern devem fazer parte do Blueprint V8.
+
+## WORKER 17 pass 4 (VAULT/SECURITY) - DLP info leak no log de falha
+
+VETOR DETECTADO (audit codigo vault-svc):
+Em vaultUseGuard (services/vault-svc/src/server.js:49-54), log.warn em
+cada tentativa falha de x-internal-token continha:
+  { tok_len: <attempt>, expected_len: <VAULT_INTERNAL_TOKEN.length> }
+
+ATAQUE possivel:
+1. POST /api/vault/use com qualquer x-internal-token curto
+2. log.warn registra expected_len=64 (ou tamanho real do token)
+3. Atacante aprende N (comprimento exato) -> reduz espaco de busca
+4. Mesmo com fail2ban (5 fails -> ban 15min), IP rotation viabiliza
+   exploit gradativo em dias - token e bytes random, mas N conhecido
+   facilita scan paralelo
+
+Trade-off do log: forensics x DLP.
+Solucao: substituir expected_len por tok_len_match (boolean):
+- Preserva info util (se atacante errou comprimento OU conteudo)
+- NAO revela comprimento exato (1 bit vs log2(N) bits)
+- Mantem ip + ua + fail2ban counter (forensics suficiente)
+
+FIX (1 arquivo - services/vault-svc/src/server.js):
+- log.warn({ ..., expected_len, tok_len, ... })
++ log.warn({ ip, ua, tok_len_match: a.length === b.length })
+
+DEPLOY:
+- commit 88860f0 pushed
+- vault-svc rebuilt + deployed converged
+
+VALIDACAO PUBLICA:
+- /api/vault/health -> 200 (svc UP apos rebuild)
+- POST /vault/use sem token -> 401 missing_token OK
+- VAULT_INTERNAL_TOKEN env NAO configurado em prod (operacional, nao codigo)
+  -> log de invalid_internal_token nao dispara ate ops configurar
+- Quando configurar e atacante tentar: log mostrara apenas tok_len_match
+  bool, NUNCA expected_len real
+
+LICAO ARQUITETURAL:
+NUNCA logar metadados da credencial esperada:
+- Length, prefix, suffix, hash do esperado
+- Mesmo logs internos podem vazar via:
+  - SIEM compartilhado entre tenants
+  - Log shipping mal configurado (S3 publico, Loki sem auth)
+  - Comprometimento de 1 maquina de log = vazamento total
+Regra: log de credencial deve ser indistinguivel entre "atacante errou A"
+e "atacante errou B". So booleans/categorias, nunca tamanhos/conteudo.
+
+GAP DETECTADO (proxima iter):
+- Auditar payment-svc / qa-svc / aiops-svc para padroes similares de
+  guards com x-internal-token (PAYMENT_INTERNAL_TOKEN, QA_RUN_INTERNAL_TOKEN)
+- ASAAS_WEBHOOK_SECRET tambem usa timingSafeEqual - validar logs
