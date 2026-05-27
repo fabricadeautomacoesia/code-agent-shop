@@ -10,14 +10,20 @@ const { jwt, validate, asyncHandler, fail2ban, errorHandler, logger } = require(
 const router = express.Router();
 const log = logger.child({ svc: 'auth-svc', mod: 'auth' });
 
+// FIX-WORKER-6 pass 1: cpf_cnpj string vazia rejeitado por min(11).optional().
+// Frontend sempre envia "" quando user nao preenche (linha 53 register/page.tsx),
+// resultando em 400 "must contain at least 11 character(s)" para buyer sem CPF.
+// Solucao: transform "" -> undefined ANTES da validacao min(11).
+// Mesmo padrao em phone_e164 (regex falha em ""). Buyer SEM doc/telefone agora ok.
+const emptyToUndef = (v) => (v === '' || v === null ? undefined : v);
 const registerSchema = z.object({
   email: z.string().email().max(180),
   password: z.string().min(8).max(128)
     .refine((s) => /[A-Z]/.test(s) && /[0-9]/.test(s), 'Senha precisa de maiuscula e numero'),
   full_name: z.string().min(2).max(200),
   role: z.enum(['buyer','seller']).default('buyer'),
-  cpf_cnpj: z.string().min(11).max(20).optional(),
-  phone_e164: z.string().regex(/^\+[1-9]\d{6,14}$/).optional(),
+  cpf_cnpj: z.preprocess(emptyToUndef, z.string().min(11).max(20).optional()),
+  phone_e164: z.preprocess(emptyToUndef, z.string().regex(/^\+[1-9]\d{6,14}$/).optional()),
 });
 
 const loginSchema = z.object({
