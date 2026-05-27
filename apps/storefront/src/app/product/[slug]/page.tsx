@@ -2,10 +2,9 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Star, Award, Download, Shield, Clock, Tag } from 'lucide-react';
 import { Api } from '@/lib/api';
-import { QnaForm } from '@/components/qna-form';
 import { AddToCart } from '@/components/add-to-cart';
 import { WishlistButton } from '@/components/wishlist-button';
-import { QnaUpvote } from '@/components/qna-upvote';
+import { ProductTabs } from '@/components/product-tabs';
 
 export const revalidate = 30;
 
@@ -89,72 +88,8 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             )}
           </div>
 
-          <div className="glass p-6">
-            <div className="flex border-b border-white/10 -mx-6 px-6 mb-6">
-              {['Visao Geral','Pre-requisitos','Changelog','Reviews','Q&A'].map((t, i) => (
-                <button key={i} className={`px-4 py-3 text-sm font-medium ${i === 0 ? 'text-magenta border-b-2 border-magenta -mb-px' : 'text-white/60'}`}>{t}</button>
-              ))}
-            </div>
-            <div className="prose prose-invert max-w-none">
-              <h3 className="font-display text-2xl">Sobre este produto</h3>
-              <p className="whitespace-pre-line text-white/80">{product.description}</p>
-              {product.install_instructions && (
-                <>
-                  <h3 className="font-display text-xl mt-8">Instrucoes de instalacao</h3>
-                  <pre className="bg-black/40 p-4 rounded-lg overflow-x-auto text-sm">{product.install_instructions}</pre>
-                </>
-              )}
-              {product.api_keys_required?.length > 0 && (
-                <>
-                  <h3 className="font-display text-xl mt-8">APIs necessarias</h3>
-                  <ul>{product.api_keys_required.map((k: string) => <li key={k}><code>{k}</code></li>)}</ul>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="glass p-6">
-            <h3 className="font-display font-bold text-xl mb-4">Perguntas & Respostas</h3>
-            {qna.length > 0 ? (
-              <div className="space-y-4 mb-6">
-                {qna.slice(0, 8).map((q) => (
-                  <div key={q.id} className="border-b border-white/5 pb-4 last:border-0">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <div className="font-semibold text-sm mb-1">Q: {q.question}</div>
-                        {q.answer
-                          ? <div className="text-sm text-white/70 pl-4 border-l-2 border-magenta mt-1">R: {q.answer}</div>
-                          : <div className="text-xs text-white/40 italic mt-1">Aguardando resposta do vendedor...</div>}
-                      </div>
-                      <QnaUpvote qnaId={q.id} initialCount={q.upvote_count || 0} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-white/60 mb-6">Seja o primeiro a perguntar sobre este produto.</p>
-            )}
-            <QnaForm productId={product.id} />
-          </div>
-
-          {reviews.length > 0 && (
-            <div className="glass p-6">
-              <h3 className="font-display font-bold text-xl mb-4">Avaliacoes</h3>
-              <div className="space-y-4">
-                {reviews.slice(0, 10).map((r) => (
-                  <div key={r.id} className="border-b border-white/5 pb-4 last:border-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      {Array.from({ length: r.rating }).map((_, i) => <Star key={i} className="w-4 h-4 fill-yellow-400 text-yellow-400" />)}
-                      <span className="font-semibold text-sm">{r.title}</span>
-                      {r.is_verified_purchase && <span className="text-[10px] px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">COMPRA VERIFICADA</span>}
-                    </div>
-                    <p className="text-sm text-white/70">{r.body}</p>
-                    <div className="text-xs text-white/40 mt-1">{r.buyer_name}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* FIX-WORKER-3: tabs funcionais (antes eram botoes decorativos sem onClick) */}
+          <ProductTabs product={product} reviews={reviews.slice(0, 10)} qna={qna.slice(0, 8)} />
         </div>
 
         <aside className="space-y-6">
