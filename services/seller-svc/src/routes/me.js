@@ -110,6 +110,25 @@ router.post('/payout',
   })
 );
 
+// FIX-WORKER-5: GET /sellers/me/payouts - historico de payouts do seller logado.
+// Antes: dashboard-seller /financeiro tinha botao "Solicitar saque" mas zero
+// visibilidade do que aconteceu depois (admin aprovou? rejeitou? processou?).
+// Seller ficava no escuro apos solicitar - tinha que perguntar suporte.
+router.get('/payouts', asyncHandler(async (req, res, next) => {
+  const lim = Math.min(parseInt(req.query.limit || '50', 10), 200);
+  const s = await query('SELECT id FROM sellers WHERE user_id = $1', [req.user.sub]);
+  if (!s.rows.length) return next(errorHandler.notFound('seller_not_found'));
+  const r = await query(
+    `SELECT id, amount_cents, status, asaas_transfer_id, requested_at,
+            approved_at, paid_at, rejected_reason
+       FROM seller_payouts
+      WHERE seller_id = $1
+      ORDER BY requested_at DESC LIMIT $2`,
+    [s.rows[0].id, lim]
+  );
+  res.json({ payouts: r.rows, count: r.rows.length });
+}));
+
 // GET /sellers/me/kpi
 router.get('/kpi', asyncHandler(async (req, res) => {
   const r = await query(
