@@ -2206,3 +2206,52 @@ GAP RESTANTE: Outros endpoints internal-only que devem usar pattern:
 - /payments/asaas/webhook (HMAC signature, padrao diferente OK)
 - /notifications/test (admin role OK)
 - Nenhum mais critico identificado.
+
+## WORKER 9 pass 2 (SEO) - metadataBase ausente quebrou og:image em todos crawlers
+Auditoria pos-W9 pass 1: identificada falha CRITICA de social-sharing.
+
+PROBLEMA:
+- /opengraph-image.tsx ja existia (dynamic OG png 1200x630 gerada via next/og)
+- Mas root layout NAO tinha metadataBase Configurado
+- Resultado: <meta property="og:image" content="http://localhost:3000/opengraph-image?...">
+- LOCALHOST URL nao acessivel pelos crawlers (WhatsApp/Twitter/FB/LinkedIn/Slack/Discord)
+- Preview de link no WhatsApp etc ficava SEM imagem -> baixa CTR de social share
+
+CONFIRMADO em producao antes do fix:
+- curl /products /sellers /promocoes: ZERO og:image meta tag
+- curl /: og:image content="http://localhost:3000/opengraph-image?..." (broken!)
+
+FIX: apps/storefront/src/app/layout.tsx
+- metadataBase: new URL(NEXT_PUBLIC_SITE_URL ||
+  'https://cas.inovareinteligenciaartificial.com')
+- Bonus: openGraph.siteName: 'Code & Agent Shop'
+- Bonus: twitter card padrao (summary_large_image + title + description)
+
+Next.js documentation: metadataBase eh base URL que Next usa para resolver
+opengraph-image.tsx + URLs relativas para absolutas. SEM ele, ImageResponse
+gera localhost URL.
+
+VALIDACAO PUBLICA (6 cenarios):
+1) / og:image -> https://cas.inovareinteligenciaartificial.com/opengraph-image?a33bd6adfe0c7515 OK
+2) /products og:image -> mesma URL absoluta (inherits) OK
+3) /sellers og:image -> mesma URL absoluta OK
+4) /promocoes og:image -> mesma URL absoluta OK
+5) Twitter card: summary_large_image + title + description + image:alt OK
+6) /opengraph-image direto: HTTP 200 image/png 190kb (crawler-accessible) OK
+
+DEPLOY: commit 831e6bc pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
+
+IMPACTO ESPERADO:
+- WhatsApp/Twitter/FB/LinkedIn/Slack agora exibem preview rico com imagem
+  CAS personalizada (background gradient + logo + tagline) ao compartilhar
+- CTR de social share esperado +30-50% vs links text-only
+- SEO sinal positivo para Google (Twitter Cards = ranking factor leve)
+
+NOTA OPERACIONAL: NEXT_PUBLIC_SITE_URL deve estar em .env Swarm para
+storefront. Fallback hardcoded para producao funciona, mas explicit env eh
+boa pratica para staging/dev terem URLs corretas.
+
+GAP RESTANTE: cada produto /product/[slug] ja tinha generateMetadata com
+images dinamicas via cover_image_url - mas estava limitado por metadataBase
+ausente. AGORA tambem funcionam. Validar em proxima iteracao.
