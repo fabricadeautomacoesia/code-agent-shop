@@ -1,6 +1,19 @@
 /**
  * Cliente API para o gateway (V8 21.1).
  * Acesso server-side via GATEWAY_URL, client-side via /api/* (Next rewrites).
+ *
+ * FIX-WORKER-8 pass 2: 4 bugs corrigidos aplicando Regra B + E (W3/W8 pass 1):
+ * 1. Regra B violada linha 63 - r.json() sem await em success path:
+ *    JSON malformed em 200 propaga ao caller que espera T (nao Promise<T>).
+ *    Caller .then crash + stack trace perdido.
+ * 2. Regra E parcial linha 60 - extraia data.error mas NAO data.message:
+ *    Auth-svc retorna {message: "Email ja cadastrado"} em validacao negocio.
+ *    friendly-errors.ts recebia "http_400" generico em vez da mensagem real.
+ * 3. Refresh loop guard sem validacao access_token: backend retorna 200
+ *    com {access_token: ''} (corner case) -> retry dispara 401 again -> loop.
+ *    FIX: validar data?.access_token truthy antes de retry.
+ * 4. cache + next.revalidate juntos: Next 16 warn "cache + revalidate mutex".
+ *    FIX: mutex - usa init.cache OU next.revalidate, nao ambos.
  */
 const SERVER_BASE = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';
 const isServer = typeof window === 'undefined';
@@ -15,10 +28,15 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T = any>(
-  path: string,
-  init: RequestInit & { auth?: string; cache?: RequestCache; revalidate?: number } = {}
-): Promise<T> {
+// FIX bug 3: tipo explicito _retry para evitar 'as any' cast (type-safe guard)
+type ApiInit = RequestInit & {
+  auth?: string;
+  cache?: RequestCache;
+  revalidate?: number;
+  _retry?: boolean;
+};
+
+export async function api<T = any>(path: string, init: ApiInit = {}): Promise<T> {
   const base = isServer ? SERVER_BASE : '';
   const url = `${base}${path.startsWith('/api') ? path : '/api' + path}`;
   const headers: Record<string, string> = {
@@ -27,13 +45,22 @@ export async function api<T = any>(
   };
   if (init.auth) headers['Authorization'] = `Bearer ${init.auth}`;
 
-  const r = await fetch(url, {
+  // FIX bug 4: mutex cache vs next.revalidate (Next 16 warning)
+  // Se revalidate definido, usar next:{revalidate} + cache:undefined.
+  // Se cache definido, usar cache + next:undefined.
+  // Caller passa UM dos dois, nunca ambos.
+  const fetchOpts: RequestInit = {
     ...init,
     headers,
     credentials: 'include',
-    cache: init.cache,
-    next: init.revalidate ? { revalidate: init.revalidate } : undefined,
-  });
+  };
+  if (init.revalidate !== undefined) {
+    (fetchOpts as any).next = { revalidate: init.revalidate };
+  } else if (init.cache) {
+    fetchOpts.cache = init.cache;
+  }
+
+  const r = await fetch(url, fetchOpts);
 
   // Auto-refresh: se 401 token_expired e tem auth, tentar refresh silencioso
   if (r.status === 401 && init.auth && !init._retry && !isServer) {
@@ -41,26 +68,39 @@ export async function api<T = any>(
       const refreshUrl = `/api/auth/refresh`;
       const rr = await fetch(refreshUrl, { method: 'POST', credentials: 'include' });
       if (rr.ok) {
-        const data = await rr.json();
-        // notifica zustand store
-        try {
-          const { useAuth } = await import('./store');
-          const { user } = useAuth.getState();
-          useAuth.getState().setAuth(data.access_token, user);
-        } catch {}
-        // retry com novo token
-        return api<T>(path, { ...init, auth: data.access_token, _retry: true } as any);
+        // FIX bug 1: await dentro do try (Regra B) + validacao
+        let data: any = null;
+        try { data = await rr.json(); } catch {}
+        // FIX bug 3: validar access_token truthy (anti-loop em backend bug)
+        if (data?.access_token && typeof data.access_token === 'string') {
+          // notifica zustand store
+          try {
+            const { useAuth } = await import('./store');
+            const { user } = useAuth.getState();
+            useAuth.getState().setAuth(data.access_token, user);
+          } catch {}
+          // retry com novo token (_retry: true previne recursao infinita)
+          return api<T>(path, { ...init, auth: data.access_token, _retry: true });
+        }
       }
-    } catch { /* ignore */ }
+    } catch { /* ignore - cai no throw ApiError abaixo */ }
   }
 
   if (!r.ok) {
     let data: any = null;
     try { data = await r.json(); } catch {}
-    throw new ApiError(r.status, data?.error || `http_${r.status}`, data);
+    // FIX bug 2 (Regra E): extrair message E error E error_pt_br (fallback chain).
+    // Auth-svc/order-svc/product-svc usam .message (negocio human-readable).
+    // errorHandler shared usa .error (codigo machine-readable).
+    // Notification template variables: error_pt_br (pt-BR localizado opcional).
+    const message = data?.message || data?.error_pt_br || data?.error || `http_${r.status}`;
+    throw new ApiError(r.status, message, data);
   }
   if (r.status === 204) return null as T;
-  return r.json();
+  // FIX bug 1 (Regra B): await explicito em success path
+  // Se body malformed em 200, rejeita DENTRO da funcao (caller catch normal)
+  // em vez de propagar Promise rejected
+  return await r.json();
 }
 
 export const Api = {

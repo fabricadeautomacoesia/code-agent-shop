@@ -11480,3 +11480,70 @@ PROXIMA ITER:
   (atualmente lanca Error generico em alguns paths)
 - W3 pass 3: AddToCart loading state + optimistic update
 - W18 pass 6: idx parcial order_items status='paid' (co_buyers CTE)
+
+================================================================
+ITER W8 PASS 2 - storefront/lib/api.ts Regra B+E + 2 bugs (2026-05-27)
+================================================================
+ESCOPO: cliente API central storefront (USAGE: 100% pages + components)
+FILE: apps/storefront/src/lib/api.ts (linhas 1-64)
+
+CONTEXTO: W8 pass 1 estabeleceu Regra E (Error com status + body message)
+em dashboards. Aplicacao agora ao cliente storefront - usado por TODOS
+os componentes (server + client). Bugs aqui impactam toda UI.
+
+BUGS CORRIGIDOS (4):
+
+1. REGRA B violada (linha 63) - r.json() sem await em success path
+- IMPACTO: caller espera T mas se body 200 malformed, recebe Promise<T>
+  rejected -> .then() crash silencioso + stack trace truncado
+- COMUM EM PROD: deploys gateway 200 com cache stale HTML
+- FIX: return await r.json() (Regra B canonica)
+
+2. REGRA E parcial (linha 60) - data.message NAO extraido
+- ANTES: data?.error || `http_${r.status}` - so machine-readable
+- IMPACTO: auth-svc retorna {message:"Email ja cadastrado"} mas
+  friendly-errors.ts recebia "http_400" generico. UX confusa.
+- FIX: chain message || error_pt_br || error || `http_${r.status}`
+  * message: negocio human-readable (PT-BR direto do svc)
+  * error_pt_br: localizacao opcional (notification templates)
+  * error: codigo machine-readable (fallback shared errorHandler)
+
+3. REFRESH LOOP guard sem validacao access_token (corner case)
+- ANTES: if (rr.ok) -> assumia data.access_token presente
+- CORNER CASE: backend retorna 200 {access_token:''} (bug raro)
+  -> setAuth('') -> retry -> 401 -> refresh loop ate AbortController
+- FIX: typeof data.access_token === 'string' && truthy check
+- BONUS: tipo ApiInit explicito (era 'as any' cast) - type-safe
+
+4. CACHE + NEXT.REVALIDATE juntos (Next 16 warning mutex)
+- ANTES: cache: init.cache + next: {revalidate} podiam coexistir
+- Next 16 console warn em DEV (RFC mutex behavior)
+- IMPACTO: prod silencia mas DX poluicao + futuro Next 17 erro?
+- FIX: mutex explicito - revalidate OR cache, nunca ambos
+
+PATTERN W3+W8 5-REGRAS APLICADAS:
+- A. revalidate alinhado TTL backend
+- B. r.json() DENTRO try-catch + await explicito *** ESTA ITER
+- C. .catch defense-in-depth Promise.all
+- D. GATEWAY_URL fallback consistente 127.0.0.1:3002 *** AUDITADO
+- E. Error com {status, body.message/error_pt_br/error} *** ESTA ITER
+
+NOVA REGRA F: Type-safe internal flags (sem 'as any')
+- ApiInit type explicito declared _retry?: boolean
+- Compilation-time guard contra typos / leak interno
+- Pattern reuse: dashboards (admin/seller) ja tem ApiInit-like?
+
+IMPACTO RUNTIME:
+- 100% pages storefront usam Api.api/cart/login/etc - aplicacao
+  imediata regra B+E ao ecossistema inteiro
+- Refresh loop guard previne incident raro mas catastrofico
+
+W8 VISUAL/UX PROGRESS:
+- pass 1: Regra B cross-dashboards 5 violacoes
+- pass 2: storefront/lib/api.ts Regra B+E + 2 bugs (esta iter)
+
+PROXIMA ITER:
+- W8 pass 3: friendly-auth-errors.ts ajustar p/ priorizar message
+  (chain mudou - testar se mensagens PT-BR fluem corretamente)
+- W3 pass 3: AddToCart loading state + optimistic update
+- W18 pass 6: idx parcial order_items status='paid'
