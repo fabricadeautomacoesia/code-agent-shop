@@ -1773,3 +1773,47 @@ GAP RESTANTE (proxima iteracao W15):
 - Inspecionar drawers (cart-drawer, compare-drawer, search-autocomplete) em
   375px width. Compare-drawer w-[min(380px,calc(100vw-2rem))] ja tem clamp OK.
 - /admin/* sao dashboards SaaS - mobile e secundario, deixar para depois.
+
+## WORKER 4 (ADMIN) - Payouts approve/reject/process silent failures + UUID
+Auditoria publica de 5 endpoints admin via dashboard-admin token revelou:
+- /sellers/admin/all -> 200 OK
+- /products/admin/qa-queue -> 200 OK
+- /orders/admin/recent -> 200 OK
+- /sellers/admin/payouts/pending -> 200 OK
+- /aiops/alerts -> 200 OK
+
+3 BUGS encontrados nos botoes de pagamento de payout:
+
+BUG 1: POST /sellers/admin/payouts/:id/approve
+- Antes: UPDATE sem RETURNING -> sempre retorna {ok:true} mesmo se UPDATE 0 rows.
+- Admin clicava "Aprovar" em payout inexistente -> UI mostra sucesso falso.
+- Mesmo problema com UUID malformado -> PG 22P02 -> 404 generic.
+
+BUG 2: POST /sellers/admin/payouts/:id/reject
+- Mesma logica falha do approve: silent {ok:true}.
+
+BUG 3: POST /payments/payouts/:id/process
+- UUID malformado -> 404 generic.
+- 'payout_not_approved' ambiguo: inexistente vs nao-aprovado retornam mesma msg.
+
+FIX services/seller-svc/src/routes/admin.js:
+- UUID_RE regex + 400 invalid_uuid em approve e reject.
+- RETURNING id + check rows.length -> 404 payout_not_pending se nada UPDATEado.
+- Response inclui {ok:true, approved:<uuid>} ou {ok:true, rejected:<uuid>}.
+
+FIX services/payment-svc/src/server.js:
+- PAYOUT_UUID_RE pre-validacao -> 400 invalid_uuid.
+- SELECT existencia primeiro -> 404 payout_not_found se nem existe.
+- 400 payout_not_approved com status atual no msg se existe mas wrong status.
+
+VALIDACAO PUBLICA (6 cenarios, todos com admin token):
+1) approve UUID malformado -> 400 invalid_uuid OK
+2) approve UUID inexistente -> 404 payout_not_pending OK (era ok:true falso)
+3) reject UUID inexistente -> 404 payout_not_pending OK (era ok:true falso)
+4) /payments process UUID malformado -> 400 invalid_uuid OK
+5) /payments process UUID inexistente -> 404 payout_not_found OK (era ambiguo not_approved)
+6) Regression GET pending list -> 200 OK
+
+DEPLOY: commit 685deee pushed,
+- seller-svc rebuilt via Dockerfile.node SVC=seller-svc, converged OK
+- payment-svc rebuilt via Dockerfile.node SVC=payment-svc, converged OK
