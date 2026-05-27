@@ -2,13 +2,23 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Search, ShoppingCart, User, Menu, Code2 } from 'lucide-react';
+import { Search, ShoppingCart, User, Menu, Code2, X, Zap, Bot, Workflow, Cpu, Users, Layers } from 'lucide-react';
 import { useAuth, useUI } from '@/lib/store';
 import { SearchAutocomplete } from './search-autocomplete';
 import { NotificationBell } from './notification-bell';
 
+const NAV_LINKS = [
+  { href: '/products?kind=ai_agent',    label: 'Agentes IA',      Icon: Bot,      color: 'hover:text-magenta' },
+  { href: '/products?kind=n8n_workflow',label: 'Workflows n8n',   Icon: Workflow, color: 'hover:text-magenta' },
+  { href: '/products?kind=automation',  label: 'Automacoes',      Icon: Cpu,      color: 'hover:text-magenta' },
+  { href: '/promocoes',                  label: 'Promocoes',       Icon: Zap,      color: 'hover:text-orange-400 font-semibold' },
+  { href: '/sellers',                    label: 'Vendedores',      Icon: Users,    color: 'hover:text-magenta' },
+  { href: '/products',                   label: 'Tudo',            Icon: Layers,   color: 'hover:text-magenta' },
+];
+
 export function Nav() {
   const [scrolled, setScrolled] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const { user } = useAuth();
   const { setCartOpen, searchOpen, setSearchOpen } = useUI();
 
@@ -18,49 +28,103 @@ export function Nav() {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  // Trava scroll quando drawer aberto
+  useEffect(() => {
+    if (mobileOpen) document.body.style.overflow = 'hidden';
+    else document.body.style.overflow = '';
+    return () => { document.body.style.overflow = ''; };
+  }, [mobileOpen]);
+
   return (
     <>
     {searchOpen && <SearchAutocomplete onClose={() => setSearchOpen(false)} />}
     <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
       scrolled ? 'glass-strong py-3' : 'py-5 bg-transparent'
     }`}>
-      <div className="container mx-auto px-6 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2 group">
+      <div className="container mx-auto px-4 sm:px-6 flex items-center justify-between gap-2">
+        <Link href="/" className="flex items-center gap-2 group flex-shrink-0">
           <div className="w-9 h-9 rounded-lg bg-gradient-vibe flex items-center justify-center shadow-lg shadow-magenta/30 group-hover:scale-110 transition-transform">
             <Code2 className="w-5 h-5 text-white" />
           </div>
-          <span className="font-display font-bold text-xl tracking-tight">
-            Code<span className="text-magenta">&</span>Agent <span className="text-white/70">Shop</span>
+          <span className="font-display font-bold text-base sm:text-xl tracking-tight whitespace-nowrap">
+            Code<span className="text-magenta">&</span>Agent <span className="hidden sm:inline text-white/70">Shop</span>
           </span>
         </Link>
 
+        {/* Desktop nav */}
         <div className="hidden lg:flex items-center gap-8 text-sm font-medium">
-          <Link href="/products?kind=ai_agent" className="hover:text-magenta transition-colors">Agentes IA</Link>
-          <Link href="/products?kind=n8n_workflow" className="hover:text-magenta transition-colors">Workflows n8n</Link>
-          <Link href="/products?kind=automation" className="hover:text-magenta transition-colors">Automacoes</Link>
-          <Link href="/promocoes" className="hover:text-orange-400 transition-colors font-semibold">Promocoes</Link>
-          <Link href="/sellers" className="hover:text-magenta transition-colors">Vendedores</Link>
-          <Link href="/products" className="hover:text-magenta transition-colors">Tudo</Link>
+          {NAV_LINKS.map((l) => (
+            <Link key={l.href} href={l.href} className={`transition-colors ${l.color}`}>{l.label}</Link>
+          ))}
         </div>
 
-        <div className="flex items-center gap-3">
-          <button onClick={() => setSearchOpen(true)} className="p-2 rounded-lg hover:bg-white/5 transition-colors">
+        <div className="flex items-center gap-1 sm:gap-3">
+          <button onClick={() => setSearchOpen(true)} aria-label="Buscar" className="p-2 rounded-lg hover:bg-white/5 transition-colors">
             <Search className="w-5 h-5" />
           </button>
-          <button onClick={() => setCartOpen(true)} className="p-2 rounded-lg hover:bg-white/5 transition-colors relative">
+          <button onClick={() => setCartOpen(true)} aria-label="Carrinho" className="p-2 rounded-lg hover:bg-white/5 transition-colors relative">
             <ShoppingCart className="w-5 h-5" />
           </button>
           <NotificationBell />
           {user ? (
-            <Link href="/conta" className="btn-ghost text-sm flex items-center gap-2">
+            <Link href="/conta" className="btn-ghost text-sm flex items-center gap-2 hidden sm:flex">
               <User className="w-4 h-4" /> {user.display_name || user.full_name?.split(' ')[0]}
             </Link>
           ) : (
-            <Link href="/login" className="btn-primary text-sm">Entrar</Link>
+            <Link href="/login" className="btn-primary text-xs sm:text-sm hidden sm:inline-flex">Entrar</Link>
           )}
+          {/* WORKER 15: hamburger mobile (icon Menu era importado mas nunca usado) */}
+          <button onClick={() => setMobileOpen(true)} aria-label="Menu" className="lg:hidden p-2 rounded-lg hover:bg-white/5 transition-colors">
+            <Menu className="w-5 h-5" />
+          </button>
         </div>
       </div>
     </nav>
+
+    {/* Mobile drawer */}
+    {mobileOpen && (
+      <>
+        <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm lg:hidden" onClick={() => setMobileOpen(false)} />
+        <aside className="fixed top-0 right-0 z-[70] h-full w-80 max-w-[85vw] glass-strong shadow-2xl lg:hidden transform transition-transform">
+          <div className="flex items-center justify-between p-4 border-b border-white/10">
+            <span className="font-display font-bold">Menu</span>
+            <button onClick={() => setMobileOpen(false)} aria-label="Fechar" className="p-1.5 rounded hover:bg-white/5">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <nav className="p-2 overflow-y-auto h-[calc(100%-60px)]">
+            {NAV_LINKS.map((l) => (
+              <Link key={l.href} href={l.href}
+                onClick={() => setMobileOpen(false)}
+                className={`flex items-center gap-3 px-4 py-3.5 rounded-lg text-sm transition-colors ${l.color}`}>
+                <l.Icon className="w-4 h-4 opacity-70" />
+                {l.label}
+              </Link>
+            ))}
+            <div className="my-3 border-t border-white/10" />
+            {user ? (
+              <Link href="/conta" onClick={() => setMobileOpen(false)}
+                className="flex items-center gap-3 px-4 py-3.5 rounded-lg text-sm hover:bg-white/5 transition-colors">
+                <User className="w-4 h-4 opacity-70" />
+                Minha conta ({user.display_name || user.full_name?.split(' ')[0]})
+              </Link>
+            ) : (
+              <>
+                <Link href="/login" onClick={() => setMobileOpen(false)}
+                  className="flex items-center gap-3 px-4 py-3.5 rounded-lg text-sm hover:text-magenta transition-colors">
+                  <User className="w-4 h-4 opacity-70" />
+                  Entrar
+                </Link>
+                <Link href="/register" onClick={() => setMobileOpen(false)}
+                  className="mx-2 my-1 btn-primary text-sm text-center block">
+                  Criar conta
+                </Link>
+              </>
+            )}
+          </nav>
+        </aside>
+      </>
+    )}
     </>
   );
 }
