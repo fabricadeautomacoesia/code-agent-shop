@@ -5801,3 +5801,61 @@ GAP PROXIMA ITER:
 - Audit /admin/orders + /admin/reports (provavel read-only)
 - Toast component centralizado (vs banners por page - W4 pass 2 mentioned)
 - Considerar useToast() context provider (toast list global)
+
+## WORKER 4 pass 5 (ADMIN) - reports refactored + audit orders read-only
+
+GAP DETECTADO (proxima iter do W4 pass 4):
+"/admin/orders + /admin/reports - audit + refactor se aplicavel"
+
+AUDIT result:
+- /admin/orders: READ-ONLY puro (lista pedidos + stats, sem POST actions)
+  -> NAO precisa useAdminAction. Skip por design (correto - sem refactor).
+- /admin/reports: TEM resolve() action SEM try/catch (silent swallow bug)
+  -> Refactor necessario.
+
+REFACTORED apps/dashboard-admin/src/app/reports/page.tsx:
++ resolve(id, dismissed) -> action.run(`${op}-${id}`, ...)
+  - op = 'resolve' | 'dismiss' por contexto (botoes distintos)
+  - Mutual exclusion: clicar Resolver disabled Descartar e vice-versa
+  - Texto dinamico ("..." durante busy)
++ loadError separado (lista) vs action.error (acao falha)
++ 2 banners (red + green) com clear
+
+PROGRESS METRIC FINAL:
+6 de 7 admin pages com hook (86% cobertura DRY):
+- /admin/payouts (W4 pass 1 -> pass 3)
+- /admin/qa-queue (W4 pass 2)
+- /admin/sellers (W4 pass 2)
+- /admin/products (W4 pass 3)
+- /admin/vault (W4 pass 4)
+- /admin/reports (W4 pass 5) <- ESTE
+- /admin/orders: read-only por design (sem POST actions)
+
+CICLO W4 (passes 1-5) FECHA TEMA ADMIN UX DEFINITIVO:
+- pass 1: inline try/catch payouts (descobre pattern)
+- pass 2: extrai useAdminAction hook + aplica qa-queue + sellers
+- pass 3: payouts refactor para hook + products
+- pass 4: vault refactor
+- pass 5: reports refactor
+TOTAL: 1 helper hook reusavel + 6 pages consistentes UX
+
+DEPLOY:
+- commit 2b4d9d9 pushed
+- dashboard-admin rebuilt (~3.6s) + converged
+
+VALIDACAO PUBLICA (7 cenarios):
+TODAS 7 admin pages HTTP 200 OK:
+- /payouts, /qa-queue, /sellers, /products, /vault, /reports, /orders
+- Bundle /reports contem: "Denuncia", "busyKey", "resolve-", "dismiss-"
+  -> codigo deployado e correto
+
+IMPACTO ARQUITETURAL:
+- Padrao consistente UX em TODO dashboard admin
+- Hook reaplicavel em features future (toast component opcional)
+- Reduce future bug class: silent error swallow eliminado em admin actions
+- Trade-off resolved: read-only pages NAO inflam codigo desnecessariamente
+
+PROXIMA ITER (W4 fechado, abrir outros tracks):
+- Toast component global (vs banners inline) - opcional UX upgrade
+- Aplicar mesma logica em dashboard-seller (W5 territory)
+- Audit que actions storefront podem se beneficiar (checkout, wishlist toggles)
