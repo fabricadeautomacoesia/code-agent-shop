@@ -8951,3 +8951,86 @@ PROXIMA ITER:
 - W4 pass 8: /admin/vault dashboard (consumir idx_vault_usage_failures)
 - W11 pass 7: cron reconciliation webhooks (idx_asaas_evt_retry)
 - W3 pass 11: CompareButton.tsx audit
+
+## WORKER 11 PASS 7 - Cron reconciliation webhooks stuck + dead letter endpoint
+
+INTEGRACAO de 3 passes anteriores:
+- W11 pass 6: tracking processed_at + processing_error + retry_count
+- W14 pass 7: idx_asaas_evt_retry (composto + partial WHERE retry_count > 0)
+- W11 pass 7 (esta iter): cron + endpoint admin que CONSOME ambos
+
+ANTES:
+Webhooks com falha pos-signature-valid (DB lock, network transitorio) ficavam
+para sempre stuck. Asaas considerava entregue (HTTP 200), nosso sistema
+nunca reprocessava.
+
+AGORA:
+reconcileWebhooks() roda cada 5min:
+- SELECT 20 webhooks usando idx_asaas_evt_retry
+- WHERE signature_valid AND processed_at IS NULL
+       AND retry_count BETWEEN 1 AND 5
+       AND received_at > NOW() - INTERVAL '24 hours'
+- ORDER BY retry_count ASC (prioriza menos tentados) + received_at ASC (FIFO)
+- Para cada: try processWebhookEvent
+  * Sucesso: UPDATE processed_at = NOW() + order_id + clear error
+  * Falha: UPDATE processing_error + retry_count++
+- Log [reconcile.ok] / [reconcile.fail] estruturado
+
+DECISOES:
+
+1. Janela 24h:
+   - Asaas tem retry interno ~3 dias, nao precisa duplicar
+   - >24h sem processar = bug serio (human intervention)
+
+2. retry_count <= 5:
+   - 5 attempts x 5min = 25min total window
+   - Apos: dead letter (retry_count > 5)
+
+3. setInterval nativo (vs node-cron):
+   - 1 funcao, 1 interval - sem nova dep
+   - setTimeout 30s warmup + setInterval 5min
+
+4. setInterval 5min (vs mais frequente):
+   - Transients raros mas existem
+   - Sem hammer DB
+   - Asaas ja faz retry interno
+
+GET /payments/webhooks/dead (NOVO admin endpoint):
+- jwt.requireAuth admin/staff
+- Lista webhooks retry_count > 5 (dead letter)
+- LIMIT 100 ORDER BY received_at DESC
+- Admin investiga + decide reprocessar manual ou ignorar
+- Reprocess manual: UPDATE retry_count = 0 + WAIT 5min ou direto via SQL
+
+DEPLOY:
+- commit 11f4ecb push main OK
+- 85 insertions
+- payment-svc rebuild via VPS cron
+- Sem nova dependency (setInterval nativo)
+- Sem mudanca schema
+
+VALIDACAO POS-DEPLOY ESPERADA:
+- Logs: "[reconcile.cron] webhook reconciliation cron started (5min interval)"
+- Primeiro run apos 30s warmup
+- GET /payments/webhooks/dead com Bearer admin -> JSON
+
+W11 PAYMENT AUDIT (passes 1-7):
+- pass 1: createPayment + split asaas baseline
+- pass 2: polling Asaas pos-create
+- pass 3: friendly error mapping
+- pass 4: CPF/CNPJ guard preventive
+- pass 5: parcelamento totalValue (split arredondamento)
+- pass 6: webhook processed_at/error tracking
+- pass 7: cron reconciliation + dead letter (esta iter)
+
+CICLO PAYMENT COMPLETO:
+- Tracking: campos populados sempre (pass 6)
+- Indexing: partial idx pronto (W14 pass 7)
+- Reprocessing: cron 5min auto-retry (pass 7)
+- Visibility: dead letter endpoint admin (pass 7)
+- Manual override: admin SQL UPDATE retry_count=0
+
+PROXIMA ITER:
+- W4 pass 8: /admin/webhooks UI consume /payments/webhooks/dead
+- W11 pass 8: webhook reprocess endpoint admin (sem psql direct)
+- W14 pass 8: drop dead indices pg_stat_user_indexes (2 semanas)
