@@ -149,6 +149,8 @@ export default function VaultPage() {
               {/* FIX-WORKER-4 pass 9: Header USD explicit (era so "Uso/mes" ambiguo BRL/USD) */}
               <th>Uso mes (USD)</th>
               <th>Quota (USD)</th>
+              {/* FIX-WORKER-4 pass 10: Saude 7d (error rate via idx_vault_usage_failures) */}
+              <th>Saude 7d</th>
               <th>Status</th>
               <th>Criado</th>
               <th className="text-right">Acoes</th>
@@ -175,6 +177,26 @@ export default function VaultPage() {
                   {/* FIX-WORKER-4 pass 9 CRITICAL: fmtUSD em vez de fmtBRL (currency mismatch) */}
                   <td className="font-mono text-xs">{fmtUSD(k.usage_this_month_cents)}</td>
                   <td className="font-mono text-xs">{k.monthly_quota_usd_cents ? fmtUSD(k.monthly_quota_usd_cents) : '-'}</td>
+                  {/* FIX-WORKER-4 pass 10: Saude 7d coluna baseada em error_rate (W14-7 indice + W17 enriched endpoint) */}
+                  <td>
+                    {(() => {
+                      const calls = Number(k.calls_7d || 0);
+                      const errors = Number(k.errors_7d || 0);
+                      const rate = Number(k.error_rate || 0);
+                      if (calls === 0) {
+                        return <span className="px-2 py-0.5 rounded bg-white/10 text-white/40 text-xs" title="Sem uso nos ultimos 7 dias">Idle</span>;
+                      }
+                      const pct = (rate * 100).toFixed(1);
+                      const tooltipText = `${errors}/${calls} chamadas falharam (${pct}%) nos ultimos 7 dias`;
+                      if (rate === 0) {
+                        return <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs" title={tooltipText}>OK</span>;
+                      }
+                      if (rate < 0.05) {
+                        return <span className="px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-xs" title={tooltipText}>Watch {pct}%</span>;
+                      }
+                      return <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 text-xs" title={tooltipText}>Issues {pct}%</span>;
+                    })()}
+                  </td>
                   <td>
                     {k.is_active
                       ? <span className="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs">active</span>

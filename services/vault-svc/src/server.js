@@ -118,15 +118,43 @@ app.post('/keys', provisionRateLimit, adminOnly, validate({ body: provisionSchem
 }));
 
 // GET /api/vault/keys -> lista (mascarado, sem expor plain)
+// FIX-WORKER-17 pass 12 + W4 pass 10: enriquece com error_stats_7d dos ultimos 7 dias.
+// Usa W14 pass 7 idx_vault_usage_failures (partial WHERE success=FALSE) para LATERAL JOIN
+// otimo. Sem este indice, query seq scan vault_key_usage (~70k+ rows/semana em prod ativo).
+//
+// Estrutura error_stats_7d por key:
+//   { calls_7d: N, errors_7d: M, error_rate: M/N (0..1), last_error_at: T }
+//
+// Dashboard admin /admin/vault renderiza coluna "Saude 7d" baseado em error_rate:
+//   - 0%: verde "OK"
+//   - 1-5%: amarelo "Watch"
+//   - >5%: vermelho "Issues"
+//   - calls_7d=0: cinza "Idle" (chave nao usada)
 app.get('/keys', adminOnly, asyncHandler(async (req, res) => {
   const r = await query(
-    `SELECT id, seller_id, provider, key_alias, key_fingerprint, is_active, is_platform_pool,
-            monthly_quota_usd_cents, usage_this_month_cents, expires_at, rotation_due_at,
-            last_used_at, created_at, revoked_at, revoked_reason
-       FROM vault_api_keys
-       ORDER BY created_at DESC LIMIT 200`
+    `SELECT k.id, k.seller_id, k.provider, k.key_alias, k.key_fingerprint,
+            k.is_active, k.is_platform_pool,
+            k.monthly_quota_usd_cents, k.usage_this_month_cents,
+            k.expires_at, k.rotation_due_at, k.last_used_at,
+            k.created_at, k.revoked_at, k.revoked_reason,
+            (SELECT COUNT(*)::INT FROM vault_key_usage u
+               WHERE u.vault_key_id = k.id
+                 AND u.created_at > NOW() - INTERVAL '7 days') AS calls_7d,
+            (SELECT COUNT(*)::INT FROM vault_key_usage u
+               WHERE u.vault_key_id = k.id
+                 AND u.created_at > NOW() - INTERVAL '7 days'
+                 AND u.success = FALSE) AS errors_7d,
+            (SELECT MAX(created_at) FROM vault_key_usage u
+               WHERE u.vault_key_id = k.id AND u.success = FALSE) AS last_error_at
+       FROM vault_api_keys k
+       ORDER BY k.created_at DESC LIMIT 200`
   );
-  res.json({ keys: r.rows });
+  // Calcula error_rate no app (PG NUMERIC division pode dar tipos confusos)
+  const keys = r.rows.map((k) => ({
+    ...k,
+    error_rate: k.calls_7d > 0 ? (k.errors_7d / k.calls_7d) : 0,
+  }));
+  res.json({ keys });
 }));
 
 // POST /api/vault/use -> internal: outro svc pede chave para usar
