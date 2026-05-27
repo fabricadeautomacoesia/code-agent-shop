@@ -72,28 +72,31 @@ export default async function CompararPage({ searchParams }: { searchParams: Pro
         <table className="w-full text-sm">
           <thead>
             <tr>
-              <th className="text-left p-3 w-40 sticky left-0 bg-cyber-dark"></th>
+              <th className="text-left p-3 w-40 sticky left-0 bg-cyber-dark z-10"></th>
               {products.map((p: any) => (
                 <th key={p.id} className="p-3 min-w-[240px]">
-                  <Link href={`/product/${p.slug}`} className="block">
-                    {/* FIX-WORKER-8 pass 2: <img> -> next/image */}
+                  {/* FIX-WORKER-8 pass 3: cover h-24 sm:h-32 (responsive em 375px com hscroll) +
+                      hover group state no Link inteiro (era so no texto) -> imagem tambem reage */}
+                  <Link href={`/product/${p.slug}`} className="block group">
                     {p.cover_image_url ? (
-                      <div className="w-full h-32 relative rounded-lg overflow-hidden mb-2">
+                      <div className="w-full h-24 sm:h-32 relative rounded-lg overflow-hidden mb-2 group-hover:ring-2 group-hover:ring-magenta/50 transition-all">
                         <Image src={p.cover_image_url} alt={p.title || 'Produto'}
-                          fill sizes="240px" className="object-cover" />
+                          fill sizes="240px" className="object-cover group-hover:scale-105 transition-transform duration-300" />
                       </div>
                     ) : (
-                      <div className="w-full h-32 bg-gradient-vibe/10 rounded-lg mb-2" />
+                      <div className="w-full h-24 sm:h-32 bg-gradient-vibe/10 rounded-lg mb-2" />
                     )}
-                    <div className="font-display font-bold text-base hover:text-magenta line-clamp-2 text-left">{p.title}</div>
+                    <div className="font-display font-bold text-base group-hover:text-magenta transition-colors line-clamp-2 text-left">{p.title}</div>
                   </Link>
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          {/* FIX-WORKER-8 pass 3: hover state em todas as data rows
+              (era flat sem affordance visual de scan) */}
+          <tbody className="divide-y divide-white/5 [&_tr:hover]:bg-white/[0.02] [&_tr:hover_td.sticky]:bg-[#0a0b0f]">
             <tr>
-              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark">Preco</td>
+              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark z-10">Preco</td>
               {products.map((p: any) => (
                 <td key={p.id} className="p-3">
                   {p.flash_promo_active && (
@@ -109,7 +112,7 @@ export default async function CompararPage({ searchParams }: { searchParams: Pro
               ))}
             </tr>
             <tr>
-              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark">Avaliacao</td>
+              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark z-10">Avaliacao</td>
               {products.map((p: any) => (
                 <td key={p.id} className="p-3">
                   <div className="flex items-center gap-1">
@@ -121,21 +124,21 @@ export default async function CompararPage({ searchParams }: { searchParams: Pro
               ))}
             </tr>
             <tr>
-              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark">Vendas</td>
+              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark z-10">Vendas</td>
               {products.map((p: any) => (
                 <td key={p.id} className="p-3 font-mono">{p.sales_count}</td>
               ))}
             </tr>
             <tr>
-              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark">Categoria</td>
+              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark z-10">Categoria</td>
               {products.map((p: any) => <td key={p.id} className="p-3 text-xs">{p.category_name || '-'}</td>)}
             </tr>
             <tr>
-              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark">Tipo</td>
+              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark z-10">Tipo</td>
               {products.map((p: any) => <td key={p.id} className="p-3"><code className="text-xs">{p.kind}</code></td>)}
             </tr>
             <tr>
-              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark">Vendedor</td>
+              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark z-10">Vendedor</td>
               {products.map((p: any) => (
                 <td key={p.id} className="p-3 text-xs">
                   {p.is_platform_owned ? (
@@ -147,12 +150,12 @@ export default async function CompararPage({ searchParams }: { searchParams: Pro
               ))}
             </tr>
             <tr>
-              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark">Tempo instalacao</td>
+              <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark z-10">Tempo instalacao</td>
               {products.map((p: any) => <td key={p.id} className="p-3 text-xs">{p.estimated_install_min ? `${p.estimated_install_min} min` : '-'}</td>)}
             </tr>
             {allTechArr.map((tech) => (
               <tr key={tech}>
-                <td className="p-3 font-mono text-xs text-white/60 sticky left-0 bg-cyber-dark">{tech}</td>
+                <td className="p-3 font-mono text-xs text-white/60 sticky left-0 bg-cyber-dark z-10">{tech}</td>
                 {products.map((p: any) => (
                   <td key={p.id} className="p-3 text-center">
                     {(p.tech_stack || []).includes(tech)
@@ -163,10 +166,16 @@ export default async function CompararPage({ searchParams }: { searchParams: Pro
               </tr>
             ))}
             <tr>
-              <td className="p-3 sticky left-0 bg-cyber-dark"></td>
+              <td className="p-3 sticky left-0 bg-cyber-dark z-10"></td>
               {products.map((p: any) => (
                 <td key={p.id} className="p-3 text-center">
-                  <Link href={`/product/${p.slug}`} className="btn-primary text-xs inline-block">Ver detalhes</Link>
+                  {/* FIX-WORKER-8 pass 3: btn-primary tem px-6 py-3, conflito com text-xs.
+                      Substituido por btn-ghost menor (border + hover) - CTA secundario
+                      (cell action, nao primary action da page) */}
+                  <Link href={`/product/${p.slug}`}
+                    className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold border border-magenta/40 bg-magenta/10 hover:bg-magenta/20 hover:border-magenta transition-colors">
+                    Ver detalhes
+                  </Link>
                 </td>
               ))}
             </tr>
