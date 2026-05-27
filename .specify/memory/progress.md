@@ -4870,3 +4870,56 @@ PROXIMA ITER MLB:
   * Mercado Pago (vs Asaas Brasil-only)
   * Mensagens internas seller-buyer (chat)
   * Sistema de Recommendations baseado em coletivo (collaborative filtering)
+
+## WORKER 15 pass 3 (MOBILE) - nav declutter 375px
+
+VETOR DETECTADO (audit responsive 375px):
+Nav header em 375px tinha 4 icons cluster + hamburger:
+- Search (40px) + Cart (40px) + WishlistBadge (40px) + NotificationBell (40px)
+- + Menu hamburger (40px)
+- + Logo "Code & Agent" text-base ~120px
+- Total ~292px ocupados em ~340px disponiveis (375 - 32px padding)
+- Apertado MAS cabe... visualmente poluido vs padrao Mercado Livre mobile
+
+Mercado Livre mobile mostra apenas search + cart + hamburger.
+Notificacoes/favoritos foram para o drawer mobile.
+
+FIX (1 arquivo - apps/storefront/src/components/nav.tsx):
+1. Wrap WishlistBadge + NotificationBell em <div className="hidden sm:flex">
+   - sm = 640px+ (Tailwind default)
+   - Desktop+tablet mantem visiveis - sem regressao funcional
+   - Mobile (<640px) oculta - libera ~80px horizontal
+
+2. Drawer mobile (lg:hidden) ganha 2 shortcuts NOVOS (so user logado):
+   + "Favoritos" -> /conta/favoritos (icon Heart)
+   + "Notificacoes" -> /conta (icon Bell)
+   - Mantem paridade funcional (nada perdido em mobile)
+
+3. Import Heart + Bell de lucide-react
+
+UX RESULTANTE:
+- Mobile 375px: 3 icons header clean (search + cart + hamburger)
+- Drawer mobile: full menu + acesso a favoritos + notificacoes
+- Desktop: inalterado (todos icons no header)
+
+DEPLOY:
+- commit 13821f6 pushed
+- storefront rebuilt (~3.6s) + converged
+
+VALIDACAO PUBLICA:
+- HTML inclui class="hidden sm:flex items-center gap-1 sm:gap-3" OK
+- lucide-heart icon presente (drawer mobile shortcut)
+- HTTP / -> 200 OK
+- Sem regressao desktop (validacao class="hidden sm:..." significa
+  oculta SO em < 640px, sm+ renderiza normal)
+
+IMPACTO:
+- Mobile UX significativamente melhor (3 icons vs 5)
+- Padrao consistente com Mercado Livre / Amazon mobile
+- Drawer mobile mais completo (favoritos + notifs antes inacessiveis)
+- Desktop nao afetado
+
+GAP PROXIMA ITER:
+- Audit PDP em 375px (button group action mb-3 - cabe?)
+- /checkout step indicator em mobile
+- CartDrawer width em 375px (max-w-md = 448px > 375px = overflow?)
