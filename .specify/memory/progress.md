@@ -17311,7 +17311,38 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ search-svc /search (pass 91) - 4 bugs enums + DLP
 - ✅ search-svc /autocomplete (pass 92) - 3 bugs DLP cache + limit + parallel
 - ✅ search-svc /top-sellers + /top-sellers/:category + /trending (pass 93) - 6 bugs
-- ✅ search-svc /categories + /facets (pass 94 esta iter) - 5 bugs
+- ✅ search-svc /categories + /facets (pass 94) - 5 bugs
+- ✅ payment-svc /webhooks/:id/reset (pass 95 esta iter) - 4 bugs admin race+DLP
+
+W7 PASS 95 RESUMO:
+- payment-svc/src/server.js POST /webhooks/:id/reset refactor (4 bugs):
+  * NEW webhookResetLimiter 10/hr/admin (anti-spam pwned)
+    - PRE-FIX: admin compromised dispara N resets simultaneos
+    - setImmediate spawns N processWebhookEvent paralelos
+    - Race com cron reconcile (5min interval) amplificada
+  * DLP mask.text() em processing_error UPDATE
+    - Pass 61 mascarou no READ (response GET /webhooks/dead)
+    - Pass 95 mascara no WRITE (UPDATE processing_error)
+    - Stack traces podem ter PG_PASS/Bearer/JWT
+  * Audit log severity=error em catch block
+    - PRE-FIX: apenas log.warn pino (sem audit_log forense)
+    - Reset failure = problema operacional rastreio compliance
+    - INSERT audit_log com action='webhook.reset_failed'
+  * Race setImmediate vs cron reconcile
+    - PRE-FIX: setImmediate fora do tx() inicial. Reset retry_count=0 ->
+      cron pega mesmo webhook -> double processing race
+    - FIX: re-claim com tx() + SELECT FOR UPDATE em setImmediate
+    - Skip se processed_at != NULL (cron ja processou)
+- Pattern W7 em 102 endpoints + 23 regras (A-W) - 95 micro-iters
+- payment-svc 100% W7 em admin endpoints critical:
+  /installments/preview (existing) + /asaas/create (pass 21)
+  + /payouts/:id/process (pass 23) + /webhooks/dead (pass 61) + /:id/reset (95)
+
+PROXIMA ITER:
+- W7 pass 96: qa-svc endpoints audit
+- W7 pass 97: auth-svc remaining endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 94 RESUMO:
 - search-svc/src/server.js 2 endpoints refactor (5 bugs):

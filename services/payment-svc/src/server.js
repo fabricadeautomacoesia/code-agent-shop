@@ -1026,10 +1026,40 @@ app.get('/payments/webhooks/dead',
 // 4. UPDATE retry_count=0, processing_error=NULL
 // 5. Imediato: chama processWebhookEvent fora do lock (nao espera proximo cron)
 // 6. Audit log com actor + action='webhook.reset' para forensics
+// FIX-WORKER-7 pass 95: 4 BUGS adicionais aplicando Pattern W7:
+//
+// BUG 1 *** RATE-LIMIT MISSING *** admin pwned spam resets
+//   PRE-FIX: zero limit. Admin compromised dispara N resets simultaneos ->
+//   setImmediate spawns N processWebhookEvent paralelos -> Asaas API call
+//   amplification + race com cron reconcile.
+//   FIX: webhookResetLimiter 10/hr/admin (real ops resets ~1-3/dia).
+//
+// BUG 2 *** DLP processing_error update *** linha 1105 (era pass 61 read-side only)
+//   PRE-FIX: UPDATE SET processing_error = $1 com String(e.message).slice(0, 500)
+//   sem mask.text(). Stack traces podem ter PG_PASS/Bearer/JWT em error msg.
+//   Pass 61 mascarou na LEITURA mas escrita ainda puxa raw.
+//   FIX: mask.text() antes do INSERT (DLP em both read+write paths).
+//
+// BUG 3 *** AUDIT LOG MISSING em reset.fail ***
+//   PRE-FIX: catch block apenas log.warn (pino logs) - sem audit_log forense.
+//   Reset falhou = problema operacional precisa rastreio compliance.
+//   FIX: INSERT audit_log severity=error em catch.
+//
+// BUG 4 *** RACE setImmediate vs cron reconcile ***
+//   PRE-FIX: setImmediate executa fora do tx() inicial. Apos UPDATE retry_count=0,
+//   cron reconcile (5min interval) pode pegar mesmo webhook -> double processing.
+//   Especialmente se reset coincide com cron tick.
+//   FIX: re-claim com tx() + FOR UPDATE no setImmediate (skip se ja processed).
 const PAYMENT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const webhookResetLimiter = require('@cas/shared').rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 10,
+  message: 'Muitos resets de webhook recentes. Aguarde 1 hora.',
+});
 
 app.post('/payments/webhooks/:id/reset',
   jwt.requireAuth({ roles: ['admin', 'staff'] }),
+  webhookResetLimiter,
   asyncHandler(async (req, res, next) => {
     if (!PAYMENT_UUID_RE.test(req.params.id)) {
       return next(errorHandler.badRequest('invalid_uuid'));
@@ -1083,7 +1113,24 @@ app.post('/payments/webhooks/:id/reset',
     });
     setImmediate(async () => {
       try {
-        const evt = typeof reset.payload === 'string' ? JSON.parse(reset.payload) : reset.payload;
+        // BUG 4: re-claim com FOR UPDATE - skip se cron ja pegou
+        // tx() garante atomic check-then-process
+        const claimed = await tx(async (c) => {
+          const r = await c.query(
+            `SELECT id, payload, processed_at FROM asaas_webhook_events
+              WHERE id = $1 FOR UPDATE`,
+            [req.params.id]
+          );
+          if (!r.rows.length) return null;
+          if (r.rows[0].processed_at) return null; // cron ja processou - skip
+          return r.rows[0];
+        });
+        if (!claimed) {
+          log.info({ webhook_id: req.params.id }, '[webhook.reset.skipped_already_processed]');
+          return;
+        }
+
+        const evt = typeof claimed.payload === 'string' ? JSON.parse(claimed.payload) : claimed.payload;
         await processWebhookEvent(evt);
         const orderLink = evt.payment?.id
           ? await query('SELECT id FROM orders WHERE asaas_payment_id = $1', [evt.payment.id]).catch(() => ({ rows: [] }))
@@ -1098,13 +1145,24 @@ app.post('/payments/webhooks/:id/reset',
         );
         log.info({ webhook_id: req.params.id, actor: req.user.sub }, '[webhook.reset.processed]');
       } catch (e) {
+        // BUG 2: DLP mask.text() em processing_error
+        const maskedErr = mask.text(String(e.message || '')).slice(0, 500);
         await query(
           `UPDATE asaas_webhook_events
               SET processing_error = $1, retry_count = retry_count + 1
             WHERE id = $2`,
-          [String(e.message).slice(0, 500), req.params.id]
+          [maskedErr, req.params.id]
         ).catch(() => {});
-        log.warn({ webhook_id: req.params.id, err: e.message }, '[webhook.reset.fail]');
+
+        // BUG 3: audit log atomic severity=error
+        await query(
+          `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+           VALUES ($1, $2, 'webhook.reset_failed', 'asaas_webhook_event', $3, 'error', $4::JSONB)`,
+          [req.user.sub, req.user.role, req.params.id,
+           JSON.stringify({ error_masked: maskedErr.slice(0, 200), ip: req.ip })]
+        ).catch(() => {});
+
+        log.warn({ webhook_id: req.params.id, err: maskedErr }, '[webhook.reset.fail]');
       }
     });
   })
