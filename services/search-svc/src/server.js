@@ -76,6 +76,7 @@ app.get('/', asyncHandler(async (req, res) => {
     SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
            p.cover_image_url, p.price_cents, p.currency, p.is_free, p.tech_stack,
            p.avg_rating, p.review_count, p.sales_count, p.is_platform_owned, p.published_at,
+           p.last_sale_at,
            s.store_slug, s.store_name, s.reputation_tier,
            c.slug AS category_slug, c.name AS category_name,
            (p.sales_count >= 5 AND p.sales_count = (

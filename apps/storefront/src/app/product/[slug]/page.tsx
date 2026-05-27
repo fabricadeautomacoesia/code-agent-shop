@@ -11,6 +11,7 @@ import { CompareButton } from '@/components/compare-button';
 import { Installments } from '@/components/installments';
 import { OfficialBadge } from '@/components/official-badge';
 import { RecentlyViewedStrip } from '@/components/recently-viewed-strip';
+import { RecentSaleBadge } from '@/components/recent-sale-badge';
 import { JsonLd, productLd, breadcrumbLd } from '@/components/json-ld';
 
 export const revalidate = 30;
@@ -117,6 +118,8 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                 +{Math.floor(Number(product.sales_count) / 10) * 10} vendidos
               </div>
             )}
+            {/* MLB-NEW WORKER 16: badge "Vendido hoje/semana/mes" (urgencia + social proof) */}
+            <RecentSaleBadge lastSaleAt={product.last_sale_at} variant="pdp" />
             {/* MLB-NEW WORKER 14: wishlist_count badge (social proof "X pessoas favoritaram") */}
             {Number(product.wishlist_count) >= 10 && (
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-pink-500/15 text-pink-300 text-xs font-semibold mb-4 ml-2 border border-pink-500/20">
