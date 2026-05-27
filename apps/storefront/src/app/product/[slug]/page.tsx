@@ -6,6 +6,7 @@ import { Api } from '@/lib/api';
 import { AddToCart } from '@/components/add-to-cart';
 import { WishlistButton } from '@/components/wishlist-button';
 import { ProductTabs } from '@/components/product-tabs';
+import { AskQuickButton } from '@/components/ask-quick-button';
 import { JsonLd, productLd, breadcrumbLd } from '@/components/json-ld';
 
 export const revalidate = 30;
@@ -133,6 +134,9 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
               </div>
               <WishlistButton productId={product.id} />
             </div>
+
+            {/* MLB-NEW WORKER 16: Pergunta rapida pre-purchase (Mercado Livre style) */}
+            <AskQuickButton productId={product.id} />
 
             {/* MLB-NEW WORKER 16: Trust Signals badges (Garantia + Suporte + Updates) */}
             <div className="mt-5 space-y-2.5 text-xs">
