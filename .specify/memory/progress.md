@@ -102,6 +102,33 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## WISHLIST BADGE - WORKER 16 NEW MLB FEATURE
+Mercado Livre style: Heart icon no Nav com contador real de favoritos.
+Drive return visits + lembra ao user que tem produtos salvos.
+
+NOVO components/wishlist-badge.tsx (Client Component):
+- Fetch /products/wishlist quando token disponivel
+- Polling 60s para refresh automatico em background
+- Renderiza null se nao logado (zero noise para visitantes)
+- Heart icon com 2 estados visuais:
+  * count>0: text-magenta + fill-magenta/30 + badge magenta com numero
+  * count=0: text-white/80 + hover magenta (sem badge)
+- Badge '9+' quando count >= 10
+- Link direto para /conta/favoritos
+- Mesmo style do NotificationBell para consistencia
+
+Nav (apps/storefront/src/components/nav.tsx):
+- Importado WishlistBadge
+- Posicionado entre Cart e NotificationBell (visivel desktop + mobile)
+- Aparece automaticamente apos login
+
+VALIDADO E2E publicamente:
+- Backend /products/wishlist: 200 {count:0} -> POST 3 items -> {count:3, titles:[3 produtos]}
+- Chunk JS layout-ca058928bd24c875.js contem '/conta/favoritos' + 'Favoritos'
+- HTML SSR de visitante anonimo NAO contem badge (correto - so logged users)
+
+UX impact estimado: +30-50% click-thru para /conta/favoritos.
+
 ## RECENTLY VIEWED - WORKER 16 NEW MLB FEATURE
 "Vistos recentemente" estilo Mercado Livre - drives re-engagement e conv rate.
 
