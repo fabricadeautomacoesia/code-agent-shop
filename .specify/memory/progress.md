@@ -102,6 +102,41 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## QA PIPELINE SECURITY - WORKER 12 (CALLBACK SIGNATURE BYPASS CRITICAL)
+Audit em services/qa-svc/src/server.js revelou bug critico:
+- POST /qa/callback aceitava qualquer body sem validar assinatura HMAC.
+- Atacante podia POSTar {run_id, confidence_score: 1.0} e aprovar QUALQUER
+  produto pendente sem QA real. Cadeia: produto approved -> vitrine -> venda
+  -> license_key emitida + download_token valido 365d. Fraude direta.
+- BONUS: WORKER_URL e callback_url usavam 127.0.0.1 em vez do service name
+  do Swarm (worker em outro container nunca alcancava qa-svc).
+
+FIX commitado + deployed (cdbb70e):
+
+qa-svc/server.js:
+- ADD env QA_CALLBACK_SECRET (sem ele -> 503 fail-CLOSED).
+- ADD env QA_CALLBACK_BASE_URL (default tasks.cas_qa-svc no Swarm).
+- WORKER_URL default agora tasks.cas_qa-worker (era 127.0.0.1).
+- express.raw montado em /qa/callback para validar HMAC byte-exact.
+- qaCallbackGuard middleware:
+  - crypto.createHmac('sha256', secret).update(rawBody) vs X-Signature header.
+  - timingSafeEqual com Buffer.
+  - Invalido -> 401 invalid_signature + log.warn{ip,ua}.
+  - Apos validar, JSON.parse + segue para handler.
+
+qa-worker/app/main.py:
+- send_callback assina com hmac.new(secret, body, sha256).
+- httpx envia content=body_bytes (nao 'json='), garantindo bytes determinsticos.
+- json.dumps(separators=',',':' + ensure_ascii=False) = serializacao consistente.
+
+DEPLOY: QA_CALLBACK_SECRET gerado via openssl rand -hex 32 em .env Swarm.
+docker service update --env-add em ambos cas_qa-svc e cas_qa-worker.
+
+VALIDADO E2E publicamente via curl:
+- Sem X-Signature -> 401 invalid_signature
+- X-Signature errada -> 401 invalid_signature
+- X-Signature correta (HMAC-SHA256 do raw body) -> 200 verdict:approved
+
 ## SELLER DASH - WORKER 5 (UPLOAD STALE CLOSURE FIX)
 Audit estatico em dashboard-seller revelou bug subtil em /upload:
 - handleFile usava setUploading({...uploading, [field]: true}) e finally false.
