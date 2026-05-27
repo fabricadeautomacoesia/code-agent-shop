@@ -3,11 +3,28 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache } = require('@cas/shared');
 
 const router = express.Router();
 const log = logger.child({ svc: 'seller-svc', mod: 'admin' });
 router.use(jwt.requireAuth({ roles: ['admin','staff'] }));
+
+// FIX-WORKER-18 pass 6: helper invalidate cache apos admin mutations
+async function invalidateSellerCache(sellerId) {
+  try {
+    const r = await query('SELECT store_slug FROM sellers WHERE id = $1', [sellerId]);
+    const tasks = [cache.del('sellers:list:*')];
+    if (r.rows.length) {
+      const slug = r.rows[0].store_slug;
+      tasks.push(
+        cache.del(`sellers:detail:${slug}`),
+        cache.del(`sellers:stats:${slug}`),
+        cache.del(`sellers:products:${slug}:*`)
+      );
+    }
+    await Promise.all(tasks);
+  } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
+}
 
 // POST /sellers/admin/:id/promote-class-b - admin promove seller a Classe B
 router.post('/:id/promote-class-b',
@@ -23,6 +40,7 @@ router.post('/:id/promote-class-b',
     );
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
     log.warn({ actor: req.user.sub, target: req.params.id }, '[seller.promote_b]');
+    await invalidateSellerCache(req.params.id);
     res.json({ seller: r.rows[0] });
   })
 );
@@ -48,6 +66,8 @@ router.post('/:id/suspend',
       [req.user.sub, req.user.role, req.params.id, JSON.stringify({ reason: req.body.reason })]
     );
     log.warn({ actor: req.user.sub, target: req.params.id, reason: req.body.reason }, '[seller.suspend]');
+    // FIX-WORKER-18 pass 6: invalida cache (suspend muda status -> some da listagem publica)
+    await invalidateSellerCache(req.params.id);
     res.json({ ok: true });
   })
 );
@@ -58,6 +78,8 @@ router.post('/:id/reactivate', asyncHandler(async (req, res) => {
     `UPDATE sellers SET status = 'active', updated_at = NOW() WHERE id = $1`,
     [req.params.id]
   );
+  // FIX-WORKER-18 pass 6: invalida cache (reactivate volta a aparecer na listagem)
+  await invalidateSellerCache(req.params.id);
   res.json({ ok: true });
 }));
 

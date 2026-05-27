@@ -3,10 +3,31 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, crypto } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, crypto, cache, logger } = require('@cas/shared');
 
+const log = logger.child({ svc: 'seller-svc', mod: 'me' });
 const router = express.Router();
 router.use(jwt.requireAuth({ roles: ['seller','admin'] }));
+
+// FIX-WORKER-18 pass 6: helper de invalidacao cache apos mutations de seller.
+// W18 pass 5 adicionou cache em /sellers, /:slug, /:slug/stats, /:slug/products
+// (TTL 60-180s). Sem invalidacao em PATCH, store_name/description ficavam stale.
+async function invalidateSellerCache(userId) {
+  try {
+    // Lookup store_slug por user_id
+    const r = await query('SELECT store_slug FROM sellers WHERE user_id = $1', [userId]);
+    const tasks = [cache.del('sellers:list:*')];
+    if (r.rows.length) {
+      const slug = r.rows[0].store_slug;
+      tasks.push(
+        cache.del(`sellers:detail:${slug}`),
+        cache.del(`sellers:stats:${slug}`),
+        cache.del(`sellers:products:${slug}:*`)
+      );
+    }
+    await Promise.all(tasks);
+  } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
+}
 
 // GET /sellers/me - perfil completo do seller logado
 router.get('/', asyncHandler(async (req, res, next) => {
@@ -42,6 +63,8 @@ router.patch('/', validate({ body: updateSchema }), asyncHandler(async (req, res
   if (!cols.length) return res.json({ ok: true, noop: true });
   vals.push(req.user.sub);
   await query(`UPDATE sellers SET ${cols.join(', ')}, updated_at = NOW() WHERE user_id = $${i}`, vals);
+  // FIX-WORKER-18 pass 6: invalida cache para seller veja mudancas imediatamente
+  await invalidateSellerCache(req.user.sub);
   res.json({ ok: true });
 }));
 
