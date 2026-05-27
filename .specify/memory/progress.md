@@ -11039,3 +11039,44 @@ PROXIMA ITER:
 - W1 pass 4: /esqueci-senha label htmlFor + autoComplete
 - W1 pass 5: /login pwScore meter (Login nao tem mas register tem)
 - W3 PDP audit continuado
+
+================================================================
+ITER W1 PASS 4 - /esqueci-senha a11y/UX (2026-05-27)
+================================================================
+ESCOPO: /esqueci-senha (forgot password landing)
+FILE: apps/storefront/src/app/esqueci-senha/page.tsx
+
+BUGS CORRIGIDOS (4):
+1. <label> sem htmlFor + input sem id (WCAG 1.3.1 / 3.3.2)
+FIX: htmlFor="forgot-email" + id="forgot-email"
+
+2. autoComplete missing (browser nao auto-preenchia email salvo)
+FIX: autoComplete="email" + inputMode="email" (teclado mobile @)
+
+3. Error persistente (nao limpava on input correction)
+FIX: clearErr() helper onChange (mesmo pattern pass 3)
+
+4. Error sem role="alert" + dismiss button
+FIX: role="alert" + botao "fechar" (mesmo pattern pass 3)
+
+BONUS:
+- Mail icon + CheckCircle aria-hidden (decorativos)
+- placeholder="seu@email.com" (form-filling hint)
+- Dica anti-suporte na confirmacao (spam folder hint)
+
+WCAG 2.1 RESULTADO:
+- 1.3.1 Info & Relationships: PASS
+- 3.3.2 Labels or Instructions: PASS
+- 4.1.2 Name Role Value: PASS
+- 4.1.3 Status Messages: PASS (role=alert)
+
+W1 AUTH AUDIT PROGRESS:
+- pass 1: NotificationBell load conditional
+- pass 2: /register CPF/phone empty validation
+- pass 3: /redefinir-senha 5 bugs
+- pass 4: /esqueci-senha 4 bugs (esta iter)
+
+PROXIMA ITER:
+- W1 pass 5: /login pwScore meter ou autoComplete audit
+- W3 PDP audit continuado
+- W7 pass 9: /products/:slug/related CTE filter
