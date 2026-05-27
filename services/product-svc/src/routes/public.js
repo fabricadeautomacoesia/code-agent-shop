@@ -62,7 +62,7 @@ router.get('/recommendations/for-me',
 router.get('/recently-viewed',
   require('@cas/shared').jwt.requireAuth(),
   asyncHandler(async (req, res) => {
-    const lim = Math.min(parseInt(req.query.limit || '12', 10), 30);
+    const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 30));
     const r = await query(
       `WITH last_views AS (
          SELECT product_id, MAX(created_at) AS last_view_at
@@ -163,7 +163,11 @@ router.get('/',
     return `products:list:cat=${q.category||''}:kind=${q.kind||''}:min=${q.min_price||''}:max=${q.max_price||''}:free=${q.free||''}:platform=${q.platform_owned||''}:seller=${q.seller||''}:sort=${q.sort||''}:lim=${q.limit||24}:page=${q.page||1}`;
   }, 60),
   asyncHandler(async (req, res) => {
-  const lim = Math.min(parseInt(req.query.limit, 10) || 24, 60);
+  // FIX-WORKER-7 pass 3: clamp 1..60 (era Math.min apenas, deixava lim=-5 passar).
+  // Antes: ?limit=-5 -> SQL "LIMIT -5" -> PG ERROR 'LIMIT must not be negative'
+  // mascarado por error handler como {products:[]} 200 (UX confuso e quebra paginacao).
+  // Agora: Math.max(1, Math.min(parseInt||24, 60)) garante invariant 1 <= lim <= 60.
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 24, 60));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
 
   const where = [`status = 'approved'`];
@@ -264,7 +268,7 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
 router.get('/:slug/reviews',
   cache.cacheMiddleware((req) => `products:reviews:${req.params.slug}:lim=${req.query.limit||20}:p=${req.query.page||1}`, 60),
   asyncHandler(async (req, res) => {
-  const lim = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 20, 100));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
   const r = await query(
     `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase, r.helpful_count, r.unhelpful_count,
