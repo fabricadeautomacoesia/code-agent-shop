@@ -102,6 +102,38 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## MEGA DEPLOY POS-OFFLINE - 7 COMMITS DEPLOYADOS + MLB++ TIER COUPON
+
+Rede voltou apos 8h offline. Push de 7 commits + deploy completo:
+
+DEPLOYS APLICADOS:
+1. Migration 017 (tier coupon) - 5 DO blocks OK
+2. qa-worker rebuilt + converged (W12 pass 2 parser + cost fallback)
+3. auth-svc rebuilt + converged (W6 CRITICAL trust proxy + fail2ban xff)
+4. order-svc rebuilt + converged (W16 MLB++ tier coupon)
+5. storefront rebuilt + converged (W8 pulse-slow + W9 PWA assets + W16 UI badge)
+
+WORKER 16 MLB++ NOVA FEATURE: Cupom segmentado por tier loyalty.
+- Mercado Livre style 'exclusivo Nivel X Mercado Pago'.
+- coupons.min_tier VARCHAR (starter/gold/platinum)
+- 2 seeds: GOLD20 (-20% tier gold+) + PLATINUM50 (-50% tier platinum)
+- POST /coupon valida user.tier vs coupon.min_tier (rank check)
+- GET /coupon/:code/preview retorna eligible + user_tier para UI badge
+- 403 coupon_tier_insufficient com {required_tier, your_tier} para mensagem clara
+
+VALIDADO E2E:
+- User gold aplica GOLD20 -> 200 ok
+- User gold aplica PLATINUM50 -> 403 'Cupom exclusivo para tier platinum+. Seu tier: gold'
+- Preview GOLD20 user gold -> {coupon_min_tier:'gold', eligible:true, user_tier:'gold'}
+- /manifest.webmanifest -> 200 JSON com name, theme_color, icons (PWA installable)
+- /apple-icon -> PNG 24557 bytes (iOS home screen)
+- /opengraph-image -> PNG 190000 bytes (1200x630 social share)
+
+BUG FIX durante deploy:
+- opengraph-image.tsx falhou build: Satori (next/og renderer) exige
+  display:flex em div com multiplos children. Adicionado em todos divs +
+  removido <span> nested e <br/> (Satori nao suporta). Commit 9814cba.
+
 ## VISUAL+PWA OFFLINE (WORKERS 8+9 - PUSH PENDENTE)
 
 WORKER 8 pass 2 (commit local 17e2d2e):
