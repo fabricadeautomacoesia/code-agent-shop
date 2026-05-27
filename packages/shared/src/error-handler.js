@@ -23,19 +23,37 @@ function notFoundHandler(req, res) {
   res.status(404).json({ error: 'route_not_found', path: req.originalUrl });
 }
 
+// FIX-WORKER-7: errors do Postgres (codigo SQLSTATE 5 chars) NUNCA devem vazar
+// nome de tabela/constraint/coluna ao cliente (reconnaissance). Sanitize aqui.
+const PG_SQLSTATE_RE = /^[0-9A-Z]{5}$/;
+function isPgError(err) {
+  return err && typeof err.code === 'string' && PG_SQLSTATE_RE.test(err.code);
+}
+
 function errorMiddleware(err, req, res, _next) {
-  const status = err.status || 500;
+  const status = err.status || (isPgError(err) ? 500 : 500);
   const code   = err.code   || 'internal_error';
   const requestId = req.requestId || req.headers['x-request-id'];
+
   if (status >= 500) {
-    logger.error({ err: { code: err.code, msg: err.message, stack: err.stack }, requestId, path: req.originalUrl }, '[error]');
+    // log COMPLETO server-side (com nomes de tabela/constraint para debug)
+    logger.error({ err: { code: err.code, msg: err.message, stack: err.stack, detail: err.detail, table: err.table, constraint: err.constraint }, requestId, path: req.originalUrl }, '[error]');
   } else {
     logger.warn({ code, msg: err.message, requestId, path: req.originalUrl }, '[warn]');
   }
+
+  // Resposta cliente: sanitizada se for erro PG cru, opaca se status>=500
+  let outCode = code;
+  let outMessage = err.message;
+  if (isPgError(err) || status >= 500) {
+    outCode = isPgError(err) ? 'database_error' : (code === 'internal_error' ? 'internal_error' : code);
+    outMessage = 'Erro interno do servidor. Tente novamente em instantes.';
+  }
+
   res.status(status).json({
-    error: code,
-    message: err.message,
-    details: err.details,
+    error: outCode,
+    message: outMessage,
+    details: status < 500 ? err.details : undefined,
     requestId,
   });
 }

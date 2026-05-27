@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { jwt, asyncHandler, validate } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler } = require('@cas/shared');
 
 const router = express.Router();
 router.use(jwt.requireAuth());
@@ -28,14 +28,27 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 // POST /products/wishlist - adiciona aos favoritos
+// FIX-WORKER-7: antes vazava FK violation 500 com nome de constraint Postgres ao cliente.
+// Agora pre-valida existencia do produto -> 404 product_not_found (sem leak).
 router.post('/',
   validate({ body: z.object({ product_id: z.string().uuid() }) }),
-  asyncHandler(async (req, res) => {
-    await query(
-      `INSERT INTO product_wishlist (user_id, product_id) VALUES ($1, $2)
-       ON CONFLICT (user_id, product_id) DO NOTHING`,
-      [req.user.sub, req.body.product_id]
+  asyncHandler(async (req, res, next) => {
+    const exists = await query(
+      `SELECT 1 FROM products WHERE id = $1 AND deleted_at IS NULL AND status = 'approved'`,
+      [req.body.product_id]
     );
+    if (!exists.rows.length) return next(errorHandler.notFound('product_not_found'));
+    try {
+      await query(
+        `INSERT INTO product_wishlist (user_id, product_id) VALUES ($1, $2)
+         ON CONFLICT (user_id, product_id) DO NOTHING`,
+        [req.user.sub, req.body.product_id]
+      );
+    } catch (e) {
+      // defesa em profundidade caso outra constraint dispare (e.g. user deletado)
+      if (e.code === '23503') return next(errorHandler.notFound('product_not_found'));
+      throw e;
+    }
     res.json({ ok: true });
   })
 );
