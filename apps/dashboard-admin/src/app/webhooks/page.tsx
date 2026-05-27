@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
-import { AlertOctagon, Clock, ExternalLink } from 'lucide-react';
+import { useAdminAction } from '@/lib/use-admin-action';
+import { AlertOctagon, Clock, ExternalLink, RefreshCw } from 'lucide-react';
 
 /**
  * FIX-WORKER-4 pass 8: dashboard /admin/webhooks consome W11 pass 7 endpoint
@@ -34,6 +35,20 @@ export default function AdminWebhooksPage() {
     } finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
+
+  // FIX-WORKER-11 pass 8: botao Reset chama POST /payments/webhooks/:id/reset
+  // (em vez do antigo workflow psql UPDATE retry_count=0)
+  const action = useAdminAction(load);
+
+  async function resetWebhook(id: string) {
+    if (!confirm(`Resetar webhook ${id.slice(0, 8)}... e tentar reprocessar imediatamente?`)) return;
+    action.run(`reset-${id}`, async () => {
+      const r = await adminFetch<{ ok: boolean; previous_retry_count: number }>(`/payments/webhooks/${id}/reset`, {
+        method: 'POST',
+      });
+      return `Webhook resetado (retry_count era ${r.previous_retry_count}). Reprocessamento disparado.`;
+    });
+  }
 
   return (
     <div>
@@ -67,9 +82,9 @@ export default function AdminWebhooksPage() {
               bug processWebhookEvent.
             </p>
             <p className="text-white/70 mt-1">
-              <strong>Para reprocessar manualmente:</strong> use psql na VPS:
-              {' '}<code className="text-magenta text-xs">UPDATE asaas_webhook_events SET retry_count = 0 WHERE id = &lt;uuid&gt;</code>
-              {' '}e aguarde proximo cron (max 5min).
+              <strong>Para reprocessar:</strong> clique no botao <strong>Reset</strong> na linha do webhook.
+              Acao reseta retry_count=0, limpa processing_error e dispara reprocessamento IMEDIATO
+              (sem esperar o proximo cron 5min). Audit log registra acao com seu user.
             </p>
           </div>
         </div>
@@ -79,6 +94,20 @@ export default function AdminWebhooksPage() {
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>Erro carregando dead letter: {loadError}</span>
           <button onClick={() => { setLoadError(''); load(); }} className="text-xs hover:underline">retry</button>
+        </div>
+      )}
+
+      {/* FIX-WORKER-11 pass 8: banners reset action */}
+      {action.error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.error}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{action.success}</span>
+          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
         </div>
       )}
 
@@ -100,6 +129,7 @@ export default function AdminWebhooksPage() {
                   <th>Retries</th>
                   <th>Recebido</th>
                   <th>Erro</th>
+                  <th className="text-right">Acoes</th>
                 </tr>
               </thead>
               <tbody>
@@ -138,6 +168,16 @@ export default function AdminWebhooksPage() {
                         {w.processing_error || 'Sem detalhe (verifique logs do payment-svc)'}
                       </div>
                       <div className="text-[10px] text-white/40 font-mono mt-1">id: {w.id.slice(0, 8)}...</div>
+                    </td>
+                    {/* FIX-WORKER-11 pass 8: botao Reset (substitui workflow psql) */}
+                    <td className="text-right">
+                      <button onClick={() => resetWebhook(w.id)}
+                        disabled={action.busyKey === `reset-${w.id}`}
+                        aria-label={`Resetar e reprocessar webhook ${w.event_type}`}
+                        className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                        <RefreshCw className={`w-3 h-3 ${action.busyKey === `reset-${w.id}` ? 'animate-spin' : ''}`} aria-hidden="true" />
+                        {action.busyKey === `reset-${w.id}` ? '...' : 'Reset'}
+                      </button>
                     </td>
                   </tr>
                 ))}

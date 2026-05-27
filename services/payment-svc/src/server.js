@@ -658,6 +658,102 @@ app.get('/payments/webhooks/dead',
   })
 );
 
+// FIX-WORKER-11 pass 8: POST /payments/webhooks/:id/reset
+// Admin reseta retry_count=0 sem precisar de psql direto (W4 pass 8 doc apontava
+// para psql como unico caminho). Agora UI dashboard-admin pode oferecer botao
+// "Reprocessar agora" inline.
+//
+// Logica:
+// 1. Valida UUID (defesa upfront contra PG 22P02 -> 500)
+// 2. SELECT FOR UPDATE (atomic - evita race com cron reconciliation)
+// 3. Confere: signature_valid=TRUE + processed_at IS NULL (so reseta o que faz sentido)
+// 4. UPDATE retry_count=0, processing_error=NULL
+// 5. Imediato: chama processWebhookEvent fora do lock (nao espera proximo cron)
+// 6. Audit log com actor + action='webhook.reset' para forensics
+const PAYMENT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+app.post('/payments/webhooks/:id/reset',
+  jwt.requireAuth({ roles: ['admin', 'staff'] }),
+  asyncHandler(async (req, res, next) => {
+    if (!PAYMENT_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+    // SELECT FOR UPDATE: lock row durante reset (evita race com cron reconciliation
+    // que esteja simultaneamente tentando processar este mesmo webhook)
+    const reset = await tx(async (c) => {
+      const cur = await c.query(
+        `SELECT id, payload, signature_valid, processed_at, retry_count
+           FROM asaas_webhook_events
+          WHERE id = $1::UUID
+          FOR UPDATE`,
+        [req.params.id]
+      );
+      if (!cur.rows.length) return { error: 'not_found' };
+      const row = cur.rows[0];
+      if (!row.signature_valid) return { error: 'invalid_signature_cant_reset' };
+      if (row.processed_at) return { error: 'already_processed' };
+      // Reset
+      await c.query(
+        `UPDATE asaas_webhook_events
+            SET retry_count = 0, processing_error = NULL
+          WHERE id = $1`,
+        [req.params.id]
+      );
+      // Audit log
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'webhook.reset', 'asaas_webhook_event', $3, 'info', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({ previous_retry_count: row.retry_count, ip: req.ip })]
+      );
+      return { ok: true, payload: row.payload, previous_retry_count: row.retry_count };
+    });
+
+    if (reset.error === 'not_found') return next(errorHandler.notFound('webhook_not_found'));
+    if (reset.error === 'invalid_signature_cant_reset') {
+      return next(errorHandler.badRequest('invalid_signature_cant_reset',
+        'Webhook com signature_valid=FALSE nao pode ser resetado (proteção anti-fraude).'));
+    }
+    if (reset.error === 'already_processed') {
+      return next(errorHandler.badRequest('already_processed',
+        'Webhook ja foi processado com sucesso (processed_at != NULL).'));
+    }
+
+    // Tenta reprocessar IMEDIATAMENTE (nao espera proximo cron 5min)
+    res.json({
+      ok: true,
+      previous_retry_count: reset.previous_retry_count,
+      hint: 'Webhook resetado. Reprocessamento imediato disparado (assincrono).',
+    });
+    setImmediate(async () => {
+      try {
+        const evt = typeof reset.payload === 'string' ? JSON.parse(reset.payload) : reset.payload;
+        await processWebhookEvent(evt);
+        const orderLink = evt.payment?.id
+          ? await query('SELECT id FROM orders WHERE asaas_payment_id = $1', [evt.payment.id]).catch(() => ({ rows: [] }))
+          : { rows: [] };
+        await query(
+          `UPDATE asaas_webhook_events
+              SET processed_at = NOW(),
+                  order_id = COALESCE(order_id, $1::UUID),
+                  processing_error = NULL
+            WHERE id = $2`,
+          [orderLink.rows[0]?.id || null, req.params.id]
+        );
+        log.info({ webhook_id: req.params.id, actor: req.user.sub }, '[webhook.reset.processed]');
+      } catch (e) {
+        await query(
+          `UPDATE asaas_webhook_events
+              SET processing_error = $1, retry_count = retry_count + 1
+            WHERE id = $2`,
+          [String(e.message).slice(0, 500), req.params.id]
+        ).catch(() => {});
+        log.warn({ webhook_id: req.params.id, err: e.message }, '[webhook.reset.fail]');
+      }
+    });
+  })
+);
+
 // Cron interval: 5min. setImmediate para 1a execucao apos 30s (let svc warm up)
 setTimeout(() => reconcileWebhooks().catch(() => {}), 30000);
 setInterval(() => reconcileWebhooks().catch((e) => log.error({ err: e.message }, '[reconcile.cron.fail]')), 5 * 60 * 1000);
