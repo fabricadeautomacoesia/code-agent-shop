@@ -11849,3 +11849,73 @@ PROXIMA ITER:
 - W3 pass 6: PriceAlertButton auditar Pattern + UX/affordance
 - W3 pass 7: NotificationBell auditar action buttons + Pattern
 - W18 pass 6: idx parcial order_items status='paid'
+
+================================================================
+ITER W3 PASS 6 - PriceAlertButton Pattern B + endpoint check (2026-05-27)
+================================================================
+ESCOPO: PriceAlertButton (storefront) + backend /check endpoint novo
+FILES:
+- apps/storefront/src/components/price-alert-button.tsx
+- services/product-svc/src/routes/price-alerts.js
+
+CONTEXTO: W3 pass 5 estabeleceu CompareButton race-condition N/A (store
+sincrono). PriceAlertButton tem async fetch -> Pattern B+C+D obrigatorios.
+Audit revelou faltava B + ineficiencia N+1 GET list completa.
+
+BUGS CORRIGIDOS (2 + 1 endpoint novo):
+
+1. PATTERN B violado - sem explicit guard double-click
+- ANTES: setLoading(true) async. 2 cliques em <16ms ambos passavam.
+- IMPACTO:
+  a. optimistic flip 2x: setActive(!wasActive) duas vezes =
+     volta visual ao estado original (toggle * 2 = identity)
+  b. 2 POST/DELETE simultaneos:
+     - POST: ON CONFLICT DO UPDATE absorve (backend OK)
+     - DELETE: 404 alert_not_found no segundo (ja deletado)
+  c. errorFlash piscar duplo durante setTimeout 2s
+- FIX: if (loading) return; explicito ANTES de setState/mutate
+- Mesmo bug AddToCart pass 3 #2 + WishlistButton pass 4 - PATTERN
+  RACE-CONDITION cross-component confirmado (3o component)
+
+2. INEFICIENCIA N+1 GET /products/price-alerts (lista 100) p/ 1 boolean
+- ANTES: useEffect chamava endpoint LIST (todos 100 alertas) +
+  .some((a) => a.product_id === productId) no client
+- IMPACTO REAL:
+  a. User com 50 alertas: ~5KB JSON parsed por PDP open (lento mobile)
+  b. DB query: scan product_price_alerts WHERE user_id (sem productId)
+     - Mesmo indexada (user_id, product_id), retorna N rows desperdicados
+  c. Se PriceAlertButton fosse adicionado em product cards (futuro),
+     N cards = N chamadas list = N * 100 alertas = O(N^2) waste
+- FIX BACKEND: novo endpoint GET /products/price-alerts/check/:product_id
+  - Pattern wishlist /check (W7 estabelecido)
+  - Query: SELECT 1 FROM product_price_alerts WHERE user_id=$1 AND product_id=$2
+  - Index hit (user_id, product_id) PK composite -> linha unica ~50 bytes
+  - UUID_RE validation upfront (anti 22P02 PG cast error)
+- FIX FRONTEND: useEffect chama /check em vez de list
+  - Response: { active: boolean } direto, sem .some() client
+  - ~5KB -> ~50 bytes (~100x reducao bandwidth)
+
+PATTERN W3 RACE-CONDITION RESUMO (passes 3-6):
+- AddToCart pass 3: A+B+C aplicados (fetch async dual button)
+- WishlistButton pass 4: B+D aplicados (fetch async botao unico)
+- CompareButton pass 5: N/A (store sincrono zustand)
+- PriceAlertButton pass 6: B aplicado (fetch async botao unico, D ja tinha)
+
+PATTERN W3 EFFICIENCY (novo pass 6):
+- Endpoints LIST nao devem ser usados para checks pontuais
+- /check/:id pattern dedicado: query indexada + response minimo
+- Aplicar: wishlist/check (ja existe), price-alerts/check (esta iter)
+- TODO: review se outros endpoints similares ja seguem pattern
+
+W3 PDP PROGRESS:
+- pass 1: fetchRelated 3 bugs catastroficos
+- pass 2: also-bought 4 bugs (CRITICO prod URL)
+- pass 3: AddToCart 4 race conditions
+- pass 4: WishlistButton Pattern B+D
+- pass 5: CompareButton 2 bugs UX/affordance (Pattern N/A)
+- pass 6: PriceAlertButton Pattern B + endpoint /check (esta iter)
+
+PROXIMA ITER:
+- W3 pass 7: NotificationBell auditar action buttons + dropdown items
+- W3 pass 8: PDP variant /check usar store (architectural - gap pass 4)
+- W18 pass 6: idx parcial order_items status='paid'

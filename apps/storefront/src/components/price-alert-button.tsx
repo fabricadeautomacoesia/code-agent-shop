@@ -35,15 +35,29 @@ export function PriceAlertButton({ productId, currentPriceCents: _unused }: Prop
   // FIX-WORKER-3 pass 9: errorFlash visual feedback (era silent catch {})
   const [errorFlash, setErrorFlash] = useState(false);
 
-  // Check estado inicial (lista alertas, filtra por productId)
+  // FIX-WORKER-3 pass 6: usa endpoint /check/:productId especifico (backend novo).
+  // ANTES: GET /products/price-alerts listava TODOS 100 alertas + .some(filter)
+  // - User com 50 alertas -> ~5KB JSON parsed para descobrir 1 boolean
+  // - Query DB: scan completo product_price_alerts WHERE user_id (sem productId filter)
+  // - N+1 implicito se PriceAlertButton for adicionado em listas/cards
+  // AGORA: GET /check/:productId -> query indexada (user_id, product_id), 50 bytes
   useEffect(() => {
     if (!token) return;
-    Api.api<{ alerts: any[] }>('/products/price-alerts', { auth: token })
-      .then((r) => setActive(r.alerts.some((a) => a.product_id === productId)))
+    Api.api<{ active: boolean }>(`/products/price-alerts/check/${productId}`, { auth: token })
+      .then((r) => setActive(!!r.active))
       .catch(() => {});
   }, [token, productId]);
 
   async function toggle() {
+    // FIX-WORKER-3 pass 6 (Pattern B): explicit guard anti double-click.
+    // setLoading async (next React tick). 2 cliques em <16ms ambos veem loading=false.
+    // IMPACTO PRE-FIX:
+    //   a. optimistic flip 2x: setActive(!wasActive) duas vezes = volta visual ao original
+    //   b. 2 POST/DELETE simultaneos: backend 409 ON CONFLICT DO UPDATE absorve mas
+    //      DELETE em quem ja nao existe pode 404 (mesmo bug WishlistButton pass 4).
+    //   c. errorFlash race: piscar duplo durante setTimeout 2s.
+    // Mesmo bug AddToCart pass 3 #2 e WishlistButton pass 4.
+    if (loading) return;
     if (!token) {
       router.push(`/login?return=/product/${productId}`);
       return;

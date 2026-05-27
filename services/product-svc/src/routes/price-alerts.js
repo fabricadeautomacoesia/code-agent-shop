@@ -32,6 +32,24 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ alerts: r.rows });
 }));
 
+// FIX-WORKER-3 pass 6: GET /products/price-alerts/check/:product_id
+// Endpoint especifico para PDP frontend checar SE este produto esta no alert list.
+// ANTES: frontend chamava GET / (lista todos 100 alertas) so para .some(filter).
+// IMPACTO PRE-FIX: user com 50 alertas baixava ~5KB JSON por PDP open.
+// AGORA: query indexada (user_id, product_id) -> linha unica, ~50 bytes.
+// Pattern same wishlist /check (W7 endpoint estabelecido).
+router.get('/check/:product_id', asyncHandler(async (req, res, next) => {
+  if (!UUID_RE.test(req.params.product_id)) {
+    return next(errorHandler.badRequest('invalid_uuid'));
+  }
+  const r = await query(
+    `SELECT 1 FROM product_price_alerts
+      WHERE user_id = $1 AND product_id = $2 LIMIT 1`,
+    [req.user.sub, req.params.product_id]
+  );
+  res.json({ active: r.rows.length > 0 });
+}));
+
 // POST /products/price-alerts - cria alerta
 router.post('/',
   validate({ body: z.object({
