@@ -13325,3 +13325,99 @@ PROXIMA ITER:
 - W7 pass 23: payment-svc payouts/process audit
 - W18 pass 7: idx parcial product_views > 90d
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
+
+================================================================
+ITER W7 PASS 22 - payment-svc webhook 3 BUGS (race+state+unknown) (2026-05-27)
+================================================================
+ESCOPO: payment-svc processWebhookEvent (assincrono pos-200-ack Asaas)
+FILE: services/payment-svc/src/server.js (linhas 434-475)
+
+CONTEXTO: W7 pass 21 mitigou ataque cross-user no /asaas/create.
+Pass 22 audita processWebhookEvent - alvo critico pois Asaas retries
+duplicados sao COMUNS (rede instavel, ack timeout, etc).
+
+BUGS CORRIGIDOS (3):
+
+1. *** RACE CONDITION (Regra K) *** SELECT sem FOR UPDATE
+- PRE-FIX linha 438: SELECT order WHERE asaas_payment_id = $1
+  fora de tx() - sem lock
+- CENARIO CRITICO ASAAS:
+  Asaas envia PAYMENT_CONFIRMED + PAYMENT_RECEIVED em sequencia rapida
+  (algumas vezes simultaneos):
+  - Webhook 1 (CONFIRMED): SELECT le payment_status='authorized'
+  - Webhook 2 (RECEIVED): SELECT le payment_status='authorized' (paralelo!)
+  - Webhook 1: tx UPDATE payment_status='captured', paid_at=NOW(),
+    splits processed, loyalty earn +20pts
+  - Webhook 2: tx UPDATE mesmo, splits processed AGAIN, loyalty earn +20pts
+  TOTAL: usuario recebe 40pts em vez de 20. Splits processados 2x.
+- FIX: SELECT FOR UPDATE dentro do tx() (lock pessimistico).
+  Segundo webhook bloqueia ate primeiro COMMIT, depois ve state atualizado.
+- Pattern W7 Regra K consolidado em 6 endpoints (checkout, loyalty, payment
+  create, agora webhook).
+
+2. *** STATE MACHINE VALIDATION *** ASAAS retries reprocessam tudo
+- ASAAS retries idempotency: webhook nao retorna 200 em 5s -> Asaas retry
+  ate 24h. webhook re-entrega MESMO evento varias vezes.
+- PRE-FIX: idempotency check linha 374-377 SO funciona se event.id presente
+  E ja foi processado uma vez. MAS:
+  - Primeira tentativa: 200 ok mas conexao caiu antes Asaas receber
+  - Segunda tentativa: chega, INSERT em asaas_webhook_events com NOVA row
+    (asaas_event_id NULL ou diferente em alguns scenarios edge)
+  - Idempotency check passa -> processa AGAIN
+- TAMBEM: out-of-order delivery:
+  - PAYMENT_RECEIVED (T0): order -> captured/paid
+  - PAYMENT_REFUNDED (T1): order -> refunded
+  - PAYMENT_RECEIVED (T2 retry): processa AGAIN -> order volta a paid (!!)
+  - Refund REVERTIDO silenciosamente. CRITICAL bug financeiro.
+- FIX: ALLOWED_TRANSITIONS state machine
+  pending -> [authorized, captured, failed]
+  authorized -> [captured, failed, refunded]
+  captured -> [refunded, failed]  # refund/chargeback OK
+  refunded -> []  # terminal - reprocessar = noop
+  failed -> [authorized]  # retry pos-failed OK
+- Pre-UPDATE check: action.ps in ALLOWED[order.payment_status]?
+  Se nao, log.info (NORMAL behavior - retry esperado) + return.
+- Defesa-em-profundidade: idempotency check + state machine guard.
+
+3. EVENTOS DESCONHECIDOS silenciados
+- PRE-FIX: if (!action) return; sem log
+- IMPACTO: Asaas adiciona novos eventos (PAYMENT_CHARGEBACK_REQUESTED,
+  PAYMENT_DUNNING_RECEIVED, PAYMENT_AWAITING_RISK_ANALYSIS) e operador
+  NAO DESCOBRE - audit log nao tem registro
+- Webhooks recebidos OK mas processWebhookEvent silently drops
+- FIX: log.warn com event_name + payment_id quando map[event] === undefined
+- Operador via alerts em logs -> adiciona event ao map
+
+PATTERN W7 SECURITY+RACE PAYMENT FLOW COMPLETO:
+- Pass 17: checkout deleted_at (write WRITE)
+- Pass 18: orders read security (download_token nao vaza)
+- Pass 19: cart loyalty/redeem race FOR UPDATE
+- Pass 20: download cap + DMCA + audit
+- Pass 21: payment create ownership + race + idempotent UPDATE
+- Pass 22: webhook race + state machine + unknown events (esta iter)
+
+DEFESA EM PROFUNDIDADE consolidada:
+- Asaas envia retry -> idempotency check pega (event.id duplicate)
+- Idempotency miss -> state machine guard pega (status invariante)
+- State machine ok -> FOR UPDATE serializa (race entre webhooks paralelos)
+- TODOS bypass falham? -> loyalty earn dispara, mas state machine garante
+  status transitions corretas downstream
+
+NOVA REGRA N (W7 pass 22):
+N. State machine validation em event-driven endpoints.
+   - Webhooks (assincronos por natureza) DEVEM ter state machine
+   - ALLOWED_TRANSITIONS table documentada
+   - Transicoes invalidas = log info + return (nao erro - reprocessamento esperado)
+   - Aplica: payment webhook, qa-svc callback, notification outbox processor
+
+PATTERN W7 13 ENDPOINTS + 14 REGRAS (A-N):
+- product-svc: 4 endpoints
+- search-svc: 5 endpoints
+- order-svc: 8 endpoints
+- payment-svc: 2 endpoints (create pass 21, webhook pass 22)
+
+PROXIMA ITER:
+- W7 pass 23: payment-svc payouts/process audit (transfer Asaas)
+- W18 pass 7: idx parcial product_views > 90d
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
+- W13: notification-svc audit (outbox processor com Regra N)

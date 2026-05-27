@@ -431,13 +431,24 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
   });
 }));
 
+// FIX-WORKER-7 pass 22: state machine valida transicoes payment_status.
+// PRE-FIX: webhook reentrante (Asaas retry pos-ack-timeout) reprocessava
+// order ja 'captured' -> dispara loyalty earn 2x + paid_at sobrescrito.
+// PRE-FIX: PAYMENT_RECEIVED apos PAYMENT_REFUNDED (out-of-order delivery)
+// revertia refund silenciosamente.
+// State machine: transicoes legitimas validadas. Reprocessamento = noop.
+const ALLOWED_TRANSITIONS = {
+  // From state: [to states permitidos]
+  'pending':    ['authorized', 'captured', 'failed'],
+  'authorized': ['captured', 'failed', 'refunded'],
+  'captured':   ['refunded', 'failed'], // refund/chargeback validos
+  'refunded':   [],                      // terminal - reprocessar = noop
+  'failed':     ['authorized'],          // retry pos-failed eh OK
+};
+
 async function processWebhookEvent(evt) {
   const paymentId = evt.payment?.id;
   if (!paymentId) return;
-
-  const r = await query('SELECT id, buyer_user_id, payment_status FROM orders WHERE asaas_payment_id = $1', [paymentId]);
-  if (!r.rows.length) return;
-  const order = r.rows[0];
 
   const map = {
     PAYMENT_RECEIVED:    { ps: 'captured', os: 'paid', paid_at: true },
@@ -448,9 +459,53 @@ async function processWebhookEvent(evt) {
     PAYMENT_REFUND_FAILED:{ ps: 'failed' },
   };
   const action = map[evt.event];
-  if (!action) return;
+  // FIX-WORKER-7 pass 22 (bug 3): eventos desconhecidos LOG WARN
+  // Pre-fix: if (!action) return; silencioso. Operador nao sabia que
+  // novos eventos Asaas (PAYMENT_CHARGEBACK_REQUESTED, DUNNING_RECEIVED)
+  // estavam sendo descartados. Audit log impossivel.
+  if (!action) {
+    log.warn({ event: evt.event, payment_id: paymentId },
+      '[webhook.unknown_event] evento Asaas nao mapeado - operador deve revisar map');
+    return;
+  }
 
   await tx(async (c) => {
+    // FIX-WORKER-7 pass 22 (bug 1 RACE Regra K): SELECT FOR UPDATE.
+    // Pre-fix: SELECT sem lock fora do tx() permitia 2 webhooks
+    // concorrentes (Asaas retry) verem mesmo state -> ambos UPDATE.
+    // Loyalty earn 2x, paid_at sobrescrito, splits processados 2x.
+    // FIX: SELECT FOR UPDATE dentro do tx() - segundo webhook bloqueia
+    // ate primeiro COMMIT, depois ve state atualizado -> noop por
+    // state machine guard.
+    const r = await c.query(
+      `SELECT id, buyer_user_id, payment_status
+         FROM orders WHERE asaas_payment_id = $1
+         FOR UPDATE`,
+      [paymentId]
+    );
+    if (!r.rows.length) return;
+    const order = r.rows[0];
+
+    // FIX-WORKER-7 pass 22 (bug 2): state machine validation
+    // Pre-fix: PAYMENT_RECEIVED em order ja 'captured' (Asaas retry)
+    // reprocessava tudo - loyalty earn 2x + paid_at sobrescrito + splits 2x.
+    // Pre-fix: PAYMENT_RECEIVED apos PAYMENT_REFUNDED revertia refund silente.
+    // POS-FIX: transicao validada. Se nao permitida, NOOP + log info.
+    if (action.ps) {
+      const allowed = ALLOWED_TRANSITIONS[order.payment_status] || [];
+      if (!allowed.includes(action.ps)) {
+        // Reprocessamento ou out-of-order delivery - NAO eh erro, eh esperado
+        // (Asaas retries ate receber 200 OK do webhook).
+        log.info({
+          payment_id: paymentId,
+          event: evt.event,
+          current_status: order.payment_status,
+          target_status: action.ps,
+        }, '[webhook.transition_blocked] state machine guard - ignorando reprocessamento');
+        return;
+      }
+    }
+
     const cols = [];
     const vals = [];
     let i = 1;
