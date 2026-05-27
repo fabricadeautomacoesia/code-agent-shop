@@ -41,12 +41,12 @@ export function RecentlyViewed() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
         {products.map((p: any) => (
           <Link key={p.id} href={`/product/${p.slug}`}
-            className="glass overflow-hidden hover:scale-[1.03] transition-transform group">
+            className="glass overflow-hidden card-hover group">
             <div className="aspect-video relative overflow-hidden bg-gradient-vibe/10">
               {p.cover_image_url ? (
                 <Image src={p.cover_image_url} alt={p.title}
                   fill sizes="(max-width:640px) 50vw, (max-width:1024px) 33vw, 25vw"
-                  className="object-cover group-hover:scale-110 transition-transform duration-500"
+                  className="object-cover card-image-zoom"
                   loading="lazy" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-gradient-vibe/10">

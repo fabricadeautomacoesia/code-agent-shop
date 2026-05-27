@@ -58,6 +58,17 @@
     border-color: rgba(236,72,153,0.25);
     box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8), 0 0 30px -10px rgba(236,72,153,0.3);
   }
+  /* FIX-WORKER-8 pass 3: hover:scale tinha 4 valores (1.02/1.03/1.05/1.10) entre cards.
+     Padronizado em 2 utilities semanticas. Cards adjacentes agora pulam consistentemente. */
+  .card-hover {
+    transition: transform 300ms cubic-bezier(.16,1,.3,1);
+    will-change: transform;
+  }
+  .card-hover:hover { transform: scale(1.03); }
+  .card-image-zoom {
+    transition: transform 500ms cubic-bezier(.16,1,.3,1);
+  }
+  .group:hover .card-image-zoom { transform: scale(1.08); }
   /* Noise overlay (V8 15.2) */
   .noise-overlay {
     position: fixed; inset: 0; pointer-events: none; z-index: 100;

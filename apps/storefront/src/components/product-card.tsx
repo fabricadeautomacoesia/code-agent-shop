@@ -16,14 +16,14 @@ export function ProductCard({ product }: { product: any }) {
   const tier = TIER_BADGE[product.reputation_tier] || TIER_BADGE.iniciante;
   return (
     <Link href={`/product/${product.slug}`}>
-      <article className="glass group overflow-hidden hover:scale-[1.02] hover:border-white/15 transition-all duration-300 reveal-up cursor-pointer h-full flex flex-col">
+      <article className="glass group overflow-hidden card-hover hover:border-white/15 reveal-up cursor-pointer h-full flex flex-col">
         <div className="aspect-video relative overflow-hidden bg-gradient-vibe/10">
           {product.cover_image_url ? (
             <Image
               src={product.cover_image_url} alt={product.title}
               fill
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-              className="object-cover group-hover:scale-110 transition-transform duration-700"
+              className="object-cover card-image-zoom"
               loading="lazy"
             />
           ) : (
