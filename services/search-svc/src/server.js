@@ -175,8 +175,20 @@ app.get('/top-sellers',
 }));
 
 // GET /search/top-sellers/:category - mais vendidos de UMA categoria
+// FIX-WORKER-10: valida slug + retorna 404 quando inexistente + enriquece com metadata
+// Antes: slug invalido retornava {products:[]} igual a categoria vazia -> UX impossivel de diferenciar.
 app.get('/top-sellers/:category', asyncHandler(async (req, res) => {
   const lim = Math.min(parseInt(req.query.limit || '12', 10), 50);
+  // 1) Resolve categoria e valida existencia
+  const catR = await query(
+    `SELECT id, slug, name, name_singular, description, parent_id
+       FROM categories WHERE slug = $1`, [req.params.category]
+  );
+  if (!catR.rows.length) {
+    return res.status(404).json({ error: 'category_not_found', slug: req.params.category });
+  }
+  const cat = catR.rows[0];
+  // 2) Top sellers da categoria
   const r = await query(
     `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
             p.cover_image_url, p.price_cents, p.currency, p.is_free,
@@ -187,11 +199,13 @@ app.get('/top-sellers/:category', asyncHandler(async (req, res) => {
             (SELECT reputation_tier FROM sellers WHERE id = p.seller_id) AS reputation_tier,
             ROW_NUMBER() OVER (ORDER BY p.sales_count DESC) AS sales_rank
        FROM products p
-       JOIN categories c ON c.id = p.category_id
-      WHERE p.status = 'approved' AND p.deleted_at IS NULL AND c.slug = $1
-      ORDER BY p.sales_count DESC LIMIT $2`, [req.params.category, lim]
+      WHERE p.status = 'approved' AND p.deleted_at IS NULL AND p.category_id = $1
+      ORDER BY p.sales_count DESC LIMIT $2`, [cat.id, lim]
   );
-  res.json({ products: r.rows, category: req.params.category });
+  res.json({
+    products: r.rows,
+    category: { slug: cat.slug, name: cat.name, name_singular: cat.name_singular, description: cat.description, parent_id: cat.parent_id },
+  });
 }));
 
 // GET /search/trending - top buscas dos ultimos 7 dias

@@ -1,23 +1,29 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import { Trophy, TrendingUp } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
 
 export const revalidate = 60;
 
-async function fetchSafe<T>(path: string): Promise<T | null> {
+// FIX-WORKER-10: agora distingue 404 (slug invalido) de 200+empty (categoria sem produtos)
+async function fetchTopSellers(slug: string): Promise<{ status: number; data: any | null }> {
   try {
     const base = process.env.GATEWAY_URL || 'http://127.0.0.1:3002';
-    const r = await fetch(`${base}${path}`, { cache: 'no-store' });
-    if (!r.ok) return null;
-    return r.json();
-  } catch { return null; }
+    const r = await fetch(`${base}/api/search/top-sellers/${slug}?limit=12`, { cache: 'no-store' });
+    const data = await r.json().catch(() => null);
+    return { status: r.status, data };
+  } catch { return { status: 0, data: null }; }
 }
 
 export default async function CategoriaPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const top: any = await fetchSafe(`/api/search/top-sellers/${slug}?limit=12`);
-  const products = top?.products || [];
+  const { status, data } = await fetchTopSellers(slug);
+  // FIX-WORKER-10: 404 -> notFound() (antes mostrava "Nenhum produto encontrado" igual a categoria vazia)
+  if (status === 404) notFound();
+  const products = data?.products || [];
+  const category = data?.category;
+  const displayName = category?.name || slug.replace(/-/g, ' ');
 
   return (
     <div className="container mx-auto px-6 py-8">
@@ -26,8 +32,9 @@ export default async function CategoriaPage({ params }: { params: Promise<{ slug
       <div className="mt-4 mb-8">
         <h1 className="font-display font-bold text-4xl mb-2 capitalize flex items-center gap-3">
           <Trophy className="w-8 h-8 text-yellow-400" />
-          Mais vendidos: {slug.replace(/-/g, ' ')}
+          Mais vendidos: {displayName}
         </h1>
+        {category?.description && <p className="text-sm text-white/60 mb-2">{category.description}</p>}
         <p className="text-white/60 flex items-center gap-2">
           <TrendingUp className="w-4 h-4" /> Top {products.length} produtos com mais vendas na categoria
         </p>
