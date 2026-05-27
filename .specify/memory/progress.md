@@ -14240,3 +14240,64 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d cron-based
 - W4: dashboard-admin /admin/disputes (consume pass 29 endpoint)
 - W13: notification-svc templates audit (XSS render)
+
+================================================================
+ITER W3 PASS 11 - AskQuickButton refator <Dialog> wrapper (2026-05-27)
+================================================================
+ESCOPO: storefront AskQuickButton migra pattern modal manual -> <Dialog>
+FILE: apps/storefront/src/components/ask-quick-button.tsx
+
+CONTEXTO: W3 pass 10 (CartDrawer) validou wrapper em consumer drawer-right
+complex. Pass 11 valida em variant 'centered' (modal) - 2o consumer.
+
+REFATORACAO APLICADA:
+
+REMOVIDO (~35 linhas pre-fix):
+- useEffect manual Escape listener (linhas 26-54 pre-fix)
+- document.body.style.overflow lock + restore manual
+- 3 useRef: triggerRef, modalRef, closeBtnRef (focus management manual)
+- setTimeout focus auto-mount manual (Dialog wrapper agora cuida)
+- triggerRef.current?.focus() return on cleanup (idem)
+- <div outer> + <div backdrop aria-hidden> + onClick stopPropagation
+- role="dialog" + aria-modal + aria-labelledby manual no JSX
+- 4 imports nao mais necessarios: useEffect, useRef
+
+ADICIONADO:
+- import Dialog from './dialog'
+- <Dialog open/onClose/ariaLabel/variant='centered'/zIndex=80/closeLabel/className>
+- Removido title prop (header rico custom com h3 + subtitle - title prop
+  geraria <h2 sr-only> double-announce com h3 visivel)
+- BONUS Dialog wrapper: focus auto-mount + return-to-opener INCLUIDO
+  (pre-fix tinha manual via useRef - agora gratuito + impossivel esquecer)
+
+VARIANT DIFERENCAS vs CartDrawer (pass 10):
+- variant='centered' (modal central) vs 'drawer-right'
+- zIndex=80 explicit (modal acima cart-drawer z-60)
+- title prop OMITIDO (header rico custom - icon + h3 + subtitle hint)
+- ariaLabel="Pergunta ao vendedor" cobre screen reader sem doubling
+- className override mantem glass-strong rounded-2xl shadow-2xl (visual)
+
+LESSON LEARNED REUSO Dialog API:
+- title prop ideal SO se header simples (apenas h2 com texto)
+- Headers ricos (icon + multi-line + helpers) -> omit title + ariaLabel
+- Wrapper renderiza h2.sr-only se title + hideCloseButton=true (gap a documentar)
+- Pattern consolidado: 2 consumers refatorados (CartDrawer drawer + AskQuick modal)
+
+PATTERN W3 DIALOG REFACTOR PROGRESS:
+- ✅ pass 10 CartDrawer (drawer-right complex - 1o consumer)
+- ✅ pass 11 AskQuickButton (centered simple - 2o consumer, esta iter)
+- pass 12 (futura) SearchAutocomplete (centered + Escape pre-existing)
+- pass 13 (futura) Nav mobile (drawer-right c/ nav links)
+- NotificationBell mantem custom (popover != dialog full)
+
+BENEFICIOS CUMULATIVOS (2 consumers refatorados ate agora):
+- 65 linhas removidas total (30 CartDrawer + 35 AskQuickButton)
+- A11Y bonus em ambos (focus management gratuito via wrapper)
+- Bug futuro em 1 lugar = fix 2 (e ate 4) consumers
+- Type-safe DialogProps cross-component
+
+PROXIMA ITER:
+- W3 pass 12: SearchAutocomplete refator (centered c/ Escape pre-existing)
+- W18 pass 7: idx parcial product_views > 90d cron
+- W4: dashboard-admin /admin/disputes listar (consume pass 29 endpoint)
+- W13: notification-svc templates XSS audit
