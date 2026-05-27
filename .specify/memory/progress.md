@@ -7116,3 +7116,71 @@ PROXIMA ITER:
 - W8 pass 4: /sellers page consistencia tier badges
 - W8 pass 5: product-card hover states uniformes
 - W15 pass 6: /comparar tabela em 375px (hscroll funcional)
+
+## WORKER 5 PASS 6 (TRUE FINAL) - /financeiro com useSellerAction + 5 bugs UX
+
+CORRECAO retroativa: W5 pass 5 declarou "5/5 write pages fechado" mas
+/financeiro foi esquecido na contagem (page tem write action POST /payout).
+Audit hoje encontrou 5 bugs UX cumulativos. Agora 6/6 = 100% real.
+
+5 BUGS em /financeiro:
+
+BUG 1 (UX input "0" persistente):
+  const [amount, setAmount] = useState(0);
+  -> Input numerico mostra "0" mesmo sem user input
+  -> User precisa apagar "0" antes de digitar
+  FIX: useState<string>('') + placeholder="50.00"
+
+BUG 2 (floating-point precision):
+  amount * 100  // 50.5 * 100 = 5050.0000000000005
+  -> Backend zod z.number().int() rejeitava silenciosamente
+  FIX: Math.round(parseFloat(amount) * 100)
+
+BUG 3 (ad-hoc states):
+  const [error, setError] = useState('');
+  const [ok, setOk] = useState('');
+  -> Pattern duplicado vs 5 outras pages com useSellerAction
+  FIX: action = useSellerAction(load) - DRY + consistencia 100%
+
+BUG 4 (double-click):
+  <button type="submit">Solicitar saque</button>
+  -> User pode clicar 10x = 10 payout requests duplicados
+  -> Sem feedback visual durante request
+  FIX: disabled={action.busyKey === 'payout'} + texto "Solicitando..."
+
+BUG 5 (validation bypass):
+  type="number" min={50}
+  -> HTML attr nao impede submit programatico em todos browsers
+  -> Backend filtrava mas user via mensagem confusa do server
+  FIX: disabled tambem checa parseFloat(amount) >= 50 client-side
+
+BONUS UX:
+- Banner "Saque liquido disponivel: R$ X" abaixo do input
+- inputMode="decimal" teclado numerico mobile correto
+- focus:border-magenta consistente com outros forms
+
+COBERTURA dashboard-seller FINAL (6/6 = 100%):
+- /products (W5 pass 1)
+- /qna (W5 pass 2) per-row innovation
+- /loja (W5 pass 3) save + KYC
+- /products/[id] (W5 pass 4) mutex save/submit
+- /upload (W5 pass 5) create-draft
+- /financeiro (W5 pass 6 ESTA ITER) payout
+
+W5 SELLER DASH CICLO 100% FECHADO DEFINITIVAMENTE:
+- 1 hook useSellerAction (50 linhas)
+- 6 pages refactored
+- ~250 linhas de ad-hoc state removidas
+- Padrao consistente: busyKey + error + success + clear + run
+- DRY total cross-app (admin tem mesmo padrao via useAdminAction)
+
+DEPLOY:
+- commit 58cb99e push main OK
+- 55 insertions, 17 deletions
+- dashboard-seller rebuild via VPS cron
+
+PROXIMA ITER:
+- Mover useSellerAction + useAdminAction para packages/shared-ui (DRY cross-app)
+- Toast component centralizado (banners ok mas toast e melhor UX)
+- W4 admin /admin/qa-queue audit (force-approve, platform-take buttons)
+- W12 pass 5: migration reset total_products_active historico
