@@ -3038,3 +3038,49 @@ DEFENSE-IN-DEPTH ARCHITECTURE:
 - Layer 2 (DB CHECK): impede admin error futuro (manual SQL update fora do app)
 - Layer 3 (proxima iter sugerida): admin UI para set custom_commission_rate
   com input type=number max=1 step=0.01
+
+## WORKER 18 pass 4 (PERFORMANCE) - Cache PDP detalhe + reviews + qna
+Audit endpoints uncached: PDP /:slug e o endpoint mais hit do site (search ->
+home -> share clicks all land here) e era o UNICO publico sem cache.
+
+ANALISE:
+- /:slug: SELECT pesado p.* + 4 subqueries (tags/versions/media/is_top_seller) +
+  2 LEFT JOINs. ~1.4ms a 10 rows, mas a 50k+ rows + 1000+ qps -> bottleneck.
+- /:slug/reviews + /:slug/qna: tambem heavy joins, e SE sao chamados em
+  series quando user navega tabs do PDP.
+- Existing caches em /:slug/related (300s), flash-promo (60s), list /, search/*.
+
+FIX services/product-svc/src/routes/public.js:
+1. /:slug: cache.withCache(key, 60, async () => ...) wraps APENAS o query.
+   Analytics writes (product_views INSERT + view_count UPDATE) FORA do cache
+   -> SEMPRE rodam em cache HIT ou MISS (correto, view count e granular).
+2. /:slug/reviews: cache.cacheMiddleware com key incluindo limit + page
+3. /:slug/qna: cache.cacheMiddleware key por slug (lista fixed-size <=50)
+
+VALIDACAO FUNCIONAL:
+- 3 endpoints retornam 200 OK
+- view_count incrementou de 3140 -> 3143 (analytics preservada apesar do cache)
+
+OBSERVACAO OPERACIONAL ENCONTRADA:
+Redis configurado (REDIS_URL=redis://tasks.redis2_redis:6379) mas conexao
+falhando com 'Stream isn't writeable enableOfflineQueue=false'.
+- Service 'redis2_redis' existe no swarm (1/1)
+- Hostname tasks.redis2_redis nao resolve via Docker DNS de outros containers
+- Code e gracioso: cache no-op quando Redis off -> nao quebra requests
+- Quando ops fixar network (provavelmente colocar redis na mesma overlay
+  network), os caches W18 pass 4 (mais os existentes W18 anteriores)
+  ativam automaticamente.
+
+DEPLOY: commit 161e564 pushed, product-svc rebuilt via Dockerfile.node
+SVC=product-svc, service updated --force, converged OK.
+
+GAP RESTANTE (operacional):
+- Ops precisa: docker service update redis2_redis --network-add network_swarm_public
+  OU configurar REDIS_URL com hostname acessivel
+- Quando Redis vier online: cache aciona automatically (code production-ready)
+
+PADRAO ARQUITETURAL CAPTURADO:
+- withCache(key, ttl, loader): use quando ha SIDE EFFECTS dentro do handler
+  (analytics, logs) que devem ROOM SEMPRE
+- cacheMiddleware(keyFn, ttl): use quando handler eh pure (read-only)
+- Ambos sao gracioso se Redis off (no-op fallback)
