@@ -7519,3 +7519,89 @@ PROXIMA ITER:
 - W18 pass 3: cache em /products/recommendations/for-me (custosa CTE)
 - W18 pass 4: image optimization audit (next/image em todas pages)
 - W18 pass 5: EXPLAIN ANALYZE em queries top do storefront
+
+## WORKER 17 PASS 10 - auth-svc rate-limit em 3 endpoints sensitivos
+
+AUDIT auth-svc revelou gap critico de seguranca:
+- /login TINHA fail2ban.middleware() desde W17 pass 1-4
+- /register, /forgot-password, /reset-password SEM qualquer rate-limit
+
+VETORES DE ATAQUE PRE-FIX:
+
+VETOR 1 - /register spam (mass-creation):
+- Atacante cria 1000 contas com emails descartaveis em segundos
+- Cada conta = fake reviews, spam Q&A, voto fraudulento, abuse loyalty bonus
+- DoS DB + esgota SMTP quota (welcome_bonus por conta)
+
+VETOR 2 - /forgot-password email bombing:
+- Atacante POST com victim@gmail.com 1000x
+- Cada call: SELECT + INSERT password_resets + INSERT notification
+- Victim recebe 1000 emails "Redefinicao de senha" = DoS user-facing
+- Tambem timing attack: response time diff hit/miss enumera emails
+
+VETOR 3 - /reset-password brute-force:
+- Token 32-byte hex, mas sem rate-limit + 15min lifetime
+- Atacante com token roubado (XSS/MITM) tem janela 1M tentativas/min
+- Possivel hijack de conta se outras defesas falham
+
+FIX (3 rate-limiters dimensionados para uso humano):
+
+1. registerLimiter:
+   - 5 registers/15min/IP
+   - Human max 1/h, 5 cobre erros captcha
+   - Bloqueia bot mass-creation automatic
+
+2. forgotPasswordLimiter:
+   - 3 forgot/1h/IP
+   - Human esquece senha 1-2x/h max
+   - PROTEGE victim de email bombing (limite por IP)
+
+3. resetPasswordLimiter:
+   - 10 tentativas/15min/IP (alinhado com TTL token)
+   - User dedo gordo digitando link torto = 2-3 tentativas
+   - Brute-force para em 10 (vs 1M antes)
+
+IMPORTS:
+- require('express-rate-limit') no topo de auth.js
+- "express-rate-limit": "^7.4.0" em package.json
+  (mesma version usada em shared/search-svc/vault-svc)
+
+CONFIG common:
+- standardHeaders: true (X-RateLimit-* clients sabem limite)
+- legacyHeaders: false
+- message customizada PT por endpoint
+
+DEPLOY:
+- commit 337e82b push main OK
+- 34 insertions, 1 deletion (2 files)
+- auth-svc rebuild via VPS cron (npm install baixa nova dep)
+
+VALIDACAO POS-DEPLOY:
+- 6x POST /auth/register rapido -> 6a retorna 429 rate_limit_exceeded
+- Headers X-RateLimit-* presentes
+- /forgot-password 4a chamada bloqueia
+- /reset-password 11a tentativa bloqueia
+
+W17 VAULT/SECURITY AUDIT TOTAL (passes 1-10):
+- pass 1-2: JWT role enforcement /use
+- pass 3: fail2ban global + IP banning brute-force token
+- pass 4: DLP - remover tok_len (oracle de comprimento)
+- pass 5: timing-safe compare
+- pass 6: rate-limit 30/min /use + 5/min /keys
+- pass 7: startup validate VAULT_AES_KEY
+- pass 8: VAULT_INTERNAL_TOKEN enforceInProd
+- pass 9: INSERT fantasma vault_key_usage removido
+- pass 10: auth-svc rate-limit register+forgot+reset (esta iter)
+
+CICLO RATE-LIMIT COMPLETO:
+- /login: fail2ban (W17 pass 1-4)
+- /register: 5/15min (W17 pass 10)
+- /forgot-password: 3/1h (W17 pass 10)
+- /reset-password: 10/15min (W17 pass 10)
+- /use: 30/min (vault-svc, W17 pass 6)
+- /keys: 5/min (vault-svc, W17 pass 6)
+
+PROXIMA ITER:
+- W17 pass 11: 2FA endpoints rate-limit (/2fa/setup, /activate, /recovery)
+- W17 pass 12: rotacao automatica vault keys (rotation_due_at hoje so visivel)
+- W6: gateway global rate-limit por endpoint (defense em profundidade)
