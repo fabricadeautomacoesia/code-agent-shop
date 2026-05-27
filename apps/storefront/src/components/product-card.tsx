@@ -4,6 +4,7 @@ import { Star, ShoppingCart, Award, TrendingUp } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { Installments } from './installments';
 import { CompareButton } from './compare-button';
+import { OfficialBadge } from './official-badge';
 
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
   iniciante:      { label: 'Iniciante', color: 'bg-gray-500/20 text-gray-300' },
@@ -33,12 +34,10 @@ export function ProductCard({ product }: { product: any }) {
               <div className="text-6xl font-display font-bold opacity-20">CAS</div>
             </div>
           )}
-          {product.is_platform_owned && (
-            <div className="absolute top-3 right-3 px-2 py-1 rounded-md bg-magenta/90 text-white text-xs font-semibold flex items-center gap-1">
-              <Award className="w-3 h-3" /> Oficial
-            </div>
-          )}
-          {product.is_top_seller && (
+          {/* MLB-NEW WORKER 16: combo selo Oficial+TopSeller (gold/magenta gradient quando ambos) */}
+          <OfficialBadge isPlatformOwned={product.is_platform_owned} isTopSeller={product.is_top_seller} variant="card" />
+          {/* Mais vendido standalone (apenas se NAO combo) - posicao top-left */}
+          {product.is_top_seller && !product.is_platform_owned && (
             <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-gradient-to-r from-yellow-400 to-orange-500 text-black text-[10px] font-bold flex items-center gap-1 shadow-lg">
               MAIS VENDIDO
             </div>

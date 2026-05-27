@@ -214,6 +214,9 @@ router.get('/',
 
 // GET /products/:slug - detalhe publico
 router.get('/:slug', asyncHandler(async (req, res, next) => {
+  // MLB-NEW WORKER 16: is_top_seller computado via window function MAX por categoria.
+  // Combo "OFICIAL MAIS VENDIDO" = is_platform_owned AND is_top_seller.
+  // Threshold min 5 vendas para evitar promover produtos novos sem trafego.
   const r = await query(
     `SELECT p.*,
             s.id AS seller_id, s.store_slug, s.store_name, s.store_logo_url,
@@ -221,7 +224,12 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
             c.slug AS category_slug, c.name AS category_name,
             (SELECT json_agg(t.*) FROM tags t JOIN product_tags pt ON pt.tag_id = t.id WHERE pt.product_id = p.id) AS tags,
             (SELECT json_agg(pv.* ORDER BY pv.created_at DESC) FROM product_versions pv WHERE pv.product_id = p.id) AS versions,
-            (SELECT json_agg(pm.* ORDER BY pm.sort_order) FROM product_media pm WHERE pm.product_id = p.id) AS media
+            (SELECT json_agg(pm.* ORDER BY pm.sort_order) FROM product_media pm WHERE pm.product_id = p.id) AS media,
+            (p.sales_count >= 5 AND p.sales_count = (
+               SELECT MAX(p2.sales_count) FROM products p2
+                WHERE p2.category_id = p.category_id
+                  AND p2.status = 'approved' AND p2.deleted_at IS NULL
+            )) AS is_top_seller
        FROM products p
        LEFT JOIN sellers s ON s.id = p.seller_id
        LEFT JOIN categories c ON c.id = p.category_id

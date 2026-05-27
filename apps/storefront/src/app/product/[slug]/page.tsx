@@ -9,6 +9,7 @@ import { ProductTabs } from '@/components/product-tabs';
 import { AskQuickButton } from '@/components/ask-quick-button';
 import { CompareButton } from '@/components/compare-button';
 import { Installments } from '@/components/installments';
+import { OfficialBadge } from '@/components/official-badge';
 import { JsonLd, productLd, breadcrumbLd } from '@/components/json-ld';
 
 export const revalidate = 30;
@@ -107,11 +108,8 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
 
         <aside className="space-y-6">
           <div className="glass p-6 sticky top-28">
-            {product.is_platform_owned && (
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-magenta/20 text-magenta-glow text-xs font-semibold mb-4">
-                <Award className="w-3 h-3" /> Produto Oficial CAS
-              </div>
-            )}
+            {/* MLB-NEW WORKER 16: combo selo Oficial+TopSeller (substitui badge Oficial standalone) */}
+            <OfficialBadge isPlatformOwned={product.is_platform_owned} isTopSeller={product.is_top_seller} variant="pdp" />
             {/* MLB-3/8: destaque de vendas (Mercado Livre style) */}
             {product.sales_count > 50 && (
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-green-500/20 text-green-300 text-xs font-semibold mb-4 ml-2">
