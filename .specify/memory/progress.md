@@ -15673,3 +15673,63 @@ PROXIMA ITER:
 - W7 pass 42: PATCH /sellers/me (profile update)
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 41 - seller-svc POST /kyc 8 BUGS COMPLIANCE BREAK + mig 045 (2026-05-27)
+================================================================
+ESCOPO: seller-svc POST /sellers/me/kyc (SUBMIT KYC compliance critical)
++ migration 045 schema
+FILES:
+- services/seller-svc/src/routes/me.js (linhas 81-95 -> rewrite)
+- db/migrations/045_sellers_kyc_pending_review.sql (NEW)
+
+CONTEXTO: W7 pass 40 (POST /payout) liberou saque p/ status='active'.
+Pass 41 audita /kyc submit - descobriu BUG GRAVE COMPLIANCE BREAK:
+auto-approve KYC = combo fraud com pass 40.
+
+BUGS CORRIGIDOS (8 - compliance/security critical):
+
+1. *** AUTO-APPROVE COMPLIANCE BREAK *** status='active' direto pos-submit
+- COMBO FRAUD com pass 40:
+  Seller fake submete KYC random -> status='active' auto -> /payout libera
+  -> saca tudo antes admin descobrir -> LAVAGEM DINHEIRO
+- FIX: status='kyc_submitted' (mig 045 enum value novo)
+  Admin endpoint /admin/kyc/approve|reject moves para active|kyc_rejected
+
+2. *** DOCUMENT DEDUP MISSING *** mesma CPF em N contas
+- Atacante: 100 contas mesmo CPF, todas pedem KYC, lavagem multi-account
+- FIX (mig 045): UNIQUE INDEX document_number_hash
+- PG 23505 -> 409 'document_already_registered'
+
+3. *** Regra Q IDEMPOTENT *** re-submit sobrescreve historico
+- Seller approved submete novo CPF -> sobrescreve antigo
+- FIX: WHERE status IN ('pending_kyc','kyc_rejected') guard
+
+4. *** Regra K *** FOR UPDATE seller (2 submits paralelos)
+
+5. *** AUDIT_LOG missing *** compliance LGPD/GDPR
+- KYC submit = evento RASTREAVEL obrigatorio
+- FIX: INSERT atomic tx + payload JSON forense (sem hash full - privacy)
+
+6. Silent rowcount=0 + ok:true (FIX: SELECT FOR UPDATE upfront)
+
+7. RATE-LIMIT 3/hr (real users <3 submits/hora)
+
+8. CPF/CNPJ length validation (digit-only + 11/14 check)
+
+MIGRATION 045:
+- ALTER TYPE seller_status ADD VALUE kyc_submitted + kyc_rejected
+- ALTER TABLE sellers ADD kyc_submitted_at + kyc_reviewed_at +
+  kyc_reviewed_by_user_id + kyc_rejection_reason
+- UNIQUE INDEX document_number_hash (anti-fraud multi-account)
+- PARTIAL IDX kyc_review_queue (admin FIFO triage)
+
+PATTERN W7 COMPLIANCE/KYC FLOW COMPLETO:
+- Layer 1: seller submit /kyc -> status='kyc_submitted' (esta iter)
+- Layer 2: admin review /admin/kyc/approve|reject (pendente W7 pass 42)
+- Layer 3: pass 40 /payout aceita status='active' (kyc_submitted bloqueado)
+
+REVIEW-SVC 100% + SELLER-SVC 2/8 endpoints (W7 pass 40+41).
+
+ITER INTERROMPIDA: user requested pause "quando tiver versao online validada VPS".
+Pass 41 commit+push apenas. Proximas iters W7 pass 42+ aguardando direcao.

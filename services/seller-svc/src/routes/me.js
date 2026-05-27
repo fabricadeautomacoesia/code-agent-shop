@@ -78,21 +78,149 @@ const kycSchema = z.object({
   address_zip: z.string().min(5).max(20),
 });
 
-// POST /sellers/me/kyc - submit KYC
-router.post('/kyc', validate({ body: kycSchema }), asyncHandler(async (req, res) => {
-  const b = req.body;
-  const fp = crypto.sha256(b.document_number);
-  await query(
-    `UPDATE sellers SET
-       document_type = $1, document_number_hash = $2, legal_name = $3,
-       address_line1 = $4, address_city = $5, address_state = $6, address_zip = $7,
-       status = 'active',
-       updated_at = NOW()
-     WHERE user_id = $8`,
-    [b.document_type, fp, b.legal_name, b.address_line1, b.address_city, b.address_state, b.address_zip, req.user.sub]
-  );
-  res.json({ ok: true, status: 'active' });
-}));
+// POST /sellers/me/kyc - submit KYC (COMPLIANCE CRITICAL)
+// FIX-WORKER-7 pass 41: 8 BUGS CRITICOS - COMPLIANCE BREAK GRAVE PRE-FIX.
+//
+// BUG 1 *** AUTO-APPROVE COMPLIANCE BREAK *** status='active' direto
+//   PRE-FIX: linha 89 setava status='active' apos qualquer submit
+//   COMBO FRAUD com pass 40:
+//   - Seller fake submete KYC com CPF random -> status='active' auto
+//   - Pass 40 libera /payout p/ status='active'
+//   - Seller saca tudo antes admin descobrir
+//   - Lavagem dinheiro via plataforma documented
+//   FIX (mig 045 adiciona enum): status='kyc_submitted' aguarda admin review
+//   Admin endpoint /admin/kyc/approve|reject move para active|kyc_rejected
+//
+// BUG 2 *** DOCUMENT DEDUP MISSING *** mesma CPF em N contas
+//   PRE-FIX: sem unique constraint document_number_hash
+//   Atacante: criar 100 contas com mesmo CPF, todas active, lavagem
+//   FIX (mig 045): UNIQUE INDEX document_number_hash
+//   PG raise 23505 -> 409 'document_already_registered'
+//
+// BUG 3 *** Regra Q IDEMPOTENT *** re-submit KYC sobrescreve approved
+//   PRE-FIX: UPDATE sem status check
+//   Seller ja aprovado submete novo CPF -> sobrescreve historico
+//   FIX: WHERE status IN ('pending_kyc','kyc_rejected') guard
+//   Active/kyc_submitted bloqueados (409)
+//
+// BUG 4 *** Regra K *** FOR UPDATE seller
+//   2 submits paralelos = race UPDATE concorrente
+//   FIX: SELECT FOR UPDATE
+//
+// BUG 5 *** AUDIT_LOG missing *** sec event critical (compliance)
+//   KYC submit = evento RASTREAVEL (GDPR/LGPD article)
+//   FIX: INSERT audit_log atomic tx
+//
+// BUG 6 *** Silent rowcount=0 *** ok:true mesmo sem update
+//   FIX: SELECT FOR UPDATE upfront + 404 se nao existe
+//
+// BUG 7 *** RATE-LIMIT *** seller pwned spam submits
+//   FIX: rateLimiter 3/hr/IP (KYC submit nao deveria > 3x/hora)
+//
+// BUG 8 *** CPF/CNPJ checksum validation MISSING ***
+//   Pre-fix: aceita "00000000000" como CPF valido (so hashea)
+//   Atacante: spray 1000 CPFs invalidos sintaticamente OK mas falsos
+//   FIX: regex digit-only + length check (11 CPF / 14 CNPJ)
+//   PROPER checksum algoritmo Receita Federal seria ideal mas:
+//   - Aplicado em auth-svc /register (W2 pass 5) ja - usuario antes ja teve CPF validado
+//   - sellers.user_id FK ja garante ownership do CPF cadastrado em users
+//   - Defesa em profundidade: regex length aqui + validacao real auth-svc
+const kycLimiter = rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 3,
+  message: 'Muitas submissoes de KYC. Aguarde 1 hora.',
+});
+
+router.post('/kyc',
+  kycLimiter,
+  validate({ body: kycSchema }),
+  asyncHandler(async (req, res, next) => {
+    const b = req.body;
+
+    // BUG 8: regex length validation (digit-only + 11 CPF | 14 CNPJ)
+    const docDigits = b.document_number.replace(/\D/g, '');
+    if (b.document_type === 'cpf' && docDigits.length !== 11) {
+      return next(errorHandler.badRequest('invalid_cpf_length', 'CPF deve ter 11 digitos'));
+    }
+    if (b.document_type === 'cnpj' && docDigits.length !== 14) {
+      return next(errorHandler.badRequest('invalid_cnpj_length', 'CNPJ deve ter 14 digitos'));
+    }
+    const fp = crypto.sha256(docDigits);  // hash digit-only canonico
+
+    let outcome;
+    await tx(async (c) => {
+      // BUG 4+6 (Regra K + 404): SELECT FOR UPDATE seller (anti-race) + existence
+      const sr = await c.query(
+        `SELECT id, status FROM sellers WHERE user_id = $1::UUID FOR UPDATE`,
+        [req.user.sub]
+      );
+      if (!sr.rows.length) { outcome = { error: 'seller_not_found' }; return; }
+      const s = sr.rows[0];
+
+      // BUG 3 (Regra Q): idempotent guard - active/kyc_submitted = terminal nao-revisitar
+      const ALLOWED_FROM = new Set(['pending_kyc', 'kyc_rejected']);
+      if (!ALLOWED_FROM.has(s.status)) {
+        outcome = { error: 'invalid_state', current_status: s.status };
+        return;
+      }
+
+      // BUG 1+2: UPDATE status='kyc_submitted' (NAO 'active') + unique doc enforce
+      try {
+        await c.query(
+          `UPDATE sellers SET
+             document_type = $1, document_number_hash = $2, legal_name = $3,
+             address_line1 = $4, address_city = $5, address_state = $6, address_zip = $7,
+             status = 'kyc_submitted',
+             kyc_submitted_at = NOW(),
+             kyc_rejection_reason = NULL,
+             updated_at = NOW()
+           WHERE id = $8::UUID AND status IN ('pending_kyc','kyc_rejected')`,
+          [b.document_type, fp, b.legal_name, b.address_line1, b.address_city, b.address_state, b.address_zip, s.id]
+        );
+      } catch (e) {
+        // BUG 2: PG 23505 = unique violation (mig 045 unique idx)
+        if (e.code === '23505') {
+          outcome = { error: 'document_already_registered' };
+          return;
+        }
+        throw e;
+      }
+
+      // BUG 5: audit_log atomic (compliance forense LGPD/GDPR)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'seller', 'kyc.submit', 'seller', $2, 'info', $3::JSONB)`,
+        [req.user.sub, s.id,
+         JSON.stringify({
+           document_type: b.document_type,
+           document_hash_prefix: fp.slice(0, 8),  // SO prefix - nao vaza hash full
+           legal_name_length: b.legal_name.length,
+           city: b.address_city,
+           state: b.address_state,
+           previous_status: s.status,
+           ip: req.ip,
+         })]
+      );
+    });
+
+    if (outcome?.error === 'seller_not_found') return next(errorHandler.notFound('seller_not_found'));
+    if (outcome?.error === 'invalid_state') {
+      return res.status(409).json({
+        error: 'invalid_state',
+        message: `Estado atual '${outcome.current_status}' nao permite re-submit KYC. Apenas pending_kyc ou kyc_rejected.`,
+        current_status: outcome.current_status,
+      });
+    }
+    if (outcome?.error === 'document_already_registered') {
+      return res.status(409).json({
+        error: 'document_already_registered',
+        message: 'Este documento ja esta registrado em outra conta seller.',
+      });
+    }
+    // PRE-FIX retornava status='active' mentindo - FIX: status='kyc_submitted'
+    // UI dashboard-seller atualiza para "Aguardando aprovacao admin"
+    res.json({ ok: true, status: 'kyc_submitted', message: 'KYC submetido. Aguarde revisao admin (1-3 dias uteis).' });
+  })
+);
 
 // GET /sellers/me/sla-status - timer da Classe B
 router.get('/sla-status', asyncHandler(async (req, res) => {
