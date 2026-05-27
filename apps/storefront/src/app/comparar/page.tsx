@@ -8,6 +8,10 @@ export const dynamic = 'force-dynamic';
 export const metadata = {
   title: 'Comparar produtos - Code & Agent Shop',
   description: 'Compare ate 4 produtos lado a lado: preco, recursos, rating, tech stack.',
+  // FIX-WORKER-9 pass 4: noindex (comparacoes user-generated nao devem ser indexadas) + canonical base
+  // sem isso: ?ids=uuid1,uuid2 e ?ids=uuid2,uuid1 viram URLs duplicadas no Google (explosao combinatorial)
+  robots: { index: false, follow: true },
+  alternates: { canonical: '/comparar' },
 };
 
 async function fetchSafe<T>(path: string): Promise<T | null> {

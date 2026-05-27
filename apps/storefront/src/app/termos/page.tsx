@@ -1,6 +1,11 @@
 import Link from 'next/link';
 
-export const metadata = { title: 'Termos de Uso - Code & Agent Shop' };
+export const metadata = {
+  title: 'Termos de Uso - Code & Agent Shop',
+  description: 'Termos de uso da plataforma Code & Agent Shop. Regras para compradores e vendedores.',
+  // FIX-WORKER-9 pass 4: canonical explicito
+  alternates: { canonical: '/termos' },
+};
 
 export default function TermosPage() {
   return (

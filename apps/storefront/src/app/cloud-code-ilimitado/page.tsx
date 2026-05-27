@@ -3,7 +3,9 @@ import { Cloud, Zap, Clock, Award, AlertTriangle, CheckCircle } from 'lucide-rea
 
 export const metadata = {
   title: 'Cloud Code Ilimitado - Programa Classe B - Code & Agent Shop',
-  description: 'Programa exclusivo para vendedores Classe B com API keys patrocinadas pela plataforma.'
+  description: 'Programa exclusivo para vendedores Classe B com API keys patrocinadas pela plataforma.',
+  // FIX-WORKER-9 pass 4: canonical explicito
+  alternates: { canonical: '/cloud-code-ilimitado' },
 };
 
 export default function CloudCodeIlimitadoPage() {

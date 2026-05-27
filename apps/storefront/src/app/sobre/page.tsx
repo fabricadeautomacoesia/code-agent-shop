@@ -3,7 +3,9 @@ import { Sparkles, Shield, Zap, Code2, Users, Award } from 'lucide-react';
 
 export const metadata = {
   title: 'Sobre - Code & Agent Shop',
-  description: 'Conheca a Code & Agent Shop, o maior marketplace de automacoes e agentes IA do Brasil.'
+  description: 'Conheca a Code & Agent Shop, o maior marketplace de automacoes e agentes IA do Brasil.',
+  // FIX-WORKER-9 pass 4: canonical explicito
+  alternates: { canonical: '/sobre' },
 };
 
 export default function SobrePage() {

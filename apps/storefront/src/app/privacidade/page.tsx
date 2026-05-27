@@ -1,6 +1,11 @@
 import Link from 'next/link';
 
-export const metadata = { title: 'Politica de Privacidade - Code & Agent Shop' };
+export const metadata = {
+  title: 'Politica de Privacidade - Code & Agent Shop',
+  description: 'Politica de privacidade da Code & Agent Shop em conformidade com a LGPD (Lei 13.709/2018).',
+  // FIX-WORKER-9 pass 4: canonical explicito
+  alternates: { canonical: '/privacidade' },
+};
 
 export default function PrivacidadePage() {
   return (
