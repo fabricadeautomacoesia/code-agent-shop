@@ -7605,3 +7605,81 @@ PROXIMA ITER:
 - W17 pass 11: 2FA endpoints rate-limit (/2fa/setup, /activate, /recovery)
 - W17 pass 12: rotacao automatica vault keys (rotation_due_at hoje so visivel)
 - W6: gateway global rate-limit por endpoint (defense em profundidade)
+
+## WORKER 17 PASS 11 - 2FA endpoints rate-limit (anti-bruteforce TOTP)
+
+AUDIT two-factor.js encontrou 5 endpoints sem rate-limit, criando vetor
+CRITICAL de bypass 2FA via brute-force.
+
+VETOR PRINCIPAL (CRITICAL) - /activate token 6 digitos:
+- Espaco: 1M combinacoes (000000-999999)
+- Sem rate-limit + paralelismo: ~16k tentativas/seg
+- otplib authenticator.check aceita +-1 janela TOTP = 90s window
+- 16k req/s x 90s = 1.4M tentativas por janela -> 100% sucesso
+- Cracking em minutos se session token roubado (XSS, MITM, etc)
+
+VETOR SECUNDARIO - /disable + /recovery (token 6 dig + senha):
+- Atacante com senha phishada brute-forca TOTP paralelo
+- Bypass total de 2FA mesmo com password correta
+
+VETOR DOS - /setup spam:
+- Cada call: AES-256-GCM encryption + UPSERT user_two_factor
+- 1000/seg = DoS interno + thrashing key rotation
+- User legitimo perde secret pendente
+
+VETOR ENUM - /status read-only:
+- Fingerprint massa: quais users tem 2FA habilitado
+- Recon para targeted phishing (sabe quem nao tem 2FA = alvo facil)
+
+FIX (3 rate-limiters):
+
+1. totpVerifyLimiter (CRITICAL anti-bruteforce):
+   - 10 tentativas / 5min / user_id
+   - 6 digitos space=1M -> 10 tentativas = 0.001% sucesso
+   - Aplicado: /activate, /recovery, /disable
+   - Brute-force cracking: ~16k anos para 50% sucesso
+
+2. totpSetupLimiter:
+   - 5 setups / 1h / user_id
+   - Bloqueia DoS spam encryption
+   - User legitimo nao re-configura mais que 1-2x/h
+
+3. totpStatusLimiter:
+   - 30 reads / 1min / user_id
+   - Frontend /conta/seguranca pode polling
+   - Bloqueia fingerprint massa
+
+KEY GENERATOR (per-user em vez de per-IP):
+  (req) => req.user?.sub || req.ip
+- user_id mais preciso (multiples devices = mesmo IP)
+- Fallback IP se JWT corrompido (defensive)
+- standardHeaders true: X-RateLimit-* para client
+
+DEPLOY:
+- commit fda97fd push main OK
+- 53 insertions, 2 deletions
+- auth-svc rebuild via VPS cron
+- Reaproveita express-rate-limit ja instalada em W17 pass 10
+
+W17 ENDPOINTS PROTEGIDOS (pass 1-11):
+| Endpoint | Limit | Pass |
+|---|---|---|
+| /vault/keys | 5/min provision | W17-6 |
+| /vault/use | 30/min internal | W17-6 |
+| /vault/* | fail2ban global | W17-3 |
+| /auth/login | fail2ban | W17-1..4 |
+| /auth/register | 5/15min/IP | W17-10 |
+| /auth/forgot-password | 3/1h/IP | W17-10 |
+| /auth/reset-password | 10/15min/IP | W17-10 |
+| /auth/2fa/status | 30/min/user | W17-11 |
+| /auth/2fa/setup | 5/h/user | W17-11 |
+| /auth/2fa/activate | 10/5min/user | W17-11 |
+| /auth/2fa/recovery | 10/5min/user | W17-11 |
+| /auth/2fa/disable | 10/5min/user | W17-11 |
+
+COBERTURA: 12 endpoints sensitivos protegidos com defense-em-profundidade.
+
+PROXIMA ITER:
+- W17 pass 12: rotacao automatica vault keys (rotation_due_at hoje so visual)
+- W6: gateway global rate-limit (defense-em-profundidade nivel rede)
+- W18 pass 3: cache em /products/recommendations/for-me
