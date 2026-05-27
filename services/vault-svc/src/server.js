@@ -165,7 +165,12 @@ app.post('/keys/:id/revoke', adminOnly,
 );
 
 // POST /api/vault/usage -> registra custo de uma chamada (faturar Classe B)
-app.post('/usage', jwt.requireAuth(),
+// FIX SEG-VAULT-3 (WORKER 17): endpoint usava jwt.requireAuth() sem role check
+// -> qualquer buyer autenticado podia inflar usage_this_month_cents (DoS quota),
+//    inserir registros falsos no vault_key_usage (poluicao audit) e atribuir
+//    cobranca a outros seller_id (fraude billing).
+// Agora exige header interno OU role admin/staff/service (mesmo guard do /use).
+app.post('/usage', vaultUseGuard,
   validate({ body: z.object({
     key_id: z.string().uuid(),
     seller_id: z.string().uuid().optional(),
