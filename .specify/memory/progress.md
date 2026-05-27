@@ -7055,3 +7055,64 @@ PROXIMA ITER:
 - W14 pass 6: audit orders + license_grants indices
 - W14 pass 7: partition vault_key_usage mensal (planejado em comment)
 - W18: cache em /sellers/admin/payouts/pending (lista raramente mudar)
+
+## WORKER 8 PASS 3 - /comparar tabela: z-index, hover, proporcoes
+
+AUDIT visual em /comparar (MLB-7 comparador feature):
+
+BUG 1 (z-index sticky vazado):
+  sticky left-0 bg-cyber-dark   <-- sem z-index!
+- 8 cells com sticky left mas sem z-index
+- Scroll horizontal com >3 produtos: conteudo proxima coluna vazia
+  visivel POR BAIXO da coluna sticky
+- Visual borrado/sobreposto durante scroll
+
+BUG 2 (cover desktop-only):
+  h-32 fixo (128px) em qualquer viewport
+- 375px com hscroll 4 produtos: cards muito altos vs viewport vertical
+- Sem responsive padroes do projeto
+
+BUG 3 (Link hover incompleto):
+  <Link><div className="hover:text-magenta">{title}</div></Link>
+- Hover state APENAS no titulo
+- Imagem cover nao reagia ao hover wrapper
+- Inconsistente com product-card.tsx (group hover na imagem + escala)
+
+BUG 4 (CTA desproporcional):
+  <Link className="btn-primary text-xs">
+- btn-primary tem px-6 py-3 (padding generoso para CTA primario)
+- Combinado com text-xs: padding 24px+12px com texto 12px = estranho
+- Dentro de cell de tabela e CTA SECUNDARIO
+
+FIX (5 mudancas, 1 arquivo):
+
+1. z-index 10 em todos sticky cells (8 occurrences via replace_all)
+2. Cover h-24 sm:h-32 (96px mobile, 128px desktop)
+3. Link "block group" + group-hover em image+title:
+   - group-hover:ring-2 ring-magenta/50 na image div
+   - group-hover:scale-105 transition na image
+   - group-hover:text-magenta no title (alem do hover natural)
+   - Mesmo padrao product-card.tsx
+4. CTA refeito como ghost variant:
+   - px-3 py-2 (proporcional ao text-xs)
+   - border-magenta/40 bg-magenta/10
+   - hover:bg-magenta/20 hover:border-magenta
+5. BONUS: row hover global na tbody via [& tr:hover]:bg-white/[0.02]
+   - Scan vertical facilitado
+   - Override sticky bg para nao perder feedback ao hover
+
+DEPLOY:
+- commit 3c9dc90 push main OK
+- 27 insertions, 18 deletions
+- storefront rebuild via VPS cron
+- Pure CSS/JSX (sem backend)
+
+W8 VISUAL AUDIT PROGRESS:
+- pass 1: btn-primary + btn-ghost padronizados (globals.css)
+- pass 2: <img> -> next/image stack em cart-drawer + pedidos + comparar
+- pass 3: /comparar tabela 4 fixes (esta iter)
+
+PROXIMA ITER:
+- W8 pass 4: /sellers page consistencia tier badges
+- W8 pass 5: product-card hover states uniformes
+- W15 pass 6: /comparar tabela em 375px (hscroll funcional)
