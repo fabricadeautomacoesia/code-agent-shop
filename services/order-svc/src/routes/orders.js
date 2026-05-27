@@ -213,29 +213,88 @@ router.post('/checkout',
 );
 
 // GET /orders - lista pedidos do usuario
+// FIX-WORKER-7 pass 18: 2 bugs (Regra D tiebreaker + Regra H json_agg COALESCE).
+// FIX-WORKER-7 pass 66: 4 BUGS aplicando Pattern W7 (Regras E + filters + UX).
+//
+// BUG 1 *** Regra E PAGINATION MISSING *** hardcoded LIMIT 50
+//   User com 200+ orders historicos (heavy buyer) só vê primeiras 50.
+//   /conta/pedidos pagina "Carregar mais" sem suporte server-side.
+//   FIX: ?limit (1-100, default 30) + ?offset.
+//
+// BUG 2 *** ?status FILTER MISSING *** UX inflexivel
+//   Usuario quer "ver só pagos" ou "ver disputados". Sem server-side filter,
+//   frontend fetch all + filter client-side = waste payload + DB.
+//   FIX: ?status enum whitelist (pending_payment, paid, fulfilled, cancelled,
+//   refunded, disputed) + invalid -> 400.
+//
+// BUG 3 *** Regra I MISSING FIELDS *** discount/coupon info
+//   PRE-FIX: response sem coupon_code, discount_cents, subtotal_cents.
+//   Frontend /conta/pedidos UI quer mostrar "Voce economizou R$ X com cupom Y"
+//   mas tem que fazer fetch /:id individual = N+1 navigation.
+//   FIX: include subtotal_cents + discount_cents + coupon_code + loyalty fields.
+//
+// BUG 4 *** TOTAL + has_more UX *** paginacao UI sem "Carregar mais" estavel
+//   FIX: COUNT(*) + has_more flag.
+const ORDER_STATUS_ENUM = new Set([
+  'pending_payment','paid','fulfilled','cancelled','refunded','disputed'
+]);
+
 router.get('/', asyncHandler(async (req, res) => {
-  // FIX-WORKER-7 pass 18: 2 bugs aplicando Pattern W7:
-  // 1. Regra D violada: ORDER BY o.created_at DESC sem tiebreaker.
-  //    2 orders criadas no mesmo ms (raro em produção, comum em testes
-  //    de carga ou batch import) = ordem arbitraria PG. Paginate UX salta.
-  //    FIX: tiebreaker o.id (UUID sempre unique).
-  // 2. Regra H violada: json_agg em items_preview retornava NULL quando
-  //    order sem items (rare: race tx() falha apos INSERT order). Frontend
-  //    .items_preview.map() crash TypeError.
-  //    FIX: COALESCE(json_agg(...), '[]'::JSON) defense.
+  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 30));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const statusFilter = req.query.status ? String(req.query.status) : null;
+  if (statusFilter && !ORDER_STATUS_ENUM.has(statusFilter)) {
+    return res.status(400).json({
+      error: 'invalid_status',
+      allowed: Array.from(ORDER_STATUS_ENUM),
+    });
+  }
+
+  // Regra B (deleted_at) nao aplicavel em orders (sem soft-delete table)
+  const whereParts = ['o.buyer_user_id = $1'];
+  const params = [req.user.sub];
+  let i = 2;
+  if (statusFilter) {
+    whereParts.push(`o.status = $${i++}`);
+    params.push(statusFilter);
+  }
+  params.push(limit, offset);
+  const limIdx = i++;
+  const offIdx = i++;
+
   const r = await query(
-    `SELECT o.id, o.order_number, o.status, o.payment_status, o.total_cents, o.currency,
-            o.payment_method, o.created_at, o.paid_at,
+    `SELECT o.id, o.order_number, o.status, o.payment_status,
+            o.total_cents, o.subtotal_cents, o.discount_cents,
+            o.coupon_code, o.loyalty_points_redeemed, o.loyalty_discount_cents,
+            o.currency, o.payment_method, o.created_at, o.paid_at,
             COALESCE(
               (SELECT json_agg(json_build_object('title', snapshot->>'title', 'cover', snapshot->>'cover_image_url'))
                  FROM order_items WHERE order_id = o.id),
               '[]'::JSON
             ) AS items_preview
-       FROM orders o WHERE o.buyer_user_id = $1
-       ORDER BY o.created_at DESC, o.id LIMIT 50`,
-    [req.user.sub]
+       FROM orders o
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY o.created_at DESC, o.id DESC
+      LIMIT $${limIdx} OFFSET $${offIdx}`,
+    params
   );
-  res.json({ orders: r.rows });
+
+  // Total count para has_more UX (paginacao "Carregar mais")
+  const countParams = params.slice(0, -2);
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM orders o WHERE ${whereParts.join(' AND ')}`,
+    countParams
+  );
+  const total = totalRes.rows[0].total;
+
+  res.json({
+    orders: r.rows,
+    total,
+    limit,
+    offset,
+    has_more: (offset + r.rows.length) < total,
+    status: statusFilter,
+  });
 }));
 
 // GET /orders/admin/recent (todos pedidos, role admin)

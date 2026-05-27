@@ -17282,7 +17282,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ notification-svc GET / (pass 62) - Regra D+E+I + DLP + UX
 - ✅ aiops-svc /metrics + /alerts + /audit-log (pass 63) - Regra D+E+I + DLP CRITICAL
 - ✅ aiops-svc /audit-log/actions + /db/dead-indexes (pass 64) - cache + drift detection
-- ✅ vault-svc /keys/rotation-due + /keys (pass 65 esta iter) - Regra D+E + DLP + filters
+- ✅ vault-svc /keys/rotation-due + /keys (pass 65) - Regra D+E + DLP + filters
+- ✅ order-svc GET / buyer listing (pass 66 esta iter) - Regra E + filters + UX
+
+W7 PASS 66 RESUMO:
+- order-svc/src/routes/orders.js GET / refactor (4 bugs):
+  * Regra E: ?limit (1-100, default 30) + ?offset
+    - Antes: hardcoded LIMIT 50, heavy buyer com 200+ orders só via 50
+  * NEW ?status filter server-side com enum whitelist
+    - Valid: pending_payment, paid, fulfilled, cancelled, refunded, disputed
+    - Invalid -> 400 com allowed[] (UX claro)
+    - Frontend /conta/pedidos pode usar tabs "Pagos"/"Disputados" server-side
+  * Regra I MORE FIELDS: subtotal_cents + discount_cents + coupon_code +
+    loyalty_points_redeemed + loyalty_discount_cents
+    - Antes: cliente fazia fetch /:id individual p/ ver desconto (N+1)
+    - Agora: response inline = single fetch listagem completa
+  * UX: total count + has_more flag p/ "Carregar mais" estavel
+- Pattern W7 em 67 endpoints + 23 regras (A-W) - 66 micro-iters
+- order-svc 100% W7 buyer-facing endpoints auditados (GET / + GET /:id)
+
+PROXIMA ITER:
+- W7 pass 67: product-svc /admin endpoints audit
+- W7 pass 68: gateway middleware audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 65 RESUMO:
 - vault-svc/src/server.js 2 admin endpoints refactor (9 bugs):
