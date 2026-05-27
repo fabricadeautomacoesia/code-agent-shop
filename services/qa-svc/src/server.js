@@ -453,6 +453,108 @@ app.get('/qa/runs/:product_id', jwt.requireAuth(), asyncHandler(async (req, res,
   res.json({ runs: r.rows });
 }));
 
+// ============================================================
+// FIX-WORKER-12 pass 7: cron stuck QA runs cleanup
+// ============================================================
+// Contexto: W12 pass 6 adicionou anti-duplicate check (10min window).
+// Runs com verdict='running' > 10min sem callback ficam "stuck" - ou n8n
+// crashou no meio do dispatch, ou worker.py travou, ou callback falhou
+// silenciosamente. Estes runs:
+// - Bloqueiam novas tentativas (anti-duplicate de pass 6 ignora apos 10min)
+// - products.status='qa_running' persiste indefinidamente
+// - Seller frustrado, suporte ticket
+//
+// Este cron diario:
+// 1. SELECT runs com verdict='running' + started_at > 10min ago
+// 2. UPDATE verdict='timeout' + finished_at=NOW + reasons=['cron_timeout: no callback after Xmin']
+// 3. UPDATE products SET status='qa_pending' (libera para retry)
+// 4. Notify seller (consistente com W12 pass 6 fan-out)
+//
+// Interval: 5min (verifica frequente, mas cada run individual so timeout apos
+// passar dos 10min do anti-duplicate window).
+async function timeoutStuckRuns() {
+  try {
+    const stuck = await query(
+      `SELECT id, product_id, started_at,
+              EXTRACT(EPOCH FROM (NOW() - started_at))/60 AS minutes_running
+         FROM product_qa_runs
+        WHERE verdict = 'running'
+          AND started_at < NOW() - INTERVAL '10 minutes'
+        ORDER BY started_at ASC LIMIT 20`
+    );
+    if (!stuck.rows.length) return;
+    log.warn({ count: stuck.rows.length }, '[qa.timeout.cron]');
+    for (const run of stuck.rows) {
+      const minutes = Math.floor(Number(run.minutes_running));
+      try {
+        await tx(async (c) => {
+          // Marca run timeout
+          await c.query(
+            `UPDATE product_qa_runs
+                SET verdict = 'timeout',
+                    finished_at = NOW(),
+                    reasons = ARRAY[$1]
+              WHERE id = $2 AND verdict = 'running'`,
+            [`cron_timeout: no callback after ${minutes}min`, run.id]
+          );
+          // Libera produto para retry
+          await c.query(
+            `UPDATE products SET status = 'qa_pending', qa_verdict = 'pending'
+              WHERE id = $1 AND status = 'qa_running'`,
+            [run.product_id]
+          );
+          // Notify seller (mesma logica W12 pass 6 dispatch_failed)
+          const sellerInfo = await c.query(
+            `SELECT s.user_id, p.title FROM products p
+               JOIN sellers s ON s.id = p.seller_id
+              WHERE p.id = $1 AND s.status = 'active'`,
+            [run.product_id]
+          );
+          if (sellerInfo.rows.length) {
+            await c.query(
+              `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+               VALUES ($1, 'in_app', 'qa_run_timeout',
+                       'QA timeout - reenvio liberado',
+                       $2, 2, $3::JSONB)`,
+              [
+                sellerInfo.rows[0].user_id,
+                `A analise QA do produto "${sellerInfo.rows[0].title}" demorou alem do esperado (${minutes}min). Foi cancelada automaticamente. Voce pode reenviar para QA quando estiver pronto.`,
+                JSON.stringify({ product_id: run.product_id, run_id: run.id, minutes })
+              ]
+            );
+          }
+        });
+        log.info({ run_id: run.id, minutes }, '[qa.timeout.ok]');
+      } catch (e) {
+        log.error({ run_id: run.id, err: e.message }, '[qa.timeout.fail]');
+      }
+    }
+  } catch (e) {
+    log.error({ err: e.message }, '[qa.timeout.cron.fail]');
+  }
+}
+
+// GET /qa/runs/stuck - admin lista runs candidatos a timeout (pre-cron visibility)
+app.get('/qa/runs/stuck',
+  jwt.requireAuth({ roles: ['admin', 'staff'] }),
+  asyncHandler(async (_req, res) => {
+    const r = await query(
+      `SELECT id, product_id, started_at, llm_provider, n8n_execution_id,
+              EXTRACT(EPOCH FROM (NOW() - started_at))/60::INT AS minutes_running
+         FROM product_qa_runs
+        WHERE verdict = 'running'
+          AND started_at < NOW() - INTERVAL '5 minutes'
+        ORDER BY started_at ASC LIMIT 50`
+    );
+    res.json({ runs: r.rows, count: r.rows.length });
+  })
+);
+
+// Cron interval: 5min + warmup 60s
+setTimeout(() => timeoutStuckRuns().catch(() => {}), 60000);
+setInterval(() => timeoutStuckRuns().catch((e) => log.error({ err: e.message }, '[qa.timeout.cron.fail]')), 5 * 60 * 1000);
+log.info('[qa.timeout.cron] stuck runs cron started (5min interval, 10min threshold)');
+
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
 
