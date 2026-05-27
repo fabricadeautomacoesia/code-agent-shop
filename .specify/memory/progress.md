@@ -17300,7 +17300,35 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc wishlist.js (pass 80) - 8 bugs GET + POST
 - ✅ product-svc price-alerts.js (pass 81) - 8 bugs GET + POST
 - ✅ product-svc seller-mgmt.js POST / draft (pass 82) - 4 bugs DoS+race
-- ✅ product-svc PATCH /products/me/:id (pass 83 esta iter) - 6 bugs Regra K+P
+- ✅ product-svc PATCH /products/me/:id (pass 83) - 6 bugs Regra K+P
+- ✅ product-svc POST /:id/submit (pass 84 esta iter) - 7 bugs state machine
+
+W7 PASS 84 RESUMO:
+- product-svc/src/routes/seller-mgmt.js POST /:id/submit refactor (7 bugs):
+  * UUID validate missing: PG 22P02 leak
+  * Regra K tx() + SELECT FOR UPDATE OF products
+    - Race: seller submit + admin force-approve simultaneo
+  * Regra P audit log atomic INSERT (transicao critica state machine)
+  * Required fields validation (description >=50, cover_image_url,
+    price_cents, currency) - 400 listing missing[]
+    - PRE-FIX: QA worker recebia lixo (waste LLM calls)
+  * NEW submitLimiter 20/hr/seller (real users submetem 1-3/dia)
+  * Regra Q distinguished state errors (UX clarity):
+    - 409 already_in_qa (em fila)
+    - 409 already_approved (passou QA)
+    - 400 invalid_state (archived/rejected pos-final)
+    - 400 missing_required (incomplete)
+  * QA dispatch timeout 5s via AbortController
+    - Antes: fetch() podia pendurar TCP wait indefinido
+- Pattern W7 em 90 endpoints + 23 regras (A-W) - 84 micro-iters
+- product-svc seller-mgmt.js 100% W7 nas 3 mutations core:
+  POST / (pass 82) + PATCH /:id (pass 83) + POST /:id/submit (pass 84)
+
+PROXIMA ITER:
+- W7 pass 85: product-svc POST /:id/versions audit
+- W7 pass 86: product-svc upload.js endpoints audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 83 RESUMO:
 - product-svc/src/routes/seller-mgmt.js PATCH /:id refactor (6 bugs):

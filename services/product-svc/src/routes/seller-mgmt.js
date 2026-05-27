@@ -460,33 +460,173 @@ router.patch('/:id', validate({ body: patchSchema }), asyncHandler(async (req, r
   res.json({ ok: true });
 }));
 
-// POST /products/me/:id/submit - envia para QA
-router.post('/:id/submit', asyncHandler(async (req, res, next) => {
-  const r = await query(
-    `UPDATE products p
-        SET status = 'qa_pending', submitted_at = NOW(), updated_at = NOW()
-       FROM sellers s
-      WHERE p.id = $1 AND p.seller_id = s.id AND s.user_id = $2 AND p.status IN ('draft','rejected')
-      RETURNING p.id, p.title`,
-    [req.params.id, req.user.sub]
-  );
-  if (!r.rows.length) return next(errorHandler.badRequest('cannot_submit', 'Produto nao esta em draft/rejected'));
+// POST /products/me/:id/submit - envia produto para fila QA
+// FIX-WORKER-7 pass 84: 7 BUGS aplicando Pattern W7 (UUID+K+P+Q + validation + rate-limit + timeout).
+//
+// BUG 1 *** UUID VALIDATE MISSING *** PG 22P02 -> 500 leak
+//   FIX: SUBMIT_UUID_RE upfront.
+//
+// BUG 2 *** Regra K *** SELECT FOR UPDATE missing -> race
+//   PRE-FIX: UPDATE atomic mas sem FOR UPDATE em SELECT step.
+//   Race entre seller submit + admin force-approve simultaneo:
+//   - Seller dispara submit (status -> qa_pending)
+//   - Admin simultaneo force-approve (status -> approved)
+//   - Sem lock: ambos pode passar WHERE check antes commit
+//   FIX: tx() wrap + SELECT FOR UPDATE OF products.
+//
+// BUG 3 *** Regra P AUDIT LOG MISSING ***
+//   Submit -> QA = transicao critica state machine sem trail.
+//   Compliance gap: produto pwned (seller scripted spam) sem rastro.
+//   FIX: INSERT audit_log atomic dentro tx().
+//
+// BUG 4 *** REQUIRED FIELDS VALIDATION MISSING ***
+//   PRE-FIX: WHERE status IN ('draft','rejected') aceita
+//   product com description NULL / cover_image_url NULL / price_cents=0.
+//   QA worker recebe lixo, dispara LLM calls waste, retorna rejected.
+//   FIX: check required fields na SELECT antes UPDATE.
+//   - description NOT NULL + length >= 50 (matches draftSchema)
+//   - cover_image_url NOT NULL
+//   - price_cents >= 0 (allow free) + currency set
+//   400 explicit listing missing_required[] p/ UX claro.
+//
+// BUG 5 *** RATE-LIMIT MISSING ***
+//   PRE-FIX: bot pode submit N products = spam QA queue.
+//   FIX: submitLimiter 20/hr/seller (real users submetem ~1-3/dia).
+//
+// BUG 6 *** Regra Q idempotency UX ***
+//   Re-submit produto em qa_pending: WHERE filter exclui mas response
+//   eh "cannot_submit" generico - UX confuso.
+//   FIX: response distinguishing "already_in_qa" vs "invalid_state".
+//
+// BUG 7 *** QA dispatch FIRE-AND-FORGET sem timeout ***
+//   PRE-FIX: fetch() sem timeout - pode pendurar TCP wait indefinido se
+//   qa-svc unreachable (rede particionada).
+//   FIX: AbortController 5s timeout.
+const SUBMIT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const submitLimiter = rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 20,
+  message: 'Muitos produtos submetidos recentemente. Aguarde 1 hora.',
+});
 
-  // dispara webhook QA (assincrono, nao bloqueia)
-  // FIX-WORKER-12 pass 2: usa service mesh URL + x-internal-token (qa-svc agora exige auth)
-  const qaUrl = `${process.env.UPSTREAM_QA || `http://tasks.cas_qa-svc:${process.env.PORT_QA || 3013}`}/qa/run`;
-  fetch(qaUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(process.env.QA_RUN_INTERNAL_TOKEN ? { 'x-internal-token': process.env.QA_RUN_INTERNAL_TOKEN } : {}),
-    },
-    body: JSON.stringify({ product_id: r.rows[0].id, triggered_by: req.user.sub })
-  }).catch((e) => log.warn({ err: e.message }, '[qa.dispatch_failed]'));
+router.post('/:id/submit',
+  submitLimiter,
+  asyncHandler(async (req, res, next) => {
+    // BUG 1: UUID validate upfront
+    if (!SUBMIT_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('product_not_found'));
+    }
 
-  await invalidate(req.params.id);
-  res.json({ ok: true, message: 'Produto enviado para QA' });
-}));
+    let outcome;
+    let productInfo;
+
+    await tx(async (c) => {
+      // BUG 2 Regra K: SELECT FOR UPDATE + ownership + return state actual
+      const cur = await c.query(
+        `SELECT p.id, p.title, p.status, p.description, p.cover_image_url,
+                p.price_cents, p.currency
+           FROM products p JOIN sellers s ON s.id = p.seller_id
+          WHERE p.id = $1 AND s.user_id = $2
+          FOR UPDATE OF p`,
+        [req.params.id, req.user.sub]
+      );
+      if (!cur.rows.length) { outcome = { error: 'not_found' }; return; }
+      const p = cur.rows[0];
+
+      // BUG 6: distinguish state errors
+      if (p.status === 'qa_pending' || p.status === 'qa_running') {
+        outcome = { error: 'already_in_qa', current_status: p.status };
+        return;
+      }
+      if (p.status === 'approved' || p.status === 'platform_owned') {
+        outcome = { error: 'already_approved', current_status: p.status };
+        return;
+      }
+      if (!['draft', 'rejected'].includes(p.status)) {
+        outcome = { error: 'invalid_state', current_status: p.status };
+        return;
+      }
+
+      // BUG 4: required fields validation
+      const missing = [];
+      if (!p.description || p.description.length < 50) missing.push('description');
+      if (!p.cover_image_url) missing.push('cover_image_url');
+      if (p.price_cents === null || p.price_cents === undefined) missing.push('price_cents');
+      if (!p.currency) missing.push('currency');
+      if (missing.length) { outcome = { error: 'missing_required', missing }; return; }
+
+      // UPDATE atomic com guard status
+      await c.query(
+        `UPDATE products
+            SET status = 'qa_pending', submitted_at = NOW(), updated_at = NOW()
+          WHERE id = $1 AND status IN ('draft','rejected')`,
+        [req.params.id]
+      );
+
+      // BUG 3 Regra P: audit log atomic
+      await c.query(
+        `INSERT INTO audit_log
+          (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'product.submit', 'product', $3, 'info', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({
+           previous_status: p.status,
+           title: p.title,
+           ip: req.ip,
+         })]
+      );
+
+      productInfo = { id: p.id, title: p.title };
+    });
+
+    if (outcome?.error === 'not_found') return next(errorHandler.notFound('product_not_found'));
+    if (outcome?.error === 'already_in_qa') {
+      return res.status(409).json({
+        error: 'already_in_qa',
+        message: 'Produto ja esta em fila de QA.',
+        current_status: outcome.current_status,
+      });
+    }
+    if (outcome?.error === 'already_approved') {
+      return res.status(409).json({
+        error: 'already_approved',
+        message: 'Produto ja foi aprovado anteriormente.',
+        current_status: outcome.current_status,
+      });
+    }
+    if (outcome?.error === 'invalid_state') {
+      return res.status(400).json({
+        error: 'invalid_state',
+        message: 'Produto nao pode ser submetido neste estado.',
+        current_status: outcome.current_status,
+      });
+    }
+    if (outcome?.error === 'missing_required') {
+      return res.status(400).json({
+        error: 'missing_required',
+        message: 'Campos obrigatorios ausentes. Complete o produto antes de submeter.',
+        missing: outcome.missing,
+      });
+    }
+
+    // BUG 7: dispara QA com timeout 5s
+    const qaUrl = `${process.env.UPSTREAM_QA || `http://tasks.cas_qa-svc:${process.env.PORT_QA || 3013}`}/qa/run`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    fetch(qaUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.QA_RUN_INTERNAL_TOKEN ? { 'x-internal-token': process.env.QA_RUN_INTERNAL_TOKEN } : {}),
+      },
+      body: JSON.stringify({ product_id: productInfo.id, triggered_by: req.user.sub }),
+      signal: ctrl.signal,
+    }).catch((e) => log.warn({ err: e.message }, '[qa.dispatch_failed]'))
+      .finally(() => clearTimeout(timer));
+
+    await invalidate(req.params.id);
+    res.json({ ok: true, message: 'Produto enviado para QA', product_id: productInfo.id });
+  })
+);
 
 // POST /products/me/:id/versions - publica nova versao (changelog)
 router.post('/:id/versions',
