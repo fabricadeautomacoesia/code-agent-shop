@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, KeyboardEvent } from 'react';
 import { Star } from 'lucide-react';
 import { QnaForm } from './qna-form';
 import { QnaUpvote } from './qna-upvote';
@@ -23,38 +23,68 @@ interface Props {
 
 export function ProductTabs({ product, reviews, qna }: Props) {
   const [active, setActive] = useState<Tab>('overview');
+  // FIX-WORKER-3 pass 5: refs para keyboard navigation roving tabindex (WAI-ARIA tabs)
+  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({} as any);
 
   const reviewCount = reviews?.length || 0;
   const qnaCount    = qna?.length || 0;
 
+  // FIX-WORKER-3 pass 5: keyboard arrow nav (Left/Right/Home/End) padrao WAI-ARIA tabs
+  // Antes: so Tab key passava entre botoes (foco linear). Agora arrow keys movem
+  // entre tabs sem deixar o tablist - padrao acessibilidade tab interface.
+  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>, currentIdx: number) {
+    let nextIdx: number | null = null;
+    if (e.key === 'ArrowRight') nextIdx = (currentIdx + 1) % TABS.length;
+    else if (e.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + TABS.length) % TABS.length;
+    else if (e.key === 'Home') nextIdx = 0;
+    else if (e.key === 'End') nextIdx = TABS.length - 1;
+    if (nextIdx !== null) {
+      e.preventDefault();
+      const nextTab = TABS[nextIdx].id;
+      setActive(nextTab);
+      tabRefs.current[nextTab]?.focus();
+    }
+  }
+
   return (
     <div className="glass p-6">
-      <div className="flex border-b border-white/10 -mx-6 px-6 mb-6 overflow-x-auto">
-        {TABS.map((t) => {
+      {/* FIX-WORKER-3 pass 5: WAI-ARIA tabs - role="tablist" + role="tab" + aria-selected + aria-controls
+          Antes: <div><button> sem semantica. Screen reader anunciava como botoes soltos.
+          Agora: NVDA/JAWS anuncia "Tab 1 de 5 selecionado, Visao Geral" + Left/Right move. */}
+      <div role="tablist" aria-label="Detalhes do produto"
+        className="flex border-b border-white/10 -mx-6 px-6 mb-6 overflow-x-auto">
+        {TABS.map((t, idx) => {
           const isActive = t.id === active;
           const badge = t.id === 'reviews' ? reviewCount
                       : t.id === 'qna'     ? qnaCount
                       : null;
           return (
             <button key={t.id}
+              ref={(el) => { tabRefs.current[t.id] = el; }}
+              role="tab"
+              id={`tab-${t.id}`}
+              aria-selected={isActive}
+              aria-controls={`panel-${t.id}`}
+              tabIndex={isActive ? 0 : -1}
               onClick={() => setActive(t.id)}
-              className={`px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${
+              onKeyDown={(e) => handleKeyDown(e, idx)}
+              className={`px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-magenta ${
                 isActive
                   ? 'text-magenta border-b-2 border-magenta -mb-px'
                   : 'text-white/60 hover:text-white'
               }`}>
               {t.label}
               {badge !== null && badge > 0 && (
-                <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-white/10">{badge}</span>
+                <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-white/10" aria-label={`${badge} ${t.id === 'reviews' ? 'avaliacoes' : 'perguntas'}`}>{badge}</span>
               )}
             </button>
           );
         })}
       </div>
 
-      {/* OVERVIEW */}
+      {/* OVERVIEW - FIX-WORKER-3 pass 5: role=tabpanel + labelledby p/ WAI-ARIA tabs */}
       {active === 'overview' && (
-        <div className="prose prose-invert max-w-none">
+        <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" className="prose prose-invert max-w-none">
           <h3 className="font-display text-2xl mt-0">Sobre este produto</h3>
           <p className="whitespace-pre-line text-white/80">{product.description}</p>
           {product.tech_stack?.length > 0 && (
@@ -72,7 +102,7 @@ export function ProductTabs({ product, reviews, qna }: Props) {
 
       {/* REQUIREMENTS */}
       {active === 'requirements' && (
-        <div className="prose prose-invert max-w-none">
+        <div role="tabpanel" id="panel-requirements" aria-labelledby="tab-requirements" className="prose prose-invert max-w-none">
           <h3 className="font-display text-2xl mt-0">Pre-requisitos</h3>
           {product.install_instructions ? (
             <>
@@ -102,11 +132,15 @@ export function ProductTabs({ product, reviews, qna }: Props) {
 
       {/* CHANGELOG */}
       {active === 'changelog' && (
-        <div className="prose prose-invert max-w-none">
+        <div role="tabpanel" id="panel-changelog" aria-labelledby="tab-changelog" className="prose prose-invert max-w-none">
           <h3 className="font-display text-2xl mt-0">Changelog</h3>
           {product.versions?.length > 0 ? (
             <div className="not-prose space-y-3">
-              {product.versions.map((v: any) => (
+              {/* FIX-WORKER-3 pass 5: ordem DESC garantida (mais recente primeiro).
+                  Backend pode retornar em qualquer ordem - aqui forcamos by created_at DESC. */}
+              {[...product.versions].sort((a: any, b: any) =>
+                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              ).map((v: any) => (
                 <div key={v.id} className="border-l-2 border-magenta pl-3">
                   <div className="font-mono text-sm font-bold">v{v.version}</div>
                   <div className="text-xs text-white/40 mb-1">{new Date(v.created_at).toLocaleDateString('pt-BR')}</div>
@@ -125,7 +159,7 @@ export function ProductTabs({ product, reviews, qna }: Props) {
 
       {/* REVIEWS */}
       {active === 'reviews' && (
-        <div>
+        <div role="tabpanel" id="panel-reviews" aria-labelledby="tab-reviews">
           <h3 className="font-display font-bold text-2xl mb-4">Avaliacoes {reviewCount > 0 && `(${reviewCount})`}</h3>
           {reviewCount === 0 ? (
             <p className="text-sm text-white/60">Ainda sem avaliacoes. Compre e seja o primeiro a avaliar.</p>
@@ -135,9 +169,10 @@ export function ProductTabs({ product, reviews, qna }: Props) {
                 <div key={r.id} className="border-b border-white/5 pb-4 last:border-0">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
                     {/* FIX-WORKER-3: 5 estrelas sempre (preenchidas vs vazias estilo MLB) em vez de N estrelas */}
-                    <div className="flex items-center gap-0.5" aria-label={`${r.rating} de 5 estrelas`}>
+                    {/* FIX-WORKER-3 pass 5: aria-hidden em estrelas decorativas (so o container aria-label conta) */}
+                    <div className="flex items-center gap-0.5" role="img" aria-label={`${r.rating} de 5 estrelas`}>
                       {Array.from({ length: 5 }).map((_, i) => (
-                        <Star key={i} className={`w-4 h-4 ${
+                        <Star key={i} aria-hidden="true" className={`w-4 h-4 ${
                           i < r.rating ? 'fill-yellow-400 text-yellow-400' : 'fill-white/10 text-white/20'
                         }`} />
                       ))}
@@ -181,7 +216,7 @@ export function ProductTabs({ product, reviews, qna }: Props) {
 
       {/* Q&A */}
       {active === 'qna' && (
-        <div>
+        <div role="tabpanel" id="panel-qna" aria-labelledby="tab-qna">
           <h3 className="font-display font-bold text-2xl mb-4">Perguntas & Respostas {qnaCount > 0 && `(${qnaCount})`}</h3>
           {qnaCount === 0 ? (
             <p className="text-sm text-white/60 mb-6">Seja o primeiro a perguntar sobre este produto.</p>
