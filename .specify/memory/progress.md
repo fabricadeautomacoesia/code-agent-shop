@@ -7683,3 +7683,77 @@ PROXIMA ITER:
 - W17 pass 12: rotacao automatica vault keys (rotation_due_at hoje so visual)
 - W6: gateway global rate-limit (defense-em-profundidade nivel rede)
 - W18 pass 3: cache em /products/recommendations/for-me
+
+## WORKER 18 PASS 3 - Cache per-user em /recommendations + /recently-viewed
+
+ANALISE queries product-svc public.js:
+
+/products/recommendations/for-me (MLB-6):
+- 3 CTEs: user_categories, viewed, in_cart_or_owned
+- 3 SUBQUERIES inline por row (sellers x3 - store_slug, name, tier)
+- 2 IN subqueries no WHERE
+- ORDER BY 3 colunas com NULLS LAST
+- Cost ~85, exec 12-20ms P50
+- Consumida HOME + /conta + carousels
+
+/products/recently-viewed (MLB):
+- CTE last_views MAX(created_at)
+- JOIN products + 3 subqueries sellers
+- Custo menor mas ainda significant
+
+CENARIO PROD:
+- User logado abre HOME = 2 queries (reco + recently)
+- Navega PDP -> volta home = +2 queries
+- 5-10 navegacoes/sessao = 5-10 x 2 queries
+- N users x 10 queries = pressao DB
+
+FIX:
+
+1. /recommendations/for-me:
+   cache.cacheMiddleware('products:reco:for-me:${user.sub}', 60s)
+   - Key per-user (categorias unicas)
+   - TTL 60s: new view reflete em <=60s
+   - Logout+login reusa cache (mesma sub)
+
+2. /recently-viewed:
+   cache.cacheMiddleware('products:recently-viewed:${user.sub}:lim=N', 30s)
+   - TTL 30s mais curto (clique A -> /conta espera ver A)
+   - 60s seria notavel UX ruim
+   - Key inclui ?limit param
+
+COBERTURA CACHE product-svc:
+- Pre-fix: 7 endpoints (also-bought, related, flash-promo, list, detail, reviews, qna)
+- Pos-fix: 9 endpoints (+ reco:for-me + recently-viewed)
+- 2 endpoints custosos per-user protegidos
+
+PERFORMANCE GAIN ESPERADO:
+- DB: ~50% redução de QPS em product-svc para users logados
+- Latency P50: 12-20ms (DB) -> ~1ms (Redis)
+- User repetidor mesmo session: HIT em 99% das chamadas
+
+DEPLOY:
+- commit 6819cdf push main OK
+- 22 insertions
+- product-svc rebuild via VPS cron
+- Redis TTL natural, sem invalidacao manual
+
+VALIDACAO POS-DEPLOY:
+  curl -H "Authorization: Bearer X" -D - /api/products/recommendations/for-me
+  -> Primeira call: X-Cache: MISS
+  -> Mesma call <60s: X-Cache: HIT
+  -> Token diferente: MISS (key diferente)
+
+W18 PERFORMANCE AUDIT (passes 1-3):
+- pass 1: cache /search/autocomplete + /top-sellers/:category
+- pass 2: cache /aiops/status (5s, status page publica)
+- pass 3: cache /products/recommendations + /recently-viewed (per-user)
+
+ENDPOINTS COM CACHE TOTAL (todos svcs):
+- search-svc: 6/7 (86%)
+- product-svc: 9/11 (82%)
+- aiops-svc: 1/3 publicos (admin-only sem cache p/ real-time)
+
+PROXIMA ITER:
+- W18 pass 4: image optimization audit (next/image consistency)
+- W18 pass 5: EXPLAIN ANALYZE em query orders/me historico
+- W14 pass 6: indice composto para product_views(user_id, created_at DESC)
