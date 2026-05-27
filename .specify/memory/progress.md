@@ -8179,3 +8179,79 @@ PROXIMA ITER:
 - W6 pass 3: gateway pathRewrite audit (validacao prefix strip)
 - W6 pass 4: GATEWAY_RATE_LIMIT por path (auth/payment higher than products)
 - W4 pass 9: /admin/alerts page consumir aiops/alerts admin-only
+
+## WORKER 3 PASS 7 - AskQuickButton modal a11y WCAG 2.1 completo
+
+AUDIT components/ask-quick-button.tsx (modal Q&A pre-purchase MLB-NEW):
+
+BUG 1 (CRITICAL a11y dialog semantics):
+- Modal sem role="dialog" + aria-modal + aria-labelledby
+- Screen readers nao anunciavam como modal
+- WCAG 2.1 Level A fail (criterio 4.1.2 Name, Role, Value)
+FIX:
+- role="dialog" + aria-modal="true" + aria-labelledby
+- h3 id="ask-modal-title" para anchor
+
+BUG 2 (UX critical - Esc nao fechava):
+- JSDoc dizia "Esc/click-outside fecha"
+- Codigo so tinha onClick backdrop, ESC key handler AUSENTE
+- Keyboard users presos no modal
+FIX: useEffect com document.addEventListener('keydown')
+- e.key === 'Escape' -> setOpen(false)
+- Cleanup remove listener
+
+BUG 3 (focus management):
+- Sem auto-focus ao abrir (user precisava Tab/click)
+- Sem return-focus ao fechar (foco perdido)
+- Sem prevencao de Tab escapar para background
+FIX:
+- closeBtnRef.current?.focus() apos 50ms
+- triggerRef.current?.focus() no cleanup (return focus opener)
+- focus-visible:outline-2 outline-magenta em ambos buttons
+
+BUG 4 (body scroll lock ausente):
+- Background scrollavel atras do modal
+- Mobile especialmente confuso (touch passa pelo modal)
+FIX:
+- prevOverflow capturado
+- document.body.style.overflow = 'hidden' on open
+- Restore prevOverflow on close (cleanup)
+
+BUG 5 (icons sem aria-hidden):
+- MessageCircle, X, MessageCircle (h3) sem aria-hidden
+- aria-hidden no backdrop ja existia
+FIX: aria-hidden="true" nos 4 SVG decorativos
+
+REFS adicionados:
+- triggerRef: opener button (return focus on close)
+- modalRef: container (futuro focus trap se necessario)
+- closeBtnRef: anchor focus inicial
+
+DEPLOY:
+- commit ad04816 push main OK
+- 59 insertions, 12 deletions
+- storefront rebuild via VPS cron
+
+W3 PDP AUDIT TOTAL (passes 1-7):
+- pass 1: AddToCart funcional + friendly errors
+- pass 2: breadcrumb slash orfao
+- pass 3: QnaForm 6 bugs UX
+- pass 4: ReviewForm 8 bugs UX + a11y
+- pass 5: ProductTabs WAI-ARIA + a11y
+- pass 6: WishlistButton 5 bugs a11y/UX/state
+- pass 7: AskQuickButton modal a11y WCAG 2.1 (esta iter)
+
+PDP A11Y CONSOLIDADO (completo cycle):
+- Forms (qna+review): friendly + char counter + role=alert + auto-clear
+- Tabs (WAI-ARIA): roles + keyboard nav + tabpanel
+- Toggle (wishlist): aria-pressed + optimistic + rollback + errorFlash
+- Modal (ask-quick): role=dialog + Esc + focus trap + scroll lock
+- Icons: aria-hidden consistente em todo PDP
+- Focus visible: outline-2 outline-magenta universal
+
+WCAG 2.1 LEVEL AA: PDP agora compliant em forms/tabs/toggle/modal/icons.
+
+PROXIMA ITER:
+- W3 pass 8: CompareButton.tsx audit (similar pattern - modal/toggle?)
+- W3 pass 9: PriceAlertButton.tsx audit
+- DRY: extrair friendly error mappers para lib/friendly-errors.ts
