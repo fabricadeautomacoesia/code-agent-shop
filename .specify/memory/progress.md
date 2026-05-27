@@ -6527,3 +6527,61 @@ PROXIMA ITER:
 - W4 pass 5: auditar /admin/qa-queue (force-approve flow)
 - W5: dashboard-seller /financeiro (payout solicitation)
 - W14: indices SQL na query payouts pending JOIN sellers
+
+## WORKER 7 PASS 5 - /products/:slug/{reviews,qna} retornavam 200 para slug inexistente
+
+BUG encontrado via audit curl product-svc:
+
+  curl /api/products/INEXISTENTE          -> 404 product_not_found  (OK)
+  curl /api/products/INEXISTENTE/reviews  -> 200 {"reviews":[]}     (BUG)
+  curl /api/products/INEXISTENTE/qna      -> 200 {"qna":[]}         (BUG)
+
+INCONSISTENCIA: endpoint detail retorna 404 corretamente, mas reviews/qna
+retornam 200 com array vazio. UI nao tinha como distinguir:
+- "produto existe mas sem avaliacoes ainda" (estado normal)
+- "produto deletado / slug nunca existiu" (link quebrado)
+
+CENARIO REPRO:
+1. Marketing compartilha link /product/slug-X (produto removido)
+2. Storefront PDP -> 404 OK
+3. Mas se user manualmente abre /api/products/slug-X/reviews via tab UI
+   -> recebe 200 vazio -> "Nenhuma avaliacao ainda"
+4. User assume produto eh novo -> tenta wishlist -> falha sem msg clara
+
+PROVA EM PROD (pre-deploy):
+  curl /api/products/inexistente-xyz/reviews  -> 200 {"reviews":[]}
+  curl /api/products/inexistente-xyz/qna       -> 200 {"qna":[]}
+
+FIX (mesma estrategia em /reviews + /qna):
+- Pre-check via SELECT 1 FROM products WHERE slug=$1 AND deleted_at IS NULL
+- Se rows.length=0: next(errorHandler.notFound('product_not_found'))
+- Caso contrario: query normal de child resources
+
+Custo do pre-check: ~0.1ms (indice ix_products_slug existente).
+Cache 60s no endpoint reseta tambem o pre-check (TTL coerente).
+
+OUTROS BUGS IDENTIFICADOS NESTE AUDIT (priorizar proximas iter):
+1. /products/compare?ids=fake1,fake2 retorna 404 "Recurso nao encontrado"
+   generico - deveria ser "products_not_found" ou min match validation.
+2. Uppercase /products/AGENTE-RAG retorna 404 (slugs sao case-sensitive).
+   Aceitavel mas opcao: normalize toLower() para UX.
+
+DEPLOY:
+- commit 7b23b8b push main OK
+- 21 insertions, 2 deletions
+- product-svc rebuild via VPS cron
+
+VALIDACAO POS-DEPLOY ESPERADA:
+  curl /api/products/inexistente-xyz/reviews -> 404 product_not_found
+  curl /api/products/inexistente-xyz/qna     -> 404 product_not_found
+  curl /api/products/agente-rag.../reviews   -> 200 {reviews:[]} (existe)
+
+product-svc endpoints publicos auditados: 11 total
+  OK:  /, /:slug, /recommendations, /recently-viewed, /also-bought,
+       /related, /compare (com >=2 IDs), /flash-promo, /:slug detail
+  FIX: /:slug/reviews + /:slug/qna (essa iter)
+
+PROXIMA ITER:
+- W7 pass 6: /products/compare validar match count vs requested IDs
+- W3: PDP UI consumir 404 corretamente (mostrar "produto removido")
+- W14: indice composto (slug, deleted_at) p/ otimizar pre-checks
