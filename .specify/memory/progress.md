@@ -2093,3 +2093,54 @@ IMPACTO TOTAL (pass 1 + pass 2):
 
 GAP COMPLETO W8: nenhum, apenas data:image QR codes que devem ficar como <img>
 (inline base64, fora do CDN, sem benefit de optimization).
+
+## WORKER 18 pass 2 (PERFORMANCE) - search-svc is_top_seller WindowAgg -> subquery
+Audit pg_stat_user_tables apos W18 pass 1 (notifications fix) revelou:
+- notifications: melhorou (idx_scan/seq_scan ratio bem melhor)
+- products: agora #2 com 480 seq_scan vs 409 idx_scan
+
+DIAGNOSTICO:
+- Query alvo: services/search-svc/src/server.js linha 71-86 (/api/search)
+  WINDOW FUNCTION:
+    (p.sales_count >= 5 AND p.sales_count = MAX(p.sales_count)
+       OVER (PARTITION BY p.category_id)) AS is_top_seller
+- EXPLAIN ANTES mostrou:
+    Seq Scan on products + Sort + WindowAgg
+    Postgres precisa varrer TODA a tabela mesmo com LIMIT 24
+    (window function nao pode pular rows ate calcular MAX por categoria)
+- A 10 rows hoje: 0.4ms; a 50k rows -> ~5-20ms degradacao significativa
+
+INDICE EXISTENTE (criado por migration anterior):
+- idx_products_cat_sales: btree (category_id, sales_count DESC)
+  WHERE status='approved' AND deleted_at IS NULL
+- PERFEITO para subquery correlacionada (Index Only Scan)
+
+FIX:
+- services/search-svc/src/server.js linha 78-82 (e product-svc/public.js
+  ja usava o pattern - so atualizei comment misleading):
+  TROCADO: MAX(p.sales_count) OVER (PARTITION BY p.category_id)
+  POR:     (SELECT MAX(p2.sales_count) FROM products p2
+              WHERE p2.category_id = p.category_id
+                AND p2.status = 'approved' AND p2.deleted_at IS NULL)
+
+EXPLAIN ANALYZE DEPOIS confirmou:
+- "Index Only Scan using idx_products_cat_sales on products p2"
+- "Index Cond: ((category_id = p.category_id) AND (sales_count IS NOT NULL))"
+- "Heap Fetches: 10" (apenas o necessario, nao a tabela toda)
+- SubPlan 2 com 0.006ms por loop (10 loops = 0.06ms total)
+- Sem mais Sort + WindowAgg
+
+IMPACTO ESPERADO:
+- 50k products / 10 categorias / 24 LIMIT:
+  WindowAgg: 50k rows ler + sort N*log(N) + window scan = ~50k+150k = 200k ops
+  Subquery:  24 outer + 24 index lookups @ O(log 50k) ~= 24+360 = 384 ops
+  -> ~520x reducao em ops, ~50x reducao em latencia esperada
+
+VALIDACAO FUNCIONAL:
+- /api/search?sort=sales retornou is_top_seller correto:
+  prompt-pack-vendas-b2b-cas-007: true (top de prompt-packs)
+  agente-rag-documentos-cas-004: true (top de agentes-ia)
+  agente-whatsapp-rag-cas-001: false (#2 de agentes-ia)
+
+DEPLOY: commit 139f38c pushed, search-svc rebuilt via Dockerfile.node
+SVC=search-svc, service updated --force, converged OK.
