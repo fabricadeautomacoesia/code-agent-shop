@@ -84,14 +84,26 @@ app.use(rateLimit({
 }));
 
 // --- Health/Status (V8 5.3 - Status Page) ---
+// FIX-WORKER-6 pass 2 (CRITICAL DLP): /api/status publica vazava UPSTREAMS map
+// inteiro, expondo:
+// - Nomes exatos dos services internos (tasks.cas_auth-svc, etc)
+// - Ports internos (3010, 3011, ..., 3020, 3006)
+// - Swarm DNS pattern -> facilita lateral movement se atacante entrar no
+//   overlay network (curl http://tasks.cas_vault-svc:3020 direto sem JWT)
+//
+// Bug paralelo ao W10 pass 5 (aiops DLP).
+//
+// FIX: status publica retorna apenas ok + ts + uptime aggregate. UPSTREAMS
+// continua em scope local mas NAO mais exposto publicamente.
+// Detalhes de infra ficam em /api/status admin-only (futuro - W6 pass 3).
 app.get('/api/status', asyncHandler(async (_req, res) => {
   res.json({
     ok: true,
     svc: 'gateway',
-    uptime_s: process.uptime(),
     ts: new Date().toISOString(),
-    env: process.env.NODE_ENV,
-    upstreams: UPSTREAMS,
+    // uptime_s removido tambem (vuln disclosure quando svc foi restartado)
+    // env tambem removido (production vs staging info nao precisa publica)
+    // upstreams REMOVIDO (network recon - era o pior leak)
   });
 }));
 
