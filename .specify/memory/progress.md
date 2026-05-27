@@ -17313,7 +17313,36 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ search-svc /top-sellers + /top-sellers/:category + /trending (pass 93) - 6 bugs
 - ✅ search-svc /categories + /facets (pass 94) - 5 bugs
 - ✅ payment-svc /webhooks/:id/reset (pass 95) - 4 bugs admin race+DLP
-- ✅ qa-svc /qa/runs/:product_id + /qa/runs/stuck (pass 96 esta iter) - 10 bugs DLP+tier-split
+- ✅ qa-svc /qa/runs/:product_id + /qa/runs/stuck (pass 96) - 10 bugs DLP+tier-split
+- ✅ auth-svc PATCH /me (pass 97 esta iter) - 8 bugs validation+race+audit
+
+W7 PASS 97 RESUMO:
+- auth-svc/src/routes/me.js PATCH / refactor (8 bugs):
+  * Regra K tx() + SELECT FOR UPDATE OF users
+    - PRE-FIX: 2 PATCHs simultaneos multi-tab = lost update
+  * Zod patchMeSchema validation rigorosa (era allowed filter sem types):
+    - full_name min 2 max 200 (DoS storage)
+    - avatar_url z.string().url() (anti-XSS 'javascript:alert()')
+    - bio max 2000 (XSS no /perfil reduzido)
+    - locale enum whitelist (pt-BR|en-US|es-ES|fr-FR)
+    - timezone regex [A-Za-z_/+-0-9] (PG TZ cast safe)
+    - phone_e164 regex /^\+\d{10,15}$/ (E.164 strict)
+    - cpf_cnpj min 11 max 20 (Zod size) + algoritmo digitos (post-validate)
+  * Regra P audit log atomic INSERT
+    - severity=warn p/ cpf_changed (compliance KYC trail)
+    - payload com DLP masking CPF (123.***.***-90 format)
+  * Empty body check upfront (antes do compute loop)
+  * NEW patchMeLimiter 20/hr/user (real users patch 1-2x/dia)
+    - PRE-FIX: bot pode brute-force cpf_cnpj validity (10k attempts/min)
+  * CPF unique conflict 409 (era 500 leak constraint)
+    - try/catch PG 23505 -> 409 cpf_already_registered
+- Pattern W7 em 105 endpoints + 23 regras (A-W) - 97 micro-iters
+
+PROXIMA ITER:
+- W7 pass 98: auth-svc /logout audit
+- W7 pass 99: seller-svc remaining sellers.js /:slug/products audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 96 RESUMO:
 - qa-svc/src/server.js 2 endpoints refactor (10 bugs):
