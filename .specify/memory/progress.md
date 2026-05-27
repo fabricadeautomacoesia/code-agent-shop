@@ -102,6 +102,28 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## MOBILE+UX - WORKER 15 PASS 2 (CARTDRAWER PARIDADE COM /CART)
+Audit do componente CartDrawer (sidebar do cart) revelou 2 inconsistencias
+versus /cart page completa:
+
+1. CartDrawer mostrava 'Qtde: N' estatico (mesmo bug que /cart tinha em W2).
+   Usuario precisava fechar drawer + abrir /cart para mudar quantidade.
+2. CartDrawer NAO mostrava linha 'X pts -R\$Y' quando havia loyalty_redeem.
+   Total exibido considerava o desconto mas usuario nao via origem.
+
+FIX commitado + deployed (4309bcb):
+- Importar Plus, Minus, Star icons.
+- Novo setQty handler com optimistic update + Api.cartSetQty.
+- Cada item do drawer agora com botoes +/- inline-flex (matching /cart style).
+- Footer: linha de loyalty_discount_cents (Star icon + pts count) ANTES
+  do Total quando loyalty_points_redeemed > 0.
+- Label 'Desconto' agora vira 'Cupom (CODIGO)' se cart.coupon_code (clarity).
+
+VALIDADO: chunk /app/layout contem Aumentar, Diminuir, cartSetQty,
+loyalty_discount_cents, loyalty_points_redeemed.
+
+CartDrawer agora 100% feature-parity com /cart page completa.
+
 ## DB HARDENING PASS 2 - WORKER 14 (HOTPATH INDEXES MIG 016)
 Deep audit via pg_stat_user_tables identificou hotpaths sem suporte:
 - search_log: 100% seq_scan (cresce rapido em prod)
