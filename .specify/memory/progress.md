@@ -17307,7 +17307,33 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc upload.js endpoints (pass 87) - 6 bugs storage DoS
 - ✅ product-svc qna/answer DEPRECATED (pass 88) - consolidate review-svc
 - ✅ notification-svc /read-all (pass 89) - 4 bugs DoS+audit+cap
-- ✅ aiops-svc /status (pass 90 esta iter) - 4 bugs DLP recon + tier-split
+- ✅ aiops-svc /status (pass 90) - 4 bugs DLP recon + tier-split
+- ✅ search-svc /search (pass 91 esta iter) - 4 bugs enums + DLP
+
+W7 PASS 91 RESUMO:
+- search-svc/src/server.js GET / refactor (4 bugs):
+  * Kind enum whitelist (SEARCH_KIND_ENUM)
+    - PRE-FIX: ?kind=anything -> PG enum 22P02 -> 500 leak
+    - 400 invalid_kind com allowed[] (mesma classe pass 73)
+  * Tier enum whitelist (SEARCH_TIER_ENUM bronze|silver|gold|platinum)
+    - PRE-FIX: ?tier=anything -> PG cast 22P02 -> 500
+    - 400 invalid_tier (mesma classe pass 72 sellers.js)
+  * Sort enum explicit 400 (em vez de default silencioso)
+    - PRE-FIX: ?sort=invalid -> fallback relevance silencioso UX confuso
+    - 400 invalid_sort com allowed[]
+  * DLP search_log:
+    - ip_address NULL (LGPD Art 5° II - IP eh PII)
+    - query: mask.text() defensive
+      * User pode colar Bearer/sk-API key na URL bar auto-fill
+      * mask.obj() recursive nao se aplica (string scalar)
+    - query_normalized derivado de safeQ (mascarado)
+- Pattern W7 em 96 endpoints + 23 regras (A-W) - 91 micro-iters
+
+PROXIMA ITER:
+- W7 pass 92: search-svc /autocomplete audit
+- W7 pass 93: search-svc /trending audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 90 RESUMO:
 - aiops-svc/src/server.js GET /status refactor (4 bugs):

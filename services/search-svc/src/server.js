@@ -5,7 +5,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../../.env'
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, cache, rateLimiter } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, cache, rateLimiter, mask } = require('@cas/shared');
 
 const log = logger.child({ svc: 'search-svc' });
 const app = express();
@@ -30,6 +30,39 @@ const autocompleteLimiter = rateLimiter.createLimiter({ windowMs: 60_000, max: 6
 app.get('/health', (_req, res) => res.json({ ok: true, svc: 'search-svc' }));
 
 // GET /search?q=...&category=...&kind=...&min_price=...&max_price=...&sort=...&page=...
+// FIX-WORKER-7 pass 91: 4 BUGS aplicando Pattern W7 (enums whitelist + DLP + sort).
+//
+// BUG 1 *** KIND ENUM WHITELIST MISSING ***
+//   PRE-FIX: ?kind=anything -> PG enum cast 22P02 -> 500 leak.
+//   Mesma classe pass 73 BUG 3 (product-svc).
+//   FIX: SEARCH_KIND_ENUM whitelist (matches products.kind enum).
+//
+// BUG 2 *** TIER ENUM WHITELIST MISSING ***
+//   PRE-FIX: ?tier=anything -> PG enum reputation_tier_enum cast 22P02 -> 500.
+//   Mesma classe pass 72 (sellers.js).
+//   FIX: SEARCH_TIER_ENUM whitelist (bronze|silver|gold|platinum).
+//
+// BUG 3 *** SORT INVALID FALLBACK SILENT ***
+//   PRE-FIX: ?sort=invalid -> default 'relevance' silencioso. UX confuso
+//   (frontend tab "ordenar por preco" caia em relevance sem feedback).
+//   FIX: explicit 400 com allowed[].
+//
+// BUG 4 *** DLP search_log ip_address PII + query raw ***
+//   PRE-FIX: search_log.ip_address e search_log.query armazenam plain text.
+//   - ip_address: LGPD - IP eh PII categorizada como dado pessoal (Art 5° II).
+//   - query: usuario pode digitar acidentalmente Bearer token / sk-API key
+//     (auto-fill URL bar copy/paste).
+//   FIX: ip_address null em search_log (analytics aggregated; user_id ja loga).
+//   query: mask.text() defensive (DLP sk-/Bearer/JWT regex).
+const SEARCH_KIND_ENUM = new Set([
+  'automation','ai_agent','n8n_workflow','node_script','python_script',
+  'php_script','prompt_pack','template','dataset','other'
+]);
+const SEARCH_TIER_ENUM = new Set(['bronze','silver','gold','platinum']);
+const SEARCH_SORT_ENUM = new Set([
+  'relevance','newest','price_asc','price_desc','rating','sales','recent_sales'
+]);
+
 app.get('/', searchLimiter, asyncHandler(async (req, res) => {
   const t0 = Date.now();
   const q = (req.query.q || '').toString().trim();
@@ -42,6 +75,11 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
   }
   const category = req.query.category;
   const kind = req.query.kind;
+
+  // FIX-WORKER-7 pass 91 BUG 1: kind enum whitelist
+  if (kind && !SEARCH_KIND_ENUM.has(kind)) {
+    return res.status(400).json({ error: 'invalid_kind', allowed: Array.from(SEARCH_KIND_ENUM) });
+  }
   // FIX-WORKER-10 pass 2: NaN -> null silencioso (antes max_price=abc -> PG NaN -> 404)
   const _minP = req.query.min_price ? parseInt(req.query.min_price, 10) : null;
   const _maxP = req.query.max_price ? parseInt(req.query.max_price, 10) : null;
@@ -49,6 +87,14 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
   const max_price = Number.isFinite(_maxP) && _maxP >= 0 ? _maxP : null;
   const free = req.query.free === 'true';
   const tier = req.query.tier;
+  // FIX-WORKER-7 pass 91 BUG 2: tier enum whitelist
+  if (tier && !SEARCH_TIER_ENUM.has(tier)) {
+    return res.status(400).json({ error: 'invalid_tier', allowed: Array.from(SEARCH_TIER_ENUM) });
+  }
+  // FIX-WORKER-7 pass 91 BUG 3: sort enum whitelist explicit 400
+  if (req.query.sort && !SEARCH_SORT_ENUM.has(String(req.query.sort))) {
+    return res.status(400).json({ error: 'invalid_sort', allowed: Array.from(SEARCH_SORT_ENUM) });
+  }
   const tag = req.query.tag;
   // FIX-WORKER-10 pass 2: Math.max para barrar limit negativo (era 500 do PG LIMIT -5)
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 24, 60));
@@ -156,7 +202,11 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
   const dur = Date.now() - t0;
 
   // search_log assincrono
+  // FIX-WORKER-7 pass 91 BUG 4 DLP:
+  //   - ip_address NULL (LGPD - IP eh PII Art 5° II)
+  //   - query: mask.text() defensive (user pode colar Bearer/sk-API key)
   if (q || category || kind) {
+    const safeQ = q ? mask.text(q) : '';
     query(
       `INSERT INTO search_log (user_id, query, query_normalized, filters, result_count, duration_ms, ip_address)
        VALUES ($1,$2,$3,$4::JSONB,$5,$6,$7)`,
@@ -165,11 +215,9 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
       // diacritics consistentemente. Substituido por escape Unicode explicito
       // ̀-ͯ (Combining Diacritical Marks block) - imune a copy/paste,
       // git diff, editor encoding issues.
-      // Pre-fix: query_normalized podia manter acentos dependendo do binary
-      // do arquivo -> trigger sanitize mig 027 nao matcheava buscas.
-      [null, q || '', q.toLowerCase().normalize('NFD').replace(/\p{M}/gu, ''),
+      [null, safeQ, safeQ.toLowerCase().normalize('NFD').replace(/\p{M}/gu, ''),
        JSON.stringify({ category, kind, min_price, max_price, free, tier, tag, sort: req.query.sort }),
-       t.rows[0].total, dur, req.ip]
+       t.rows[0].total, dur, null]
     ).catch(() => {});
   }
 
