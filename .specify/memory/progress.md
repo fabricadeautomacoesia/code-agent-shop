@@ -12672,3 +12672,85 @@ PROXIMA ITER:
 - W18 pass 7: idx parcial product_views > 90d (cron-based)
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
 - W8 pass 4: aplicar Regra I (SELECT explicit) em outros services
+
+================================================================
+ITER W7 PASS 16 - order-svc cart.js 4 bugs (CRITICAL WRITE PATH) (2026-05-27)
+================================================================
+ESCOPO: order-svc routes/cart.js (POST /items + /coupon endpoints)
+FILE: services/order-svc/src/routes/cart.js (linhas 36-220)
+
+CONTEXTO: W7 pass 15 consolidou 9 regras (A-I). Aplicacao a write
+path order-svc - SEVERIDADE MAIOR que read endpoints (causa state
+inconsistency real, nao so display).
+
+BUGS CORRIGIDOS (4):
+
+1. *** CRITICAL WRITE PATH *** POST /items SEM deleted_at IS NULL
+- Regra B violada em endpoint de ESCRITA (maior criticidade)
+- Cenario real:
+  a. User abre PDP do produto X
+  b. Admin deleta produto X (UPDATE products SET deleted_at = NOW())
+  c. User ainda na aba PDP clica "Adicionar ao carrinho"
+  d. Query verificava status mas NAO deleted_at
+  e. Produto deletado vai pro cart -> checkout -> pagamento (!!)
+  f. Download token gerado para produto inexistente
+- IMPACTO REAL: orders fantasma com produto deleted_at NULL nas FKs
+  - Receita capturada mas seller nao recebe (seller_payouts join falha)
+  - Download URL 404 -> user reclama support
+  - Refund manual operacionalmente caro
+- FIX: AND deleted_at IS NULL no WHERE
+- Pattern Regra B canonica em WRITE > READ severidade
+
+2. GET /coupon/:code/preview cache key SEM normalize case
+- Pre-fix: req.params.code direto no cache key
+- 'WIN10' / 'win10' / 'Win10' = 3 cache keys diferentes
+- Cache fragmentado, hit rate baixo
+- Abuso bot: 1000 variacoes case = Redis memory balloon
+- FIX: (req.params.code || '').toUpperCase() no cache key
+- + UPPER(code) = UPPER($1) no SQL bind (case-insensitive DB match)
+
+3. POST /coupon SQL CASE-SENSITIVE INCONSISTENTE com /preview
+- Pre-fix preview corrigido (UPPER), POST mantinha code = $1
+- User flow QUEBRADO:
+  a. User digita 'win10' (lowercase)
+  b. /coupon/win10/preview -> UPPER match -> 200 OK desconto exibido
+  c. User clica "Aplicar" -> POST /coupon code='win10'
+  d. WHERE code = 'win10' case-sensitive -> 404 'coupon_invalid'
+  e. UX broken: "Por que apareceu desconto mas nao aplica?"
+- FIX: UPPER(code) = UPPER($1) ambos lados (consistencia)
+
+4. POST /coupon SELECT * violava Regra I
+- coupons table tem campos internos (created_by_user_id, internal_notes,
+  deduplicate_strategy, last_audited_at, etc)
+- Lista explicita preferivel (Pattern security cross-svc Regra I)
+- FIX: SELECT code, discount_type, discount_value, tier_breakpoints,
+       expires_at, min_tier, max_uses, used_count, is_active
+
+PATTERN W7 9 REGRAS - SEVERIDADE WRITE vs READ:
+
+WRITE endpoints (POST/PUT/PATCH/DELETE):
+- Regra B (deleted_at) = MAXIMA prioridade
+- Cria state inconsistency real, nao so display bug
+- Causa downstream cascade (orders fantasma, payouts errados, refunds)
+
+READ endpoints (GET):
+- Regra B = display bug (UI mostra produto deletado)
+- Click pra PDP/cart pode falhar mas state nao corrompe
+
+LICAO: futuros endpoints WRITE devem ter audit prioritario Regra B.
+
+PATTERN W7 11 ENDPOINTS + 9 REGRAS:
+- product-svc: /recently-viewed, /for-me, /related, /also-bought
+- search-svc: /top-sellers x2, /search, /autocomplete, /facets, /categories
+- order-svc: POST /cart/items, GET /coupon/preview, POST /coupon (esta iter)
+
+W7 PROGRESS:
+- product-svc: passes 1-10
+- search-svc: passes 11-15 (+ aiops-svc audit)
+- order-svc: pass 16 (cart.js WRITE path)
+
+PROXIMA ITER:
+- W7 pass 17: order-svc orders.js (checkout, list, status)
+- W7 pass 18: cart.js loyalty/redeem (similar pattern)
+- W18 pass 7: idx parcial product_views > 90d (cron-based)
+- W3 pass 10: refatorar CartDrawer usar <Dialog>

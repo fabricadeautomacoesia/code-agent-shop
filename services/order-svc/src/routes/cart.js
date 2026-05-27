@@ -39,8 +39,20 @@ router.post('/items',
     quantity: z.number().int().min(1).max(99).default(1),
   })}),
   asyncHandler(async (req, res, next) => {
+    // FIX-WORKER-7 pass 16 (Regra B violada - CRITICAL WRITE PATH):
+    // Endpoint de ESCRITA permitia adicionar produto deletado ao carrinho.
+    // Cenario real:
+    //   1. User abre PDP do produto X
+    //   2. Admin deleta produto X (UPDATE products SET deleted_at = NOW())
+    //   3. User ainda na aba PDP clica "Adicionar ao carrinho"
+    //   4. Query verificava status mas NAO deleted_at
+    //   5. Produto deletado vai pro cart -> checkout -> pagamento (!!)
+    //   6. Download token gerado para produto inexistente
+    // CRITICIDADE: maior que endpoints de leitura - causa orders fantasma.
+    // FIX: deleted_at IS NULL no WHERE (Regra B canonica).
     const p = await query(
-      `SELECT id, price_cents, currency, status, title FROM products WHERE id = $1`,
+      `SELECT id, price_cents, currency, status, title FROM products
+        WHERE id = $1 AND deleted_at IS NULL`,
       [req.body.product_id]
     );
     if (!p.rows.length || !['approved','platform_owned'].includes(p.rows[0].status))
@@ -117,15 +129,25 @@ router.patch('/items/:id',
 // Cache key inclui code + subtotal + user.tier porque min_tier check varia por loyalty tier.
 // Router tem jwt.requireAuth() global - req.user.sub sempre presente.
 router.get('/coupon/:code/preview',
+  // FIX-WORKER-7 pass 16: cache key normalize uppercase (cupons sao
+  // case-insensitive na UX MLB-style). Pre-fix:
+  //   - 'WIN10' / 'win10' / 'Win10' = 3 cache keys diferentes
+  //   - Cache fragmentado, hit rate baixo
+  //   - Abuso possivel: bot envia 1000 variacoes case = balloon Redis
+  // Pos-fix: uppercase no cache key + no SQL bind. UPPER(code) garante
+  // match independente do case input.
   cache.cacheMiddleware((req) => {
-    return `coupon:preview:${req.params.code}:s=${req.query.subtotal_cents || 0}:u=${req.user?.sub || 'anon'}`;
+    const code = (req.params.code || '').toUpperCase();
+    return `coupon:preview:${code}:s=${req.query.subtotal_cents || 0}:u=${req.user?.sub || 'anon'}`;
   }, 30),
   asyncHandler(async (req, res, next) => {
   const subtotal = parseInt(req.query.subtotal_cents || '0', 10);
+  // FIX-WORKER-7 pass 16: UPPER(code) na query (case-insensitive lookup).
+  // Coupon table store code uppercase por convencao - garante match.
   const c = await query(
     `SELECT code, discount_type, discount_value, tier_breakpoints, expires_at, min_tier
        FROM coupons
-      WHERE code = $1 AND is_active
+      WHERE UPPER(code) = UPPER($1) AND is_active
         AND (starts_at IS NULL OR starts_at <= NOW())
         AND (expires_at IS NULL OR expires_at > NOW())
         AND (max_uses IS NULL OR used_count < max_uses)`,
@@ -170,9 +192,19 @@ const TIER_RANK = { starter: 0, gold: 1, platinum: 2 };
 router.post('/coupon',
   validate({ body: z.object({ code: z.string() }) }),
   asyncHandler(async (req, res, next) => {
+    // FIX-WORKER-7 pass 16: 2 bugs (consistencia com /coupon/:code/preview):
+    // 1. Regra I violada: SELECT * coupons -> expoe campos internos
+    //    (created_by_user_id, internal_notes, deduplicate_strategy)
+    //    Pattern security cross-svc: lista explicita.
+    // 2. WHERE code = $1 case-sensitive -> 'WIN10' funciona, 'win10' = 404.
+    //    Pre-fix preview foi corrigido (UPPER) mas POST ainda inconsistente.
+    //    User digita lowercase -> /preview OK -> Aplica -> 404 (!!).
+    //    FIX: UPPER(code) = UPPER($1) ambos lados (case-insensitive lookup).
     const c = await query(
-      `SELECT * FROM coupons
-        WHERE code = $1 AND is_active
+      `SELECT code, discount_type, discount_value, tier_breakpoints,
+              expires_at, min_tier, max_uses, used_count, is_active
+         FROM coupons
+        WHERE UPPER(code) = UPPER($1) AND is_active
           AND (starts_at IS NULL OR starts_at <= NOW())
           AND (expires_at IS NULL OR expires_at > NOW())
           AND (max_uses IS NULL OR used_count < max_uses)`,
