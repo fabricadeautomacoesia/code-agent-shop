@@ -20,6 +20,27 @@ app.use('/payments/asaas/webhook', express.raw({ type: '*/*', limit: '2mb' }));
 app.use(express.json({ limit: '512kb' }));
 app.use(sanitize.middleware());
 
+// FIX-WORKER-11 pass 2 (CRITICAL SEC): asaas/create nao tinha auth.
+// Antes: qualquer um na internet podia POST com order_id UUID e:
+// - Disparar Asaas API calls (denial-of-wallet + rate limit)
+// - Receber invoice_url/pix_qrcode/boleto_url de QUALQUER pedido (PII leak)
+// - Corromper status: UPDATE orders SET payment_status='authorized'
+const PAYMENT_INTERNAL_TOKEN = process.env.PAYMENT_INTERNAL_TOKEN || '';
+function asaasCreateGuard(req, res, next) {
+  const tok = req.headers['x-internal-token'];
+  if (PAYMENT_INTERNAL_TOKEN && tok) {
+    let valid = false;
+    try {
+      const a = Buffer.from(String(tok));
+      const b = Buffer.from(PAYMENT_INTERNAL_TOKEN);
+      valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+    } catch { valid = false; }
+    if (valid) return next();
+    log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[payment.create.invalid_internal_token]');
+  }
+  return jwt.requireAuth({ roles: ['admin','staff','service'] })(req, res, next);
+}
+
 app.get('/health', (_req, res) => res.json({
   ok: true, svc: 'payment-svc',
   asaas: { configured: !!process.env.ASAAS_API_KEY, url: process.env.ASAAS_API_URL }
@@ -84,7 +105,9 @@ app.get('/payments/installments/preview', asyncHandler(async (req, res) => {
 }));
 
 // POST /payments/asaas/create - chamado pelo order-svc apos checkout
+// FIX-WORKER-11 pass 2: agora exige asaasCreateGuard (x-internal-token ou service role)
 app.post('/payments/asaas/create',
+  asaasCreateGuard,
   validate({ body: z.object({
     order_id: z.string().uuid(),
     installment_count: z.number().int().min(1).max(12).optional(),

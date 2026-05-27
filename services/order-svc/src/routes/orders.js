@@ -127,9 +127,13 @@ router.post('/checkout',
         if (req.body.installment_count && req.body.payment_method === 'credit_card') {
           body.installment_count = req.body.installment_count;
         }
+        // FIX-WORKER-11 pass 2: payment-svc agora exige x-internal-token (auth bypass fix)
         await fetch(`${paymentUrl}/payments/asaas/create`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.PAYMENT_INTERNAL_TOKEN ? { 'x-internal-token': process.env.PAYMENT_INTERNAL_TOKEN } : {}),
+          },
           body: JSON.stringify(body),
         });
       } catch (e) {
