@@ -6,6 +6,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Mail, CheckCircle } from 'lucide-react';
 import { Api } from '@/lib/api';
+import { friendlyAuthError } from '@/lib/auth-errors';
 
 export default function EsqueciSenhaPage() {
   const [email, setEmail] = useState('');
@@ -20,7 +21,7 @@ export default function EsqueciSenhaPage() {
       await Api.api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) });
       setSent(true);
     } catch (e: any) {
-      setErr(e.data?.message || e.message);
+      setErr(friendlyAuthError(e));
     } finally { setLoading(false); }
   }
 

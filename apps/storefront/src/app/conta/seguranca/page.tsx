@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Shield, Smartphone, AlertCircle, CheckCircle, Copy } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
+import { friendlyAuthError } from '@/lib/auth-errors';
 
 export default function SegurancaPage() {
   const router = useRouter();
@@ -30,7 +31,7 @@ export default function SegurancaPage() {
     try {
       const r: any = await Api.api('/auth/2fa/setup', { method: 'POST', auth: token! });
       setSetupData(r);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { setError(friendlyAuthError(e)); }
     finally { setLoading(false); }
   }
 
@@ -43,7 +44,7 @@ export default function SegurancaPage() {
       setOk('2FA ativado com sucesso! Salve os codigos de recuperacao.');
       setToken2fa('');
       Api.me(token!).then((m) => setMe(m.user));
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { setError(friendlyAuthError(e)); }
     finally { setLoading(false); }
   }
 
@@ -54,7 +55,7 @@ export default function SegurancaPage() {
       setOk('2FA desativado.');
       setPassword(''); setToken2fa('');
       Api.me(token!).then((m) => setMe(m.user));
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { setError(friendlyAuthError(e)); }
     finally { setLoading(false); }
   }
 

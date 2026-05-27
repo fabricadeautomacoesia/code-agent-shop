@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Lock, CheckCircle } from 'lucide-react';
 import { Api } from '@/lib/api';
+import { friendlyAuthError } from '@/lib/auth-errors';
 
 export default function ResetPage() {
   return <Suspense fallback={<div className="container mx-auto px-6 py-16">Carregando...</div>}><ResetInner /></Suspense>;
@@ -45,7 +46,7 @@ function ResetInner() {
       setDone(true);
       setTimeout(() => router.push('/login?reset=1'), 2500);
     } catch (e: any) {
-      setErr(e.data?.message || e.message);
+      setErr(friendlyAuthError(e));
     } finally { setLoading(false); }
   }
 

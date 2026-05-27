@@ -6,6 +6,7 @@ import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Api } from '@/lib/api';
+import { friendlyAuthError } from '@/lib/auth-errors';
 
 export default function RegisterPage() {
   return <Suspense fallback={<div className="container mx-auto px-6 py-16 max-w-md">Carregando...</div>}><RegisterInner /></Suspense>;
@@ -38,7 +39,7 @@ function RegisterInner() {
       await Api.register({ ...form, role });
       router.push('/login?registered=1');
     } catch (err: any) {
-      setError(err.data?.message || err.message);
+      setError(friendlyAuthError(err));
     } finally { setLoading(false); }
   }
 

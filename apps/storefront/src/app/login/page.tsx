@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { CheckCircle } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
+import { friendlyAuthError } from '@/lib/auth-errors';
 
 export default function LoginPage() {
   return <Suspense fallback={<div className="container mx-auto px-6 py-16 max-w-md">Carregando...</div>}><LoginInner /></Suspense>;
@@ -35,7 +36,7 @@ function LoginInner() {
       setAuth(r.access_token, r.user);
       router.push('/conta');
     } catch (err: any) {
-      setError(err.data?.message || err.message);
+      setError(friendlyAuthError(err));
     } finally { setLoading(false); }
   }
 
