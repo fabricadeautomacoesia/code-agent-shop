@@ -6785,3 +6785,67 @@ PROXIMA ITER:
 - W17 pass 10: rotacao automatica de keys (rotation_due_at hoje so visivel)
 - W14: particionamento mensal de vault_key_usage (planejado em comment)
 - W18: cache em /keys list 30s (admin dashboard refresca, baixo churn)
+
+## WORKER 15 PASS 5 - FlashPromoTimer overflow horizontal em 375px
+
+BUG visual encontrado em components/flash-promo-timer.tsx (MLB-10 timer).
+
+CENARIO QUEBRADO em 375px viewport (Pixel 5/iPhone SE - 50%+ trafego):
+- Container util apos nesting + p-4: ~343px
+- Row do countdown tinha 5 elementos inline SEM flex-wrap:
+  Clock + "Termina em:" + 4 badges (Xd / 00h / 00m / 00s)
+  Largura minima ~370px > 343px disponivel
+- ml-auto forcava badges para direita -> squeeze ilegivel ou overflow
+
+OBSERVADO:
+- /promocoes lista flash -> badges sobrepostas
+- PDP de produto em flash -> overflow horizontal scrolls
+- Header "Promocao Relampago -X%" tambem apertado em 375px
+
+FIX (4 mudancas tailwind):
+
+1. flex-wrap nas DUAS rows (header + countdown):
+   - Header badges -% podem quebrar para nova linha se necessario
+   - Countdown label "Termina em:" quebra antes dos badges
+
+2. ml-auto -> sm:ml-auto (responsivo):
+   - Mobile (<640px): badges fluem naturais sem squeeze
+   - Desktop: badges alinhadas direita (visual original mantido)
+
+3. Padding/text responsivos:
+   - p-3 sm:p-4 (3px menos vertical em mobile)
+   - text-xs sm:text-sm (12px mobile, 14px desktop)
+   - badges px-1.5 sm:px-2 (compactas em mobile)
+
+4. flex-shrink-0 nos elementos fixos:
+   - Icons Zap + Clock nao encolhem
+   - Badge -% mantem largura
+   - Texto "Termina em:" / "Promocao Relampago" e quem flexa
+
+CASOS COBERTOS:
+- Promocao curta (hours+mins+secs): 3 badges = fit em 1 row mesmo em 320px
+- Promocao longa (days>0): 4 badges, quebra para 2a linha em <375px
+- Discount muito alto (-99%): badge fixa, header pode quebrar
+- Locale pt-BR ("Promocao Relampago" e maior que MLB "Promocion Relampago")
+
+DEPLOY:
+- commit e586570 push main OK
+- 20 insertions, 12 deletions
+- storefront rebuild via VPS cron
+- Componente client-side, no SSR change
+
+VALIDACAO POS-DEPLOY:
+- DevTools 375px no /promocoes -> sem horizontal scroll
+- Chrome DevTools "iPhone SE" preset -> timer renderiza limpo
+- Container "border-2 border-orange-500" alinha sem overflow
+
+W15 RESPONSIVE AUDIT TOTAL (passes 1-5):
+- pass 1-2: Nav mobile drawer hamburger + body scroll lock
+- pass 3: Nav header limpa em <sm (esconder Wishlist+Bell, expor no drawer)
+- pass 4: PDP title break-words + flex-wrap em rating row
+- pass 5: FlashPromoTimer overflow em 375px (esta iter)
+
+PROXIMA ITER:
+- W15 pass 6: AskQuickButton modal em 375px
+- W15 pass 7: CompareDrawer responsive (4 produtos lado a lado)
+- W8: consistencia visual gradients/tipografia random pages
