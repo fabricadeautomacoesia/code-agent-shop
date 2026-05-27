@@ -10910,3 +10910,72 @@ PROXIMA ITER:
 - W13 pass 9: template email security_refresh_reuse (urgency 3 = sempre email)
 - W4 pass 15: /admin/audit-log filter shortcut "Security Incidents"
 - W17 pass 15: rate-limit /auth/refresh (anti brute-force scenarios)
+
+## WORKER 7 PASS 8 - /recommendations/for-me: CTE orfa + stale categories
+
+AUDIT product-svc encontrou 2 bugs cumulativos:
+
+BUG 1 (CRITICAL UX - CTE 'viewed' orfa):
+- WITH viewed AS (SELECT product_id FROM product_views WHERE user_id=$1)
+- CTE declarada mas NUNCA USADA na query principal
+- Produtos ja vistos aparecem como recommendation
+- UX ruim: "veja produtos que VOCE JA VIU"
+- MLB pattern: recomendar produtos NOVOS
+
+FIX:
+- CTE viewed com DISTINCT + janela 90d (alinhada "memoria recente")
+- WHERE no SELECT principal:
+    AND p.id NOT IN (SELECT product_id FROM viewed)
+- Produtos > 90d em historico podem voltar (esqueceu)
+
+BUG 2 (stale categories):
+- CTE user_categories conta product_views sem validar produtos
+- Produto X deletado mas X.category_id ainda no top-3
+- Recommendation enviesada por historico stale
+FIX (mesmo pattern W7 pass 7):
+- JOIN products dentro CTE
+- WHERE p.status='approved' AND p.deleted_at IS NULL
+
+PERFORMANCE:
+- CTE viewed: 1 SELECT extra, idx_pviews_user_recent cobre
+- WHERE NOT IN viewed: O(N log M)
+- Custo +5-10% aceitavel
+- Cache W18-3 60s mitiga overhead
+
+EDGE CASES:
+- User novo sem views: viewed vazia, fallback sales_count>100
+- User power 100+ views: exclui todos, depende sales_count
+- Produto deletado: categoria excluida CTE filter
+
+DEPLOY:
+- commit 5654ffa push main OK
+- 20 insertions, 1 deletion
+- product-svc rebuild via VPS cron
+- Sem schema change
+- Backward compat: API identica, qualidade melhor
+
+VALIDACAO POS-DEPLOY:
+- User 5 visits: reco nao inclui esses 5
+- User com produto deletado em historico: categoria excluida
+
+W7 PRODUCT-SVC AUDIT (passes 1-8):
+- pass 1: /me CRUD baseline
+- pass 2: admin guards
+- pass 3: wishlist toggle idempotency
+- pass 4: clamp negative params
+- pass 5: /:slug/reviews+/qna 404
+- pass 6: /compare 3 bugs
+- pass 7: /recently-viewed limit truncado
+- pass 8: /recommendations/for-me orfa + stale (esta iter)
+
+CICLO MLB-6 RECOMMENDATIONS COMPLETO:
+- Cache per-user (W18-3)
+- Filtros dentro CTE (W7-7)
+- CTE viewed efetiva (W7-8 esta iter)
+- Indice idx_pviews_user_recent (W14-6)
+- Cobertura: corretude + performance + UX
+
+PROXIMA ITER:
+- W7 pass 9: /products/:slug/related pattern (categorias relacionadas dinamicas)
+- W18 pass 7: cache /orders/me historico
+- W3 PDP audit continuado
