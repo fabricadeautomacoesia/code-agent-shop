@@ -6476,3 +6476,54 @@ PROXIMA ITER:
 - W2 pass 6: /checkout error messages friendly mapping similar
 - W4: admin dashboard audit
 - W11: payment-svc Asaas createPayment validation campos
+
+## WORKER 4 PASS 4 - /admin/payouts "Transferir Asaas" feature MORTA
+
+BUG CRITICO encontrado via audit dashboard-admin:
+
+CADEIA QUEBRADA:
+- Backend GET /sellers/admin/payouts/pending so filtrava status='pending'
+- Frontend tinha botao "Transferir Asaas" condicionado a status='approved'
+- Apos admin clicar "Aprovar" -> status vira approved -> SUMME da lista
+- Botao Transferir nunca era visivel -> feature morta
+
+CONSEQUENCIA EM PROD:
+- Pipeline pending -> approved -> paid travava em "approved"
+- Sellers viam payout aprovado mas Asaas transfer nunca disparado
+- Suporte rodava transferencia manual via psql ou cli interno
+- 50% do payout flow invisivel ao admin
+
+FIX 1 (backend seller-svc):
+GET /sellers/admin/payouts/pending?status=pending|approved|all
+- Whitelist contra SQL injection
+- 'all' -> WHERE p.status IN ('pending','approved')
+- Default 'pending' (backward-compat)
+- Response: { payouts, filter: { status } }
+
+FIX 2 (frontend dashboard-admin):
+- statusFilter state default 'all' (pipeline completo visivel)
+- 3 botoes filtro UI: Todos ativos / pending / approved
+- useEffect([statusFilter]) -> reload on change
+
+FIX 3 (UI badge):
+- Antes sempre amarelo (bg-yellow-500/20)
+- Agora dinamico: pending=amarelo, approved=azul, paid=verde, rejected=vermelho
+- Affordance visual do estado atual
+
+VALIDACAO POS-DEPLOY:
+1. Admin /admin/payouts vai mostrar tab "Todos ativos" por default
+2. Pending payouts aparecem com badge amarelo + botoes Aprovar/Rejeitar
+3. Admin clica Aprovar -> payout vira badge azul "approved"
+4. Botao "Transferir Asaas" aparece (era invisivel pre-fix)
+5. Click dispara POST /payments/payouts/:id/process -> Asaas webhook
+6. Payout vira paid (verde) ou continua approved se Asaas falhar
+
+DEPLOY:
+- commit 1317922 push main OK
+- 46 insertions, 6 deletions
+- seller-svc + dashboard-admin rebuild via VPS cron
+
+PROXIMA ITER:
+- W4 pass 5: auditar /admin/qa-queue (force-approve flow)
+- W5: dashboard-seller /financeiro (payout solicitation)
+- W14: indices SQL na query payouts pending JOIN sellers
