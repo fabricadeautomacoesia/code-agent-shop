@@ -3,11 +3,24 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache } = require('@cas/shared');
 
 const router = express.Router();
 const log = logger.child({ svc: 'product-svc', mod: 'admin' });
 router.use(jwt.requireAuth({ roles: ['admin','staff'] }));
+
+// FIX-WORKER-18: invalidacao de cache em mutations
+async function invalidateProductCache() {
+  try {
+    await Promise.all([
+      cache.del('products:list:*'),
+      cache.del('products:related:*'),
+      cache.del('products:flash-promo:*'),
+      cache.del('search:top-sellers:*'),
+      cache.del('search:facets:*'),
+    ]);
+  } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
+}
 
 // GET /products/admin/qa-queue
 router.get('/qa-queue', asyncHandler(async (req, res) => {
@@ -46,6 +59,7 @@ router.post('/:id/force-approve',
         [req.user.sub, req.user.role, req.params.id, JSON.stringify({ reason: req.body.reason })]
       );
     });
+    await invalidateProductCache();
     res.json({ ok: true });
   })
 );
@@ -79,6 +93,7 @@ router.post('/:id/platform-take',
       [req.user.sub, req.user.role, req.params.id, JSON.stringify({ reason: req.body.reason, duplicate_id: dup.rows[0].id })]
     );
     log.warn({ original: req.params.id, platform_copy: dup.rows[0].id }, '[product.platform_take]');
+    await invalidateProductCache();
     res.json({ ok: true, platform_product: dup.rows[0] });
   })
 );
@@ -86,6 +101,7 @@ router.post('/:id/platform-take',
 // POST /products/admin/:id/archive
 router.post('/:id/archive', asyncHandler(async (req, res) => {
   await query(`UPDATE products SET status = 'archived', archived_at = NOW(), updated_at = NOW() WHERE id = $1`, [req.params.id]);
+  await invalidateProductCache();
   res.json({ ok: true });
 }));
 

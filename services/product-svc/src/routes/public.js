@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { asyncHandler, validate, errorHandler } = require('@cas/shared');
+const { asyncHandler, validate, errorHandler, cache } = require('@cas/shared');
 
 const router = express.Router();
 
@@ -57,7 +57,10 @@ router.get('/recommendations/for-me',
 );
 
 // GET /products/:slug/related - produtos relacionados (mesma categoria, exclui o atual)
-router.get('/:slug/related', asyncHandler(async (req, res) => {
+// FIX-WORKER-18 pass2: cache 300s - related products muda raramente (categoria + same tier)
+router.get('/:slug/related',
+  cache.cacheMiddleware((req) => `products:related:${req.params.slug}:lim=${req.query.limit || 6}`, 300),
+  asyncHandler(async (req, res) => {
   const r = await query(
     `SELECT p2.id, p2.slug, p2.title, p2.subtitle, p2.short_description, p2.kind,
             p2.cover_image_url, p2.price_cents, p2.currency, p2.is_free,
@@ -98,7 +101,10 @@ router.get('/compare', asyncHandler(async (req, res) => {
 }));
 
 // GET /products/flash-promo - produtos em promocao relampago ativa (MLB-10)
-router.get('/flash-promo/active', asyncHandler(async (req, res) => {
+// cache 60s - flash promo tem timer curto, mas ainda vale cachear janela curta
+router.get('/flash-promo/active',
+  cache.cacheMiddleware(() => 'products:flash-promo:active', 60),
+  asyncHandler(async (req, res) => {
   const r = await query(
     `SELECT id, slug, title, subtitle, short_description, kind, cover_image_url,
             price_cents, currency, is_free, tech_stack, avg_rating, review_count,
@@ -115,7 +121,13 @@ router.get('/flash-promo/active', asyncHandler(async (req, res) => {
 }));
 
 // GET /products - listagem + filtros facetados
-router.get('/', asyncHandler(async (req, res) => {
+// cache 60s - lista publica de produtos. Invalidada em mutations admin/me.
+router.get('/',
+  cache.cacheMiddleware((req) => {
+    const q = req.query;
+    return `products:list:cat=${q.category||''}:kind=${q.kind||''}:min=${q.min_price||''}:max=${q.max_price||''}:free=${q.free||''}:platform=${q.platform_owned||''}:seller=${q.seller||''}:sort=${q.sort||''}:lim=${q.limit||24}:page=${q.page||1}`;
+  }, 60),
+  asyncHandler(async (req, res) => {
   const lim = Math.min(parseInt(req.query.limit, 10) || 24, 60);
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
 

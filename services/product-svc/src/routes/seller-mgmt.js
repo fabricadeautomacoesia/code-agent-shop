@@ -3,11 +3,22 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache } = require('@cas/shared');
 
 const router = express.Router();
 const log = logger.child({ svc: 'product-svc', mod: 'seller-mgmt' });
 router.use(jwt.requireAuth({ roles: ['seller','admin'] }));
+
+// FIX-WORKER-18: helper de invalidacao reutilizado em todas mutations
+async function invalidate() {
+  try {
+    await Promise.all([
+      cache.del('products:list:*'),
+      cache.del('products:related:*'),
+      cache.del('search:facets:*'),
+    ]);
+  } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
+}
 
 const draftSchema = z.object({
   category_id: z.string().uuid(),
@@ -73,6 +84,7 @@ router.post('/', validate({ body: draftSchema }), asyncHandler(async (req, res, 
      b.cover_image_url || null, JSON.stringify(b.attributes || {}), b.meta_keywords || null]
   );
   log.info({ product_id: r.rows[0].id, seller_user: req.user.sub }, '[product.draft]');
+  await invalidate();
   res.status(201).json({ product: r.rows[0] });
 }));
 
@@ -97,6 +109,7 @@ router.patch('/:id', asyncHandler(async (req, res, next) => {
   if (!cols.length) return res.json({ ok: true, noop: true });
   vals.push(req.params.id);
   await query(`UPDATE products SET ${cols.join(', ')}, updated_at = NOW() WHERE id = $${i}`, vals);
+  await invalidate();
   res.json({ ok: true });
 }));
 
@@ -120,6 +133,7 @@ router.post('/:id/submit', asyncHandler(async (req, res, next) => {
     body: JSON.stringify({ product_id: r.rows[0].id, triggered_by: req.user.sub })
   }).catch((e) => log.warn({ err: e.message }, '[qa.dispatch_failed]'));
 
+  await invalidate();
   res.json({ ok: true, message: 'Produto enviado para QA' });
 }));
 
