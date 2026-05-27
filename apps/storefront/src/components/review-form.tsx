@@ -5,29 +5,8 @@ import { Star, Send } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
-// FIX-WORKER-3 pass 4: mapper friendly para erros review (consistente com qna-form pass 3)
-const REVIEW_ERROR_MESSAGES: Record<string, string> = {
-  already_reviewed:       'Voce ja avaliou este produto.',
-  forbidden_not_buyer:    'Apenas compradores verificados podem avaliar.',
-  order_not_paid:         'O pedido precisa estar pago para avaliacao.',
-  order_not_fulfilled:    'Aguarde o produto ser entregue antes de avaliar.',
-  product_not_found:      'Produto nao encontrado ou foi removido.',
-  rate_limited:           'Muitas avaliacoes em pouco tempo. Aguarde alguns minutos.',
-  spam_detected:          'Avaliacao detectada como spam. Reformule sem links.',
-};
-function friendlyReviewError(e: any): string {
-  const code = e?.data?.error || e?.message || '';
-  if (REVIEW_ERROR_MESSAGES[code]) return REVIEW_ERROR_MESSAGES[code];
-  if (code === 'validation_error' && e?.data?.details?.length) {
-    const d = e.data.details[0];
-    const field = Array.isArray(d.path) ? d.path[d.path.length - 1] : d.path;
-    if (d.code === 'too_big' && field === 'title') return 'Titulo muito longo (max 200 caracteres).';
-    if (d.code === 'too_big' && field === 'body')  return 'Comentario muito longo (max 5000 caracteres).';
-    if (d.code === 'invalid_type' && field === 'rating') return 'Selecione uma nota de 1 a 5 estrelas.';
-    return `Campo ${field}: ${d.message || 'invalido'}`;
-  }
-  return 'Erro ao publicar avaliacao. Tente novamente em instantes.';
-}
+// FIX-WORKER-3 pass 10 (DRY): friendlyReviewError movido para lib/friendly-errors.ts
+import { friendlyReviewError } from '@/lib/friendly-errors';
 
 const TITLE_MAX = 200;
 const BODY_MAX = 5000;

@@ -5,27 +5,8 @@ import { MessageCircle, Send } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
-// FIX-WORKER-3 pass 3: mapper friendly para erros qna (consistente com add-to-cart.tsx)
-const QNA_ERROR_MESSAGES: Record<string, string> = {
-  product_not_found:      'Produto nao encontrado ou foi removido.',
-  spam_detected:          'Pergunta detectada como spam. Reformule de modo educado.',
-  duplicate_question:     'Voce ja fez uma pergunta similar neste produto recentemente.',
-  rate_limited:           'Voce esta perguntando muito rapido. Aguarde alguns minutos.',
-  forbidden_role:         'Apenas compradores cadastrados podem fazer perguntas.',
-  question_too_short:     'Pergunta muito curta. Use ao menos 5 caracteres.',
-  question_too_long:      'Pergunta muito longa. Limite de 2000 caracteres.',
-};
-function friendlyQnaError(e: any): string {
-  const code = e?.data?.error || e?.message || '';
-  if (QNA_ERROR_MESSAGES[code]) return QNA_ERROR_MESSAGES[code];
-  if (code === 'validation_error' && e?.data?.details?.length) {
-    const d = e.data.details[0];
-    if (d.code === 'too_small') return 'Pergunta muito curta (minimo 5 caracteres).';
-    if (d.code === 'too_big')   return 'Pergunta muito longa (maximo 2000 caracteres).';
-    return `Campo invalido: ${d.message || 'erro de validacao'}`;
-  }
-  return 'Erro ao enviar pergunta. Tente novamente em instantes.';
-}
+// FIX-WORKER-3 pass 10 (DRY): friendlyQnaError movido para lib/friendly-errors.ts
+import { friendlyQnaError } from '@/lib/friendly-errors';
 
 const MIN_LEN = 5;
 const MAX_LEN = 2000;

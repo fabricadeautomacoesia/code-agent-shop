@@ -6,26 +6,8 @@ import { ShoppingCart, Loader2, Check, AlertCircle } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth, useUI } from '@/lib/store';
 
-// FIX-WORKER-3 pass 2: mapper local para erros de cart (alert() raw -> friendly PT)
-const CART_ERROR_MESSAGES: Record<string, string> = {
-  product_not_available: 'Produto indisponivel ou foi removido.',
-  product_not_found:     'Produto nao encontrado.',
-  validation_error:      'Dados invalidos. Tente novamente.',
-  cart_locked:           'Carrinho temporariamente bloqueado. Aguarde alguns segundos.',
-  forbidden_role:        'Sua conta nao tem permissao para esta acao.',
-  rate_limited:          'Muitas requisicoes. Aguarde alguns minutos.',
-};
-function friendlyCartError(e: any): string {
-  const code = e?.data?.error || e?.message || '';
-  if (CART_ERROR_MESSAGES[code]) return CART_ERROR_MESSAGES[code];
-  if (code === 'validation_error' && e?.data?.details?.length) {
-    const d = e.data.details[0];
-    const field = Array.isArray(d.path) ? d.path[d.path.length - 1] : d.path;
-    if (d.code === 'too_big' && field === 'quantity') return 'Quantidade maxima por item: 99.';
-    return `Campo ${field}: ${d.message || 'invalido'}`;
-  }
-  return 'Erro ao adicionar ao carrinho. Tente novamente.';
-}
+// FIX-WORKER-3 pass 10 (DRY): friendlyCartError movido para lib/friendly-errors.ts
+import { friendlyCartError } from '@/lib/friendly-errors';
 
 /**
  * Botoes "Comprar agora" e "Adicionar ao carrinho" funcionais.
