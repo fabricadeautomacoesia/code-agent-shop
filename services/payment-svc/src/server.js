@@ -287,12 +287,19 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
     if (exists.rows.length) return res.json({ ok: true, duplicate: true });
   }
 
-  // Audita SEMPRE (mesmo invalido) para investigacao de tentativas de fraude
-  await query(
+  // FIX-WORKER-11 pass 6: capturar event_row_id p/ poder atualizar processed_at/processing_error
+  // depois do setImmediate. Antes: rows da tabela ficavam SEMPRE com processed_at=NULL
+  // (campo presente no schema mas nunca populado). Auditoria/reconciliacao impossivel:
+  // - SELECT * FROM asaas_webhook_events WHERE processed_at IS NULL = sempre TODOS
+  // - SELECT * WHERE processing_error IS NOT NULL = sempre vazio (mesmo com fails)
+  // - retry_count sempre 0 mesmo com webhooks reprocessados
+  const insertResult = await query(
     `INSERT INTO asaas_webhook_events (event_type, asaas_event_id, asaas_payment_id, payload, signature_valid)
-     VALUES ($1, $2, $3, $4::JSONB, $5)`,
+     VALUES ($1, $2, $3, $4::JSONB, $5)
+     RETURNING id`,
     [data.event, data.id || null, data.payment?.id || null, JSON.stringify(data), valid]
   );
+  const eventRowId = insertResult.rows[0]?.id;
 
   // Se invalido, NUNCA processa - retorna 401
   if (!valid) {
@@ -302,8 +309,37 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
 
   res.json({ ok: true });
 
-  // Processa assincrono apenas se valido
-  setImmediate(() => processWebhookEvent(data).catch((e) => log.error({ err: e.message }, '[webhook.process.fail]')));
+  // FIX-WORKER-11 pass 6: tracking processed_at + processing_error em fluxo async.
+  // Em sucesso: processed_at = NOW() (audit pode SELECT WHERE processed_at IS NULL p/ stuck).
+  // Em falha: processing_error gravado p/ debugging + retry_count incrementado.
+  // Asaas considera entregue (200 ja foi enviado), mas operador pode reprocessar
+  // manualmente via UPDATE retry_count + cron job futuro.
+  setImmediate(async () => {
+    try {
+      await processWebhookEvent(data);
+      // Marca processed_at e linka order_id se descoberto
+      const orderLink = data.payment?.id
+        ? await query('SELECT id FROM orders WHERE asaas_payment_id = $1', [data.payment.id]).catch(() => ({ rows: [] }))
+        : { rows: [] };
+      await query(
+        `UPDATE asaas_webhook_events
+            SET processed_at = NOW(),
+                order_id = COALESCE(order_id, $1::UUID),
+                processing_error = NULL
+          WHERE id = $2`,
+        [orderLink.rows[0]?.id || null, eventRowId]
+      );
+    } catch (e) {
+      log.error({ err: e.message, eventRowId }, '[webhook.process.fail]');
+      await query(
+        `UPDATE asaas_webhook_events
+            SET processing_error = $1,
+                retry_count = retry_count + 1
+          WHERE id = $2`,
+        [String(e.message).slice(0, 500), eventRowId]
+      ).catch(() => {});
+    }
+  });
 }));
 
 async function processWebhookEvent(evt) {
