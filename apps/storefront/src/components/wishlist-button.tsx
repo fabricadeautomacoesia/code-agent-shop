@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Heart, Loader2 } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth, useWishlist } from '@/lib/store';
@@ -16,6 +17,7 @@ export function WishlistButton({
   productId: string;
   variant?: 'pdp' | 'card';
 }) {
+  const router = useRouter();
   const { token } = useAuth();
   const { has, add, remove, load } = useWishlist();
   const inStore = has(productId);
@@ -52,8 +54,16 @@ export function WishlistButton({
   async function toggle(e?: React.MouseEvent) {
     // Card overlay esta DENTRO de um <Link> wrapper - evita navegar para PDP
     if (e) { e.preventDefault(); e.stopPropagation(); }
+    // FIX-WORKER-3 pass 4 (Pattern B): explicit guard anti-double-click.
+    // setState eh async - 2 cliques em <16ms ambos passavam guard.
+    // Mesmo bug que AddToCart pass 3 #2: optimistic flip 2x = volta visual
+    // ao estado original + 2 POST/DELETE -> backend race.
+    if (loading) return;
     if (!token) {
-      window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+      // FIX-WORKER-3 pass 4 (Regra D): router.push soft-nav em vez de hard-redirect
+      // (mesmo fix AddToCart pass 3 #4). Preserva history + state + ~50ms vs 500ms.
+      const next = encodeURIComponent(window.location.pathname);
+      router.push(`/login?next=${next}`);
       return;
     }
     // FIX-WORKER-3 pass 6: optimistic update com rollback em erro.

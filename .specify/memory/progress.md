@@ -11704,3 +11704,73 @@ PROXIMA ITER:
 - W3 pass 4: WishlistButton optimistic update (mesmo pattern guard A+B+C)
 - W3 pass 5: buyNow semantica - design decision (incrementa qty vs checkout direto)
 - W18 pass 6: idx parcial order_items status='paid' (co_buyers CTE)
+
+================================================================
+ITER W3 PASS 4 - WishlistButton Pattern B+D guards (2026-05-27)
+================================================================
+ESCOPO: PDP WishlistButton (variants 'pdp' large + 'card' overlay)
+FILE: apps/storefront/src/components/wishlist-button.tsx
+
+CONTEXTO: W3 pass 3 estabeleceu Pattern A+B+C race-condition guard.
+Auditoria do WishlistButton revelou faltavam Pattern B + Regra D
+(boa cobertura em A=N/A botao unico e C=try/finally OK).
+
+BUGS CORRIGIDOS (2):
+
+1. Pattern B violado - sem explicit guard double-click
+- ANTES: setLoading(true) async (next React tick). 2 cliques em <16ms
+  ambos veem loading=false -> ambos passam para handler
+- IMPACTO REAL:
+  a. optimistic flip 2x: setFavorited(!wasInWishlist) duas vezes ->
+     visualmente VOLTA ao estado original (toggle * 2 = identity)
+  b. 2 requests POST/DELETE simultaneos: backend race conflict
+     - Se segundo chegar antes do primeiro processar: 409 duplicate insert
+     - Se primeiro processar primeiro: segundo era no-op mas consome rate-limit
+  c. errorFlash race: segundo erro pode disparar setErrorFlash(true)
+     enquanto primeiro ainda no setTimeout 2s -> piscar duplo
+- FIX: if (loading) return; explicito ANTES de setState/mutate
+- Mesmo bug que AddToCart pass 3 #2 - pattern reusable consolidado
+
+2. Regra D violada (W8 pass 1+2) - window.location.href hard-redirect
+- ANTES linha 56: window.location.href = '/login?next=' + encodeURI(...)
+- IMPACTO:
+  a. Full page reload (~500ms vs router.push ~50ms)
+  b. Perde history -> botao voltar pos-login NAO retorna ao PDP
+  c. Perde state Next (scroll position, modals abertos, etc)
+  d. Cookies session re-validados em vez de soft-nav
+- FIX: importar useRouter + router.push(`/login?next=${next}`)
+- BONUS: pos-login user volta para PDP que tinha tentado favoritar
+  (UX MLB style "lembrei onde estava")
+
+OUTROS BUGS CONSIDERADOS, NAO CORRIGIDOS:
+
+3. PDP variant /check + card variant store race
+- PDP usa endpoint /check, card usa store global useWishlist
+- Cenario: PDP aberto + Home volta + card remove -> store update propaga
+  -> PDP useEffect line 36 dispara /check fresh = refetch desperdicado
+- NAO CORRIGIDO: PDP variant deveria tambem usar store para consistencia.
+  Mudaria arquitetura - merece iter dedicada.
+
+4. Card variant store + setFavorited local race
+- useEffect [inStore] line 43 sobrescreve optimistic
+- Na pratica: optimistic ja sincronizou ambos -> useEffect roda noop
+- Funciona acidentalmente mas frageil a refactors futuros.
+- NAO CORRIGIDO: simplificar para usar SO store (sem favorited local).
+  Refactor maior.
+
+PATTERN W3 RACE-CONDITION GUARD CROSS-COMPONENTS:
+- AddToCart pass 3: A + B + C aplicados
+- WishlistButton pass 4: B + C aplicados (A N/A)
+- Aplicavel: CompareButton, PriceAlertButton, NotificationBell action buttons
+
+W3 PDP PROGRESS:
+- pass 1: fetchRelated 3 bugs catastroficos
+- pass 2: also-bought 4 bugs (CRITICO prod URL)
+- pass 3: AddToCart 4 race conditions
+- pass 4: WishlistButton Pattern B+D (esta iter)
+
+PROXIMA ITER:
+- W3 pass 5: CompareButton auditar Pattern A+B+C+D
+- W3 pass 6: PriceAlertButton auditar mesmo pattern
+- W3 pass 7: PDP variant /check refactor usar store (architectural)
+- W18 pass 6: idx parcial order_items status='paid'
