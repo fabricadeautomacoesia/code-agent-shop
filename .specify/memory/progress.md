@@ -3936,3 +3936,68 @@ PROXIMA ITER:
 - Considerar rotacao AES key zero-downtime (3 fases: dual-decrypt, re-encrypt,
   drop-old). Complexo, deixar para iter futura.
 - Audit packages/shared/src/jwt.js para mesmo pattern de validacao de env
+
+## WORKER 17 pass 6 (SHARED/JWT) - fail-closed em prod + DLP latent
+
+GAP DETECTADO (proxima iter do W17 pass 5):
+"Audit packages/shared/src/jwt.js para mesmo pattern de validacao de env"
+
+VULNERABILIDADE LATENTE ENCONTRADA (CRITICA):
+packages/shared/src/jwt.js linhas 9-10 tinham fallback HARDCODED:
+  ACCESS_SECRET  = process.env.JWT_ACCESS_SECRET || 'dev-access-secret-CHANGE-ME'
+  REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret-CHANGE-ME'
+
+Vetor latente (NAO exploitavel agora pq prod tem 64 chars):
+- Ops um dia restart sem env (typo, secrets rotation falha, .env perdido)
+- Secrets viram strings hardcoded conhecidas em GitHub publico
+- Atacante forja qualquer JWT (role='admin', sub=qualquer user_id)
+- COMPROMETIMENTO TOTAL: acesso admin, login as anyone, bypass de auth
+
+Diagnostico de prod (curl /api/auth check):
+- JWT_ACCESS_SECRET length: 64 chars OK (validado via docker exec)
+- JWT_REFRESH_SECRET length: 64 chars OK
+Sistema NAO esta vulneravel agora - fix eh defensivo (prevent future disaster).
+
+FIX (1 arquivo - packages/shared/src/jwt.js):
++ const PROD = NODE_ENV === 'production'
++ const MIN_SECRET_LEN = 32 (256-bit minimo para HS256)
++ _loadSecret(name) com fail-closed:
+  - PROD + (ausente OR < 32 chars) -> console.error + process.exit(1)
+  - DEV mantem fallback (jest/local dev nao quebram)
++ Mensagem opaca (DLP): expoe nome da env mas operador VAI investigar
+  (vs ataque externo - exit faz container reiniciar = alerta ops imediato)
+
+DEPLOY (12 services Node + gateway = 13 total):
+- commit e15dc88 pushed
+- 12 builds paralelos em 3 batches (~2.2s cada)
+- 11 service updates (excluindo gateway): converged em <30s
+- Smoke test pos batch 1: login + verify + orders OK
+- Gateway update SEPARADO (2 replicas zero-downtime): converged
+
+Services rebuildados:
+aiops, auth, gateway, notification, order, payment, product, qa,
+review, search, seller, vault
+
+VALIDACAO PUBLICA (smoke test final):
+- /api/products?limit=1 -> 200 + JSON OK (gateway routing OK)
+- /api/auth/login -> JWT 337 chars assinado OK (auth-svc OK)
+- /api/orders auth -> 200 + JSON pedidos OK (cross-service JWT verify OK)
+
+IMPACTO:
+- Comprometimento total via fallback hardcoded IMPOSSIVEL agora
+- Container fail-fast vs vulnerable silencioso (Swarm restart loop visivel)
+- Resilencia: prod nunca subira com secrets fracos sem ops notar
+- Defense em depth: secret > 32 chars enforce minimum entropy HS256
+
+LICAO ARQUITETURAL:
+Fallback hardcoded em env critico = ARMADILHA LATENTE.
+Padroes para Blueprint V8:
+- Production env vars criticos: FAIL-CLOSED no module load
+- Length minimum em secrets HMAC (32 chars = 256-bit)
+- Console.error + process.exit (NAO throw silencioso)
+- Mensagem opaca em logs (operador investiga via stack/restart loop)
+
+PROXIMA ITER:
+- Mesma estrategia para outras envs criticas: DATABASE_URL, REDIS_URL,
+  ASAAS_WEBHOOK_SECRET, QA_CALLBACK_SECRET
+- Consider startup health-check unificado em packages/shared/src/startup.js
