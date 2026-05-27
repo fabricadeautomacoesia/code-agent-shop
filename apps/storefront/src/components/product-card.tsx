@@ -2,6 +2,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { Star, ShoppingCart, Award } from 'lucide-react';
 import { Api } from '@/lib/api';
+import { Installments } from './installments';
 
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
   iniciante:      { label: 'Iniciante', color: 'bg-gray-500/20 text-gray-300' },
@@ -71,6 +72,8 @@ export function ProductCard({ product }: { product: any }) {
               <div className="font-display font-bold text-magenta-glow text-lg">
                 {product.is_free ? 'Gratis' : Api.formatBRL(product.price_cents)}
               </div>
+              {/* MLB-NEW WORKER 17: parcelamento sem juros (compact) */}
+              <Installments priceCents={product.price_cents} isFree={product.is_free} variant="card" />
             </div>
           </div>
         </div>

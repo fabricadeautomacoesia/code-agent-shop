@@ -102,4 +102,16 @@ export const Api = {
   me:          (token: string) => api<{ user: any }>('/auth/me', { auth: token }),
   formatBRL:   (cents: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((cents || 0) / 100),
+  /**
+   * MLB-NEW WORKER 17: calcula parcelamento sem juros padrao Mercado Livre.
+   * Regra: max 12x, parcela minima R$5 (500 cents). Retorna { n, perCents } ou null se < min.
+   */
+  installments: (cents: number, max = 12, minParcelaCents = 500) => {
+    if (!cents || cents <= 0) return null;
+    let n = max;
+    while (n > 1 && Math.floor(cents / n) < minParcelaCents) n--;
+    if (n < 2) return null;
+    const perCents = Math.floor(cents / n);
+    return { n, perCents };
+  },
 };

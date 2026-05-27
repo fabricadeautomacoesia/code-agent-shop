@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { Clock, ChevronRight, Star } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
+import { Installments } from './installments';
 
 /**
  * MLB-NEW: "Vistos recentemente" - secao client-side que aparece SE user logado
@@ -73,6 +74,8 @@ export function RecentlyViewed() {
                   {p.is_free ? 'Gratis' : Api.formatBRL(p.price_cents)}
                 </div>
               </div>
+              {/* MLB-NEW WORKER 17: parcelas compact */}
+              <Installments priceCents={p.price_cents} isFree={p.is_free} variant="card" />
             </div>
           </Link>
         ))}

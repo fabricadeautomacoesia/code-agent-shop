@@ -7,6 +7,7 @@ import { AddToCart } from '@/components/add-to-cart';
 import { WishlistButton } from '@/components/wishlist-button';
 import { ProductTabs } from '@/components/product-tabs';
 import { AskQuickButton } from '@/components/ask-quick-button';
+import { Installments } from '@/components/installments';
 import { JsonLd, productLd, breadcrumbLd } from '@/components/json-ld';
 
 export const revalidate = 30;
@@ -128,6 +129,8 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             <div className="text-4xl font-display font-bold text-magenta-glow mb-6">
               {product.is_free ? 'Gratis' : Api.formatBRL(product.price_cents)}
             </div>
+            {/* MLB-NEW WORKER 17: parcelamento sem juros estilo Mercado Credito */}
+            <Installments priceCents={product.price_cents} isFree={product.is_free} variant="pdp" />
             <div className="flex gap-2 mb-3">
               <div className="flex-1">
                 <AddToCart productId={product.id} isFree={product.is_free} />
@@ -233,6 +236,8 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                       <span className="text-white/40">- {p.sales_count} vendas</span>
                     </div>
                     <div className="font-display font-bold text-magenta-glow mt-1">{p.is_free ? 'Gratis' : Api.formatBRL(p.price_cents)}</div>
+                    {/* MLB-NEW WORKER 17: parcelas em produto relacionado */}
+                    <Installments priceCents={p.price_cents} isFree={p.is_free} variant="card" />
                   </div>
                 </div>
               </Link>
