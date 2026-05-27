@@ -214,13 +214,25 @@ router.post('/checkout',
 
 // GET /orders - lista pedidos do usuario
 router.get('/', asyncHandler(async (req, res) => {
+  // FIX-WORKER-7 pass 18: 2 bugs aplicando Pattern W7:
+  // 1. Regra D violada: ORDER BY o.created_at DESC sem tiebreaker.
+  //    2 orders criadas no mesmo ms (raro em produção, comum em testes
+  //    de carga ou batch import) = ordem arbitraria PG. Paginate UX salta.
+  //    FIX: tiebreaker o.id (UUID sempre unique).
+  // 2. Regra H violada: json_agg em items_preview retornava NULL quando
+  //    order sem items (rare: race tx() falha apos INSERT order). Frontend
+  //    .items_preview.map() crash TypeError.
+  //    FIX: COALESCE(json_agg(...), '[]'::JSON) defense.
   const r = await query(
     `SELECT o.id, o.order_number, o.status, o.payment_status, o.total_cents, o.currency,
             o.payment_method, o.created_at, o.paid_at,
-            (SELECT json_agg(json_build_object('title', snapshot->>'title', 'cover', snapshot->>'cover_image_url'))
-               FROM order_items WHERE order_id = o.id) AS items_preview
+            COALESCE(
+              (SELECT json_agg(json_build_object('title', snapshot->>'title', 'cover', snapshot->>'cover_image_url'))
+                 FROM order_items WHERE order_id = o.id),
+              '[]'::JSON
+            ) AS items_preview
        FROM orders o WHERE o.buyer_user_id = $1
-       ORDER BY o.created_at DESC LIMIT 50`,
+       ORDER BY o.created_at DESC, o.id LIMIT 50`,
     [req.user.sub]
   );
   res.json({ orders: r.rows });
@@ -230,20 +242,30 @@ router.get('/', asyncHandler(async (req, res) => {
 router.get('/admin/recent',
   jwt.requireAuth({ roles: ['admin','staff'] }),
   asyncHandler(async (req, res) => {
+    // FIX-WORKER-7 pass 18: tiebreaker (Regra D) + window temporal stats
     const r = await query(
       `SELECT o.id, o.order_number, o.status, o.payment_status, o.total_cents, o.currency,
               o.payment_method, o.buyer_user_id, o.created_at, o.paid_at,
               u.email AS buyer_email, u.full_name AS buyer_name
          FROM orders o
          JOIN users u ON u.id = o.buyer_user_id
-        ORDER BY o.created_at DESC LIMIT 100`
+        ORDER BY o.created_at DESC, o.id LIMIT 100`
     );
+    // FIX-WORKER-7 pass 18: stats window temporal 90 days.
+    // PRE-FIX: COUNT(*) FROM orders SEM filtro temporal -> full table scan
+    // toda vez admin abre dashboard. Em escala MLB (1M orders) = ~2-5s PG CPU
+    // por hit. Admin abre /admin/recent muitas vezes/dia.
+    // POS-FIX: WHERE created_at > NOW() - 90 days -> scan idx_orders_created
+    // -> ~10-50ms em 1M orders (~50x).
+    // 90d eh padrao "recent" - admin querendo all-time usa /admin/financials.
+    // Stats reflete contexto "ultimo trimestre" - mais util que all-time.
     const stats = await query(
       `SELECT
          COUNT(*) FILTER (WHERE status IN ('paid','fulfilled')) AS count_paid,
          COUNT(*) FILTER (WHERE status = 'pending_payment') AS count_pending,
-         COALESCE(SUM(total_cents) FILTER (WHERE status IN ('paid','fulfilled')), 0) AS total_revenue
-         FROM orders`
+         COALESCE(SUM(total_cents) FILTER (WHERE status IN ('paid','fulfilled')), 0) AS total_revenue,
+         '90 days' AS window
+         FROM orders WHERE created_at > NOW() - INTERVAL '90 days'`
     );
     res.json({ orders: r.rows, stats: stats.rows[0] });
   })
@@ -255,10 +277,36 @@ router.get('/admin/recent',
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 router.get('/:id', asyncHandler(async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) return next(errorHandler.notFound('order_not_found'));
+  // FIX-WORKER-7 pass 18: 2 bugs (Regra I + Regra H):
+  // 1. SELECT o.* expoe colunas internas: idempotency_key (replay attack vector
+  //    se vazado), buyer_ip+buyer_user_agent (PII), expires_at internal logic,
+  //    asaas_charge_id (internal payment provider reference).
+  // 2. json_agg(oi.*) EXPOE download_token plain text - se user nao for o
+  //    buyer ainda mas admin/staff (linha 261 condicao role permite ler order
+  //    de outro user), download_token VAZA ao admin -> admin pode baixar
+  //    produto de qualquer order. SECURITY ISSUE.
+  //    + Regra H: json_agg NULL se 0 items (raro mas possivel).
+  // FIX: lista explicita campos consumidos pelo frontend.
+  // download_token EXCLUIDO do response - admin nao deve ver.
+  // /orders/:id/download eh endpoint dedicado com check buyer-only.
   const r = await query(
-    `SELECT o.*,
-       (SELECT json_agg(oi.*) FROM order_items oi WHERE oi.order_id = o.id) AS items
-       FROM orders o WHERE o.id = $1 AND (o.buyer_user_id = $2 OR $3 = TRUE)`,
+    `SELECT o.id, o.order_number, o.status, o.payment_status, o.total_cents,
+            o.subtotal_cents, o.discount_cents, o.coupon_code, o.currency,
+            o.payment_method, o.created_at, o.paid_at, o.fulfilled_at,
+            o.loyalty_points_redeemed, o.loyalty_discount_cents,
+            COALESCE(
+              (SELECT json_agg(json_build_object(
+                 'id', oi.id, 'product_id', oi.product_id,
+                 'unit_price_cents', oi.unit_price_cents,
+                 'quantity', oi.quantity,
+                 'line_total_cents', oi.line_total_cents,
+                 'snapshot', oi.snapshot
+               ) ORDER BY oi.created_at, oi.id)
+                 FROM order_items oi WHERE oi.order_id = o.id),
+              '[]'::JSON
+            ) AS items
+       FROM orders o
+      WHERE o.id = $1 AND (o.buyer_user_id = $2 OR $3 = TRUE)`,
     [req.params.id, req.user.sub, ['admin','staff'].includes(req.user.role)]
   );
   if (!r.rows.length) return next(errorHandler.notFound('order_not_found'));

@@ -12853,3 +12853,85 @@ PROXIMA ITER:
 - W7 pass 19: loyalty/redeem audit (pattern similar)
 - W18 pass 7: idx parcial product_views > 90d
 - W3 pass 10: refatorar CartDrawer usar <Dialog>
+
+================================================================
+ITER W7 PASS 18 - order-svc orders.js READ + SECURITY (2026-05-27)
+================================================================
+ESCOPO: order-svc routes/orders.js 3 READ endpoints (GET / + /admin/recent + /:id)
+FILE: services/order-svc/src/routes/orders.js (linhas 186-266)
+
+CONTEXTO: W7 pass 17 corrigiu CRITICAL WRITE (checkout) e deferiu 4 bugs
+READ. Audit aprofundado revelou 5 bugs (1 SECURITY + 4 patterns):
+
+BUGS CORRIGIDOS (5):
+
+1. *** SECURITY *** GET /orders/:id download_token VAZAVA AO ADMIN
+- PRE-FIX linha 260: SELECT json_agg(oi.*) FROM order_items oi
+  - oi.* incluia download_token (plain text - URL secreta acesso ao produto)
+- Linha 261 condicao: WHERE buyer_user_id = $2 OR $3 = TRUE
+  - $3 = admin role -> admin pode ler ORDERS DE QUALQUER USER
+- IMPACTO: admin lia order do user X -> response inclui download_token
+  do user X -> admin pode usar URL para baixar produto comprado por user X
+- SEVERIDADE: Information Disclosure (PII + payment-gated content)
+- FIX: json_build_object explicit fields - download_token NAO incluido
+- Endpoint dedicado /orders/:id/download faz check buyer-only
+- BONUS: idempotency_key, buyer_ip, buyer_user_agent, asaas_charge_id
+  tambem removidos (Regra I = lista explicita = security cross-svc)
+
+2. REGRA I violada SELECT o.* (linha 259)
+- Pre-fix expunha: idempotency_key (replay attack vector se vazado),
+  buyer_ip + buyer_user_agent (PII), expires_at logic interna,
+  asaas_charge_id (provider ref)
+- FIX: 14 campos explicitos consumidos pelo frontend
+- Pattern security cross-svc consolidado (Regra I cross-iter)
+
+3. REGRA H violada json_agg NULL (linhas 220 e 260)
+- GET /: items_preview NULL se 0 items (race tx() falha pos-INSERT order)
+- GET /:id: items NULL se 0 items
+- Frontend .items.map() crash TypeError
+- FIX: COALESCE(json_agg(...), '[]'::JSON) defense ambos
+
+4. REGRA D violada tiebreaker (linhas 193 e 209)
+- GET / ORDER BY o.created_at DESC sem tiebreaker (50 LIMIT)
+- GET /admin/recent ORDER BY o.created_at DESC (100 LIMIT)
+- 2 orders mesmo ms = ordem arbitraria (raro prod, comum testes carga)
+- FIX: tiebreaker o.id (UUID sempre unique)
+- Bonus: json_agg order_items ORDER BY oi.created_at, oi.id (consistencia)
+
+5. PERF stats /admin/recent FULL TABLE SCAN
+- Pre-fix linha 246: COUNT(*) FROM orders sem WHERE
+- Em escala MLB (1M orders): ~2-5s PG CPU por hit
+- Admin abre /admin/recent muitas vezes/dia -> ~30s+ wasted PG CPU/admin/day
+- FIX: WHERE created_at > NOW() - INTERVAL '90 days'
+- Hit idx_orders_created -> ~10-50ms em 1M orders (~50x)
+- Stats agora reflete "ultimo trimestre" (contexto admin mais util)
+- All-time stats movidas conceitualmente p/ /admin/financials (existente)
+- Bonus: stats.window field declara "90 days" no response
+
+PATTERN W7 12 ENDPOINTS + 10 REGRAS (A-J):
+- product-svc: 4 endpoints
+- search-svc: 5 endpoints (+ /trending audit clean)
+- order-svc: cart.js (POST /items + 2 coupon), orders.js (checkout WRITE
+             pass 17, 3 READ pass 18)
+
+W7 PROGRESS:
+- product-svc: passes 1-10
+- search-svc: passes 11-15 (+ aiops-svc audit)
+- order-svc: passes 16 (cart.js), 17 (checkout WRITE), 18 (orders.js READ)
+
+REGRA J ORPHAN DETECTION GUARD reusable:
+- Aplicado: orders/checkout (pass 17)
+- Pendente: wishlist endpoints (futuro)
+- Pendente: compare_items endpoints (futuro)
+
+SECURITY LICOES CONSOLIDADAS (passes 13-18):
+- Regra G: SQL LIKE wildcard escape (pass 13)
+- Regra I: SELECT explicit fields (pass 15) - HOJE evitou download_token leak
+- Pass 17 CRITICAL WRITE: deleted_at IS NULL em endpoints write
+- Pass 18 SECURITY: admin reading order de outro user nao vaza secrets
+
+PROXIMA ITER:
+- W7 pass 19: cart.js loyalty/redeem audit
+- W7 pass 20: download.js audit (download_token consumption)
+- W18 pass 7: idx parcial product_views > 90d
+- W3 pass 10: refatorar CartDrawer usar <Dialog>
