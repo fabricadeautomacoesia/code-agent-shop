@@ -2557,3 +2557,50 @@ OBSERVACAO LIMITACAO:
 - Atacante distribuindo sob LB pode passar de 5 falhas globalmente
 - Migration futura: usar Redis (cache layer) para shared state
 - Aceitable hoje: replicas=1 por svc nos secrets-protected endpoints
+
+## WORKER 18 pass 3 (PERFORMANCE) - tentativa de idx outbox e RETRACT
+Audit pg_stat: notifications continua liderando seq_scan (2362). Hipotese
+inicial: query do outbox cron filtra locked_by IS NULL que nao estava no
+WHERE parcial de idx_notif_outbox_ready -> heap recheck custoso.
+
+CRIADO: migration 022_notifications_outbox_unlocked.sql
+- CREATE INDEX idx_notif_outbox_unlocked com WHERE incluindo locked_by IS NULL
+
+POS-DEPLOY VALIDACAO HONESTA (EXPLAIN ANALYZE):
+- Planner CONTINUA escolhendo idx_notif_outbox_ready (criado em mig 016)
+- Index Cond: channel + next_retry_at no idx existente
+- Filter recheck: locked_by + retry_count + sent_status (cheap, <1ms)
+- idx_notif_outbox_unlocked nao foi escolhido (idx_scan=0 desde criacao)
+- Conclusao: minha hipotese estava errada. O idx 016 ja resolvia.
+
+CORRECAO: migration 023_drop_redundant_outbox_index.sql
+- DROP INDEX idx_notif_outbox_unlocked
+- Honesty doc: WHERE parcial em mig 016 e otimo, postgres faz cheap recheck
+  do locked_by IS NULL apos Index Cond filtrar 99% das rows. A 50k rows nao
+  vira gargalo. Manter o idx redundante so adicionaria write overhead.
+
+REASON SEQ SCAN AINDA ALTO em notifications:
+- Mesmo com 4 rows, cron 30s executa processOutbox 2x/min = 2880/dia
+- Cada execucao ainda prefere Seq Scan a 4 rows (planner correto)
+- A 50k+ rows o planner switchara automaticamente para idx_notif_outbox_ready
+- Nao ha bug aqui - eh comportamento esperado
+
+OUTRA TENTATIVA DE INVESTIGACAO (PDP query):
+- EXPLAIN ANALYZE PDP /api/products/:slug (4 subqueries):
+  Execution Time: 1.399ms total (sub-millisecond por subquery)
+  Tags via product_tags_pkey Bitmap Index Scan OK
+  Versions via idx_pv_product Index Scan OK
+  Media Seq Scan (so 0 rows na tabela) OK
+- Saudavel.
+
+DEPLOY:
+- commit 33a5743 (mig 022 - bem-intencionada mas no-op)
+- commit 614b0f2 (mig 023 - drop do redundante apos validacao)
+- Ambas aplicadas via psql -f no container
+
+LICAO CAPTURADA:
+- Antes de criar indice: rodar EXPLAIN com SET enable_seqscan=off pra forcar
+  index usage + comparar planner choices entre opcoes.
+- Se planner ja faz "Index Cond + cheap Filter recheck", criar novo indice
+  com Filter no WHERE parcial e provavelmente redundante.
+- Honest retrospective > deploy de codigo inutil.
