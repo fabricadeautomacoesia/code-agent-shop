@@ -17287,7 +17287,29 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc /admin/qa-queue (pass 67) - Regra D+E + LGPD + cache
 - ✅ gateway middleware audit (pass 68) - DLP logs + fail2ban
 - ✅ product-svc GET /products/me (pass 69) - admin bypass + Regra D+E+I + filters
-- ✅ seller-svc /sla-history + /payouts (pass 70 esta iter) - Regra D+E+I + DLP + filter
+- ✅ seller-svc /sla-history + /payouts (pass 70) - Regra D+E+I + DLP + filter
+- ✅ order-svc POST /:id/dispute rate-limit (pass 71 esta iter) - anti-spam
+
+W7 PASS 71 RESUMO:
+- order-svc/src/routes/orders.js POST /:id/dispute refactor:
+  * NEW rate-limiter disputeOpenLimiter (5/hr/IP)
+  * Pre-fix: BUG 4 documentado pass 29 mas SEM limiter implementado
+  * Vetor: atacante compra 10 produtos uniformes -> script abre 100 disputes
+    "plagiarism" em sellers competidores em segundos
+  * Real users: ~1 dispute/mes - 5/hr eh muito permissivo MAS bloqueia
+    script automation
+  * Pattern rate-limit estabelecido pass 32-34 (review/qna/answer)
+- Auditados em pass 71 (no fix needed):
+  * /admin/disputes/:id/resolve (pass 31): Pattern W7 completo OK
+  * GET /:id (pass 18): explicit fields + Regra I OK
+- Pattern W7 em 72 endpoints + 23 regras (A-W) - 71 micro-iters
+- order-svc 100% W7-aplicado em mutation endpoints com user-input
+
+PROXIMA ITER:
+- W7 pass 72: seller-svc /kpi Regra I + sellers.js audit
+- W7 pass 73: product-svc public.js endpoints (search list)
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 70 RESUMO:
 - seller-svc/src/routes/me.js 2 endpoints refactor (8 bugs):

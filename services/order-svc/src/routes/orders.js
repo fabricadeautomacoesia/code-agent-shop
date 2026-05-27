@@ -4,7 +4,21 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, maskPII } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, maskPII, rateLimiter } = require('@cas/shared');
+
+// FIX-WORKER-7 pass 71: rate-limiter anti-spam dispute.
+// PRE-FIX: POST /:id/dispute SEM rate-limit. Atacante com conta legitima:
+//   - Bot dispara 100 disputes "plagiarism" em sellers competidores
+//   - Mesmo com Regra M ownership (so abre dispute do PROPRIO order),
+//     atacante pode ter comprado 10 produtos uniformes -> abrir 1 dispute por item
+//     em SCRIPT loop = 100 disputes em segundos.
+//   - DoS admin queue + reputation attack legitimo.
+//   - Pattern W7 estabelecido (pass 32-34): mutations user-supplied DEVEM ter limiter.
+// FIX: 5 disputes / hora / IP (real users abrem ~1 dispute/mes).
+const disputeOpenLimiter = rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 5,
+  message: 'Muitas disputas abertas recentemente. Aguarde 1 hora.',
+});
 
 const router = express.Router();
 const log = logger.child({ svc: 'order-svc', mod: 'orders' });
@@ -429,6 +443,7 @@ router.get('/:id', asyncHandler(async (req, res, next) => {
 //   UUID validate upfront p/ evitar PG 22P02
 //   audit_log INSERT (forense - dispute eh evento critical)
 router.post('/:id/dispute',
+  disputeOpenLimiter,  // FIX-WORKER-7 pass 71: anti-spam 5/hr/IP
   validate({ body: z.object({
     order_item_id: z.string().uuid(),
     reason_code: z.enum(['not_as_described','not_working','plagiarism','support_missing']),
