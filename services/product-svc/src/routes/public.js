@@ -34,6 +34,20 @@ router.get('/recommendations/for-me',
   require('@cas/shared').jwt.requireAuth(),
   cache.cacheMiddleware((req) => `products:reco:for-me:${req.user.sub}`, 60),
   asyncHandler(async (req, res) => {
+    // FIX-WORKER-7 pass 8: 2 bugs identificados nesta query:
+    //
+    // BUG 1: CTE 'viewed' declarada mas NUNCA USADA na query principal.
+    //   - Produtos ja vistos podem aparecer como recommendation
+    //   - UX ruim: "veja produtos que VOCE JA VIU" = sugestao redundante
+    //   - Recommendations deveria mostrar produtos NOVOS
+    //   FIX: adicionar `AND p.id NOT IN (SELECT ... FROM viewed)` no WHERE
+    //
+    // BUG 2: CTE 'user_categories' nao filtra produtos deletados/non-approved.
+    //   - Se user viu produto X 100x mas X foi deletado, X.category_id ainda
+    //     conta para "top categories" do user
+    //   - Recommendation enviesada por historico stale
+    //   FIX: JOIN com WHERE p.status='approved' AND p.deleted_at IS NULL
+    //   (mesmo pattern de W7 pass 7 /recently-viewed)
     const r = await query(
       `WITH user_categories AS (
          SELECT p.category_id, COUNT(*) AS view_count
@@ -41,12 +55,16 @@ router.get('/recommendations/for-me',
            JOIN products p ON p.id = v.product_id
           WHERE v.user_id = $1
             AND v.created_at > NOW() - INTERVAL '30 days'
+            AND p.status = 'approved'
+            AND p.deleted_at IS NULL
           GROUP BY p.category_id
           ORDER BY view_count DESC
           LIMIT 3
        ),
        viewed AS (
-         SELECT product_id FROM product_views WHERE user_id = $1
+         SELECT DISTINCT product_id FROM product_views
+          WHERE user_id = $1
+            AND created_at > NOW() - INTERVAL '90 days'
        ),
        in_cart_or_owned AS (
          SELECT ci.product_id FROM cart_items ci
@@ -66,6 +84,7 @@ router.get('/recommendations/for-me',
          FROM products p
         WHERE p.status = 'approved' AND p.deleted_at IS NULL
           AND p.id NOT IN (SELECT product_id FROM in_cart_or_owned)
+          AND p.id NOT IN (SELECT product_id FROM viewed)
           AND (
             p.category_id IN (SELECT category_id FROM user_categories)
             OR p.sales_count > 100
