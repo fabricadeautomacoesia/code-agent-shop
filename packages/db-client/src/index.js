@@ -9,6 +9,11 @@ let _pool;
 
 function getPool() {
   if (_pool) return _pool;
+  // FIX-WORKER-10 pass 6: statement_timeout 10s default (configuravel via PG_STATEMENT_TIMEOUT_MS).
+  // Sem isso, queries lentas/runaway podiam locker pool inteiro indefinidamente.
+  // 10s e generoso para queries lentas legitimas (analytics) mas mata runaway loops/cartesianos.
+  // Em prod com slow query log monitoring, alertar quando hit este teto.
+  const statementTimeoutMs = parseInt(process.env.PG_STATEMENT_TIMEOUT_MS || '10000', 10);
   _pool = new Pool({
     host: process.env.PG_HOST || '127.0.0.1',
     port: parseInt(process.env.PG_PORT || '5432', 10),
@@ -19,6 +24,8 @@ function getPool() {
     idleTimeoutMillis: parseInt(process.env.PG_POOL_IDLE_TIMEOUT || '30000', 10),
     connectionTimeoutMillis: 10000,
     application_name: process.env.APP_NAME || 'code-agent-shop',
+    // PG-level timeout: query > 10s -> ERROR canceling statement due to statement timeout
+    statement_timeout: statementTimeoutMs,
   });
   _pool.on('error', (err) => log.error({ err }, '[pg] idle client error'));
   _pool.on('connect', () => log.debug('[pg] new client connected'));

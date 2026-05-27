@@ -5,20 +5,32 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../../.env'
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, cache } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, cache, rateLimiter } = require('@cas/shared');
 
 const log = logger.child({ svc: 'search-svc' });
 const app = express();
 const PORT = parseInt(process.env.PORT_SEARCH || '3019', 10);
 
 app.disable('x-powered-by');
+// FIX-WORKER-10 pass 6: trust proxy para rate-limit usar IP real (X-Forwarded-For do gateway).
+// Sem isso, todos requests do gateway viam mesmo IP -> ban global ao primeiro burst.
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '256kb' }));
 app.use(sanitize.middleware());
+
+// FIX-WORKER-10 pass 6: rate-limit por IP em endpoints public hot.
+// /autocomplete eh hit por keystroke - bot scraping pode hammerar.
+// /search e mais pesado mas tambem expoe ao publico.
+// Limites generous (humanos legit nao atingem) mas barram bots:
+// - /search: 30 req/min por IP (1 req/2s sustentado)
+// - /autocomplete: 60 req/min por IP (1 req/s sustentado, typing rapido OK)
+const searchLimiter = rateLimiter.createLimiter({ windowMs: 60_000, max: 30 });
+const autocompleteLimiter = rateLimiter.createLimiter({ windowMs: 60_000, max: 60 });
 
 app.get('/health', (_req, res) => res.json({ ok: true, svc: 'search-svc' }));
 
 // GET /search?q=...&category=...&kind=...&min_price=...&max_price=...&sort=...&page=...
-app.get('/', asyncHandler(async (req, res) => {
+app.get('/', searchLimiter, asyncHandler(async (req, res) => {
   const t0 = Date.now();
   const q = (req.query.q || '').toString().trim();
   // FIX-WORKER-10 pass 5: early-return para q 1-2 chars SEM filtros (lixo/typo).
@@ -150,7 +162,7 @@ app.get('/', asyncHandler(async (req, res) => {
 }));
 
 // GET /search/autocomplete?q=...
-app.get('/autocomplete', asyncHandler(async (req, res) => {
+app.get('/autocomplete', autocompleteLimiter, asyncHandler(async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (q.length < 2) return res.json({ suggestions: [] });
   const r = await query(
