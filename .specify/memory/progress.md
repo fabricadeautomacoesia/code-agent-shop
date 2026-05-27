@@ -17321,7 +17321,37 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ review-svc /qna/:id/voted (pass 101) - 4 bugs UUID+Regra A+UX+cache
 - ✅ vault-svc /use endpoint (pass 102) - 3 bugs critical security
 - ✅ notification-svc /:id/read (pass 103) - 3 bugs Regra K+rate+UX
-- ✅ order-svc cart.js GET / + DELETE /items/:id (pass 104 esta iter) - 7 bugs
+- ✅ order-svc cart.js GET / + DELETE /items/:id (pass 104) - 7 bugs
+- ✅ order-svc cart.js PATCH /items/:id + coupon/preview (pass 105 esta iter) - 5 bugs
+
+W7 PASS 105 RESUMO:
+- order-svc/src/routes/cart.js 2 endpoints refactor (5 bugs):
+  * PATCH /items/:id (2 bugs):
+    - UUID validate missing: PG 22P02 -> 500 leak
+    - PRODUCT STATUS/DELETED CHECK MISSING:
+      * PRE-FIX: PATCH quantity em product rejected/archived/deleted ainda funcionava
+      * Inconsistencia: GET /cart filtra (pass 104) mas PATCH ainda inc
+      * FIX: UPDATE com EXISTS check products status + deleted_at
+      * 404 cart_item_not_found_or_product_unavailable explicit
+  * GET /coupon/:code/preview (3 bugs):
+    - CODE LENGTH + FORMAT validation
+      * PRE-FIX: req.params.code direto - 10k chars = DoS Redis cache key
+      * Atacante injeta ';DROP TABLE' (PG safe mas cache pollution)
+      * FIX: regex [A-Z0-9_-]{3,40} antes do cache hit (precedence)
+    - ?subtotal_cents NaN guard:
+      * PRE-FIX: parseInt('abc') = NaN -> activeTierIdx loop quebra silent
+      * FIX: Number.isFinite + 400 invalid_subtotal_cents
+    - DLP CACHE KEY: code raw em Redis key
+      * PRE-FIX: 'coupon:preview:WIN10:s=...' - Redis MONITOR expose cupons
+      * FIX: SHA-256 hash 16 chars (pattern pass 92 autocomplete)
+- Pattern W7 em 115 endpoints + 23 regras (A-W) - 105 micro-iters
+
+PROXIMA ITER:
+- W7 pass 106: order-svc cart.js POST /coupon + loyalty/redeem audit
+- W7 pass 107: product-svc admin /:id/force-approve audit
+- Operacional: SSH VPS + bash deploy/w7-deploy-validate.sh
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 104 RESUMO:
 - order-svc/src/routes/cart.js 2 endpoints refactor (7 bugs):

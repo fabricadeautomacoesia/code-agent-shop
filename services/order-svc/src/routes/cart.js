@@ -152,29 +152,53 @@ router.delete('/items/:id', asyncHandler(async (req, res, next) => {
   res.json({ ok: true });
 }));
 
-// FIX-WORKER-2: PATCH /cart/items/:id - atualiza quantidade absoluta + recalcula totals
-// Antes nao existia: UI so removia item ou re-adicionava (sem +/-). Agora UI pode bumpar via 1 call.
+// PATCH /orders/cart/items/:id - atualiza quantidade absoluta + recalcula totals
+// FIX-WORKER-2: introducao do endpoint (era so remove/re-add).
+// FIX-WORKER-7 pass 105: 2 BUGS aplicando Pattern W7 (UUID + Regra A+B product check).
+//
+// BUG 1 *** UUID VALIDATE MISSING *** PG 22P02 -> 500 leak
+//   PRE-FIX: req.params.id direto em $2::UUID - 'invalid' -> PG cast fail.
+//   FIX: CART_ITEM_UUID_RE.test() upfront (reusa do DELETE pass 104).
+//
+// BUG 2 *** PRODUCT STATUS/DELETED CHECK MISSING ***
+//   PRE-FIX: PATCH quantity recalcula line_total_cents = unit_price * quantity.
+//   Cenario: product foi rejected/archived/deleted apos add. User clica +
+//   no cart -> quantity patched + recalcCart re-soma (subtotal_cents).
+//   Inconsistencia: GET /cart filtra product status (pass 104) e exclui item,
+//   mas PATCH ainda permite incrementar item invisivel.
+//   FIX: JOIN products no UPDATE - se product invalid, rowcount=0 -> 404.
 router.patch('/items/:id',
   validate({ body: z.object({ quantity: z.number().int().min(1).max(99) }) }),
   asyncHandler(async (req, res, next) => {
+    // BUG 1: UUID validate upfront
+    if (!CART_ITEM_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('cart_item_not_found'));
+    }
+
     let cartId;
     await tx(async (c) => {
-      // FIX: cart_items nao tem coluna updated_at (apenas created_at).
-      // FIX: cast explicito INT para evitar PG 42P08 (bigint vs integer) quando $1 eh usado em
-      // duas expressoes com tipos diferentes (quantity=int, line_total=bigint).
+      // BUG 2: UPDATE com JOIN products check (Regra A+B)
+      // Cart_item WHERE id matches MAS product NAO mais available -> rowcount=0
       const r = await c.query(
-        `UPDATE cart_items SET
+        `UPDATE cart_items ci SET
             quantity = $1::INT,
-            line_total_cents = unit_price_cents * $1::INT
-          WHERE id = $2::UUID AND cart_id IN (SELECT id FROM carts WHERE user_id = $3::UUID)
-          RETURNING cart_id`,
+            line_total_cents = ci.unit_price_cents * $1::INT
+          WHERE ci.id = $2::UUID
+            AND ci.cart_id IN (SELECT id FROM carts WHERE user_id = $3::UUID)
+            AND EXISTS (
+              SELECT 1 FROM products p
+              WHERE p.id = ci.product_id
+                AND p.status IN ('approved','platform_owned')
+                AND p.deleted_at IS NULL
+            )
+          RETURNING ci.cart_id`,
         [req.body.quantity, req.params.id, req.user.sub]
       );
       if (!r.rows.length) return;
       cartId = r.rows[0].cart_id;
       await recalcCart(c, cartId);
     });
-    if (!cartId) return next(errorHandler.notFound('cart_item_not_found'));
+    if (!cartId) return next(errorHandler.notFound('cart_item_not_found_or_product_unavailable'));
     res.json({ ok: true });
   })
 );
@@ -187,20 +211,49 @@ router.patch('/items/:id',
 // TTL 30s baixo porque used_count/is_active podem mudar mas refresh suficiente.
 // Cache key inclui code + subtotal + user.tier porque min_tier check varia por loyalty tier.
 // Router tem jwt.requireAuth() global - req.user.sub sempre presente.
+// FIX-WORKER-7 pass 105: 3 BUGS aplicando Pattern W7 (input validation + NaN guard + DLP).
+//
+// BUG 1 *** CODE LENGTH + FORMAT MISSING ***
+//   PRE-FIX: req.params.code direto - bot envia 10000 chars = DoS Redis cache
+//   key + DB query cost. Atacante tambem injeta ';DROP TABLE' (PG safe via
+//   parametrizado mas cache key pollution).
+//   FIX: regex whitelist [A-Z0-9_-]{3,40} antes de cache hit.
+//
+// BUG 2 *** ?subtotal_cents NaN GUARD ***
+//   PRE-FIX: parseInt('abc') = NaN -> activeTierIdx loop quebra
+//   (NaN >= NaN === false em todos tiers -> activeTierIdx=-1 silent).
+//   FIX: Number.isFinite check + 400 invalid_subtotal_cents.
+//
+// BUG 3 *** DLP CACHE KEY *** code raw em Redis key
+//   PRE-FIX: cache key 'coupon:preview:WIN10:s=...' - admin com Redis MONITOR
+//   ve cupons tentados por users (potential pre-disclose codes ainda nao ativos).
+//   FIX: SHA-256 hash 16 chars (lookups O(1) sem leak content).
+//   Pattern reaplicavel cross-svc (autocomplete pass 92 estabeleceu).
+const COUPON_CODE_RE = /^[A-Z0-9_-]{3,40}$/i;
+
 router.get('/coupon/:code/preview',
-  // FIX-WORKER-7 pass 16: cache key normalize uppercase (cupons sao
-  // case-insensitive na UX MLB-style). Pre-fix:
-  //   - 'WIN10' / 'win10' / 'Win10' = 3 cache keys diferentes
-  //   - Cache fragmentado, hit rate baixo
-  //   - Abuso possivel: bot envia 1000 variacoes case = balloon Redis
-  // Pos-fix: uppercase no cache key + no SQL bind. UPPER(code) garante
-  // match independente do case input.
+  // Validate code antes do cache hit (precedence)
+  (req, res, next) => {
+    if (!COUPON_CODE_RE.test(String(req.params.code || ''))) {
+      return res.status(400).json({ error: 'invalid_coupon_code', format: 'A-Z0-9_- 3-40 chars' });
+    }
+    next();
+  },
+  // FIX-WORKER-7 pass 16: cache key uppercase (case-insensitive MLB).
+  // FIX-WORKER-7 pass 105: hash defensive (DLP - cache key nao expoe code).
   cache.cacheMiddleware((req) => {
     const code = (req.params.code || '').toUpperCase();
-    return `coupon:preview:${code}:s=${req.query.subtotal_cents || 0}:u=${req.user?.sub || 'anon'}`;
+    const crypto = require('node:crypto');
+    const codeHash = crypto.createHash('sha256').update(code).digest('hex').slice(0, 16);
+    return `coupon:preview:${codeHash}:s=${req.query.subtotal_cents || 0}:u=${req.user?.sub || 'anon'}`;
   }, 30),
   asyncHandler(async (req, res, next) => {
-  const subtotal = parseInt(req.query.subtotal_cents || '0', 10);
+  // BUG 2: NaN guard subtotal_cents
+  const subtotalRaw = req.query.subtotal_cents;
+  const subtotal = subtotalRaw !== undefined ? parseInt(subtotalRaw, 10) : 0;
+  if (!Number.isFinite(subtotal) || subtotal < 0) {
+    return res.status(400).json({ error: 'invalid_subtotal_cents', message: 'subtotal_cents deve ser inteiro >= 0' });
+  }
   // FIX-WORKER-7 pass 16: UPPER(code) na query (case-insensitive lookup).
   // Coupon table store code uppercase por convencao - garante match.
   const c = await query(
