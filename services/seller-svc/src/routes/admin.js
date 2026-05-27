@@ -61,6 +61,67 @@ router.post('/:id/reactivate', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// FIX-WORKER-4: GET /sellers/admin/sla-risk - sellers Classe B proximos do deadline SLA.
+// Critical para admin agir antes da revogacao automatica de API keys.
+// Threshold default: 3 dias (configuravel via query param ?days=N).
+router.get('/sla-risk', asyncHandler(async (req, res) => {
+  const days = Math.min(parseInt(req.query.days || '3', 10), 30);
+  const r = await query(
+    `SELECT s.id, s.store_name, s.store_slug, s.seller_class, s.sla_active,
+            s.sla_days, s.sla_last_upload_at, s.sla_next_deadline_at,
+            s.sla_revoked_count, s.status,
+            EXTRACT(EPOCH FROM (s.sla_next_deadline_at - NOW()))/86400 AS days_remaining,
+            u.email, u.full_name
+       FROM sellers s
+       JOIN users u ON u.id = s.user_id
+      WHERE s.seller_class = 'class_b'
+        AND s.sla_active = TRUE
+        AND s.sla_next_deadline_at IS NOT NULL
+        AND s.sla_next_deadline_at <= NOW() + ($1 || ' days')::INTERVAL
+        AND s.status NOT IN ('suspended','banned')
+      ORDER BY s.sla_next_deadline_at ASC LIMIT 100`,
+    [String(days)]
+  );
+  res.json({ at_risk: r.rows, count: r.rows.length, threshold_days: days });
+}));
+
+// FIX-WORKER-4: GET /sellers/admin/all - listing geral com filtros + paginacao.
+// Suporta ?status=active|pending_kyc|suspended|banned, ?seller_class=class_a|class_b,
+// ?q=search_term (matches store_name ou email), ?limit, ?page.
+router.get('/all', asyncHandler(async (req, res) => {
+  const lim = Math.min(parseInt(req.query.limit || '30', 10), 100);
+  const off = (Math.max(parseInt(req.query.page || '1', 10), 1) - 1) * lim;
+  const where = ['1=1'];
+  const params = [];
+  let i = 1;
+  if (req.query.status) {
+    where.push(`s.status = $${i++}`); params.push(req.query.status);
+  }
+  if (req.query.seller_class) {
+    where.push(`s.seller_class = $${i++}`); params.push(req.query.seller_class);
+  }
+  if (req.query.q) {
+    where.push(`(s.store_name ILIKE $${i} OR u.email ILIKE $${i})`);
+    params.push(`%${req.query.q}%`); i++;
+  }
+  params.push(lim, off);
+  const r = await query(
+    `SELECT s.id, s.store_slug, s.store_name, s.seller_class, s.status,
+            s.reputation_tier, s.reputation_score, s.total_sales, s.total_products_active,
+            s.created_at, u.email, u.full_name
+       FROM sellers s JOIN users u ON u.id = s.user_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY s.created_at DESC
+      LIMIT $${i} OFFSET $${i+1}`,
+    params
+  );
+  const cnt = await query(
+    `SELECT COUNT(*) AS total FROM sellers s JOIN users u ON u.id = s.user_id WHERE ${where.join(' AND ')}`,
+    params.slice(0, -2)
+  );
+  res.json({ sellers: r.rows, total: parseInt(cnt.rows[0].total, 10), page: parseInt(req.query.page || '1', 10), limit: lim });
+}));
+
 // GET /sellers/admin/pending-kyc
 router.get('/pending-kyc', asyncHandler(async (req, res) => {
   const r = await query(
