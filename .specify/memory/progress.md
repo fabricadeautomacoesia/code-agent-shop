@@ -8716,3 +8716,81 @@ PROXIMA ITER:
 - Configurar ASAAS_WEBHOOK_SECRET no painel
 - W4 pass 7: /admin/reports KPI dashboard
 - packages/shared-ui: mover useSellerAction + useAdminAction (cross-app DRY)
+
+## WORKER 11 PASS 6 - webhook handler nao populava processed_at/processing_error
+
+AUDIT payment-svc encontrou bug de auditoria/reconciliacao.
+
+SCHEMA asaas_webhook_events tem 3 campos NUNCA POPULADOS:
+- processed_at TIMESTAMPTZ
+- processing_error TEXT
+- retry_count INT (default 0)
+- order_id UUID FK (tambem nao populado)
+
+CONSEQUENCIAS:
+- Queries reconciliacao inuteis (WHERE processed_at IS NULL retorna sempre TODOS)
+- Falhas no setImmediate so iam pro stdout, DB nao sabia
+- Admin nao tinha como auditar quais webhooks falharam
+- order_id FK presente no schema mas sempre NULL
+
+CENARIO REAL FALHA SILENCIOSA:
+1. Asaas envia PAYMENT_RECEIVED para order #X
+2. signature_valid=true -> 200 OK enviado a Asaas
+3. setImmediate processa
+4. DB lock transitorio em UPDATE orders -> exception
+5. log.error stdout (mas DB row fica processed_at=NULL silencioso)
+6. Admin investiga -> nao sabe que webhook chegou e falhou
+7. Order nunca vira "paid" -> seller nao recebe split
+
+FIX (3 mudancas):
+
+1. INSERT ... RETURNING id:
+   - Captura eventRowId para UPDATE pos-processamento
+
+2. setImmediate refatorado para async com try/catch:
+   - try: processWebhookEvent + UPDATE processed_at=NOW()
+   - catch: UPDATE processing_error + retry_count++
+   - Bonus: linka order_id via SELECT payment_id (FK populado)
+
+3. processing_error truncado .slice(0, 500):
+   - Evita PG error_message gigante
+
+QUERIES VIAVEIS POS-FIX:
+
+  -- Falhas processing (reconciliable)
+  SELECT id, event_type, processing_error, retry_count
+    FROM asaas_webhook_events
+   WHERE signature_valid AND processed_at IS NULL
+     AND processing_error IS NOT NULL;
+
+  -- Stuck (validos sem processed_at por >5min)
+  SELECT * FROM asaas_webhook_events
+   WHERE signature_valid AND processed_at IS NULL
+     AND processing_error IS NULL
+     AND received_at < NOW() - INTERVAL '5 minutes';
+
+DEPLOY:
+- commit a8d4b50 push main OK
+- 41 insertions, 5 deletions
+- payment-svc rebuild via VPS cron
+- DB schema ja tinha campos (mig 006) - apenas codigo populando
+- Webhooks historicos mantem processed_at=NULL
+
+W11 PAYMENT AUDIT (passes 1-6):
+- pass 1: createPayment basico + split asaas
+- pass 2: polling Asaas pos-create (era GET imediato sem QR PIX)
+- pass 3: friendly error mapping
+- pass 4: CPF/CNPJ guard preventive
+- pass 5: parcelamento totalValue (split arredondamento)
+- pass 6: webhook tracking processed_at/error (esta iter)
+
+CONTEXTO ASAAS PRODUCTION (iter anterior):
+- Token validado contra api.asaas.com/v3/myAccount -> HTTP 200
+- deploy/asaas-token-update.sh idempotent script criado
+- /api/payments/health agora retorna {asaas:{configured:true}}
+- Production live ready
+
+PROXIMA ITER:
+- W11 pass 7: cron reconciliation reprocessar webhooks stuck
+- W4 pass 7: /admin/webhooks UI inspecionar fails
+- Smoke test E2E com order real Asaas
