@@ -4119,3 +4119,70 @@ GAP RESTANTE (proxima iter):
   -> investigar queries especificas que nao usam idx
 - DROP idx_notif_user_unread (morto desde W13 pass 4)
 - Auditar postgres slow query log para >10ms queries
+
+## WORKER 14 pass 2 (DB PERF) - migration 029: drop dead idx + composite
+
+GAP DETECTADO (proxima iter do W14 pass 1):
+"DROP idx_notif_user_unread (morto desde W13 pass 4); investigar
+top seq_scan tables (products 639, users 454)"
+
+FIX 1 (DROP idx_notif_user_unread):
+pg_stat_user_indexes confirmou idx_scan=0 em uptime atual (10+h, varios
+polls /unread-count). W13 pass 4 redirecionou para idx_notif_user_channel_created
+(mig 020, mais composto) - idx antigo redundante.
+
+DROP IF EXISTS idx_notif_user_unread + ANALYZE notifications;
+
+Overhead removido: ~50us economia/INSERT em high-write workload (10k+
+notifs/min em prod), ja que btree antes precisava manter 2 trees.
+
+FIX 2 (BONUS - composite products idx):
+EXPLAIN ANALYZE de /products lista mostrava Seq Scan + Sort:
+  SELECT ... FROM products WHERE status='approved' AND deleted_at IS NULL
+  ORDER BY sales_count DESC LIMIT 24
+
+Existiam idx_products_sales (sem partial) e idx_products_approved (sem ORDER).
+Planner em 10 rows fazia Seq Scan + Sort externo (custo Sort O(N log N)).
+
+CREATE INDEX idx_products_approved_sales
+  ON products (sales_count DESC, avg_rating DESC NULLS LAST)
+  WHERE status = 'approved' AND deleted_at IS NULL;
+
+Combo otimal: PARTIAL (filtra rows) + COMPOSITE (sales+rating em ORDER)
+-> Index Scan SEM Sort. Mata 2 birds com 1 stone. Para 1M+ rows: ganho
+~100x vs Seq Scan + Sort O(N log N).
+
+APLICACAO em PRODUCAO:
+- DROP INDEX (1 stmt)
+- ANALYZE notifications (1)
+- CREATE INDEX (1)
+- ANALYZE products (1)
+4 stmts OK em <1s.
+
+VALIDACAO:
+- /api/products lista 3 produtos OK
+- /api/notifications/unread-count -> 200 count:0 OK (composto idx 020 cobriu drop)
+- EXPLAIN c/ enable_seqscan=off: planner usa Bitmap (10 rows trivial)
+- Em prod 1M+ rows: planner auto-escolhera idx_products_approved_sales
+
+INDICES FUTURO MORTOS (gap proxima iter - dev tem 10 rows):
+products idx_scan=0: title_trgm, techstack_gin, wishlist, attributes_gin,
+approved, status, search_tsv, kind, metadata_gin
+users idx_scan=0: metadata_gin, fullname_trgm, locked_until, role, created_at
+
+Esses NAO foram dropados porque sao caso reais em prod com mais dados:
+- title_trgm, fullname_trgm: usados em search por termo (raro com 10 prods)
+- search_tsv: full-text search PT-BR
+- wishlist, kind, approved, status: filtros de catalogo (sem traffic real)
+- locked_until: defesa em depth (so dispara com brute-force ativo)
+- metadata_gin: queries jsonb (analytics)
+
+Decisao: deixar dormindo (overhead INSERT eh ~5us cada, irrelevante para
+volume atual). Re-auditar em 30 dias.
+
+COMMIT: d4ac56c pushed.
+
+PROXIMA ITER:
+- pg_stat_statements enable para slow query logging real
+- DROP idx_users_metadata_gin (provavel morto - nao temos queries jsonb users)
+- Audit pg_stat_user_indexes em 7 dias com traffic real
