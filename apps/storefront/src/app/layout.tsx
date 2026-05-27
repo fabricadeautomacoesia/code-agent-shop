@@ -4,6 +4,7 @@ import { Providers } from '@/components/providers';
 import { Nav } from '@/components/nav';
 import { Footer } from '@/components/footer';
 import { CartDrawer } from '@/components/cart-drawer';
+import { CompareDrawer } from '@/components/compare-drawer';
 import { JsonLd, organizationLd, webSiteLd } from '@/components/json-ld';
 
 export const metadata: Metadata = {
@@ -39,6 +40,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           <Nav />
           <CartDrawer />
+          {/* MLB-NEW WORKER 16: comparator floating drawer (renderiza vazio se 0 items) */}
+          <CompareDrawer />
           <main className="relative z-10 pt-24">{children}</main>
           <Footer />
         </Providers>

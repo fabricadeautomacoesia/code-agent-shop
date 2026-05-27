@@ -7,6 +7,7 @@ import { AddToCart } from '@/components/add-to-cart';
 import { WishlistButton } from '@/components/wishlist-button';
 import { ProductTabs } from '@/components/product-tabs';
 import { AskQuickButton } from '@/components/ask-quick-button';
+import { CompareButton } from '@/components/compare-button';
 import { Installments } from '@/components/installments';
 import { JsonLd, productLd, breadcrumbLd } from '@/components/json-ld';
 
@@ -140,6 +141,13 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
 
             {/* MLB-NEW WORKER 16: Pergunta rapida pre-purchase (Mercado Livre style) */}
             <AskQuickButton productId={product.id} />
+
+            {/* MLB-NEW WORKER 16: Adicionar a comparacao (max 4) */}
+            <CompareButton variant="pdp" product={{
+              id: product.id, slug: product.slug, title: product.title,
+              cover_image_url: product.cover_image_url, price_cents: product.price_cents,
+              is_free: product.is_free,
+            }} />
 
             {/* MLB-NEW WORKER 16: Trust Signals badges (Garantia + Suporte + Updates) */}
             <div className="mt-5 space-y-2.5 text-xs">

@@ -3,6 +3,7 @@ import Image from 'next/image';
 import { Star, ShoppingCart, Award } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { Installments } from './installments';
+import { CompareButton } from './compare-button';
 
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
   iniciante:      { label: 'Iniciante', color: 'bg-gray-500/20 text-gray-300' },
@@ -42,6 +43,12 @@ export function ProductCard({ product }: { product: any }) {
               MAIS VENDIDO
             </div>
           )}
+          {/* MLB-NEW WORKER 16: icone comparar overlay (bottom-right) */}
+          <CompareButton variant="card" product={{
+            id: product.id, slug: product.slug, title: product.title,
+            cover_image_url: product.cover_image_url, price_cents: product.price_cents,
+            is_free: product.is_free,
+          }} />
         </div>
         <div className="p-5 flex flex-col flex-1">
           <div className="flex items-start justify-between gap-2 mb-2">

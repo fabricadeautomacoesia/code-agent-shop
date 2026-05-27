@@ -35,3 +35,48 @@ export const useUI = create<UIState>((set) => ({
   setCartOpen: (v) => set({ cartOpen: v }),
   setSearchOpen: (v) => set({ searchOpen: v }),
 }));
+
+/**
+ * MLB-NEW WORKER 16: comparator drawer state.
+ * Mercado Livre: usuario clica "Comparar" em ate 4 cards, drawer flutuante mostra
+ * selecao e CTA "Comparar agora" -> /comparar?ids=uuid1,uuid2,uuid3.
+ * Persistido em localStorage (cas_compare) para sobreviver refresh.
+ */
+export type CompareItem = {
+  id: string;
+  slug: string;
+  title: string;
+  cover_image_url?: string;
+  price_cents: number;
+  is_free?: boolean;
+};
+type CompareState = {
+  items: CompareItem[];
+  open: boolean;
+  toggle: (p: CompareItem) => void;
+  remove: (id: string) => void;
+  clear: () => void;
+  setOpen: (v: boolean) => void;
+};
+export const COMPARE_MAX = 4;
+export const useCompare = create<CompareState>()(
+  persist(
+    (set, get) => ({
+      items: [],
+      open: false,
+      toggle: (p) => {
+        const cur = get().items;
+        const has = cur.find((i) => i.id === p.id);
+        if (has) {
+          set({ items: cur.filter((i) => i.id !== p.id) });
+        } else if (cur.length < COMPARE_MAX) {
+          set({ items: [...cur, p], open: true });
+        }
+      },
+      remove: (id) => set({ items: get().items.filter((i) => i.id !== id) }),
+      clear: () => set({ items: [], open: false }),
+      setOpen: (v) => set({ open: v }),
+    }),
+    { name: 'cas_compare' }
+  )
+);
