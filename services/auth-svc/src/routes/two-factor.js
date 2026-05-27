@@ -110,15 +110,24 @@ router.post('/recovery',
 );
 
 // POST /auth/2fa/disable -> exige senha + token (V8 4.2)
+// FIX-WORKER-6 pass 3: idempotente. Se ja desabilitado, valida senha (gate de
+// auth pra nao vazar estado) e retorna 200 enabled:false. Antes retornava 404
+// "2fa_not_enabled" que confundia o frontend (UI mostrava erro generico).
+// Token TOTP nao e exigido nesse caso porque nao ha secret valido.
 router.post('/disable',
-  validate({ body: z.object({ password: z.string(), token: z.string().length(6) }) }),
+  validate({ body: z.object({ password: z.string(), token: z.string().length(6).optional() }) }),
   asyncHandler(async (req, res, next) => {
     const u = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.sub]);
     if (!u.rows.length || !(await bcrypt.compare(req.body.password, u.rows[0].password_hash))) {
       return next(errorHandler.unauthorized('invalid_password'));
     }
-    const r = await query('SELECT secret_encrypted, secret_iv, secret_tag FROM user_two_factor WHERE user_id = $1 AND is_enabled', [req.user.sub]);
-    if (!r.rows.length || !r.rows[0].secret_tag) return next(errorHandler.notFound('2fa_not_enabled'));
+    const r = await query('SELECT secret_encrypted, secret_iv, secret_tag, is_enabled FROM user_two_factor WHERE user_id = $1', [req.user.sub]);
+    // Idempotencia: ja desabilitado (ou nunca configurado) -> 200 sem-op
+    if (!r.rows.length || !r.rows[0].secret_tag || !r.rows[0].is_enabled) {
+      return res.json({ enabled: false, idempotent: true });
+    }
+    // Path normal: 2FA ativo -> exige token TOTP valido
+    if (!req.body.token) return next(errorHandler.badRequest('token_required'));
     // FIX SEG-2FA: tag real do GCM
     const secret = cryp.decrypt({ encrypted: r.rows[0].secret_encrypted, iv: r.rows[0].secret_iv, tag: r.rows[0].secret_tag });
     if (!authenticator.check(req.body.token, secret)) return next(errorHandler.unauthorized('invalid_token'));
