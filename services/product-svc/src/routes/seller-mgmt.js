@@ -10,13 +10,31 @@ const log = logger.child({ svc: 'product-svc', mod: 'seller-mgmt' });
 router.use(jwt.requireAuth({ roles: ['seller','admin'] }));
 
 // FIX-WORKER-18: helper de invalidacao reutilizado em todas mutations
-async function invalidate() {
+// FIX-WORKER-7 pass 5: agora aceita productId opcional para invalidar caches
+// especificos por slug (detail/reviews/qna/related). Antes, PATCH em produto
+// invalidava apenas patterns globais -> PDP detail mostrava versao antiga
+// por 60s ate TTL natural expirar. Bug visivel quando seller edita preco/title
+// e abre PDP -> ve dado stale.
+async function invalidate(productId) {
   try {
-    await Promise.all([
+    const tasks = [
       cache.del('products:list:*'),
       cache.del('products:related:*'),
       cache.del('search:facets:*'),
-    ]);
+    ];
+    if (productId) {
+      // Lookup slug e invalida caches especificos do produto
+      const r = await query('SELECT slug FROM products WHERE id = $1', [productId]);
+      if (r.rows.length) {
+        const slug = r.rows[0].slug;
+        tasks.push(
+          cache.del(`products:detail:${slug}`),
+          cache.del(`products:reviews:${slug}:*`),
+          cache.del(`products:qna:${slug}`)
+        );
+      }
+    }
+    await Promise.all(tasks);
   } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
 }
 
@@ -109,7 +127,8 @@ router.patch('/:id', asyncHandler(async (req, res, next) => {
   if (!cols.length) return res.json({ ok: true, noop: true });
   vals.push(req.params.id);
   await query(`UPDATE products SET ${cols.join(', ')}, updated_at = NOW() WHERE id = $${i}`, vals);
-  await invalidate();
+  // FIX-WORKER-7 pass 5: passa productId para invalidate cache detail/reviews/qna por slug
+  await invalidate(req.params.id);
   res.json({ ok: true });
 }));
 
@@ -137,7 +156,7 @@ router.post('/:id/submit', asyncHandler(async (req, res, next) => {
     body: JSON.stringify({ product_id: r.rows[0].id, triggered_by: req.user.sub })
   }).catch((e) => log.warn({ err: e.message }, '[qa.dispatch_failed]'));
 
-  await invalidate();
+  await invalidate(req.params.id);
   res.json({ ok: true, message: 'Produto enviado para QA' });
 }));
 

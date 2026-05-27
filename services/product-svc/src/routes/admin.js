@@ -10,15 +10,28 @@ const log = logger.child({ svc: 'product-svc', mod: 'admin' });
 router.use(jwt.requireAuth({ roles: ['admin','staff'] }));
 
 // FIX-WORKER-18: invalidacao de cache em mutations
-async function invalidateProductCache() {
+// FIX-WORKER-7 pass 5: aceita productId para invalidacao especifica detail/reviews/qna
+async function invalidateProductCache(productId) {
   try {
-    await Promise.all([
+    const tasks = [
       cache.del('products:list:*'),
       cache.del('products:related:*'),
       cache.del('products:flash-promo:*'),
       cache.del('search:top-sellers:*'),
       cache.del('search:facets:*'),
-    ]);
+    ];
+    if (productId) {
+      const r = await query('SELECT slug FROM products WHERE id = $1', [productId]);
+      if (r.rows.length) {
+        const slug = r.rows[0].slug;
+        tasks.push(
+          cache.del(`products:detail:${slug}`),
+          cache.del(`products:reviews:${slug}:*`),
+          cache.del(`products:qna:${slug}`)
+        );
+      }
+    }
+    await Promise.all(tasks);
   } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
 }
 
@@ -59,7 +72,8 @@ router.post('/:id/force-approve',
         [req.user.sub, req.user.role, req.params.id, JSON.stringify({ reason: req.body.reason })]
       );
     });
-    await invalidateProductCache();
+    // FIX-WORKER-7 pass 5: passa productId p/ invalidacao especifica detail/reviews/qna
+    await invalidateProductCache(req.params.id);
     res.json({ ok: true });
   })
 );
@@ -93,7 +107,8 @@ router.post('/:id/platform-take',
       [req.user.sub, req.user.role, req.params.id, JSON.stringify({ reason: req.body.reason, duplicate_id: dup.rows[0].id })]
     );
     log.warn({ original: req.params.id, platform_copy: dup.rows[0].id }, '[product.platform_take]');
-    await invalidateProductCache();
+    // FIX-WORKER-7 pass 5: passa productId p/ invalidacao especifica detail/reviews/qna
+    await invalidateProductCache(req.params.id);
     res.json({ ok: true, platform_product: dup.rows[0] });
   })
 );
@@ -101,7 +116,8 @@ router.post('/:id/platform-take',
 // POST /products/admin/:id/archive
 router.post('/:id/archive', asyncHandler(async (req, res) => {
   await query(`UPDATE products SET status = 'archived', archived_at = NOW(), updated_at = NOW() WHERE id = $1`, [req.params.id]);
-  await invalidateProductCache();
+  // FIX-WORKER-7 pass 5: invalida tambem detail/reviews/qna por slug
+  await invalidateProductCache(req.params.id);
   res.json({ ok: true });
 }));
 
