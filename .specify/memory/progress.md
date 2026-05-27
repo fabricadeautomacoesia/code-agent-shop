@@ -2651,3 +2651,50 @@ LICAO mobile-first:
 GAP RESTANTE proxima iter:
 - 18 outras h1 com text-4xl absoluto em pages varias (mas menores risco
   pois sao headers SEM conteudo competing side-by-side)
+
+## WORKER 16 (MLB-NEW) - RecentlyViewedStrip horizontal scroll no PDP
+Mercado Livre exibe "Continuou navegando" abaixo dos related products no PDP
+como horizontal scroll suave de 6-12 thumbs pequenos. Encoraja cross-browse
+sem precisar voltar para home. CAS tinha RecentlyViewed grid SO na home.
+
+NOVO COMPONENTE: apps/storefront/src/components/recently-viewed-strip.tsx
+- 'use client' (depende de useAuth)
+- Fetch /api/products/recently-viewed?limit=12 (max 30 enforced backend)
+- Filtra produto atual via excludeId prop
+- Skip render se: !token, < 3 produtos restantes (evita strip raquitica)
+- Layout: flex gap-3 overflow-x-auto snap-x snap-mandatory + scrollbar-thin
+- Cards w-36 sm:w-40 (compact, ~28-32% menor que RecentlyViewed grid card)
+- Thumb h-20 sm:h-24 + title line-clamp-2 + preco bold
+- Bonus: -mx-2 px-2 para "bleed" overflow visual estilo MLB
+
+INTEGRACAO: apps/storefront/src/app/product/[slug]/page.tsx
+- Import RecentlyViewedStrip
+- Render apos section "Voce tambem pode gostar" (related products)
+- excludeId={product.id} para filtrar o proprio produto da lista
+
+DIFERENCAS vs RecentlyViewed grid existente:
+- RecentlyViewed: usado em home, grid 2/3/4 cols, full cards, prominent
+- RecentlyViewedStrip: usado em PDP, horizontal scroll, compact thumbs,
+  subtle (mt-12 sem container wrapper full-bleed)
+
+VALIDACAO PUBLICA (TRIPLA):
+1) PDP chunk page-60197b9ca967f806.js contem 5 marcadores:
+   RecentlyViewedStrip, Continue navegando, excludeId,
+   snap-x snap-mandatory, recently-viewed?limit=12 OK
+2) Backend GET /api/products/recently-viewed?limit=12 (auth teste1):
+   Retorna produtos reais (Email Marketing, Template Dashboard, etc) OK
+3) Home / continua com RecentlyViewed grid (nao foi quebrado, incremental) OK
+
+DEPLOY: commit dfb05e7 pushed, storefront rebuilt via Dockerfile.next,
+service updated --force, converged OK.
+
+IMPACTO ESPERADO:
+- PDP engagement: usuario chega via search/external link sem contexto de
+  navegacao anterior + ve "Continue navegando" -> 1-click para produtos
+  ja vistos = re-conversao
+- Sinergia com WORKER 14 wishlist_count + WORKER 16 useWishlist store
+  (Heart icon overlay): usuario navega via strip + favorita inline
+
+GAP RESTANTE proxima iter:
+- Adicionar mesmo strip em /cart (apos checkout submit) para upsell
+- /conta/page.tsx (account dashboard) podia ter strip dos ultimos 4-6 vistos
