@@ -10379,3 +10379,63 @@ PROXIMA ITER:
 - W18 pass 6: EXPLAIN ANALYZE query mais lenta restante
 - W18 pass 7: cache /orders/me historico (per-user TTL 30s)
 - W12 pass 7: cron stuck QA runs
+
+## WORKER 8 PASS 4 - /promocoes responsive header + price/CTA row
+
+AUDIT /promocoes encontrou 2 issues mobile (375px):
+
+BUG 1 (header overflow):
+- Title "Promocoes Relampago" text-5xl (48px) + bg-gradient
+- Zap icon w-16 h-16
+- Em 375px com 18 chars: ~520px largura > 343px viewport util
+- Header quebra container, scrollbar surge
+
+FIX:
+- text-3xl sm:text-5xl (30/48px)
+- Zap w-12 sm:w-16
+- mb-3 sm:mb-4 proporcional
+- aria-hidden no Zap
+
+BUG 2 (price+CTA row overflow):
+- 3 elementos sem flex-wrap:
+  * Preco antigo (~70px)
+  * Preco novo text-3xl (~120px)
+  * CTA "Comprar agora" px-6 py-3 (~150px)
+  * gap-4 x 2 (32px)
+- Total ~372px > 343px viewport
+- ml-auto fazia squeeze do CTA
+
+FIX:
+- flex-wrap sm:flex-nowrap (mobile permite quebra)
+- gap-3 sm:gap-4 (menor mobile)
+- text-base sm:text-lg precos antigo
+- text-2xl sm:text-3xl preco novo
+- sm:ml-auto (mobile sem squeeze)
+- w-full sm:w-auto (CTA full-width mobile clicavel)
+- aria-label dinamico
+
+LAYOUT RESULTADO:
+- Mobile: precos linha 1, CTA full-width linha 2
+- Desktop: tudo em 1 linha com ml-auto
+
+DEPLOY:
+- commit 352a958 push main OK
+- 22 insertions, 7 deletions
+- storefront rebuild via VPS cron
+- 1 file pure CSS/Tailwind
+
+W8 VISUAL AUDIT (passes 1-4):
+- pass 1: btn-primary + btn-ghost padronizados globals.css
+- pass 2: <img> -> next/image stack em 3 components
+- pass 3: /comparar tabela 4 fixes (z-index, hover, proporcoes)
+- pass 4: /promocoes header + price row mobile (esta iter)
+
+OVERLAP W15 MOBILE RESPONSIVE:
+- W15-5 corrigiu FlashPromoTimer overflow
+- W8-4 corrige /promocoes page-level overflow
+- Componente + page agora ambos responsive 375px
+
+PROXIMA ITER:
+- W8 pass 5: audit /comparar tabela mobile (CompareDrawer + page)
+- W15 pass 6: audit /conta/* pages mobile (perfil, pontos, favoritos)
+- W16: MLB feature nova (Loyalty avancado, ML recomendacoes, etc)
