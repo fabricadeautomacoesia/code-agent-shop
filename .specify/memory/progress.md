@@ -17292,7 +17292,38 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ seller-svc /kpi + sellers.js GET / (pass 72) - Regra D+I + enum + UX
 - ✅ product-svc GET / public listing (pass 73) - 8 bugs major
 - ✅ product-svc GET /:slug detail PDP (pass 74) - 5 bugs DLP + whitelist
-- ✅ product-svc /:slug/reviews + /:slug/qna (pass 75 esta iter) - 10 bugs filters + UX
+- ✅ product-svc /:slug/reviews + /:slug/qna (pass 75) - 10 bugs filters + UX
+- ✅ product-svc /compare + /flash-promo/active (pass 76 esta iter) - 9 bugs
+
+W7 PASS 76 RESUMO:
+- product-svc/src/routes/public.js 2 MLB feature endpoints (9 bugs):
+  * /compare (4 bugs) - MLB-7 comparador:
+    - Regra A: status IN ('approved','platform_owned')
+      (platform_owned MLB products invisiveis no comparador)
+    - N+1 FIX: 4 subqueries correlacionadas -> LEFT JOIN sellers + categories
+      (4 products * 4 subqueries = 16 sub-statements -> 1 plan node)
+    - NEW rate-limit listLimiter (60/min/IP)
+      * Compare IDs custom = cache key combinatoria infinita
+      * Atacante hammer com varied IDs = cache bypass garantido
+    - NEW cache 60s vary by canonical sorted IDs
+  * /flash-promo/active (5 bugs) - MLB-10 promocao relampago:
+    - Regra A: status IN ('approved','platform_owned')
+    - Regra D: + p.id ASC tiebreaker (multiplos promos ending same minute)
+    - Regra E: ?limit (1-100) + ?offset
+    - NEW seller info: LEFT JOIN sellers (store_slug/store_name)
+      * UX consistency cross-endpoint (compare ja tinha, flash não)
+    - Total + has_more p/ UX UI "X promos ativas"
+- Pattern W7 em 80 endpoints + 23 regras (A-W) - 76 micro-iters
+- Regra A FIX cross-pass acumulado: 5 endpoints corrigidos
+  (pass 73 GET / + pass 74 /:slug + pass 75 /:slug/reviews + /:slug/qna
+   + pass 76 /compare + /flash-promo) - platform_owned products
+   agora aparecem em TODOS endpoints publicos do storefront
+
+PROXIMA ITER:
+- W7 pass 77: product-svc /recommendations/for-me audit (auth-required)
+- W7 pass 78: product-svc /recently-viewed + /:slug/related audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 75 RESUMO:
 - product-svc/src/routes/public.js 2 PDP sub-endpoints refactor (10 bugs):

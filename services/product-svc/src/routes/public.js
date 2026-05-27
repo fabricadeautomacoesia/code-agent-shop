@@ -286,7 +286,36 @@ router.get('/:slug/related',
 // 3. >4 IDs era silentemente truncado. Agora warn no response.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-router.get('/compare', asyncHandler(async (req, res) => {
+// FIX-WORKER-7 pass 76: 4 BUGS aplicando Pattern W7 (Regra A + N+1 + rate-limit + cache).
+//
+// BUG 1 *** Regra A INCOMPLETA *** status = 'approved' exclui platform_owned
+//   MLB platform_owned products NUNCA aparecem no comparador.
+//   Pattern cross-svc estabelecido pass 73/74/75.
+//   FIX: status IN ('approved','platform_owned').
+//
+// BUG 2 *** N+1 SUBQUERIES *** 4 subqueries correlacionadas por row
+//   4 products * 4 subqueries = 16 sub-statements PG por hit.
+//   FIX: LEFT JOIN sellers/categories explicit (1 plan node previsivel).
+//
+// BUG 3 *** RATE-LIMIT MISSING ***
+//   /compare aceita 4 UUIDs custom -> cache key infinito (combinatoria).
+//   Atacante hammer com varied IDs = cache miss garantido a cada hit.
+//   FIX: aplicar listLimiter (60 req/min/IP) - mesmo cap do GET /.
+//
+// BUG 4 *** CACHE MISSING ***
+//   Compare hot path em MLB-7 feature. Combinatoria IDs grande mas
+//   keys mais usadas (top products) repetem. Cache 60s vary by IDs.
+//   FIX: cache.cacheMiddleware com key ordenada (canonical IDs sorted).
+const compareCacheKey = (req) => {
+  const idsRaw = (req.query.ids || '').toString();
+  const ids = idsRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 4).sort();
+  return `products:compare:${ids.join('|')}`;
+};
+
+router.get('/compare',
+  listLimiter,
+  cache.cacheMiddleware(compareCacheKey, 60),
+  asyncHandler(async (req, res) => {
   const idsRaw = (req.query.ids || '').toString();
   const allIds = idsRaw.split(',').map(s => s.trim()).filter(Boolean);
   const truncated = allIds.length > 4;
@@ -303,18 +332,21 @@ router.get('/compare', asyncHandler(async (req, res) => {
       invalid_count: invalidIds.length,
     });
   }
+  // FIX-WORKER-7 pass 76 BUG 1+2: Regra A platform_owned + LEFT JOIN explicit
   const r = await query(
     `SELECT p.id, p.slug, p.title, p.subtitle, p.kind, p.cover_image_url,
             p.price_cents, p.currency, p.is_free, p.license_kind,
             p.tech_stack, p.api_keys_required, p.estimated_install_min,
             p.requirements, p.avg_rating, p.review_count, p.sales_count,
             p.is_platform_owned, p.flash_promo_active, p.flash_promo_discount_pct,
-            (SELECT store_slug FROM sellers WHERE id = p.seller_id) AS store_slug,
-            (SELECT store_name FROM sellers WHERE id = p.seller_id) AS store_name,
-            (SELECT reputation_tier FROM sellers WHERE id = p.seller_id) AS reputation_tier,
-            (SELECT name FROM categories WHERE id = p.category_id) AS category_name
+            s.store_slug, s.store_name, s.reputation_tier,
+            c.name AS category_name
        FROM products p
-      WHERE p.id = ANY($1::UUID[]) AND p.status = 'approved' AND p.deleted_at IS NULL`,
+       LEFT JOIN sellers s ON s.id = p.seller_id
+       LEFT JOIN categories c ON c.id = p.category_id
+      WHERE p.id = ANY($1::UUID[])
+        AND p.status IN ('approved','platform_owned')
+        AND p.deleted_at IS NULL`,
     [limited]
   );
   // FIX bug 2: identificar IDs missing (existiam no request mas DB nao retornou)
@@ -347,22 +379,54 @@ router.get('/compare', asyncHandler(async (req, res) => {
 
 // GET /products/flash-promo - produtos em promocao relampago ativa (MLB-10)
 // cache 60s - flash promo tem timer curto, mas ainda vale cachear janela curta
+// FIX-WORKER-7 pass 76: 5 BUGS aplicando Pattern W7 (Regras A+D+E + seller info + total).
+//
+// BUG 1 *** Regra A *** status = 'approved' exclui platform_owned MLB flash promos
+// BUG 2 *** Regra D *** ORDER BY flash_promo_ends_at ASC sem id tiebreaker
+//   Multiplos promos ending same minute -> ordem indefinida.
+// BUG 3 *** Regra E *** hardcoded LIMIT 20 sem ?limit/?offset
+// BUG 4 *** SELLER INFO MISSING *** /compare tem store_slug/name mas flash nao
+//   UX inconsistente entre endpoints similares.
+//   FIX: LEFT JOIN sellers (mesmo pattern /compare).
+// BUG 5 *** TOTAL COUNT MISSING *** UX flash promo page sem visibility
 router.get('/flash-promo/active',
-  cache.cacheMiddleware(() => 'products:flash-promo:active', 60),
+  cache.cacheMiddleware((req) => `products:flash-promo:active:lim=${req.query.limit||20}:off=${req.query.offset||0}`, 60),
   asyncHandler(async (req, res) => {
+  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 20));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const r = await query(
-    `SELECT id, slug, title, subtitle, short_description, kind, cover_image_url,
-            price_cents, currency, is_free, tech_stack, avg_rating, review_count,
-            sales_count, is_platform_owned, flash_promo_discount_pct, flash_promo_ends_at,
-            (price_cents * (1 - flash_promo_discount_pct/100))::BIGINT AS discounted_price_cents,
-            EXTRACT(EPOCH FROM (flash_promo_ends_at - NOW()))::BIGINT AS seconds_remaining
-       FROM products
-      WHERE status = 'approved' AND flash_promo_active = TRUE
-        AND flash_promo_ends_at > NOW()
-        AND deleted_at IS NULL
-      ORDER BY flash_promo_ends_at ASC LIMIT 20`
+    `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind, p.cover_image_url,
+            p.price_cents, p.currency, p.is_free, p.tech_stack, p.avg_rating, p.review_count,
+            p.sales_count, p.is_platform_owned, p.flash_promo_discount_pct, p.flash_promo_ends_at,
+            (p.price_cents * (1 - p.flash_promo_discount_pct/100))::BIGINT AS discounted_price_cents,
+            EXTRACT(EPOCH FROM (p.flash_promo_ends_at - NOW()))::BIGINT AS seconds_remaining,
+            s.store_slug, s.store_name
+       FROM products p
+       LEFT JOIN sellers s ON s.id = p.seller_id
+      WHERE p.status IN ('approved','platform_owned')
+        AND p.flash_promo_active = TRUE
+        AND p.flash_promo_ends_at > NOW()
+        AND p.deleted_at IS NULL
+      ORDER BY p.flash_promo_ends_at ASC, p.id ASC
+      LIMIT $1 OFFSET $2`,
+    [limit, offset]
   );
-  res.json({ products: r.rows });
+
+  // Total count (UX UI flash promo banner "X promos ativas")
+  const totalRes = await query(
+    `SELECT COUNT(*)::INT AS total FROM products
+      WHERE status IN ('approved','platform_owned')
+        AND flash_promo_active = TRUE
+        AND flash_promo_ends_at > NOW()
+        AND deleted_at IS NULL`
+  );
+
+  res.json({
+    products: r.rows,
+    total: totalRes.rows[0].total,
+    limit, offset,
+    has_more: (offset + r.rows.length) < totalRes.rows[0].total,
+  });
 }));
 
 // GET /products - listagem + filtros facetados
