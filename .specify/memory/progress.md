@@ -1423,3 +1423,45 @@ IMPACTO ESPERADO:
 
 GIT: commit ed60c15 pushed.
 NAO precisou rebuild de svc (apenas DDL no banco).
+
+## WORKER 7 (PRODUCT-SVC) - Wishlist DELETE/check error handling bugs
+Auditoria publica de 17 endpoints product-svc revelou 2 bugs em wishlist:
+
+ENDPOINTS TESTADOS (todos saudaveis):
+- /api/products (list), /products/:slug, /reviews, /qna, /related, /flash-promo,
+  /compare (com validacoes), /wishlist GET/POST (com pre-validacao de existencia),
+  404 generico para slug inexistente.
+
+BUGS WISHLIST:
+1) DELETE/:product_id e GET/:product_id/check nao validavam UUID format.
+   - UUID malformado -> PG 22P02 (invalid_input_syntax) -> global error handler
+     retornava 404 "Recurso nao encontrado" generico (confuso para debugging).
+2) DELETE de produto valido mas NAO favoritado -> retornava silencioso {ok:true}.
+   - User clicava "remover favorito" duas vezes (ou em outro tab) e nada
+     indicava que nada foi removido (falha invisivel).
+3) Storefront wishlist-button.tsx usava alert() raw com e.message ("invalid_credentials")
+   - UI feia e codigo de maquina exposto.
+
+FIX BACKEND: services/product-svc/src/routes/wishlist.js
+- Constante UUID_RE (regex padrao Inovare, ja usado em notification-svc).
+- DELETE pre-valida UUID -> 400 invalid_uuid (em vez de 404 generico).
+- DELETE usa RETURNING product_id + checks rows.length -> 404 not_in_wishlist
+  com payload {ok:true, removed:<uuid>} em sucesso (informativo).
+- GET /check pre-valida UUID -> 400 invalid_uuid.
+
+FIX FRONTEND: apps/storefront/src/components/wishlist-button.tsx
+- catch removeu alert() (UX feio) -> console.error silencioso.
+- 404 not_in_wishlist (DELETE) trata como idempotencia: setFavorited(false)
+  sincroniza UI ao estado real (cobrindo cenario multi-tab/device).
+
+VALIDACAO PUBLICA (5 cenarios):
+1) GET /wishlist/not-a-uuid/check -> 400 {error:"invalid_uuid"} OK
+2) DELETE /wishlist/not-a-uuid -> 400 {error:"invalid_uuid"} OK
+3) DELETE /wishlist/00000000-... (UUID valido inexistente) -> 404 not_in_wishlist OK
+4) POST add -> {ok:true}; DELETE -> {ok:true, removed:<uuid>} OK
+5) DELETE imediato apos remover -> 404 not_in_wishlist OK (idempotente)
+
+DEPLOY: commit 9b1fd2c pushed,
+- product-svc rebuilt via Dockerfile.node SVC=product-svc (contexto root)
+- storefront rebuilt via Dockerfile.next (contexto apps/storefront)
+- ambos --force update, converged OK.
