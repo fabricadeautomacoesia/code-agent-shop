@@ -82,11 +82,11 @@ router.patch('/items/:id',
   asyncHandler(async (req, res, next) => {
     let cartId;
     await tx(async (c) => {
+      // FIX: cart_items nao tem coluna updated_at no schema (apenas created_at).
       const r = await c.query(
         `UPDATE cart_items SET
             quantity = $1,
-            line_total_cents = unit_price_cents * $1,
-            updated_at = NOW()
+            line_total_cents = unit_price_cents * $1
           WHERE id = $2 AND cart_id IN (SELECT id FROM carts WHERE user_id = $3)
           RETURNING cart_id`,
         [req.body.quantity, req.params.id, req.user.sub]
