@@ -82,11 +82,30 @@ router.post('/checkout',
       // FIX-WORKER-11 pass 3: rate clamp 0..1 (era unrestricted -> admin podia setar
       // custom_commission_rate=1.5 (150%) e gerar payout NEGATIVO ao seller, ou negativo
       // (rouba seller). Math.max(0, Math.min(1, rate)) garante invariant.
+      //
+      // FIX-WORKER-11 pass 9: descontar coupon + loyalty PROPORCIONAL em cada item.
+      // ANTES: commission = line_total * rate (bruto, sem desconto)
+      //   Bug: SUM(payouts) podia exceder cart.total_cents quando cupom/loyalty aplicado
+      //   Asaas rejeita createPayment com 400 "split sum > value" (W11 pass 5 contexto)
+      //   Cenario: line_total R$100 com cupom 20% -> total R$80
+      //            commission_18% sobre 100 = R$18, payout = R$82 (>= R$80 PAGO!)
+      // AGORA: cada item recebe desconto proporcional ao share no subtotal.
+      //   item_after_discount = line_total - (line_total / subtotal) * (discount + loyalty)
+      //   commission/payout calculados sobre item_after_discount
+      //   SUM(payouts) garantidamente <= cart.total_cents
+      const subtotalCents = parseInt(cart.rows[0].subtotal_cents, 10) || 0;
+      const totalDiscountCents = (parseInt(cart.rows[0].discount_cents, 10) || 0) + loyaltyCents;
       for (const it of items.rows) {
+        const lineTotalCents = parseInt(it.line_total_cents, 10);
+        // Desconto proporcional: share do item no subtotal aplicado ao desconto total
+        const itemShare = subtotalCents > 0 ? lineTotalCents / subtotalCents : 0;
+        const itemDiscount = Math.round(itemShare * totalDiscountCents);
+        const effectiveTotal = Math.max(0, lineTotalCents - itemDiscount);
+
         const rawRate = it.is_platform_owned ? 1.0 : (Number(it.custom_commission_rate) || TAKE_RATE);
         const rate = Math.max(0, Math.min(1, rawRate)); // clamp 0..1
-        const commission = it.is_platform_owned ? it.line_total_cents : Math.floor(it.line_total_cents * rate);
-        const payout = Math.max(0, it.line_total_cents - commission); // defense em depth
+        const commission = it.is_platform_owned ? effectiveTotal : Math.floor(effectiveTotal * rate);
+        const payout = Math.max(0, effectiveTotal - commission);
         const dl_token = crypto.randomUUID();
         const license_key = `CAS-${crypto.randomBytes(12).toString('hex').toUpperCase()}`;
         const snapshot = await c.query('SELECT fn_product_snapshot($1) AS s', [it.product_id]);
@@ -98,7 +117,7 @@ router.post('/checkout',
               download_expires_at, snapshot)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW() + INTERVAL '365 days', $14::JSONB)`,
           [order.rows[0].id, it.product_id, null, it.seller_id || null,
-           it.is_platform_owned, it.quantity, it.unit_price_cents, it.line_total_cents,
+           it.is_platform_owned, it.quantity, it.unit_price_cents, lineTotalCents,
            rate, commission, payout, license_key, dl_token, snapshot.rows[0].s]
         );
 
