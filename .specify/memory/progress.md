@@ -8318,3 +8318,77 @@ PROXIMA ITER:
 - Frontend update comparar/page.tsx para consumir errors granulares
 - W3 pass 8: CompareButton.tsx audit
 - W7 pass 7: /products/me/:id/submit guards (QA pipeline race)
+
+## WORKER 3 PASS 8 - comparar/page.tsx consume errors granulares (W7-6 backend)
+
+CONTEXTO: W7 pass 6 fez backend /products/compare retornar errors granulares
+(invalid_ids, products_not_found, insufficient_products, warning_truncated,
+missing_ids parcial). Mas comparar/page.tsx ainda usava fetchSafe que descartava
+body de errors -> mensagem generica "Comparacao invalida" para qualquer falha.
+
+FIX (3 mudancas):
+
+1. fetchSafe -> fetchCompare typed:
+   type CompareResult =
+     | { ok: true; products, count, missing_ids?, warning_truncated? }
+     | { ok: false; status, error, message, invalid_count?, found?, ...};
+   - Discriminated union TS-safe (missing_ids so em success)
+   - Network error tambem typed (status:0, error:'network')
+
+2. Error UI granular por backend.error:
+   - invalid_ids: "IDs invalidos. Verifique o link" + invalid_count
+   - products_not_found: "Produtos foram removidos/despublicados"
+   - insufficient_products: "Apenas N validos, precisa 2+"
+   - min_2_products: "Selecione no minimo 2"
+   - network: "Falha de conexao"
+   - default: fallback com result.message
+
+3. Missing IDs display + partial success warnings:
+   - Lista primeiros 3 IDs missing font-mono + "+N" se mais
+   - Banner amarelo acima da tabela quando partial:
+     - "X produto(s) nao puderam ser carregados"
+     - warning_truncated text se aplicavel
+   - Conditional render so se algum aviso presente
+
+UX COMPARISON:
+
+ANTES (qualquer erro):
+  /comparar?ids=fake1,fake2 -> "Comparacao invalida"
+  /comparar?ids=deletado1,deletado2 -> "Comparacao invalida"
+  User confuso: link errado? Produto saiu? Bug?
+
+DEPOIS (granular):
+  /comparar?ids=fake1,fake2
+    -> "IDs invalidos (2 invalidos). Verifique o link"
+  /comparar?ids=deletado1,deletado2
+    -> "Produtos indisponiveis (2 removidos ou despublicados)"
+  /comparar?ids=valido,deletado,v3,v4
+    -> Tabela 3 produtos + banner amarelo "1 produto nao pode ser carregado"
+  /comparar?ids=v1,v2,v3,v4,v5,v6,v7
+    -> Tabela 4 produtos + banner "Apenas primeiros 4 de 7 IDs considerados"
+
+DEPLOY:
+- commit 0aafcbb push main OK
+- 85 insertions, 14 deletions
+- storefront rebuild via VPS cron
+- Backend ja faz pass 6, frontend agora consome
+
+W3 PDP AUDIT PROGRESS (passes 1-8):
+- pass 1: AddToCart funcional + friendly errors
+- pass 2: breadcrumb slash orfao
+- pass 3: QnaForm 6 bugs UX
+- pass 4: ReviewForm 8 bugs UX + a11y
+- pass 5: ProductTabs WAI-ARIA
+- pass 6: WishlistButton 5 bugs a11y/UX/state
+- pass 7: AskQuickButton modal WCAG 2.1
+- pass 8: comparar/page consume W7-6 errors granulares (esta iter)
+
+INTEGRACAO COMPLETA W7-6 + W3-8:
+- Backend retorna errors granulares -> frontend mostra mensagens claras
+- DRY: error mapping inline ainda mas pattern estabelecido para extracao futura
+- Type-safe via discriminated union (CompareResult)
+
+PROXIMA ITER:
+- W3 pass 9: PriceAlertButton audit
+- W3 pass 10: extrair friendly mappers para lib/friendly-errors.ts (DRY)
+- W8: visual polish em comparar tabela (cell hover, sort options)
