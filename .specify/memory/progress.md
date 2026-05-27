@@ -7757,3 +7757,56 @@ PROXIMA ITER:
 - W18 pass 4: image optimization audit (next/image consistency)
 - W18 pass 5: EXPLAIN ANALYZE em query orders/me historico
 - W14 pass 6: indice composto para product_views(user_id, created_at DESC)
+
+## WORKER 4 PASS 6 - /admin/orders 4 bugs UX + perf
+
+AUDIT dashboard-admin /admin/orders (read-only audit page):
+
+BUG 1 (error persistente):
+  catch { setError(e.message); }
+- Auto-refresh 30s nao limpava erro em sucesso
+- Admin via "Erro" stale com dados frescos abaixo
+FIX: setError('') em sucesso + botao retry no banner
+
+BUG 2 (poll desperdicio offscreen):
+  useEffect(setInterval(load, 30000))
+- Tab admin em background continua poll
+- 5 tabs abertas = 10 calls/min mesmo invisivel
+- Backend pressure + bateria laptop
+FIX: document.visibilitychange listener
+- hidden -> clearInterval (suspende)
+- visible -> load() imediato + reinicia
+- Pattern dashboards web modernos (Slack, Discord)
+
+BUG 3 (STATUS_COLOR sem fallback):
+  className={STATUS_COLOR[o.status]}
+- Backend adicionando novo status retorna undefined
+- React renderiza className="... undefined" -> CSS quebrado
+FIX: `STATUS_COLOR[o.status] || 'bg-white/10 text-white/60'`
+
+BUG 4 (sem indicador freshness):
+- Admin nao sabia se dados eram frescos ou stale 30s
+FIX: lastUpdate state + display HH:MM:SS no header
+
+DEPLOY:
+- commit c83ee8e push main OK
+- 44 insertions, 4 deletions
+- dashboard-admin rebuild via VPS cron
+- Sem backend mudanca
+
+W4 ADMIN AUDIT PROGRESS (passes 1-6):
+- pass 1-3: hook useAdminAction + migracao sellers/qa-queue
+- pass 4: /admin/payouts feature morta "Transferir Asaas" (bug critico)
+- pass 5: /admin/qa-queue 4 bugs UX
+- pass 6: /admin/orders 4 bugs UX + perf (esta iter)
+
+COBERTURA dashboard-admin 100% auditado:
+- /admin/sellers ✓ (W4 pass 1-3 hook + tier suspension)
+- /admin/qa-queue ✓ (W4 pass 5 condicionais + loadError)
+- /admin/orders ✓ (W4 pass 6 poll + status fallback - esta iter)
+- /admin/payouts ✓ (W4 pass 4 transferir asaas)
+
+PROXIMA ITER:
+- W4 pass 7: /admin/reports KPI dashboard
+- W4 pass 8: /admin/vault audit (encrypt/decrypt keys UI)
+- W4 pass 9: /admin/alerts page (consume /aiops/alerts admin-only - W10 pass 5)
