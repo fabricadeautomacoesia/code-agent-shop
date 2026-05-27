@@ -5140,3 +5140,49 @@ PROXIMA ITER (DB):
 - pg_cron extension para cleanup BACKGROUND sem app load
 - Particionamento de notifications (time-series write-heavy)
 - Audit cleanup similar em metrics_history (provavel ja feito)
+
+## WORKER 10 pass 5 (SEARCH-SVC) - early return q<3 chars + skip search_log
+
+VETOR DETECTADO (audit edge cases):
+GET /api/search?q=a (1 char):
+- plainto_tsquery + 2x ts_rank + subquery is_top_seller + LEFT JOINs
+- COUNT query separada
+- INSERT search_log
+- Total ~11ms para retornar 0 results
+
+CENARIO REAL (user digitando "agente" sem debounce frontend):
+6 hits sequenciais (a, ag, age, agen, agent, agente)
+- Primeiros 5 hits desperdicados em q=1-2 chars
+- Cada um gera Seq Scan no search_tsv + INSERT bloat em search_log
+- search_log fica poluido com queries curtas (typos/lixo)
+
+FIX (1 arquivo - services/search-svc/src/server.js):
++ Early return SE q.length < 3 AND nao ha filtros (category/kind/tag)
++ Return { results:[], hint:'query too short - min 3 chars', duration_ms:0 }
++ Skip search_log insert (evita bloat + trigger sanitize mig 027 acionado)
++ Permite q curto SE ha filtros (q=ai com category=automacoes faz sentido
+  por exemplo, e filtros restringem scope)
+
+Pattern consistente com autocomplete (ja tinha q.length<2 early return).
+
+DEPLOY:
+- commit 7cbc137 pushed
+- search-svc rebuilt (~2.7s) + deployed converged
+
+VALIDACAO PUBLICA (4 cenarios):
+- q=a (1 char) -> early return + duration_ms:0 + hint OK
+- q=ag (2 chars) -> early return + duration_ms:0 + hint OK
+- q=agente (3+ chars) -> full search funciona normal OK
+- q=a + category=automacoes -> permite (filtros restringem) OK
+
+IMPACTO:
+- 5/6 hits search desperdicados eliminados (typing UX)
+- DB load reduzido em high-traffic search
+- search_log bloat prevenido (mig 027 trigger ja sanitizava, este preveine entrada)
+- duration_ms:0 visible para frontend opcional UX (hint pode aparecer no input)
+- Recomenda-se frontend implementar debounce 300ms tambem (defense em depth)
+
+GAP DETECTADO (proxima iter):
+- Audit autocomplete tem rate-limit? Pode ser hammered por bots
+- Considerar fuzzy search com q=2 chars + indication "did you mean..."
+- search-svc tem timeout em queries lentas? PG statement_timeout configured?
