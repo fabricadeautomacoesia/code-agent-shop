@@ -35,6 +35,19 @@ async function createCustomer({ name, cpfCnpj, email, phone, externalReference }
 
 async function getCustomer(id) { return api('GET', `/customers/${id}`); }
 
+// FIX-WORKER-11 pass 5: bug arredondamento em parcelamento com split.
+// ANTES: em CREDIT_CARD installmentCount>1, codigo enviava SO installmentCount +
+// installmentValue, OMITINDO value total. Asaas usa installmentValue*count para
+// derivar o total, mas com floor() em linha 201 do server.js perdem-se centavos.
+// Exemplo: total=R$1380.66 / 12x = R$115.055 -> floor(115.05) -> Asaas calcula
+// 115.05*12=R$1380.60, gap de R$0.06. Split com fixedValue calculado sobre
+// total_cents ORIGINAL (R$1380.66 numerico) excede installmentValue*count
+// soma -> Asaas rejeita "invalid_value: split sum > total".
+//
+// FIX: enviar totalValue (campo aceito Asaas v3 docs) que tem precedencia
+// sobre installmentValue*count. Asaas redistribui parcelas internamente
+// (a ultima pode ter centavos extras) E split casa com total real.
+// Quando sem split, comportamento equivalente ao anterior.
 async function createPayment({ customer, billingType, value, dueDate, description, externalReference, split, installmentCount, installmentValue }) {
   const payload = {
     customer, billingType, dueDate, description, externalReference,
@@ -44,6 +57,9 @@ async function createPayment({ customer, billingType, value, dueDate, descriptio
   if (billingType === 'CREDIT_CARD' && installmentCount && installmentCount > 1) {
     payload.installmentCount = installmentCount;
     payload.installmentValue = installmentValue || Math.round((value / installmentCount) * 100) / 100;
+    // totalValue (canonical total no formato Asaas) garante que split casa
+    // com cobranca real. Asaas redistribui internamente entre as parcelas.
+    payload.totalValue = value;
   } else {
     payload.value = value;
   }
