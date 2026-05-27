@@ -7463,3 +7463,59 @@ PROXIMA ITER:
 - W17 pass 10: rotacao automatica vault keys
 - W4 pass 6: /admin/orders read-only validation
 - W18 pass 2: cache em /aiops/status (publica, baixa mutacao)
+
+## WORKER 18 PASS 2 - Cache 5s no /aiops/status
+
+ANALISE PERFORMANCE:
+Storefront /status page (publica) faz fetch a cada 10s (refresh ativo).
+Cada call /aiops/status executa:
+
+1. healthcheck() SELECT 1 Postgres (~5ms)
+2. collectMetrics() SHELL COMMANDS top/free/df (~50-200ms)
+3. SQL alerts aggregate (~10ms)
+Total: ~70-250ms por request
+
+CENARIO PROD:
+- /status page open em 10 abas simultaneas
+- 10 calls/s distribuidos
+- 10x exec(top, free, df) paralelos
+- Pressao CPU INTERNA do container medindo CPU (ironia)
+- shell exec gera I/O syscall + parsing overhead
+
+FIX:
+  cache.cacheMiddleware(() => 'aiops:status:public:v2', 5)
+
+- 5s TTL alinhado com client refresh 10s
+- 1 backend call serve ate 2 windows de refresh
+- Multi-client: todos compartilham snapshot por 5s
+- shell + DB N:1 -> 1:1 por janela
+- Key v2 invalida cache antigo (pre-DLP fix pass 5)
+
+TRADE-OFF:
+- Dados ate 5s antigos no /status publica (aceitavel - nao real-time)
+- Admin dashboard /metrics e /alerts SEM cache (real-time mantido)
+- /aiops/status sem query params -> mesmo key serve todos clients
+
+VALIDACAO POS-DEPLOY:
+  curl -D - /api/aiops/status | grep X-Cache
+  -> MISS na primeira call
+  -> HIT nas seguintes ate 5s expirar
+  -> Carga interna do svc deve cair ~5x em pico
+
+DEPLOY:
+- commit 8672bc6 push main OK
+- 14 insertions, 2 deletions
+- aiops-svc rebuild via VPS cron
+
+W18 PERFORMANCE AUDIT (passes 1-2):
+- pass 1: cache /autocomplete + /top-sellers/:category (search-svc)
+- pass 2: cache /aiops/status (esta iter)
+
+ENDPOINTS QUENTES COBERTOS POR CACHE:
+- search-svc: 6/7 endpoints (86%)
+- aiops-svc: 1/3 endpoints publicos (status); /metrics+/alerts admin-only sem cache (real-time)
+
+PROXIMA ITER:
+- W18 pass 3: cache em /products/recommendations/for-me (custosa CTE)
+- W18 pass 4: image optimization audit (next/image em todas pages)
+- W18 pass 5: EXPLAIN ANALYZE em queries top do storefront
