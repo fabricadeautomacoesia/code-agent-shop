@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { X, Trash2, ShoppingBag, ArrowRight } from 'lucide-react';
+import { X, Trash2, ShoppingBag, ArrowRight, Plus, Minus, Star } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth, useUI } from '@/lib/store';
 
@@ -29,6 +29,19 @@ export function CartDrawer() {
     if (!token) return;
     await Api.cartDel(token, id);
     load();
+  }
+
+  // FIX-WORKER-15: paridade com /cart - mudar quantidade direto no drawer
+  async function setQty(id: string, qty: number) {
+    if (!token) return;
+    if (qty < 1) return removeItem(id);
+    if (qty > 99) return;
+    // optimistic local + reload
+    setCart((c: any) => c ? ({
+      ...c,
+      items: c.items?.map((it: any) => it.id === id ? { ...it, quantity: qty, line_total_cents: it.unit_price_cents * qty } : it) || c.items,
+    }) : c);
+    try { await Api.cartSetQty(token, id, qty); load(); } catch {}
   }
 
   if (!cartOpen) return null;
@@ -78,8 +91,25 @@ export function CartDrawer() {
                       className="text-sm font-semibold line-clamp-2 hover:text-magenta">
                       {it.product?.title}
                     </Link>
-                    <div className="text-xs text-white/50 mt-1">Qtde: {it.quantity}</div>
-                    <div className="font-display font-bold text-magenta-glow mt-1">{Api.formatBRL(it.line_total_cents)}</div>
+                    {/* FIX-WORKER-15: controles +/- inline (paridade com /cart) */}
+                    <div className="flex items-center justify-between mt-2 gap-2">
+                      <div className="inline-flex items-center rounded border border-white/10 bg-white/5">
+                        <button onClick={(e) => { e.preventDefault(); setQty(it.id, it.quantity - 1); }}
+                          aria-label="Diminuir"
+                          className="p-1 hover:bg-white/10 rounded-l disabled:opacity-30"
+                          disabled={it.quantity <= 1}>
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <span className="px-2 text-xs font-mono font-semibold min-w-[24px] text-center">{it.quantity}</span>
+                        <button onClick={(e) => { e.preventDefault(); setQty(it.id, it.quantity + 1); }}
+                          aria-label="Aumentar"
+                          className="p-1 hover:bg-white/10 rounded-r disabled:opacity-30"
+                          disabled={it.quantity >= 99}>
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className="font-display font-bold text-sm text-magenta-glow">{Api.formatBRL(it.line_total_cents)}</div>
+                    </div>
                   </div>
                   <button onClick={() => removeItem(it.id)} className="text-white/40 hover:text-red-400 p-1 h-fit">
                     <Trash2 className="w-4 h-4" />
@@ -95,7 +125,19 @@ export function CartDrawer() {
             <div className="space-y-1 text-sm">
               <div className="flex justify-between text-white/60"><span>Subtotal</span><span>{Api.formatBRL(cart.subtotal_cents)}</span></div>
               {cart.discount_cents > 0 && (
-                <div className="flex justify-between text-green-400"><span>Desconto</span><span>- {Api.formatBRL(cart.discount_cents)}</span></div>
+                <div className="flex justify-between text-green-400">
+                  <span>{cart.coupon_code ? `Cupom (${cart.coupon_code})` : 'Desconto'}</span>
+                  <span>- {Api.formatBRL(cart.discount_cents)}</span>
+                </div>
+              )}
+              {/* FIX-WORKER-15: linha de loyalty discount (paridade com /cart) */}
+              {cart.loyalty_discount_cents > 0 && (
+                <div className="flex justify-between text-magenta-glow">
+                  <span className="flex items-center gap-1">
+                    <Star className="w-3 h-3" /> {cart.loyalty_points_redeemed} pts
+                  </span>
+                  <span>- {Api.formatBRL(cart.loyalty_discount_cents)}</span>
+                </div>
               )}
               <div className="flex justify-between text-lg font-display font-bold pt-2 border-t border-white/10">
                 <span>Total</span>
