@@ -6,7 +6,7 @@ const express = require('express');
 const cron = require('node-cron');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache } = require('@cas/shared');
 
 const log = logger.child({ svc: 'review-svc' });
 const app = express();
@@ -65,6 +65,15 @@ app.post('/', jwt.requireAuth(), validate({ body: reviewSchema }), asyncHandler(
          SELECT user_id, 'in_app', 'review_received', $1, $2 FROM sellers WHERE id = $3`,
         [`Nova avaliacao: ${b.rating} estrelas`, b.body || `Voce recebeu ${b.rating} estrelas`, oi.rows[0].seller_id]
       );
+    }
+    // FIX-WORKER-3 pass 2: invalida cache do PDP reviews + product detail (avg_rating mudou)
+    const slugR = await query('SELECT slug FROM products WHERE id = $1', [b.product_id]);
+    if (slugR.rows.length) {
+      const slug = slugR.rows[0].slug;
+      await Promise.all([
+        cache.del(`products:reviews:${slug}:*`).catch(() => {}),
+        cache.del(`products:detail:${slug}`).catch(() => {}),
+      ]);
     }
     res.status(201).json({ review: r.rows[0] });
   } catch (e) {
@@ -131,6 +140,11 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
          SELECT user_id, 'in_app', 'qna_question', 'Nova pergunta', $1 FROM sellers WHERE id = $2`,
         [`Nova pergunta sobre produto`, p.rows[0].seller_id]
       );
+    }
+    // FIX-WORKER-3 pass 2: invalida cache do PDP qna (60s TTL antes ocultava o post recem-criado)
+    const slugR = await query('SELECT slug FROM products WHERE id = $1', [req.body.product_id]);
+    if (slugR.rows.length) {
+      await cache.del(`products:qna:${slugR.rows[0].slug}`).catch(() => {});
     }
     res.status(201).json({ qna: r.rows[0] });
   })
@@ -207,6 +221,11 @@ app.post('/qna/:id/answer', jwt.requireAuth({ roles: ['seller','admin'] }),
          VALUES ($1, 'in_app', 'qna_answered', 'Sua pergunta foi respondida', 'Acesse o produto para ver a resposta')`,
         [r.rows[0].asked_by_user_id]
       );
+    }
+    // FIX-WORKER-3 pass 2: invalida cache qna do PDP (answer agora aparece)
+    const slugR = await query('SELECT slug FROM products WHERE id = $1', [r.rows[0].product_id]);
+    if (slugR.rows.length) {
+      await cache.del(`products:qna:${slugR.rows[0].slug}`).catch(() => {});
     }
     res.json({ ok: true });
   })
