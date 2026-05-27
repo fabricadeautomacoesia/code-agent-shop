@@ -13,11 +13,18 @@ router.use(jwt.requireAuth());
 const TAKE_RATE = parseFloat(process.env.PLATFORM_TAKE_RATE || '0.18');
 
 // POST /orders/checkout - cria pedido a partir do cart
+// FIX-WORKER-2: schema refinement - installment_count > 1 exige payment_method='credit_card'
+// Antes: client podia enviar {payment_method:'pix', installment_count:12}; field era
+// silenciosamente DROPED na linha 120 -> pedido criado sem parcelas mas usuario achava
+// que receberia 12x. UX confuso.
 router.post('/checkout',
   validate({ body: z.object({
     payment_method: z.enum(['pix','credit_card','boleto']),
     installment_count: z.number().int().min(1).max(12).optional(),
-  })}),
+  }).refine(
+    (d) => !d.installment_count || d.installment_count === 1 || d.payment_method === 'credit_card',
+    { message: 'installment_count > 1 requer payment_method=credit_card', path: ['installment_count'] }
+  )}),
   asyncHandler(async (req, res, next) => {
     const result = await tx(async (c) => {
       const cart = await c.query(
