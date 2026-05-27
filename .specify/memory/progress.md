@@ -4565,3 +4565,57 @@ GAP DETECTADO (proxima iter):
   /api/reviews (sem rewrite). Validar
 - order-svc tem global jwt.requireAuth -> /api/orders/health = 401
   (correto - health interno nao deve ser publico para fail2ban scan)
+
+## WORKER 2 pass 3 (CHECKOUT) - silent payment dispatch failure logged
+
+VETOR DETECTADO (E2E checkout test):
+- POST /orders/checkout -> 201 order criada OK
+- 5s wait + GET /orders/{id} -> asaas_payment_id ainda NULL
+- W2 pass 2 (poll backoff) compensa UX mas root cause persistia
+
+Audit revelou em order-svc/orders.js:126-146:
+- setImmediate(async () => { await fetch(...) })
+- fetch NAO throw em 401/500 -> response chega normal
+- Codigo so logava no catch -> nunca triggered em HTTP errors
+- W17 pass 7 startup ja alertava: "recommended env missing: PAYMENT_INTERNAL_TOKEN"
+- Mas runtime continuava silencioso
+
+FIX (1 arquivo - services/order-svc/src/routes/orders.js):
++ Check r.ok apos await fetch
++ !r.ok: log.error com { status, has_token, detail } [payment.dispatch_non_2xx]
++ ok: log.info [payment.dispatch_ok]
++ catch (network/DNS) preserva log.error existente
+
+DEPLOY:
+- commit 63b8bbf pushed
+- order-svc rebuilt + deployed converged
+
+VALIDACAO E2E (revelou DOIS issues distintos):
+1. Trigger checkout -> log apareceu:
+   {"status":401, "has_token":false, "detail":"missing_token",
+    "msg":"[payment.dispatch_non_2xx]"}
+2. ROOT CAUSE 100% confirmada: PAYMENT_INTERNAL_TOKEN env nao configurada
+   em prod -> order-svc envia sem header -> payment-svc requireAuth retorna 401
+
+ACAO OPERACIONAL NECESSARIA (nao codigo - ops):
+1. Gerar token: openssl rand -hex 32
+2. docker secret create cas_payment_internal_token (ou env Swarm)
+3. Configurar em AMBOS services: order-svc + payment-svc
+4. Restart services
+
+ENVS pendentes documentadas (CRITICAL):
+- PAYMENT_INTERNAL_TOKEN (este pass)
+- VAULT_INTERNAL_TOKEN (W17 pass 4 doc)
+- QA_RUN_INTERNAL_TOKEN (W12 pass 2 doc)
+Todas startup.js alerta mas runtime nao bloqueia (opcional pra dev).
+
+IMPACTO:
+- Bug invisivel agora visivel em logs estruturados
+- Ops time tem actionable info (status + has_token + detail)
+- W17 pass 7 startup.js + W2 pass 3 runtime logging = defense em depth
+- Quando token configurado, [payment.dispatch_ok] confirmara healthy
+
+PROXIMA ITER:
+- Considerar tornar PAYMENT_INTERNAL_TOKEN OBRIGATORIO em PROD (fail-closed)
+  similar ao JWT secrets W17 pass 6 - hoje continua silently broken
+- Audit qa-svc/vault-svc para mesmo pattern fetch sem r.ok check
