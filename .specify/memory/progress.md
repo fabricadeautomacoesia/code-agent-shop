@@ -17319,7 +17319,31 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ seller-svc /:slug/stats + /:slug/products (pass 99) - 9 bugs
 - ✅ W7 MARCO pass 100 - 100 micro-iters + deploy script + doc
 - ✅ review-svc /qna/:id/voted (pass 101) - 4 bugs UUID+Regra A+UX+cache
-- ✅ vault-svc /use endpoint (pass 102 esta iter) - 3 bugs critical security
+- ✅ vault-svc /use endpoint (pass 102) - 3 bugs critical security
+- ✅ notification-svc /:id/read (pass 103 esta iter) - 3 bugs Regra K+rate+UX
+
+W7 PASS 103 RESUMO:
+- notification-svc/src/server.js POST /:id/read refactor (3 bugs):
+  * Regra K race condition documentada (kept original pattern com check 404)
+    - PRE: SELECT-then-UPDATE separados podem dar UX inconsistente em multi-tab
+    - Mitigado via single UPDATE...RETURNING + check existence fallback
+  * NEW readLimiter 100/min/user (anti-DoS DB)
+    - PRE: zero limit. Bot UUIDs random no /:id/read wasteful 2 queries/hit
+    - 1000 req/seg = 2000 DB queries (DoS amplification)
+    - Real users marcam <30/min em surto - 100/min permissivo
+  * UX unread_count_remaining no response
+    - PRE: response so {ok, already_read} - frontend Bell badge precisava
+      fetch separado /unread-count = 2 round-trips por click
+    - POS: include unread_count_remaining atomico
+    - UX: 1 click = 1 update visual badge sem segundo fetch
+- Pattern W7 em 111 endpoints + 23 regras (A-W) - 103 micro-iters
+
+PROXIMA ITER:
+- W7 pass 104: order-svc remaining endpoints
+- W7 pass 105: product-svc admin /:id/force-approve audit
+- Operacional: SSH VPS + bash deploy/w7-deploy-validate.sh
+- W3 pass 14: Dialog wrapper e2e tests
+- W14: monitor /aiops/db/dead-indexes prod 2+ semanas
 
 W7 PASS 102 RESUMO:
 - vault-svc/src/server.js POST /use refactor (3 bugs adicionais):

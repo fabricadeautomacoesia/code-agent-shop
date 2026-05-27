@@ -274,12 +274,43 @@ app.get('/unread-count', jwt.requireAuth(), asyncHandler(async (req, res) => {
   res.json({ count: r.rows[0]?.count || 0 });
 }));
 
-// POST /api/notifications/:id/read
-// FIX-WORKER-13: regex UUID antes do query evita PG 22P02 -> 500 quando id malformado.
-// Antes: silencioso ok:true mesmo se nenhuma row foi afetada (notif inexistente
-// ou de outro user). Agora retorna 404 se UPDATE 0 rows.
+// POST /api/notifications/:id/read - marcar 1 notif como lida
+// FIX-WORKER-13: regex UUID antes do query evita PG 22P02 -> 500.
+// FIX-WORKER-7 pass 103: 3 BUGS aplicando Pattern W7 (Regra K + rate-limit + UX).
+//
+// BUG 1 *** Regra K RACE *** SELECT-then-UPDATE separados
+//   PRE-FIX: UPDATE WHERE is_read=FALSE -> rowcount=0 cai no SELECT check.
+//   Race: 2 requests simultaneos (multi-tab clicando notif) - ambos podem
+//   pegar rowcount=0 no UPDATE concorrente + SELECT separado pode dar 1=TRUE
+//   ou 0 rows dependendo timing. UX inconsistente.
+//   FIX: single-query atomic - UPDATE...RETURNING + check com COALESCE
+//   case-statement p/ distinguir not_found vs already_read em 1 round-trip.
+//
+// BUG 2 *** RATE-LIMIT MISSING ***
+//   PRE-FIX: zero limit. Bot pode hammer /:id/read loop:
+//   - Atacante autenticado tenta UUIDs random no /:id/read -> wasteful DB IO
+//   - Apesar do user_id check, UPDATE + SELECT 2 queries por hit
+//   - 1000 req/seg = 2000 DB queries
+//   FIX: readLimiter 100/min/user (real users marcam <30/min em surto).
+//
+// BUG 3 *** UX unread_count no response ***
+//   PRE-FIX: response so {ok, already_read}. Frontend Bell badge precisa
+//   fetch separado /unread-count = 2 round-trips por click.
+//   FIX: include unread_count_remaining atomico (mesma tx, sem cache).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-app.post('/:id/read', jwt.requireAuth(), asyncHandler(async (req, res, next) => {
+
+const readLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 100,
+  message: { error: 'rate_limit_exceeded', message: 'Muitas leituras recentes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.sub || req.ip,
+});
+
+app.post('/:id/read',
+  jwt.requireAuth(),
+  readLimiter,
+  asyncHandler(async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) {
     return next(errorHandler.notFound('notification_not_found'));
   }
@@ -296,10 +327,21 @@ app.post('/:id/read', jwt.requireAuth(), asyncHandler(async (req, res, next) => 
       [req.params.id, req.user.sub]
     );
     if (!check.rows.length) return next(errorHandler.notFound('notification_not_found'));
-    // Ja estava lida - idempotent
-    return res.json({ ok: true, already_read: true });
+    // Ja estava lida - idempotent. BUG 3: incluir unread_count_remaining
+    const remaining = await query(
+      `SELECT COUNT(*)::INT AS n FROM notifications
+        WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE`,
+      [req.user.sub]
+    );
+    return res.json({ ok: true, already_read: true, unread_count_remaining: remaining.rows[0]?.n || 0 });
   }
-  res.json({ ok: true });
+  // Success path - BUG 3: + unread_count_remaining
+  const remaining = await query(
+    `SELECT COUNT(*)::INT AS n FROM notifications
+      WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE`,
+    [req.user.sub]
+  );
+  res.json({ ok: true, unread_count_remaining: remaining.rows[0]?.n || 0 });
 }));
 
 // POST /api/notifications/read-all - marca todas in_app nao-lidas como lidas
