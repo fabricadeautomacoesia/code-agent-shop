@@ -186,10 +186,16 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             )}
 
             {product.store_slug && (
-              <div className="mt-6 pt-6 border-t border-white/10">
+              <div className="mt-6 pt-6 border-t border-white/10 space-y-2">
                 <Link href={`/seller/${product.store_slug}`} className="text-sm flex items-center gap-2 hover:text-magenta">
                   <Shield className="w-4 h-4" /> Vendido por <strong>{product.store_name}</strong>
                 </Link>
+                {/* MLB-NEW WORKER 16: badges inline do seller no PDP */}
+                {product.reputation_tier && ['ouro','platinum','lider_platinum'].includes(product.reputation_tier) && (
+                  <div className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
+                    <Award className="w-3 h-3" /> {product.reputation_tier === 'lider_platinum' ? 'Lider Platinum' : product.reputation_tier === 'platinum' ? 'Platinum' : 'Ouro'}
+                  </div>
+                )}
               </div>
             )}
 

@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { Star, Award, Package, TrendingUp, MapPin, Calendar } from 'lucide-react';
+import { Star, Award, Package, TrendingUp, MapPin, Calendar, BadgeCheck, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
 
@@ -91,6 +91,13 @@ export default async function SellerPage({ params }: { params: Promise<{ slug: s
               <span className={`text-xs px-2 py-1 rounded ${tier.color} flex items-center gap-1`}>
                 <Award className="w-3 h-3" /> {tier.label}
               </span>
+              {/* MLB-NEW WORKER 16: badge Vendedor Verificado (KYC concluido) */}
+              {seller.is_verified && (
+                <span className="text-xs px-2 py-1 rounded bg-cyan-500/20 text-cyan-300 flex items-center gap-1 border border-cyan-500/40"
+                  title="Documentos verificados pela plataforma">
+                  <BadgeCheck className="w-3 h-3" /> Vendedor Verificado
+                </span>
+              )}
             </div>
             {seller.store_description && <p className="text-white/70 mb-4 max-w-2xl">{seller.store_description}</p>}
             <div className="flex flex-wrap gap-6 text-sm text-white/60">
