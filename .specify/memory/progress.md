@@ -6417,3 +6417,62 @@ PROXIMA ITER:
 - W4: admin dashboard audit
 - W12: qa-svc + qa-worker.py callback handling
 - W13: notification-svc outbox processor
+
+## WORKER 2 PASS 5 - /cart form cupom com bugs UX + a11y
+
+AUDIT E2E fluxo /cart -> /checkout -> /conta/pedidos:
+- /cart layout OK (next/image, qty +/-, loyalty redeem cards funcionais)
+- /checkout layout OK (CPF guard W11 pass 4, polling Asaas W2 pass 2)
+- /conta/pedidos lista OK (badges status, next/image stack -3)
+- /conta/pedidos/[id] funcional
+
+GAPS encontrados especificamente no form de cupom em /cart:
+
+1. INPUT NAO TRIMADO:
+   - "PROGRESSIVO15 " (espacos copy-paste de email/whatsapp) -> 404 backend
+   - Backend faz SELECT WHERE code = $1 sem TRIM proprio
+   - User reclama "mas eu copiei certo"
+
+2. SEM PREVENT DE DUPLICATE:
+   - Aplicar mesmo cupom novamente: request redundante + load() flash
+   - Nao indica visualmente que cupom ja estava aplicado
+
+3. ERROR MESSAGES CRUS:
+   - catch { setErr(e.message) } expoe "validation_error" raw
+   - 3 casos comuns sem texto friendly: not_found/min_tier/expired
+
+4. BOTAO A11Y/UX:
+   - <button><Tag/></button> screen reader: "button" sem contexto
+   - Sem disabled quando coupon vazio -> click vazio = 400 backend
+   - Sem hover state visivel
+   - Sem type="submit" explicito
+
+FIX applyCoupon():
+- code = coupon.trim().toUpperCase() antes envio
+- Pre-checks: vazio + duplicado (com mensagens claras)
+- Friendly mapping para 3 erros backend (not_found / min_tier / expired)
+- setCoupon('') apos sucesso (feedback visual de aplicacao)
+
+FIX UI form:
+- type="submit" explicito + aria-label="Aplicar cupom" + title
+- disabled={!coupon.trim()} + disabled:opacity-40 + cursor-not-allowed
+- hover:border-magenta transition-colors (afford de interatividade)
+- input style textTransform:uppercase + placeholder:normal-case
+- Placeholder enriquecido "Cupom (ex: PROGRESSIVO15)"
+- aria-label no input para screen readers
+
+IMPACTO UX:
+- Cupons com espacos agora funcionam (recover de copy-paste sujo)
+- Mensagens de erro acionaveis ("nao encontrado" vs "validation_error")
+- Botao acessivel WCAG AA (aria-label + visible focus + disabled correto)
+- Sem mais flash visual em reaplicacao
+
+DEPLOY:
+- commit fdd6239 push main OK
+- 39 insertions, 5 deletions
+- storefront rebuild via VPS cron
+
+PROXIMA ITER:
+- W2 pass 6: /checkout error messages friendly mapping similar
+- W4: admin dashboard audit
+- W11: payment-svc Asaas createPayment validation campos
