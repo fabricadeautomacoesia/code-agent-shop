@@ -16,5 +16,8 @@ module.exports = {
   cache:        require('./cache'),
   paginate:     require('./paginate'),
   startup:      require('./startup'),
+  // FIX-WORKER-7 pass 52: HTML escape DRY cross-svc (consolida 3 implementations
+  // duplicadas em notification-svc renderMustache + auth-svc forgot/register).
+  htmlEscape:   require('./html-escape').htmlEscape,
   sleep:        (ms) => new Promise((r) => setTimeout(r, ms)),
 };

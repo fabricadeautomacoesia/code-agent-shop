@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, validate, asyncHandler, fail2ban, errorHandler, logger } = require('@cas/shared');
+const { jwt, validate, asyncHandler, fail2ban, errorHandler, logger, htmlEscape } = require('@cas/shared');
 
 const router = express.Router();
 
@@ -167,10 +167,8 @@ router.post('/register', registerLimiter, validate({ body: registerSchema }), as
       );
 
       // BUG 4: notification welcome (mesmo tx - atomico)
-      // Helper inline htmlEscape (pattern W7 pass 50 - TODO extract @cas/shared)
-      const htmlEscape = (s) => String(s).replace(/[&<>"'/]/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '/': '&#x2F;',
-      })[c]);
+      // FIX-WORKER-7 pass 52: usa @cas/shared.htmlEscape (DRY cross-svc)
+      // (htmlEscape ja desestruturado no top do arquivo - linha modificada pass 52)
       const fullNameSafe = htmlEscape(full_name);
       const appUrl = process.env.APP_URL || 'https://cas.inovareinteligenciaartificial.com';
       await c.query(
@@ -528,9 +526,7 @@ router.post('/forgot-password',
     //   Anti-spam: invalidar tokens anteriores ao gerar novo (1 token por user max)
     //   FIX: UPDATE password_resets SET used_at=NOW() WHERE user_id ... AND used_at IS NULL
     //   ANTES INSERT novo token
-    const htmlEscape = (s) => String(s).replace(/[&<>"'/]/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '/': '&#x2F;',
-    })[c]);
+    // FIX-WORKER-7 pass 52: htmlEscape via @cas/shared (DRY - removido inline)
 
     const tok = crypto.randomBytes(32).toString('hex');
     const hash = crypto.createHash('sha256').update(tok).digest('hex');

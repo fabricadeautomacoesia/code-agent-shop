@@ -16711,3 +16711,85 @@ PROXIMA ITER:
 - W7 pass 54: auth-svc /logout audit
 - W3 pass 14: Dialog wrapper e2e tests
 - W18 pass 9: drop dead idx baseado audit prod
+
+================================================================
+ITER W7 PASS 52 - extract @cas/shared.htmlEscape DRY (refactor) (2026-05-27)
+================================================================
+ESCOPO: refactor cross-svc - HTML escape consolidacao DRY
+FILES:
+- packages/shared/src/html-escape.js (NEW)
+- packages/shared/src/index.js (export htmlEscape)
+- services/notification-svc/src/server.js (use shared - era _htmlEscape inline)
+- services/auth-svc/src/routes/auth.js (use shared - era 2 helpers inline)
+
+CONTEXTO: W13 pass 31 (notification renderMustache) + W7 pass 50
+(/forgot-password) + W7 pass 51 (/register) implementaram MESMO htmlEscape
+LOGIC inline 3x. Duplicacao = bug a quebrar 1 dos 3 = XSS silent em
+producao + manutencao 3x trabalho.
+
+REFACTOR APLICADO:
+
+NOVO @cas/shared/html-escape.js:
+- function htmlEscape(s)
+- Escape: & < > " ' / (OWASP minimum)
+- Null/undefined safe (retorna '')
+- Regex compilado uma vez (perf ~1μs/call)
+- JSDoc com warnings: SO HTML body/attribute context
+  (NAO usar em URL/JS/CSS - cada context tem escape proprio)
+
+EXPORT @cas/shared/index.js:
+- adicionado htmlEscape: require('./html-escape').htmlEscape
+- API: const { htmlEscape } = require('@cas/shared')
+
+CONSUMER 1: notification-svc renderMustache
+- PRE: function _htmlEscape inline (linhas 54-58)
+- POS: const { htmlEscape: _htmlEscape } = require('@cas/shared')
+- Alias _htmlEscape mantido p/ minimizar diff renderMustache code
+- Backward-compat: zero break
+
+CONSUMER 2+3: auth-svc /forgot-password + /register
+- PRE: 2 helpers inline distintos (mesmo codigo, copy-paste)
+  - linha 171-173 (register, dentro tx)
+  - linha 529-531 (forgot-password, dentro asyncHandler)
+- POS: 1 import top-level + uso direto
+- Imports: const { ..., htmlEscape } = require('@cas/shared')
+- Codigo dentro endpoints: const fullNameSafe = htmlEscape(full_name)
+
+BENEFICIOS:
+- DRY: 3 implementations duplicadas -> 1 source of truth
+- Bug fix em html-escape.js = atualiza 3 consumers
+- Pattern padronizado para futuros endpoints com body_html
+- Performance: regex compiled uma vez no module load (cache)
+- Backward-compat: renderMustache mantem _htmlEscape alias
+
+NOVO PATTERN W7 SHARED LIBRARY:
+- Pre-pass: @cas/shared tem 14 modules (logger, validate, etc)
+- Pos-pass: 15 modules (+ html-escape)
+- Padrao import: { fn } = require('@cas/shared') (single import path)
+- Trade-off: 1 line bundle size vs duplication X consumers
+
+POTENCIAIS CONSUMERS FUTUROS:
+- payment-svc emails (recibo Asaas com user data)
+- search-svc autocomplete (query escape em result rendering)
+- product-svc QnA + reviews descriptions (admin moderation UI)
+- Pattern: SEMPRE htmlEscape() user input em body_html notification
+
+PATTERN W7 43 ENDPOINTS + 22 REGRAS (A-V) + 1 REFACTOR - 52 micro-iters:
+- product-svc: 4
+- search-svc: 5
+- order-svc: 11
+- payment-svc: 4
+- vault-svc: 2
+- notification-svc: 3
+- qa-svc: 2
+- review-svc: 8 (100%)
+- seller-svc: 7
+- gateway: 2
+- auth-svc: 4
++ refactor @cas/shared.htmlEscape (esta iter)
+
+PROXIMA ITER:
+- W7 pass 53: auth-svc /refresh re-audit (W17 pass 14 + Regras novas A-V)
+- W7 pass 54: auth-svc /logout audit
+- W3 pass 14: Dialog wrapper e2e tests
+- W18 pass 9: drop dead idx baseado audit prod

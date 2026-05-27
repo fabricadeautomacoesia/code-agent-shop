@@ -51,11 +51,10 @@ const FROM = process.env.SMTP_FROM || 'Code & Agent Shop <no-reply@code-agent-sh
 // Vetor real: seller cria produto title="X<script>alert(1)</script>" -> notification
 // payload.title -> renderMustache body_html -> <script> raw no email -> XSS no Gmail
 // preview (alguns clients render <script>; outros so img/iframe mas o vetor existe).
-function _htmlEscape(s) {
-  return String(s).replace(/[&<>"'/]/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '/': '&#x2F;',
-  })[c]);
-}
+// FIX-WORKER-7 pass 52: _htmlEscape inline removido - usa @cas/shared.htmlEscape
+// (DRY cross-svc - consolida 3 implementations duplicadas).
+// Alias _htmlEscape mantido p/ backward-compat com renderMustache abaixo.
+const { htmlEscape: _htmlEscape } = require('@cas/shared');
 
 // FIX-WORKER-13 pass 6: hardening contra prototype pollution + URL schema injection.
 // Keys reservadas que NAO devem ser resolvidas via cur[p]:
