@@ -102,6 +102,38 @@ APLICADA com sucesso no Postgres VPS. EXPLAIN ANALYZE valida planner ja
 preparado para escalar (Seq Scan ainda em tabelas <100 rows, mas Index Scan
 sera escolhido automaticamente acima desse limiar).
 
+## CHECKOUT UX - WORKER 2 (CART QUANTITY CONTROLS)
+Audit E2E do fluxo /cart -> /checkout -> /conta/pedidos revelou:
+- Cart UI exibia apenas 'Qtde: N' como texto estatico (nao editavel).
+- Usuario nao podia +/- quantidade - so remover via lixeira (UX horrivel).
+- Cupom progressivo aplicava desconto correto (R$417->4170/10% no tier 0).
+- Checkout PIX criava order pending OK, redirect ao /conta/pedidos OK.
+
+FIX commitado + deployed (a72e564 + a3c704b + 6546c0c):
+
+order-svc novo PATCH /cart/items/:id body {quantity:1..99}:
+- UPDATE quantity + line_total_cents (= unit_price * qty) + recalcCart.
+- Cast \$1::INT (PG 42P08 quando \$1 usado em quantity=int E line_total=bigint).
+- Cast \$2::UUID + \$3::UUID (UUID malformado -> 22P02 -> 404 via W4 global handler).
+- cart_items nao tem updated_at - removido.
+
+storefront cart UI:
+- Botoes +/- (Lucide Plus/Minus) em inline-flex rounded-lg.
+- Display monospace centralizado.
+- setQty handler com optimistic update + load() pos-PATCH (refresh totals
+  para cupom progressivo recalcular tier).
+- qty<1 -> remove(id) auto. qty>=99 desabilita botao +.
+- Api.cartSetQty helper.
+
+VALIDADO E2E:
+- PATCH qty=7 -> 200 + GET cart {quantity:7, line_total:13300=1900*7}
+- PATCH qty=100 -> 400 validation_error (max 99)
+- PATCH qty=0 -> 400 (min 1)
+- PATCH UUID malformado -> 404 not_found via W4 global handler
+
+BONUS: confirmou que o W4 global error-handler (PG 22P02 -> 404) propaga
+para order-svc apos rebuild com shared atualizado.
+
 ## ADMIN AUDIT - WORKER 4 (UUID 22P02 LEAK FIX)
 Audit dos endpoints admin via curl com token role=admin revelou:
 - GET /api/orders/admin -> HTTP 500 'database_error'
