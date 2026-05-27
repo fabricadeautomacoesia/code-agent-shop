@@ -6350,3 +6350,70 @@ PROXIMA ITER:
 - W9 pass 7: melhorar /cart + /checkout layouts (mesmo padrao)
 - W2: E2E checkout flow audit
 - W8: visual consistency audit
+
+## WORKER 10 PASS 4 - /search/facets ignorava category + kind filters
+
+BUG CRITICO encontrado via audit curl edge cases:
+- /facets?category=agentes-ia retornava {kinds:[template:1,n8n:2,ai_agent:3,...]}
+- /facets?category=automacoes retornava EXATAMENTE OS MESMOS COUNTS
+- Independente do filtro, sempre counts GLOBAIS do catalogo inteiro
+
+PROVA EM PRODUCAO:
+  curl /api/search/facets?category=agentes-ia | head -c 200
+  curl /api/search/facets?category=automacoes | head -c 200
+  -> bytes identicos (template:1, node_script:1, n8n:2, ai_agent:3)
+
+CAUSA: SQL na linha 316-326 NUNCA referenciava req.query.category nem
+req.query.kind. So tinha WHERE status='approved' GROUP BY kind/tier.
+O cache key incluia :cat=X mas a query subjacente nao filtrava nada.
+
+CONSEQUENCIAS UX:
+1. /categoria/agentes-ia sidebar mostrava "147 templates" (global) sendo
+   que agentes-ia so tem 3 templates. UI enganava o usuario.
+2. Cache servia counts errados por ate 180s -> bug persistente.
+3. Search com filtro categoria + facets nao diminuia counts ao filtrar.
+4. SQL waste: 3 subqueries sempre rodavam contra products inteiro.
+
+FIX (3 mudancas):
+
+1. CTE base com filtros aplicados:
+   WITH base AS (
+     SELECT p.id, p.kind, p.price_cents, p.seller_id, p.category_id
+       FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+      WHERE p.status='approved' AND p.deleted_at IS NULL
+        AND ($1::TEXT IS NULL OR c.slug = $1)
+        AND ($2::TEXT IS NULL OR p.kind = $2)
+   )
+   Subqueries derivam de `base` -> counts CORRETOS por filtro.
+
+2. Normalizacao + validacao:
+   - category: trim + lowercase (slugs sao lower no DB)
+   - kind: whitelist 10 valores (defesa adicional vs parametrizado)
+   - Cache key normalizado tambem -> melhor hit rate
+
+3. Response enriquecido:
+   - COALESCE em MIN/MAX/AVG (evita null se base vazio)
+   - total: COUNT(*) FROM base p/ UI "X produtos filtrados"
+   - filter: { category, kind } p/ frontend confirmar quais foram aceitos
+
+DEPLOY:
+- commit 7e118c4 push main OK
+- 36 insertions, 9 deletions
+- search-svc rebuild necessario via VPS cron
+- Cache antigo invalida naturalmente em 180s
+- VALIDACAO POS-DEPLOY: curl /facets?cat=X != /facets?cat=Y
+
+ENDPOINTS search-svc auditados (todos OK exceto este):
+- GET /              OK (q vazio = lista all, SQLi filtrado)
+- GET /autocomplete  OK (>=2 chars, cache W18)
+- GET /trending      OK (sanitizado pass 3)
+- GET /categories    OK (children agregados)
+- GET /facets        BUG CORRIGIDO <- ESTE
+- GET /top-sellers   OK (cache W10)
+- GET /top-sellers/:category OK (404 quando inexistente)
+
+PROXIMA ITER:
+- W4: admin dashboard audit
+- W12: qa-svc + qa-worker.py callback handling
+- W13: notification-svc outbox processor
