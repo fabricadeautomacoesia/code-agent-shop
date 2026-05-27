@@ -1097,3 +1097,50 @@ PROXIMOS GAPS MLB:
 - Mercado Pontos backend ja existe (seller-svc/loyalty.js) mas falta UI redeem
 - Comparador UI ja existe (/comparar) mas falta drawer flutuante de selecao
 - Cupom progressivo ja existe (order-svc/cart.js) mas falta widget na cart
+
+## WORKER 16 (MLB-NEW) - Comparator floating drawer + CompareButton
+Pagina /comparar ja existia mas so funcionava via URL manual `?ids=uuid1,uuid2`.
+Faltava UX equivalente ao Mercado Livre: usuario clica "Comparar" em ate 4 cards/PDPs,
+drawer flutuante bottom-right mostra selecao + CTA "Comparar agora" -> /comparar?ids=...
+
+NOVO STORE: apps/storefront/src/lib/store.ts
+- useCompare (zustand + persist localStorage cas_compare)
+- items: CompareItem[], max COMPARE_MAX=4
+- toggle(p), remove(id), clear(), setOpen(v)
+- Auto-abre drawer ao adicionar primeiro item
+
+NOVO COMPONENTE: apps/storefront/src/components/compare-button.tsx
+- 2 variants:
+  * pdp: botao largura cheia abaixo de AskQuickButton (border + 3 estados)
+  * card: icone overlay absolute bottom-right do card-image (toggle ON/OFF)
+- Estados: idle (GitCompare) / selected (Check + magenta) / full (disabled + opacity)
+- e.preventDefault + stopPropagation no card (evita navegar para PDP)
+
+NOVO COMPONENTE: apps/storefront/src/components/compare-drawer.tsx
+- Fixed bottom-4 right-4 z-[70] glass-strong + border magenta/30
+- Header: "Comparar (n/4)" + collapsivel (ChevronUp/Down) + Limpar (Trash2)
+- Lista divide-y: thumb 40px + title + preco + X (remove)
+- Footer: "Comparar agora ->" se >=2 items, senao msg "Adicione +N produto(s)"
+- Renderiza vazio se 0 items (no SSR flash, useEffect mounted gate)
+
+INTEGRACAO LAYOUT: apps/storefront/src/app/layout.tsx
+- CompareDrawer mounted apos CartDrawer (mesmo padrao).
+INTEGRACAO PDP: ProductPage -> CompareButton variant=pdp apos AskQuickButton.
+INTEGRACAO CARD: ProductCard -> CompareButton variant=card overlay no card-image.
+
+VALIDACAO PUBLICA (TRIPLA):
+1) Layout chunk _next/static/chunks/app/layout-cd7dc2d217c32b37.js:
+   CompareDrawer, Comparar (, Comparar agora, cas_compare, Adicione +, Recolher OK
+2) PDP chunk page-a481414336f6bd8e.js:
+   CompareButton, Adicionar a comparacao, Adicionado a comparacao OK
+3) Catalog chunk page-02b3c746a3f8d12f.js:
+   CompareButton, Adicionar a comparacao, Remover da comparacao OK
+4) Backend /api/products/compare?ids=X validation OK ("min_2_products")
+
+DEPLOY: commit a078c97 pushed, build storefront via Dockerfile.next,
+service updated --force, converged OK.
+
+PROXIMOS GAPS MLB (remanescentes):
+- Loyalty UI redeem button na cart (backend ja existe seller-svc/loyalty.js)
+- Widget cupom progressivo na cart (calc dinamico based on subtotal)
+- Mercado Pontos extrato historico em /conta/pontos
