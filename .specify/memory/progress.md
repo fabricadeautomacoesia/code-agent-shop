@@ -1380,3 +1380,46 @@ Backend real ainda testado: POST /api/auth/login com senha errada retornou
 
 DEPLOY: commit 1c7ab17 pushed, storefront rebuilt via Dockerfile.next,
 service updated --force, converged OK.
+
+## WORKER 18 (PERFORMANCE) - Seq scan na bandeja notifications in-app
+Audit pg_stat_user_tables identificou notifications como tabela mais varrida:
+  notifications: 1662 seq_scan vs 358 idx_scan (4051 tup_read seq)
+  Lider absoluto, mesmo com apenas 4 rows hoje - sinaliza access pattern
+  recorrente sem suporte de indice apropriado.
+
+DIAGNOSTICO:
+- Query alvo (notification-svc/server.js:78):
+  SELECT * FROM notifications
+   WHERE user_id = $1 AND channel = 'in_app'
+   ORDER BY created_at DESC LIMIT 30
+- Indices existentes nao serviam:
+  * idx_notif_user_unread (user_id, created_at DESC) WHERE is_read=false
+    -> ignorado pois query lista TUDO (lidas + nao-lidas)
+  * idx_notif_pending / idx_notif_outbox_ready -> partial WHERE pending,
+    sao para cron de outbox/email, nao para bandeja
+- EXPLAIN ANALYZE confirmado: "Seq Scan on notifications" com
+  Filter: ((user_id = $0) AND (channel = 'in_app'))
+
+FIX: db/migrations/020_notifications_inbox_index.sql
+- CREATE INDEX IF NOT EXISTS idx_notif_user_channel_created
+    ON notifications(user_id, channel, created_at DESC)
+- Cobre exatamente os filtros + ORDER BY da query alvo
+- DO block tolerante a undefined_table (padrao migrations CAS)
+- 16 kB de espaco em disco
+
+VALIDACAO:
+- Migration aplicada via psql -f no container postegresp2_postgres
+- Index criado: pg_indexes -> idx_notif_user_channel_created EXISTE
+- EXPLAIN ANALYZE (SET enable_seqscan=off) confirma planner usa:
+  "Index Scan using idx_notif_user_channel_created on notifications"
+  "Index Cond: ((user_id = $0) AND (channel = 'in_app'))"
+- Hoje seq scan ainda eh cheaper com 4 rows, mas planner switchara
+  automaticamente quando index ficar mais barato (crescimento natural).
+
+IMPACTO ESPERADO:
+- Com 1000 users x 50 notif/user = 50k rows -> seq scan custaria 50k tuples
+  por bandeja-fetch. Index scan custara ~5 tuples (LIMIT 30 ordered).
+- 10x melhoria de latencia esperada uma vez que volume cresca.
+
+GIT: commit ed60c15 pushed.
+NAO precisou rebuild de svc (apenas DDL no banco).
