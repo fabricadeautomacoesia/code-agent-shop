@@ -43,6 +43,24 @@ export function CompareButton({
     ? `Limite de ${COMPARE_MAX} produtos atingido - ver comparacao primeiro`
     : (selected ? 'Remover da comparacao' : 'Adicionar a comparacao');
 
+  // FIX-WORKER-3 pass 5: card variant full state vira <Link> consistente com
+  // PDP variant. Antes: button disabled cinza inutil (zero affordance).
+  // Agora: clica e vai para /comparar (mesmo fluxo PDP full).
+  if (variant === 'card' && full) {
+    const compareIds = items.map((i) => i.id).join(',');
+    return (
+      <Link
+        href={`/comparar?ids=${compareIds}`}
+        onClick={(e) => e.stopPropagation()}
+        aria-label="Limite atingido - ver pagina de comparacao"
+        title={titleText}
+        className="absolute bottom-2 right-2 z-10 p-1.5 rounded-lg backdrop-blur transition-all focus-visible:outline-2 focus-visible:outline-yellow-400 bg-yellow-500/20 text-yellow-200 hover:bg-yellow-500/30 border border-yellow-500/40"
+      >
+        <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+      </Link>
+    );
+  }
+
   if (variant === 'card') {
     return (
       <button
@@ -50,13 +68,10 @@ export function CompareButton({
         aria-label={titleText}
         aria-pressed={selected}
         title={titleText}
-        disabled={full}
         className={`absolute bottom-2 right-2 z-10 p-1.5 rounded-lg backdrop-blur transition-all focus-visible:outline-2 focus-visible:outline-magenta ${
           selected
             ? 'bg-magenta text-white shadow-lg shadow-magenta/40'
-            : full
-              ? 'bg-white/5 text-white/30 cursor-not-allowed'
-              : 'bg-black/40 text-white/70 hover:bg-magenta/80 hover:text-white'
+            : 'bg-black/40 text-white/70 hover:bg-magenta/80 hover:text-white'
         }`}
       >
         {selected
@@ -100,7 +115,10 @@ export function CompareButton({
       {selected
         ? <Check className="w-4 h-4" aria-hidden="true" />
         : <GitCompare className="w-4 h-4" aria-hidden="true" />}
-      {selected ? 'Adicionado a comparacao' : 'Adicionar a comparacao'}
+      {/* FIX-WORKER-3 pass 5: texto enganoso "Adicionado" sugere read-only.
+          User nao sabia que clique remove. Inconsistente com titleText linha 44
+          que ja dizia "Remover da comparacao". Agora alinhado: acao explicita. */}
+      {selected ? 'Remover da comparacao' : 'Adicionar a comparacao'}
     </button>
   );
 }

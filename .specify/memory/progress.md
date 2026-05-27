@@ -11774,3 +11774,78 @@ PROXIMA ITER:
 - W3 pass 6: PriceAlertButton auditar mesmo pattern
 - W3 pass 7: PDP variant /check refactor usar store (architectural)
 - W18 pass 6: idx parcial order_items status='paid'
+
+================================================================
+ITER W3 PASS 5 - CompareButton 2 bugs UX/affordance (2026-05-27)
+================================================================
+ESCOPO: PDP CompareButton (variants 'pdp' + 'card' overlay)
+FILE: apps/storefront/src/components/compare-button.tsx
+
+CONTEXTO: W3 pass 4 estabeleceu cross-component pattern aplicacao.
+CompareButton diferente: store mutation sincrona (zustand localStorage)
+em vez de async fetch -> Pattern A+B+C N/A (sem network race).
+Regra D N/A (sem redirect/router).
+
+AUDIT PATTERN W3 RACE-CONDITION:
+- A. Cross-state disable: N/A (botao unico)
+- B. Explicit guard: N/A (toggle sincrono store - double-click = identity)
+- C. try/finally: N/A (sem async)
+- D. router.push: N/A (sem redirect)
+=> CompareButton clean das 4 regras race-condition
+
+BUGS REAIS IDENTIFICADOS (UX/affordance):
+
+1. CARD VARIANT FULL STATE - botao morto sem fallback
+- ANTES: disabled={full} -> botao cinza inutil sem affordance
+- INCONSISTENCIA: PDP variant em full state virava <Link> elegante
+  para /comparar com ids do store. Card variant ficava button morto.
+- IMPACTO UX:
+  a. User clica card icon no max=4 -> nada acontece (mau feedback)
+  b. Nao havia path para ver /comparar a partir do card overlay
+  c. User precisava abrir menu/header para navegar /comparar manual
+- FIX: card variant em full vira <Link href=/comparar?ids=...> tambem
+- BONUS: ArrowRight icon yellow consistente com PDP full state
+- onClick={(e) => e.stopPropagation()} para nao acionar PDP Link wrapper
+
+2. PDP VARIANT TEXTO ENGANOSO "Adicionado a comparacao"
+- ANTES: selected ? 'Adicionado a comparacao' : 'Adicionar a comparacao'
+- "Adicionado" sugere estado read-only (passado) - user NAO sabia
+  que click removeria
+- INCONSISTENCIA: titleText linha 44 ja dizia "Remover da comparacao"
+  -> tooltip/aria dizia "Remover", texto visivel dizia "Adicionado"
+  -> screen readers anunciavam "Remover" mas users sighted viam "Adicionado"
+- FIX: texto alinhado com titleText -> "Remover da comparacao"
+- Pattern MLB/Amazon: acao explicita no botao (Verb + Object), nunca
+  estado passivo (Past Tense). 
+
+OUTROS BUGS CONSIDERADOS, NAO CORRIGIDOS:
+
+3. Link compareIds query stale (race entre render + click)
+- Se outra aba/janela altera store entre render e click, ids no URL stale
+- /comparar page lida com ids invalidos via UUID validation (W7 pass 6)
+- Aceitavel - low impact + ja tratado downstream
+
+PATTERN W3 RACE-CONDITION RESUMO (passes 3-5):
+- AddToCart pass 3: A+B+C aplicados (fetch async)
+- WishlistButton pass 4: B+D aplicados (fetch async)
+- CompareButton pass 5: N/A todas regras (store sincrono)
+  -> Pattern aplica SO em components com async fetch + state
+  -> Components store-only nao precisam (zustand sync mutations)
+
+PATTERN W3-UX/AFFORDANCE NOVO (pass 5):
+- Botoes em estado "disabled" / "limite atingido" devem oferecer
+  NEXT STEP visivel (Link p/ contexto relacionado) em vez de cinza morto
+- Texto visivel == titleText/aria-label (consistencia sighted vs screen readers)
+- Acao explicita (verb) > estado passivo (Past Tense)
+
+W3 PDP PROGRESS:
+- pass 1: fetchRelated 3 bugs catastroficos
+- pass 2: also-bought 4 bugs (CRITICO prod)
+- pass 3: AddToCart 4 race conditions
+- pass 4: WishlistButton Pattern B+D
+- pass 5: CompareButton 2 bugs UX/affordance (esta iter)
+
+PROXIMA ITER:
+- W3 pass 6: PriceAlertButton auditar Pattern + UX/affordance
+- W3 pass 7: NotificationBell auditar action buttons + Pattern
+- W18 pass 6: idx parcial order_items status='paid'
