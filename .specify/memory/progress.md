@@ -31080,3 +31080,31 @@ PROXIMA ITER:
 - W4 admin DLP audit-log viewer
 - W17 vault security audit
 - VPS SSH unblock URGENTISSIMO (63h+ ciclos)
+
+## PASS 354 W6 *** CRITICAL ***: gateway body limit ordering broke uploads
+commit bceb220
+BUG: app.use('/api', 1MB DEFAULT) declarado ANTES de /api/products/upload (32MB)
+  - Express middleware ORDER de declaracao, nao path specificity
+  - Upload ZIP > 1MB rejeitado 413 antes de chegar ao upload-specific
+  - Multer filter 50MB nunca atingido (gateway barrava em 1MB)
+  - Comentario antigo "rotas COM limit especifico verificadas ANTES" FALSO
+
+IMPACTO PRODUCAO:
+  - Sellers nao conseguiam upload package ZIP > 1MB
+  - Bug silencioso (sem alerta, so 413 ao usuario)
+  - Fluxo critico (seller onboarding) afetado
+
+POST-FIX ordem:
+1. /uploads 32MB
+2. /api/products/upload 32MB
+3. /api/auth 16KB
+4. /api 1MB catchall depois (aplica /api/sellers, /api/orders, etc)
+
+W6 gateway critical path fix - 3rd CRITICAL na consolidacao
+  (junto pass 289 asaas.cancelPayment + pass 304 rateLimit keyGenerator)
+87 passes acumulados (268->354) sem deploy VPS
+
+PROXIMA ITER:
+- W17 vault security audit
+- W4 admin DLP audit-log viewer
+- VPS SSH unblock URGENTISSIMO - 3 CRITICAL acumulados
