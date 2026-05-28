@@ -128,9 +128,21 @@ export default function PerfilPage() {
   return (
     <div className="container mx-auto px-6 py-8 max-w-2xl">
       <Link href="/conta" className="text-sm text-white/60 hover:text-white">&larr; Minha conta</Link>
+      {/* FIX-WORKER-8 pass 444 (consistency visual conta/* h1 sizes):
+          PRE-FIX: text-3xl fixo (outlier - todas outras conta pages usam text-4xl)
+          - /conta/favoritos: text-4xl
+          - /conta/seguranca: text-4xl
+          - /conta/pedidos: text-4xl
+          - /conta/notificacoes: text-4xl
+          - /conta/pontos: text-3xl sm:text-4xl (responsive)
+          - /conta/perfil: text-3xl (FIXED - outlier visual)
+          POST-FIX: text-3xl sm:text-4xl (paridade /conta/pontos responsive):
+          - Mobile 375px: text-3xl (fit no User icon row)
+          - Desktop >= 640px: text-4xl (paridade outras conta pages)
+          - Visual hierarchy consistente cross-conta */}
       <div className="flex items-center gap-3 mt-4 mb-8">
         <User className="w-8 h-8 text-magenta" />
-        <h1 className="font-display font-bold text-3xl">Editar perfil</h1>
+        <h1 className="font-display font-bold text-3xl sm:text-4xl">Editar perfil</h1>
       </div>
 
       {/* FIX-WORKER-1 pass 148 (a11y): 4 labels htmlFor + 4 inputs id (WCAG 1.3.1)

@@ -33981,3 +33981,44 @@ W6 ua_prefix audit series consolidada:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 ALTA PRIORIDADE (perf regression cura)
+
+## PASS 444 W8 VISUAL/UX: /conta/perfil h1 size paridade (text-3xl -> text-3xl sm:text-4xl)
+commit pendente
+INCONSISTENCY visual /conta/perfil h1 text-3xl fixo (outlier)
+PRE-FIX cross-conta audit:
+- /conta/favoritos: text-4xl ✓
+- /conta/seguranca: text-4xl ✓
+- /conta/pedidos: text-4xl ✓
+- /conta/notificacoes: text-4xl ✓
+- /conta/pontos: text-3xl sm:text-4xl (responsive) ✓
+- /conta/perfil: text-3xl FIXO ✗ (OUTLIER)
+
+CENARIO:
+- User navega /conta/favoritos (text-4xl prominent)
+- Click /conta/perfil -> heading subtly smaller (text-3xl)
+- Visual hierarchy inconsistent -> "outra page menos importante?"
+- Mobile 375px: ambos OK (text-3xl ja cabe)
+- Desktop >= 640px: perfil mostra menor que outras conta pages
+
+POST-FIX:
+- text-3xl sm:text-4xl (paridade /conta/pontos pass responsive)
+- Mobile 375px: text-3xl (fit no User icon row)
+- Desktop >= 640px: text-4xl (paridade outras conta pages)
+- Visual hierarchy consistente cross-conta sub-section
+
+Note: notificacoes linha 131 "Faça login" text-3xl preservado (auth gate
+empty state context - intentionally smaller que main page heading).
+
+Pattern V8 W8: section heading sizes DEVEM ser consistentes em mesma family
+(/conta/*, /admin/*, /seller/*)
+
+W8 visual consistency series:
+  pass 4 conta sections glassmorphism
+  pass 444 conta/perfil h1 size paridade <- ESTE
+
+177 passes acumulados (268->444) sem deploy VPS
+6 CRITICAL + 28 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE
