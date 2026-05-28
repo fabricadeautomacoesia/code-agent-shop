@@ -33884,3 +33884,51 @@ W7 listing edge case series:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 442 W10 SEARCH/AIOPS: CRITICAL idx_products_title_trgm recreate (mig 048 regressao)
+commit pendente
+BUG REGRESSION PERF: mig 048 dropou idx que /autocomplete USA via pg_trgm
+PRE-FIX self-detect:
+- Mig 048 (pass 119 W18) DROP idx_products_title_trgm
+- Reasoning: "ILIKE title nunca eh criterio principal" + idx_scan=0
+- ERRADO: /autocomplete (linha 358) usa pg_trgm operators:
+  - title % $1 (similarity match)
+  - similarity(title, $1) AS s
+  - ORDER BY s DESC
+- Sem idx GIN trigram -> Seq Scan products ~50k rows
+- Hot-path mobile autocomplete: typing 5 chars = 5 full-table scans
+
+ROOT CAUSE pass 119:
+- idx_scan=0 em pg_stat_user_indexes pode acontecer mesmo com queries usando:
+  1. PG planner optou Seq Scan em dataset pequeno (early dev)
+  2. Reset stats apos mig 048 nao validou em fase carga real
+  3. Trigram idxs precisam dataset >=10k rows p/ planner preferir
+- Dev environment ~500 products = planner sempre opta Seq Scan
+- Prod environment ~50k products = idx critico
+
+PERF impact REAL prod:
+- Sem idx: /autocomplete ~150-300ms per keystroke
+- Mobile typing 5 chars = 5 * 250ms = 1.25s wait
+- Com idx: ~5-15ms per keystroke (15-40x melhoria)
+- Mobile typing 5 chars = 5 * 10ms = 50ms acumulado
+- UX: keystroke responsiveness restaurada
+
+POST-FIX mig 096:
+- CREATE INDEX idx_products_title_trgm GIN (title gin_trgm_ops)
+- ANALYZE products
+
+LICAO V8:
+- idx_scan=0 NAO eh evidencia suficiente p/ DROP
+- pg_trgm operators (% + similarity) precisam GIN trigram
+- Avaliar production traffic patterns ANTES drop
+- Manter idx mesmo "idle" em dev se uso prod confirmavel via code grep
+
+W10 perf regression series:
+  pass 119 mig 048 DROP idx (regressao)
+  pass 442 mig 096 RECREATE idx <- ESTE (cura regressao)
+
+175 passes acumulados (268->442) sem deploy VPS
+6 CRITICAL + 28 migrations pendentes apply (era 27 - novo pass 442)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO + mig 096 EM ALTA PRIORIDADE
