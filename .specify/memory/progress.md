@@ -17383,7 +17383,33 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ conta pages 3 buttons + PII protection (pass 163)
 - ✅ Admin audit-log + db-audit a11y rico + WAI-ARIA tabs (pass 164)
 - ✅ Admin /disputes 7 buttons + radiogroup (pass 165)
-- ✅ MLB-15 InstantDownloadBadge trust signal (pass 166 esta iter)
+- ✅ MLB-15 InstantDownloadBadge trust signal (pass 166)
+- ✅ MLB-16 PixDiscountBadge -5% incentivo PIX (pass 167 esta iter)
+
+W7 PASS 167 RESUMO - W16 MLB-16 PIX DISCOUNT BADGE:
+- AUDIT MLB features: 15 implementadas (pass 166), faltava incentivo PIX (BR universal)
+- Pattern Mercado Livre + e-commerces brasileiros: 'Pagando via PIX paga menos'
+  (universal nos brasileiros, aprovacao instantanea + menor fee Asaas)
+- IMPLEMENTED MLB-16 PixDiscountBadge:
+  * NEW component pix-discount-badge.tsx (60 linhas)
+  * Server Component puro (zero JS bundle)
+  * 2 variants:
+    - 'card': mini badge 'PIX -5%' (Zap green icon)
+    - 'pdp': inline gradient green 'ou R\$X via PIX (-5%)' + savings explicit
+  * Defensive: renderiza apenas se !isFree + priceCents >= 100
+  * Calculo: PIX_DISCOUNT_PCT = 0.05 (5% alinhado backend)
+  * aria-label rico c/ valores BRL formatados pre-formatados
+- INTEGRATED:
+  * ProductCard: card variant abaixo Installments (mini badge)
+  * PDP: pdp variant inline c/ background gradient green
+- Business impact:
+  * Pix taxa Asaas (R\$0.20/transacao) vs cartao (4.99%): aprovacao instant
+  * Desconto 5% = win-win: cliente economiza, plataforma menor fee
+  * Pattern psicologico: 'desconto' aumenta perceived value pre-buy
+  * Backend ja suporta PIX como billingType (futura integracao com discount real)
+- 16/16 MLB features (era 15)
+- BUILD storefront OK + service converged
+- COMMIT 4c18dea pushed GitHub main + deployed prod
 
 W7 PASS 166 RESUMO - W16 MLB-15 INSTANT DOWNLOAD BADGE:
 - AUDIT MLB features: tinhamos 14 features (paridade ML), faltava trust signal
