@@ -48,7 +48,7 @@ export default function ContaPage() {
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-12">
         {[
           { href: '/conta/pedidos',  Icon: ShoppingBag, label: 'Meus pedidos',   desc: `${orders.length} pedido(s)` },
-          { href: '/conta/downloads',Icon: Package,     label: 'Downloads',      desc: 'Seus produtos' },
+          { href: '/conta/pedidos',  Icon: Package,     label: 'Downloads',      desc: 'Baixar produtos comprados' },
           { href: '/conta/pontos',   Icon: Star,        label: 'CAS Pontos',
             desc: loyalty
               ? `${Number(loyalty.points_balance).toLocaleString('pt-BR')} pts - tier ${loyalty.tier}`
