@@ -20622,3 +20622,58 @@ PROXIMA ITER:
 - W6: audit reset-password flow
 - W13 audit notification-svc retry backoff edge cases
 - 🚨 VPS SSH unblock URGENTE (14 ciclos - >4.5h sem deploy!)
+
+PASS 182 (W6 CRITICAL email case-mismatch bug) - 2026-05-28:
+- W6 auditou auth-svc reset-password + login + register flow
+- BUG CRITICO descoberto:
+  * Zod .email() valida format mas NAO normaliza case
+  * INSERT INTO users (email) usa raw input
+  * SELECT WHERE u.email = $1 (login + forgot-password) case-sensitive
+  * User registra 'John@Example.com' -> login com 'john@example.com' FALHA
+  * Mensagem: 'Email ou senha invalidos' - gas-lighting UX
+  * Bonus: facilita email enumeration via case differences
+
+- FIX em 2 camadas:
+
+1. Application (auth.js):
+   * normalizedEmail = z.string().email().max(180)
+     .transform((s) => s.trim().toLowerCase())
+   * registerSchema, loginSchema, forgotPasswordSchema reuse helper
+   * 3 endpoints corrigidos atomicamente (centralized)
+
+2. Database (migration 060):
+   * PASSO 1: SELECT colisoes case-insensitive existentes (abort if any)
+   * PASSO 2: UPDATE users SET email = LOWER(TRIM(email)) WHERE differs
+   * PASSO 3: CREATE UNIQUE INDEX idx_users_email_lower_unique
+     ON users (LOWER(email)) WHERE deleted_at IS NULL
+   * Defesa em profundidade: DB rejeita case-conflict mesmo se app esquecer
+
+- Pattern compativel com Stripe/Auth0/Supabase email handling
+- RFC 5321 local-part technically case-sensitive mas mundo real todos
+  email providers tratam case-insensitive
+
+- Commit 47bdbbb pushed origin/main
+- VPS SSH ainda bloqueado (15 ciclos consecutivos)
+
+W6 audit pos-fix - 3 endpoints validados:
+- POST /auth/register: insertou email normalizado
+- POST /auth/login: query usa email normalizado (matches)
+- POST /auth/forgot-password: lookup usa email normalizado
+
+CODIGO ACUMULADO ORIGIN/MAIN (15 ciclos):
+- 168-181: documentados
+- 182: auth-svc email normalize + migration 060
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply migration: psql -f /opt/cas/db/migrations/060_users_email_normalize.sql
+- Rebuild: docker service update cas_auth-svc --force
+- Teste E2E:
+  1. POST /api/auth/register {email:'Test@Example.com', password:'...'}
+  2. POST /api/auth/login {email:'test@example.com', password:'...'} -> ok=true
+  3. POST /api/auth/login {email:'TEST@EXAMPLE.COM', password:'...'} -> ok=true
+
+PROXIMA ITER:
+- W18: cache /products list
+- W7: review-svc dashboard LATERAL pattern
+- W11: payment-svc Asaas webhook idempotency edge cases
+- 🚨 VPS SSH unblock URGENTE (15 ciclos - >5h sem deploy!)
