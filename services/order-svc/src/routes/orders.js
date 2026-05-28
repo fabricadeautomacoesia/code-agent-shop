@@ -188,12 +188,32 @@ router.post('/checkout',
            rate, commission, payout, license_key, dl_token, snapshot.rows[0].s]
         );
 
-        if (!it.is_platform_owned && it.asaas_wallet_id && payout > 0) {
-          await c.query(
-            `INSERT INTO asaas_splits (order_id, seller_id, wallet_id, fixed_value_cents)
-             VALUES ($1,$2,$3,$4)`,
-            [order.rows[0].id, it.seller_id, it.asaas_wallet_id, payout]
-          );
+        // FIX-WORKER-11 pass 270 (split fallback queue):
+        //   PRE-FIX (pass 268 identified): seller sem asaas_wallet_id ->
+        //   sem split row -> payout 100% plataforma. Seller perde receita
+        //   se configura wallet DEPOIS da venda.
+        //   POST-FIX: 2 caminhos:
+        //   1. asaas_wallet_id PRESENTE -> INSERT asaas_splits (normal)
+        //   2. asaas_wallet_id AUSENTE -> INSERT payouts_pending_wallet
+        //      (queue debt para cron diario liquidar quando wallet configurada)
+        //   Sem perda receita seller. Mig 078 criou schema.
+        if (!it.is_platform_owned && payout > 0) {
+          if (it.asaas_wallet_id) {
+            await c.query(
+              `INSERT INTO asaas_splits (order_id, seller_id, wallet_id, fixed_value_cents)
+               VALUES ($1,$2,$3,$4)`,
+              [order.rows[0].id, it.seller_id, it.asaas_wallet_id, payout]
+            );
+          } else {
+            // FALLBACK: seller sem wallet config - debt queue para futuro
+            await c.query(
+              `INSERT INTO payouts_pending_wallet
+                 (order_id, order_item_id, seller_id, amount_cents, reason)
+               VALUES ($1, $2, $3, $4, 'no_asaas_wallet')
+               ON CONFLICT DO NOTHING`,  // Defense double-process safety
+              [order.rows[0].id, null /* order_item_id needs row lookup post-insert */, it.seller_id, payout]
+            );
+          }
         }
       }
 

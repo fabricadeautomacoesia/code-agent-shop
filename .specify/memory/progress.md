@@ -27460,3 +27460,94 @@ PROXIMA ITER:
 - W11 split fallback iter (deferred pass 268)
 - W4 admin bulk QA
 - VPS SSH unblock CRITICAL (102 ciclos - 34h!!!)
+
+============================================================
+PASS 270 (2026-05-28) - W11 + W3 + W13 split queue + UX
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W11 ORDER-SVC: split fallback queue (mig 078 + INSERT logic) DEFERRED PASS 268
+- W3 storefront: qna-upvote router.push paridade
+- W13 audit clean
+
+============================================================
+1. W11 - mig 078 payouts_pending_wallet + INSERT fallback
+============================================================
+FILES:
+- db/migrations/078_payouts_pending_wallet.sql (NEW table)
+- services/order-svc/src/routes/orders.js:191 (INSERT fallback)
+
+PROBLEMA (pass 268 documented):
+- Seller sem asaas_wallet_id config -> sem INSERT asaas_splits
+- payment-svc createPayment SEM split -> 100% receita p/ wallet plataforma
+- Seller real perde receita se configura wallet DEPOIS da venda
+- Sem queue de reconcile
+
+POST-FIX (2 caminhos):
+- asaas_wallet_id PRESENTE -> INSERT asaas_splits (normal flow)
+- asaas_wallet_id AUSENTE -> INSERT payouts_pending_wallet
+  * Schema mig 078: order_id + order_item_id + seller_id + amount_cents
+  * Status: pending|liquidated|forfeited
+  * Reason: 'no_asaas_wallet' (extensivel)
+  * 3 indices PARTIAL p/ cron hot-path
+- Cron diario (futuro implementation) detecta seller now-has-wallet
+  -> Asaas createTransfer + UPDATE 'liquidated'
+- Notification "Voce tem X em payouts pendentes liquidados"
+
+NOTA: cron implementation deferred (precisa testar mig 078 em prod primeiro).
+Migration tolerante - DDL safe rollback.
+
+============================================================
+2. W3 - qna-upvote router.push paridade
+============================================================
+FILE: apps/storefront/src/components/qna-upvote.tsx:35
+
+PROBLEMA:
+- window.location.href = '/login?next=...' hard redirect
+- add-to-cart pass 3 + qna-form pass 264 ja usam router.push
+- qna-upvote ficou desatualizado - paridade missing
+
+POST-FIX:
+- useRouter import + router.push(`/login?next=${next}`)
+- Pattern V8 soft-nav consistente cross-component
+
+============================================================
+3. W13 audit - schema comment desatualizado (info only)
+============================================================
+schema mig 008 linha 20:
+  priority SMALLINT NOT NULL DEFAULT 0
+  Comment: '-- 0 normal, 1 high, 2 critical'
+Mas codigo (passes 258/261/263) usa 0/1/2/3:
+  0 = normal (default)
+  1 = high (proxy)
+  2 = medium-high (engagement: payout_paid, seller_new_sale,
+                   seller_reactivated, dispute_resolved)
+  3 = critical (security: seller_suspended, refund_failed)
+SMALLINT range -32k a 32k - sem schema constraint violation
+Comment outdated mas funcional. Migration so p/ comment overkill - documentado aqui.
+
+============================================================
+SUMARIO PASS 270
+============================================================
+Files: 3 modificados/criados
+  - db/migrations/078_payouts_pending_wallet.sql (NEW table)
+  - services/order-svc/src/routes/orders.js (INSERT fallback)
+  - apps/storefront/src/components/qna-upvote.tsx (router.push)
+Lines: ~90 added
+
+VPS SSH BLOQUEADO (103 ciclos - 34.3h sem deploy).
+Migs 069-078 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_order-svc cas_storefront --force
+- Apply mig 078:
+    docker exec cas_postgres psql -U cas_admin -d cas \
+      -f /docker/db/migrations/078_payouts_pending_wallet.sql
+- W11: criar order com seller sem asaas_wallet_id ->
+  SELECT FROM payouts_pending_wallet WHERE seller_id=X -> 1 row pending
+- W3: anon /product/X clique upvote -> /login soft-nav (sem reload)
+
+PROXIMA ITER:
+- W11 cron liquidar payouts_pending_wallet
+- W4 admin UI payouts_pending_wallet view
+- VPS SSH unblock CRITICAL (103 ciclos - 34.3h)

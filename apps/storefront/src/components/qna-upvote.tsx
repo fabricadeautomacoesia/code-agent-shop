@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ChevronUp } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
@@ -16,6 +17,7 @@ import { useAuth } from '@/lib/store';
  *  - ChevronUp aria-hidden (decorativo)
  */
 export function QnaUpvote({ qnaId, initialCount = 0 }: { qnaId: string; initialCount?: number }) {
+  const router = useRouter();
   const { token } = useAuth();
   const [count, setCount] = useState(initialCount);
   const [voted, setVoted] = useState(false);
@@ -32,7 +34,13 @@ export function QnaUpvote({ qnaId, initialCount = 0 }: { qnaId: string; initialC
 
   async function toggle() {
     if (!token) {
-      window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+      // FIX-WORKER-3 pass 270 (soft-nav paridade pass 264):
+      //   PRE-FIX: window.location.href hard redirect perde state
+      //   add-to-cart pass 3 + qna-form pass 264 ja usam router.push
+      //   qna-upvote ficou desatualizado - paridade missing
+      //   POST-FIX: router.push preserva React state + history transition
+      const next = encodeURIComponent(window.location.pathname);
+      router.push(`/login?next=${next}`);
       return;
     }
     setLoading(true);
