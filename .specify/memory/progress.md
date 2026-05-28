@@ -31665,3 +31665,25 @@ Pattern V8 W5: KPI dashboards sempre server-side aggregate
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
+
+## PASS 374 W10 SEARCH: analytics filter tracking gap
+commit 5652c458
+BUG search_log nao registra busca por filters secundarios
+PRE-FIX: if (q || category || kind) gating INSERT
+  Busca SO com tier/tag/recently_sold/free/price NAO registra
+  Analytics MLB sub-agg sem visibilidade:
+  - "filter tier mais usado" zero data
+  - "preco range mais buscado" sem signal
+
+POST-FIX:
+- hasAnyFilter abrangente (9 filters)
+- + recently_sold no JSON filters (era missing)
+
+Pattern V8 W10: analytics tracking comprehensive
+
+107 passes acumulados (268->374) sem deploy VPS
+4 CRITICAL + 20 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
