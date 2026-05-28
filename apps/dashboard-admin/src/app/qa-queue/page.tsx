@@ -30,7 +30,21 @@ export default function QAQueuePage() {
   const action = useAdminAction(load);
 
   async function forceApprove(id: string) {
-    const reason = prompt('Justificativa para aprovacao manual (override LLM):');
+    // FIX-WORKER-4 pass 381 (a11y + UX consistency):
+    //   PRE-FIX: prompt() nativo browser-blocking
+    //   - Sync modal trava main thread (UI freeze)
+    //   - Nao acessivel (screen reader announce inconsistente)
+    //   - Sem styling glassmorphism (visual broken vs platformTake elegante)
+    //   - Inconsistencia: platformTake (linha 41) usa promptDialog moderno
+    //   POST-FIX: paridade promptDialog + confirmDialog (paridade platformTake).
+    //   force-approve eh override do LLM - alta criticidade, exige confirmacao
+    //   explicita + reason. Pattern V8 W4 consolidacao critical actions.
+    const { confirmDialog, promptDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog('Aprovar produto manualmente?', {
+      body: 'Voce esta sobrepondo o veredicto do pipeline LLM (threshold 0.80). Acao registrada em audit_log severity=warn.',
+      variant: 'danger', confirmLabel: 'Sim, aprovar',
+    })) return;
+    const reason = await promptDialog('Justificativa para aprovacao manual:', 'Ex: produto excelente mas LLM rejeitou por falso positivo');
     if (!reason) return;
     action.run(`approve-${id}`, async () => {
       await adminFetch(`/products/admin/${id}/force-approve`, { method: 'POST', body: JSON.stringify({ reason }) });
