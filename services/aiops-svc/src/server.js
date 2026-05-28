@@ -604,6 +604,76 @@ function formatBytes(n) {
   return `${(n / 1073741824).toFixed(2)}GB`;
 }
 
+// FIX-WORKER-4 pass 193: GET /aiops/llm-cost - admin observability LLM spend.
+// Consume product_qa_runs.cost_usd_cents (W12 qa-svc pass 27 grava em callback).
+//
+// Aggregation por provider + model + dia (ultimos 30d).
+// Cache 300s (cost atualiza por callback - novo cost a cada QA run).
+// Admin/staff only (custos internos = sensitive operacional).
+//
+// USE CASES dashboard:
+// - Identificar provider mais caro (cost por LLM call)
+// - Detectar spike anomalo (gasto subitamente alto)
+// - Justificar trocar de provider (Gemini/Groq vs OpenAI)
+// - Forecasting mensal (project cost atual -> 30d)
+app.get('/llm-cost',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware('aiops:llm_cost:30d', 300),
+  asyncHandler(async (_req, res) => {
+    // 1. Aggregation por provider+model+dia (top 30 dias)
+    const byProvider = await query(
+      `SELECT llm_provider, llm_model,
+              COUNT(*)::INT AS calls,
+              SUM(cost_usd_cents)::BIGINT AS total_cents,
+              AVG(cost_usd_cents)::BIGINT AS avg_cents,
+              MAX(cost_usd_cents)::BIGINT AS max_cents,
+              SUM(tokens_input)::BIGINT AS total_input_tokens,
+              SUM(tokens_output)::BIGINT AS total_output_tokens,
+              AVG(duration_ms)::INT AS avg_duration_ms
+         FROM product_qa_runs
+        WHERE created_at > NOW() - INTERVAL '30 days'
+          AND llm_provider IS NOT NULL
+          AND cost_usd_cents IS NOT NULL
+        GROUP BY llm_provider, llm_model
+        ORDER BY total_cents DESC NULLS LAST, llm_provider ASC, llm_model ASC`
+    );
+
+    // 2. Total geral
+    const total = await query(
+      `SELECT COUNT(*)::INT AS total_calls,
+              SUM(cost_usd_cents)::BIGINT AS total_cents,
+              COUNT(*) FILTER (WHERE verdict = 'approved')::INT AS approved,
+              COUNT(*) FILTER (WHERE verdict = 'rejected')::INT AS rejected,
+              COUNT(*) FILTER (WHERE verdict IN ('error','timeout'))::INT AS failed
+         FROM product_qa_runs
+        WHERE created_at > NOW() - INTERVAL '30 days'
+          AND cost_usd_cents IS NOT NULL`
+    );
+
+    // 3. Daily timeseries (sparkline UI)
+    const daily = await query(
+      `SELECT DATE_TRUNC('day', created_at)::DATE AS day,
+              COUNT(*)::INT AS calls,
+              SUM(cost_usd_cents)::BIGINT AS total_cents
+         FROM product_qa_runs
+        WHERE created_at > NOW() - INTERVAL '30 days'
+          AND cost_usd_cents IS NOT NULL
+        GROUP BY day
+        ORDER BY day DESC
+        LIMIT 30`
+    );
+
+    res.json({
+      window_days: 30,
+      total: total.rows[0] || {
+        total_calls: 0, total_cents: 0, approved: 0, rejected: 0, failed: 0,
+      },
+      by_provider: byProvider.rows,
+      daily: daily.rows.reverse(), // ASC para frontend chart
+    });
+  })
+);
+
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
 
