@@ -28638,3 +28638,46 @@ PROXIMA ITER:
 - W4 /admin/webhooks UI consume has_more pagination
 - W11 audit refund flow analog cancelPayment review
 - VPS SSH unblock URGENTISSIMO (122 ciclos - 40.7h)
+
+
+============================================================
+PASS 290 - 2026-05-28 - W7 wishlist already_exists + W14 mig 083 notif cleanup idx
+============================================================
+Files: 2 modificados/criados
+  - services/product-svc/src/routes/wishlist.js (already_exists in POST response)
+  - db/migrations/083_notifications_cleanup_idx.sql (NEW 2 PARTIAL idx)
+Lines: ~50 added
+
+W7 (wishlist POST response distinguishability):
+- PRE-FIX: ON CONFLICT DO NOTHING + res.json({ok:true}) sem feedback
+  Frontend nao distingue added vs ja-favoritado em double-click
+- POST-FIX: RETURNING product_id + check rowcount
+  Response: { ok, already_exists: boolean, product_id }
+  Cache invalidation pulada quando duplicate (otimizacao noop)
+- UX: frontend pode mostrar toast diferente "Ja favoritado" vs "Adicionado"
+
+W14 (mig 083 notifications cleanup hot-path PARTIAL idx):
+- Cron 0 4 * * * (pass 279) DELETE notifications scan completo >1M rows
+- idx existentes nao cobrem cleanup criteria (priority + template_code prefix)
+- POST-FIX 2 idx PARTIAL:
+  - idx_notif_cleanup_regular ON (created_at, template_code) WHERE priority < 3
+  - idx_notif_cleanup_security ON (created_at) WHERE priority >= 3
+- Cobertura dual: cada tier de retention tem idx proprio
+- Cron pass 279 advisory_lock + LIMIT 50000 + agora idx = scan eficiente
+
+VPS SSH BLOQUEADO (123 ciclos - 41h sem deploy).
+Migs 069-083 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply: psql -f /opt/cas/db/migrations/083_notifications_cleanup_idx.sql
+- Rebuild: docker service update cas_product-svc --force
+- W7: POST /api/products/wishlist {product_id:<existing>} 2x
+  1a: { ok:true, already_exists:false, product_id }
+  2a: { ok:true, already_exists:true,  product_id }
+- W14: EXPLAIN ANALYZE DELETE notifications WHERE created_at < NOW()-'60 days'::interval
+       AND priority < 3 -> Index Scan idx_notif_cleanup_regular
+
+PROXIMA ITER:
+- W3 PDP WishlistButton consume already_exists (toast diferente)
+- W4 admin notification cleanup KPI dashboard
+- VPS SSH unblock URGENTISSIMO (123 ciclos - 41h)

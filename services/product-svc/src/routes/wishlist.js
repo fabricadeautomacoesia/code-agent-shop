@@ -148,10 +148,20 @@ router.post('/',
       [req.body.product_id]
     );
     if (!exists.rows.length) return next(errorHandler.notFound('product_not_found'));
+    /* FIX-WORKER-7 pass 290 (response distinguishability):
+       PRE-FIX: ON CONFLICT DO NOTHING + res.json({ok:true}) sem feedback
+       de added vs already-favoritado. Frontend WishlistButton mostra mesmo
+       toast "Adicionado!" em ambos casos - UX confuso para user que clica
+       2x rapido (debounce miss) e ve "Adicionado" sem mudanca de UI.
+       POST-FIX: RETURNING + check rowcount. Response inclui already_exists:
+       boolean - frontend pode mostrar "Ja estava favoritado" toast diferente
+       OU skip animation se duplicate. Pattern V8 cross-svc REST clarity. */
+    let r;
     try {
-      await query(
+      r = await query(
         `INSERT INTO product_wishlist (user_id, product_id) VALUES ($1, $2)
-         ON CONFLICT (user_id, product_id) DO NOTHING`,
+         ON CONFLICT (user_id, product_id) DO NOTHING
+         RETURNING product_id`,
         [req.user.sub, req.body.product_id]
       );
     } catch (e) {
@@ -159,9 +169,17 @@ router.post('/',
       if (e.code === '23503') return next(errorHandler.notFound('product_not_found'));
       throw e;
     }
-    // FIX-WORKER-18 pass 178: invalida cache GET /wishlist + check
-    await invalidateWishlistCache(req.user.sub);
-    res.json({ ok: true });
+    const alreadyExists = r.rows.length === 0;
+    // Invalida cache so se realmente adicionou (otimizacao - duplicate noop)
+    if (!alreadyExists) {
+      // FIX-WORKER-18 pass 178: invalida cache GET /wishlist + check
+      await invalidateWishlistCache(req.user.sub);
+    }
+    res.json({
+      ok: true,
+      already_exists: alreadyExists,
+      product_id: req.body.product_id,
+    });
   })
 );
 
