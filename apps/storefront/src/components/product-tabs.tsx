@@ -60,6 +60,7 @@ export function ProductTabs({ product, reviews, qna }: Props) {
                       : null;
           return (
             <button key={t.id}
+              type="button"
               ref={(el) => { tabRefs.current[t.id] = el; }}
               role="tab"
               id={`tab-${t.id}`}

@@ -84,25 +84,33 @@ export function QnaForm({ productId, onSubmitted }: { productId: string; onSubmi
           {trimmed.length}/{MAX_LEN}
         </div>
       </div>
+      {/* FIX-WORKER-3 pass 186 (a11y): aria-hidden em icone decorativo + focus-visible
+          + aria-label dinamico contextual SR */}
       <button type="submit"
         disabled={!canSubmit}
-        className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-        <Send className="w-4 h-4" /> {loading ? 'Enviando...' : (token ? 'Enviar pergunta' : 'Login para perguntar')}
+        aria-label={loading ? 'Enviando pergunta' : (token ? 'Enviar pergunta sobre o produto' : 'Fazer login para perguntar')}
+        className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-magenta">
+        <Send className="w-4 h-4" aria-hidden="true" /> {loading ? 'Enviando...' : (token ? 'Enviar pergunta' : 'Login para perguntar')}
       </button>
       {/* FIX-WORKER-3 pass 3: ambos banners com botao fechar (UX consistente com cart/checkout)
           FIX-WORKER-3 pass 137 (a11y): role=status + aria-live polite no msg success
           (era apenas visual - SR nao anunciava sucesso de submissao). */}
+      {/* FIX-WORKER-3 pass 186 (a11y): aria-label semantico + focus-visible */}
       {msg && (
         <div role="status" aria-live="polite"
           className="text-sm text-green-400 bg-green-500/10 border border-green-500/30 rounded-lg p-2 flex items-start justify-between gap-2">
           <span>{msg}</span>
-          <button type="button" onClick={() => setMsg('')} className="text-[10px] hover:underline">fechar</button>
+          <button type="button" onClick={() => setMsg('')}
+            aria-label="Fechar mensagem de sucesso"
+            className="text-[10px] hover:underline focus-visible:outline-2 focus-visible:outline-green-400 rounded">fechar</button>
         </div>
       )}
       {err && (
         <div role="alert" className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-2 flex items-start justify-between gap-2">
           <span>{err}</span>
-          <button type="button" onClick={() => setErr('')} className="text-[10px] hover:underline">fechar</button>
+          <button type="button" onClick={() => setErr('')}
+            aria-label="Fechar mensagem de erro"
+            className="text-[10px] hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
         </div>
       )}
     </form>
