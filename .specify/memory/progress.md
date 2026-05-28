@@ -20317,3 +20317,57 @@ PROXIMA ITER:
 - W10 search-svc bugs
 - W7 audit endpoints sem cache restantes
 - 🚨 VPS SSH unblock URGENTE (8 ciclos sem deploy = >2h)
+
+PASS 176 (W18 cache /loyalty/me + cross-svc coherency) - 2026-05-28:
+- W18 pass 176 - cache GET /loyalty/me:
+  * Chamado em cart/page.tsx useEffect em CADA render (saldo redeem card)
+  * Pre-fix: 2-3 queries (user_loyalty + loyalty_transactions + welcome bonus)
+  * Fix: cache.cacheMiddleware 30s vary by user.sub + ?limit
+  * Welcome bonus side-effect: idempotente (apenas 1a chamada user starter)
+    apos rodar, response identica -> cache valido
+- Cache coherency (2 paths):
+  1. seller-svc loyalty.js POST /earn (apos credit) -> cache.del(loyalty:me:{userId}:*)
+  2. order-svc orders.js POST /checkout (debit balance) -> loyaltyDebited flag
+     dentro tx + post-tx res.status(201) invalidate cross-svc
+- Cart redeem (cart.js) NAO precisa invalidacao (apenas marca intent no cart,
+  nao debita balance ate checkout)
+- Commit a9cd4ac pushed origin/main
+- VPS SSH ainda bloqueado (9 ciclos consecutivos)
+
+CACHE COVERAGE TOTAL agora:
+- seller-svc /sellers/me/kpi: 300s
+- seller-svc /sellers/me/sla-status: 60s (pass 174)
+- seller-svc /sellers/me/payouts: 30s (pass 175)
+- seller-svc /loyalty/me: 30s (pass 176 atual)
+- seller-svc /sellers (list/detail/stats/products): 60-180s
+- product-svc public + admin: cached
+- search-svc + aiops + review-svc: cached
+- order-svc cart: cached
+- payment-svc /installments: 600s
+
+CACHE COHERENCY 4 cross-svc paths (W12+W18 passes 174-176):
+- qa-svc QA approve -> seller-svc sla-status + kpi (pass 174)
+- seller-svc admin payouts approve/reject -> seller-svc payouts (pass 175)
+- payment-svc UPDATE paid -> seller-svc payouts (pass 175)
+- order-svc checkout debit -> seller-svc loyalty:me (pass 176 atual)
+
+CODIGO ACUMULADO ORIGIN/MAIN (9 ciclos):
+- 168-173: documentados
+- 174: cache /sla-status + qa coherency
+- 175: cache /payouts + 3-path coherency
+- 176: cache /loyalty/me + 2-path coherency
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_order-svc --force
+- Teste cache: time curl -H "Authorization: Bearer $T" \
+    https://shop.../api/loyalty/me
+  * 1a: ~12ms (PG miss)
+  * 2a: <5ms (Redis hit)
+- Teste coherency: POST /checkout -> GET /loyalty/me deve mostrar saldo
+  ja debitado (sem stale)
+
+PROXIMA ITER:
+- W18 mais cache: /wishlist, /notifications/me?
+- W6 audit reset-password flow
+- W10 search-svc bugs
+- 🚨 VPS SSH unblock URGENTE (9 ciclos sem deploy = >2.5h)
