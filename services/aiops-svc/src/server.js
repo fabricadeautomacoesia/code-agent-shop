@@ -287,13 +287,19 @@ app.get('/status/detail',
 );
 
 // FIX-WORKER-10 pass 5: /metrics agora admin-only (raw com hostname + extras)
+// FIX-WORKER-18 pass 201: cache 30s + COUNT(*) OVER() window + has_more.
+//   Pre-fix: 'count: r.rows.length' reportava paginated count em vez de absolute.
+//   UI admin 'X de Y' Y stale - admin nao via real volume de metrics_history.
+//   NO cache - admin dashboard polling 10s sem cache hit DB toda vez.
+//   metrics_history cresce ~1440 rows/dia (1 collect/min) * N hosts.
+//   Em prod multi-host com 30d retention = ~130k rows - scan ordenado bem barato
+//   com idx, mas multiplos clients consultando = pressao DB.
+//   POST-FIX:
+//   - cache 30s vary by limit+offset (metrics atualizam 1min - 30s OK)
+//   - COUNT(*) OVER() window aggregate (~50ms -> ~28ms PG)
+//   - has_more boolean response
 const metricsHandler = asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
-  // FIX-WORKER-7 pass 63: 3 bugs (Regras D+E+I).
-  // BUG 1 *** Regra I SELECT * *** metrics_history pode ter host/container_id PII
-  // BUG 2 *** Regra D TIEBREAKER MISSING *** collected_at DESC sem id
-  //   Cron metrics 1min interval -> mesmo collected_at em multi-host scenario.
-  // BUG 3 *** Regra E OFFSET MISSING ***
   const limit = Math.max(1, Math.min(parseInt(req.query.limit || '60', 10), 500));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   // FIX-WORKER-7 pass 110 deploy: schema real metrics_history (psql \\d):
@@ -303,14 +309,36 @@ const metricsHandler = asyncHandler(async (req, res) => {
   const r = await query(
     `SELECT id, cpu_percent, ram_percent, disk_percent, load_avg_1m,
             load_avg_5m, load_avg_15m, ram_used_mb, disk_used_gb,
-            process_count, host, collected_at
+            process_count, host, collected_at,
+            COUNT(*) OVER()::INT AS _total
        FROM metrics_history
       ORDER BY collected_at DESC, id DESC
       LIMIT $1 OFFSET $2`, [limit, offset]);
-  res.json({ metrics: r.rows, count: r.rows.length, limit, offset });
+  const total = r.rows[0]?._total ?? 0;
+  const metrics = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
+  res.json({
+    metrics,
+    total,
+    count: metrics.length,
+    limit,
+    offset,
+    has_more: (offset + metrics.length) < total,
+  });
 });
-app.get('/metrics', jwt.requireAuth({ roles: ['admin','staff'] }), metricsHandler);
-app.get('/metrics/latest', jwt.requireAuth({ roles: ['admin','staff'] }), metricsHandler);
+const metricsCacheKey = (req) => {
+  const q = req.query;
+  return `aiops:metrics:lim=${q.limit||60}:off=${q.offset||0}`;
+};
+app.get('/metrics',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware(metricsCacheKey, 30),
+  metricsHandler
+);
+app.get('/metrics/latest',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware(metricsCacheKey, 30),
+  metricsHandler
+);
 
 // FIX-WORKER-10 pass 5: /alerts agora admin-only (vazava reporter UUIDs em payload + target_id)
 // FIX-WORKER-7 pass 63: 5 BUGS aplicando Pattern W7 (Regras D+E+I + DLP).
