@@ -32082,3 +32082,24 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W2 checkout E2E
 - W18 perf optimization
+
+## PASS 389 W2 CHECKOUT: order detail link 404 + multi-item UX
+commit c9f05a8
+2 BUGS em /conta/pedidos/[id] bottom link:
+1. /product/${slug || ''} -> /product/ 404 se vazio
+2. Multi-item order linka SO ao primeiro item (confuso)
+
+POST-FIX:
+- Single-item + slug: link contextual 'Ver X na vitrine'
+- Multi-item: skip primary link
+- Bottom fallback /products catalogo (sempre disponivel)
+- space-y-2 visual hierarchy
+
+UX MLB clear single vs multi-purchase
+
+122 passes acumulados (268->389) sem deploy VPS
+5 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W18 perf optimization
