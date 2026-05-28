@@ -33421,3 +33421,47 @@ Pattern V8 W9: TODAS pages PII (noindex) precisam openGraph rico para share priv
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 432 W10 SEARCH/AIOPS: /alerts severity+source+acknowledged filters
+commit pendente
+GAP aiops-svc /alerts suportava apenas ?days - inoperante operacionalmente
+PRE-FIX:
+- Handler aceitava days (1-90) + limit + offset apenas
+- Admin /admin/alerts forcava ver TODOS alerts mixed
+- Sem severity filter -> info+warn+error+critical misturados (poluicao visual)
+- Sem source filter -> aiops+spike-detector+fail2ban+qa-failure tudo junto
+- Sem acknowledged filter -> resolvidos misturados com pendentes
+- Operational queries comuns forcadas client-side:
+  - "Critical unack 7d" - waste bandwidth + UI flicker
+  - "Spike-detector 24h" - idem
+  - "Fail2ban hoje" - idem
+
+INFRA JA TEM IDX (mig 008):
+- idx_alerts_severity (severity, created_at DESC)
+- idx_alerts_source (source)
+- idx_alerts_unack PARTIAL WHERE acknowledged_at IS NULL
+- Filtros NAO usavam idx existente -> waste DB capacity
+
+POST-FIX 3 filtros opcionais:
+- ?severity (enum whitelist VALID_SEV info|warn|error|critical)
+- ?source (regex /^[a-z0-9_-]{1,60}$/ - anti-injection)
+- ?acknowledged ('true'|'false' boolean | '' no filter)
+- Filtros combinaveis com WHERE clause dinamico
+- Cache key vary by all 3 (paridade audit-log pass 430)
+- filter echo na response (paridade)
+
+Paridade audit-log pass 430 (target_id + target_type filters consume idx).
+Pattern V8 W10: hot-path endpoints com idx existente DEVEM expor filtros.
+
+W10 alerts/audit-log filter series:
+  pass 178 alerts cache + window
+  pass 202 alerts cache 10s
+  pass 288 alerts days clamp min bound
+  pass 430 audit-log target_id+target_type filters
+  pass 432 alerts severity+source+acknowledged <- ESTE
+
+165 passes acumulados (268->432) sem deploy VPS
+5 CRITICAL + 26 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO

@@ -394,6 +394,37 @@ const alertsHandler = asyncHandler(async (req, res) => {
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 100));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
+  /* FIX-WORKER-10 pass 432 (severity + source + acknowledged filters):
+     PRE-FIX: handler suportava apenas ?days. Admin /admin/alerts forcava:
+     - Ver TODOS alerts mixed (info+warn+error+critical) - poluicao
+     - Sem filter source -> aiops + spike-detector + fail2ban + qa-failure misturados
+     - Sem filter ack/unack -> alertas resolvidos misturados com pendentes
+     Operational queries comuns:
+     - "Critical unack ultimos 7d" forcava client-side filter (waste)
+     - "Spike-detector last 24h" - idem
+     Pattern V8 (paridade audit-log pass 430 target_id + paridade pass 12 payouts):
+     POST-FIX: 3 filtros opcionais aproveitando idx existentes:
+     - idx_alerts_severity (mig 008)
+     - idx_alerts_source (mig 008)
+     - idx_alerts_unack PARTIAL (mig 008) - usado quando ack=unack */
+  const VALID_SEV = new Set(['info','warn','error','critical']);
+  const sevFilter = VALID_SEV.has((req.query.severity || '').toString().trim()) ? req.query.severity.toString().trim() : null;
+  const SOURCE_RE = /^[a-z0-9_-]{1,60}$/;
+  const srcRaw = (req.query.source || '').toString().trim().toLowerCase();
+  const sourceFilter = SOURCE_RE.test(srcRaw) ? srcRaw : null;
+  const ackParam = (req.query.acknowledged || '').toString().trim().toLowerCase();
+  // 'true' | 'false' | '' (no filter)
+  const ackFilter = ackParam === 'true' ? true : (ackParam === 'false' ? false : null);
+
+  const where = [`created_at > NOW() - ($1 || ' days')::INTERVAL`];
+  const params = [String(days)];
+  let pi = 2;
+  if (sevFilter) { where.push(`severity = $${pi++}`); params.push(sevFilter); }
+  if (sourceFilter) { where.push(`source = $${pi++}`); params.push(sourceFilter); }
+  if (ackFilter === true) where.push(`acknowledged_at IS NOT NULL`);
+  if (ackFilter === false) where.push(`acknowledged_at IS NULL`);
+  params.push(limit, offset);
+
   // FIX-WORKER-18 pass 202: COUNT(*) OVER() window consolidation
   // Pattern V8 consolidado em 11 endpoints anteriores (passes 178-201)
   const r = await query(
@@ -401,10 +432,10 @@ const alertsHandler = asyncHandler(async (req, res) => {
             payload, acknowledged_at, created_at,
             COUNT(*) OVER()::INT AS _total
        FROM alerts
-      WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
+      WHERE ${where.join(' AND ')}
       ORDER BY created_at DESC, id DESC
-      LIMIT $2 OFFSET $3`,
-    [String(days), limit, offset]
+      LIMIT $${pi++} OFFSET $${pi++}`,
+    params
   );
 
   const total = r.rows[0]?._total ?? 0;
@@ -428,6 +459,8 @@ const alertsHandler = asyncHandler(async (req, res) => {
     limit,
     offset,
     days,
+    // FIX pass 432: echo filtros aplicados (paridade audit-log pass 430)
+    filter: { severity: sevFilter, source: sourceFilter, acknowledged: ackFilter },
     has_more: (offset + alerts.length) < total,
   });
 });
@@ -435,9 +468,10 @@ const alertsHandler = asyncHandler(async (req, res) => {
 // Trade-off realtime vs DB pressure: alerts SAO urgent (admin polls 5-10s
 // para reagir rapido) mas 10s cache aceita pequena stale window vs
 // proteger DB pool. SLO admin <15s noticing new critical alert preserved.
+// FIX-WORKER-10 pass 432: cache key vary inclui severity+source+ack
 const alertsCacheKey = (req) => {
   const q = req.query;
-  return `aiops:alerts:d=${q.days||7}:lim=${q.limit||100}:off=${q.offset||0}`;
+  return `aiops:alerts:d=${q.days||7}:sev=${q.severity||''}:src=${q.source||''}:ack=${q.acknowledged||''}:lim=${q.limit||100}:off=${q.offset||0}`;
 };
 app.get('/alerts',
   jwt.requireAuth({ roles: ['admin','staff'] }),
