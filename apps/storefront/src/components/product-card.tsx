@@ -8,6 +8,7 @@ import { OfficialBadge } from './official-badge';
 import { WishlistButton } from './wishlist-button';
 import { RecentSaleBadge } from './recent-sale-badge';
 import { InstantDownloadBadge } from './instant-download-badge';
+import { PixDiscountBadge } from './pix-discount-badge';
 
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
   iniciante:      { label: 'Iniciante', color: 'bg-gray-500/20 text-gray-300' },
@@ -99,6 +100,10 @@ export function ProductCard({ product }: { product: any }) {
               </div>
               {/* MLB-NEW WORKER 17: parcelamento sem juros (compact) */}
               <Installments priceCents={product.price_cents} isFree={product.is_free} variant="card" />
+              {/* MLB-16 WORKER 16 pass 167: badge desconto PIX 5% */}
+              <div className="mt-1.5">
+                <PixDiscountBadge priceCents={product.price_cents} isFree={product.is_free} variant="card" />
+              </div>
             </div>
           </div>
         </div>
