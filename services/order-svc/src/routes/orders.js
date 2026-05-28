@@ -4,7 +4,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, maskPII, rateLimiter } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, maskPII, rateLimiter, cache } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 71: rate-limiter anti-spam dispute.
 // PRE-FIX: POST /:id/dispute SEM rate-limit. Atacante com conta legitima:
@@ -40,6 +40,9 @@ router.post('/checkout',
     { message: 'installment_count > 1 requer payment_method=credit_card', path: ['installment_count'] }
   )}),
   asyncHandler(async (req, res, next) => {
+    // FIX-WORKER-18 pass 176: flag p/ invalidar cache loyalty:me pos-tx
+    // se loyalty pts foram debitados (UPDATE user_loyalty linha ~99).
+    let loyaltyDebited = false;
     const result = await tx(async (c) => {
       const cart = await c.query(
         `SELECT * FROM carts WHERE user_id = $1 FOR UPDATE`, [req.user.sub]
@@ -105,6 +108,7 @@ router.post('/checkout',
            VALUES ($1::UUID, $2::INT, 'order_redeem', 'order')`,
           [req.user.sub, -loyaltyPts]
         );
+        loyaltyDebited = true; // FIX-WORKER-18 pass 176: marca para invalidacao pos-tx
       }
 
       const orderNo = await c.query(`SELECT fn_generate_order_number() AS n`);
@@ -184,6 +188,17 @@ router.post('/checkout',
     });
 
     res.status(201).json({ ok: true, order: result });
+
+    // FIX-WORKER-18 pass 176: invalida cache loyalty:me se pts debitados (cross-svc).
+    // Cache GET /loyalty/me em seller-svc 30s TTL. Sem invalidate user veria
+    // saldo stale apos checkout (mostra pontos ja gastos como disponivel).
+    if (loyaltyDebited) {
+      try {
+        await cache.del(`loyalty:me:${req.user.sub}:*`);
+      } catch (e) {
+        log.warn({ err: e.message, user: req.user.sub }, '[cache.invalidate_fail]');
+      }
+    }
 
     // Dispara payment-svc para criar cobranca Asaas (assincrono)
     setImmediate(async () => {
