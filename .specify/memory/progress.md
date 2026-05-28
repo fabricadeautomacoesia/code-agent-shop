@@ -28381,3 +28381,42 @@ PROXIMA ITER:
 - W7 product-svc trending searches consume idx pass 283
 - W2 checkout payment_method UX (PIX 5% off proeminente vs CC parcelado)
 - VPS SSH unblock URGENTISSIMO (116 ciclos - 38.7h)
+
+
+============================================================
+PASS 284 - 2026-05-28 - W12 QA rejection notif + W9 categoria meta
+============================================================
+Files: 2 modificados
+  - services/qa-svc/src/server.js (rejection notif clean reasons=[])
+  - apps/storefront/src/app/categoria/[slug]/layout.tsx (twitter+og.url)
+Lines: ~25 added
+
+W12 (QA rejection notif sem reasons UX):
+- PRE-FIX: reasons=[] -> notif body 'Motivos:\n- ' (trailing bullet vazio)
+- POST-FIX:
+  - reasons vazio -> mensagem generica + CTA ticket suporte
+  - >=1 reason -> bullet list normal
+  - payload.reasons = null (em vez de '\n- ' artificial)
+  - payload.reasons_count adicionado p/ dashboard filter
+- Defensive .filter(s => s && trim()) trata edge case reasons=['','null']
+
+W9 (categoria [slug] paridade seller metadata):
+- openGraph: + url (compartilhamento WhatsApp/FB render absoluto)
+- twitter: + card='summary' (X/Twitter rich preview)
+- Paridade pass 232 seller [slug] layout pattern
+
+VPS SSH BLOQUEADO (117 ciclos - 39h sem deploy).
+Migs 069-081 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-svc cas_storefront --force
+- W12: rejeitar produto com LLM forcando reasons=[] no callback -> notif body
+  "O sistema nao gerou motivos explicitos - revise..."
+  Query: SELECT body FROM notifications WHERE template_code='product_rejected' ORDER BY created_at DESC LIMIT 3;
+- W9: curl -s https://cas.../categoria/ia-agents -o - | grep -oP 'twitter:card|og:url'
+  Esperado: twitter:card=summary + og:url=/categoria/ia-agents
+
+PROXIMA ITER:
+- W7 product-svc admin force-approve atomicity audit
+- W4 admin dashboard rebuild notification stats consume pass 279 audit
+- VPS SSH unblock URGENTISSIMO (117 ciclos - 39h)

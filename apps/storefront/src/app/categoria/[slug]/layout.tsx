@@ -16,15 +16,27 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       if (d?.category?.description) description = d.category.description;
     }
   } catch {}
+  // FIX-WORKER-9 pass 284: paridade seller [slug] metadata - twitter card + og.url
+  //   PRE-FIX: openGraph sem url -> WhatsApp/Facebook share preview pode renderizar
+  //   URL relativa /categoria/slug em vez de absoluta -> link quebrado em alguns clients.
+  //   Twitter card faltando -> share no X/Twitter mostra summary generico do site
+  //   sem destacar categoria especifica.
+  //   POST-FIX: og.url + twitter.card minimo summary (sem imagem - top-sellers nao
+  //   tem banner) para compartilhamento social rico.
   return {
     title: `Mais vendidos: ${name} - Code & Agent Shop`,
     description,
-    // FIX-WORKER-9 pass 3: canonical dinamico por slug
     alternates: { canonical: `/categoria/${slug}` },
     openGraph: {
       type: 'website',
       title: `Top ${name}`,
       description: `Mais vendidos em ${name}`,
+      url: `/categoria/${slug}`,
+    },
+    twitter: {
+      card: 'summary',
+      title: `Top ${name} - Code & Agent Shop`,
+      description,
     },
   };
 }

@@ -541,6 +541,17 @@ app.post('/qa/callback',
       );
       if (u.rows.length) {
         const seller = u.rows[0];
+        /* FIX-WORKER-12 pass 284 (notif rejected sem reasons UX):
+           PRE-FIX: reasons=[] (LLM sem motivos explicitos) gerava:
+             "Seu produto X nao passou no QA.\nMotivos:\n- "
+           Trailing bullet vazio - UX feio + seller confuso "qual e o motivo?"
+           POST-FIX: condicional - se reasons vazio render mensagem generica
+           CTA pra contato; se >=1 reason render lista bullet. payload tambem
+           clean (sem leading '\n- ' artificial). Pattern V8 zero-state hide. */
+        const reasonsList = (b.reasons || []).filter((s) => s && String(s).trim());
+        const rejBody = reasonsList.length > 0
+          ? `Seu produto "${seller.title}" nao passou no QA.\nMotivos:\n- ${reasonsList.join('\n- ')}`
+          : `Seu produto "${seller.title}" nao passou no QA (confidence ${(b.confidence_score*100).toFixed(1)}%). O sistema nao gerou motivos explicitos - revise descricao, codigo e cover image. Para detalhes, abra ticket no suporte.`;
         await c.query(
           `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
            VALUES ($1, 'email', $2, $3, $4, $5::JSONB, $6)`,
@@ -549,10 +560,12 @@ app.post('/qa/callback',
            approved ? `Produto aprovado: ${seller.title}` : `Necessario ajustar: ${seller.title}`,
            approved
              ? `Parabens! Seu produto "${seller.title}" foi aprovado (confidence ${(b.confidence_score*100).toFixed(1)}%). Ja esta na vitrine.`
-             : `Seu produto "${seller.title}" nao passou no QA.\nMotivos:\n- ${(b.reasons||[]).join('\n- ')}`,
+             : rejBody,
            JSON.stringify({
              name: seller.full_name, score: (b.confidence_score*100).toFixed(1),
-             reasons: (b.reasons || []).join('\n- '), title: seller.title,
+             reasons: reasonsList.length > 0 ? reasonsList.join('\n- ') : null,
+             reasons_count: reasonsList.length,
+             title: seller.title,
            }),
            approved ? 0 : 1]
         );
