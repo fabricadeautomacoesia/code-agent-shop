@@ -32958,3 +32958,38 @@ audit grep zero remanescentes
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 420 W7 REVIEW: qna POST notification context (product title + payload)
+commit b32f4dc
+BUG notification qna sem product context
+PRE-FIX:
+- title='Nova pergunta' (generic)
+- body='Nova pergunta sobre produto' (sem product info)
+- SEM payload JSONB
+- template_code='qna_question' nao mapeado inferCtaUrl
+
+CENARIO BROKEN:
+- Seller multi-produto recebe notif sem qual produto
+- inferCtaUrl pass 355 mapeia 'product_qna_new' -> /product/[slug]#qna
+- 'qna_question' NAO mapeia -> link generic /conta
+
+POST-FIX:
+- SELECT + p.title
+- title 'Nova pergunta: {productTitle}' (slice 60)
+- body com question excerpt slice 200 + ellipsis
+- payload JSONB { slug, product_id, qna_id }
+- template_code='product_qna_new' paridade inferCtaUrl mapping
+- priority=1
+
+UX MLB: Seller click notif -> direto PDP#qna tab com context
+
+W7 review notification:
+  pass 36 qna answer
+  pass 261 dispute resolved
+  pass 420 qna POST <- ESTE
+
+153 passes acumulados (268->420) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
