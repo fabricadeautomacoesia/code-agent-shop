@@ -28262,3 +28262,39 @@ PROXIMA ITER:
 - W2 checkout multi-seller mix banner (cart tem items mistos wallet+sem)
 - W4 admin notification cleanup logs viewer (consume pass 279 audit_log)
 - VPS SSH unblock URGENTISSIMO (113 ciclos - 37.7h)
+
+
+============================================================
+PASS 281 - 2026-05-28 - W10 (search /facets seller_tiers filter)
+============================================================
+Files: 1 modificado
+  - services/search-svc/src/server.js (filter active sellers in tier counts)
+Lines: ~8 added
+
+W10 (facets seller_tiers data accuracy):
+- PRE-FIX: subquery seller_tiers JOIN sellers SEM filter status/deleted_at
+- Cenario: admin suspende seller pos-product-approval (pass 263) - produto
+  fica 'approved' ate cron archive runs. Counts inflados temporariamente
+- UX: storefront tier filter "gold (47)" mas /search retorna 42 (5 sao seller suspended)
+- POST-FIX: WHERE s.status='active' AND s.deleted_at IS NULL
+- Cache 180s ja existente cobre - drop apenas re-warm
+
+W4 (admin audit-log inspecao notification.cleanup_batch):
+- Verificado /admin/audit-log dashboard JA suporta filtro action dropdown
+- Pass 279 audit_log INSERT 'notification.cleanup_batch' aparece automaticamente
+- Endpoint aiops-svc /audit-log/actions (pass 12) ja lista actions distintas
+- NENHUMA mudanca codigo - verificacao end-to-end consume pass 279
+
+VPS SSH BLOQUEADO (114 ciclos - 38h sem deploy).
+Migs 069-080 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_search-svc --force (+ cache flush)
+- W10: curl https://cas.../api/search/facets?category=ia-agents | jq '.facets.seller_tiers'
+  Esperado: counts soh inclui sellers active+nao-deleted
+- W4: /admin/audit-log -> filter action="notification.cleanup_batch" (apos 04:00 UTC)
+
+PROXIMA ITER:
+- W3 PDP variant selector (badge OFICIAL MAIS VENDIDO MLB-9)
+- W2 checkout multi-seller mix banner
+- VPS SSH unblock URGENTISSIMO (114 ciclos - 38h)

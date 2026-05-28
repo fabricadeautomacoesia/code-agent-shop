@@ -691,6 +691,14 @@ app.get('/facets',
          (SELECT json_agg(json_build_object('tier', reputation_tier, 'count', cnt)
                           ORDER BY cnt DESC, reputation_tier ASC NULLS LAST)
             FROM (SELECT s.reputation_tier, COUNT(*) AS cnt FROM base b JOIN sellers s ON s.id=b.seller_id
+                   /* FIX-WORKER-10 pass 281: filter sellers active+nao-suspended.
+                      PRE-FIX: produto approved + seller suspended -> contava no tier.
+                      Cenario real: admin suspende seller pos-approval (pass 263)
+                      mas produto stays 'approved' ate cron archiver - counts ficam
+                      inflados ate la. UX: storefront filter "tier=gold" mostra 47
+                      produtos mas /search retorna 42 (5 sao seller suspended).
+                      POST-FIX: WHERE s.status='active' + deleted_at IS NULL. */
+                   WHERE s.status='active' AND s.deleted_at IS NULL
                     GROUP BY s.reputation_tier) t),
          '[]'::JSON
        ) AS seller_tiers,
