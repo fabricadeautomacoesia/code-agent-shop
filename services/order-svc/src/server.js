@@ -20,6 +20,8 @@ const app = express();
 const PORT = parseInt(process.env.PORT_ORDER || '3015', 10);
 
 app.disable('x-powered-by');
+/* FIX-WORKER-17 pass 305: trust proxy paridade cross-svc */
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '256kb' }));
 app.use(sanitize.middleware());
 

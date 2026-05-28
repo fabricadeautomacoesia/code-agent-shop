@@ -41,6 +41,9 @@ const app = express();
 const PORT = parseInt(process.env.PORT_NOTIFICATION || '3018', 10);
 
 app.disable('x-powered-by');
+/* FIX-WORKER-17 pass 305: trust proxy paridade cross-svc (auth/payment/product/etc).
+   Sem este, rate-limiter linhas 23/keyGenerator usa req.ip = gateway IP shared. */
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '256kb' }));
 app.use(sanitize.middleware());
 

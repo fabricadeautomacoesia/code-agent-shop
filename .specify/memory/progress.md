@@ -29257,3 +29257,44 @@ PROXIMA ITER:
 - W6 audit fail2ban-middleware keyGenerator paridade
 - W4 admin status dashboard mostrar rate-limit drops
 - VPS SSH unblock URGENTISSIMO (137 ciclos - 45.7h)
+
+
+============================================================
+PASS 305 - 2026-05-28 - W17 trust proxy CRITICAL paridade cross-svc
+============================================================
+Files: 5 modificados
+  - services/seller-svc/src/server.js (trust proxy=1)
+  - services/order-svc/src/server.js (trust proxy=1)
+  - services/notification-svc/src/server.js (trust proxy=1)
+  - services/qa-svc/src/server.js (trust proxy=1)
+  - services/review-svc/src/server.js (trust proxy=1)
+  - services/aiops-svc/src/server.js (trust proxy=1)
+Lines: ~6 added (1 linha cada svc)
+
+W17 (trust proxy CRITICAL paridade):
+- PRE-FIX descoberta: 6 services SEM app.set('trust proxy', 1)
+- Auth/payment/product/search/vault JA tinham (passes anteriores)
+- Seller/order/notif/qa/review/aiops sem - inconsistencia
+- IMPACTO:
+  - req.ip = gateway internal IP (shared across all clients)
+  - audit_log.ip armazena GATEWAY IP em vez de client real
+  - Rate-limiters per-IP partilhavam bucket (mesma vuln pass 304 gateway)
+  - Forensics inutil para investigacao por IP
+- POST-FIX: app.set('trust proxy', 1) em 6 svcs
+- 1 hop trust = Traefik -> gateway -> svc (req.ip le X-Forwarded-For)
+- Paridade auth/payment/product/search/vault
+
+VPS SSH BLOQUEADO (138 ciclos - 46h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_order-svc cas_notification-svc cas_qa-svc cas_review-svc cas_aiops-svc --force
+- Verify audit_log captures real client IP:
+  SELECT DISTINCT payload_after->>'ip' FROM audit_log
+  WHERE action='auth.login' AND created_at > NOW() - INTERVAL '1 hour' LIMIT 10;
+  Esperado: IPs reais clients (vs antes todos = gateway internal IP)
+
+PROXIMA ITER:
+- W4 admin status dashboard mostra rate-limit drops per-IP
+- W17 audit other svcs (qa-worker.py Python, llm-router?) trust proxy equivalents
+- VPS SSH unblock URGENTISSIMO (138 ciclos - 46h)

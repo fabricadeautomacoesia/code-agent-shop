@@ -23,6 +23,8 @@ const DISK_TH = parseFloat(process.env.ALERT_DISK_THRESHOLD || '90');
 const AUTOHEAL_RAM = parseFloat(process.env.AUTOHEAL_RAM_THRESHOLD || '95');
 
 app.disable('x-powered-by');
+/* FIX-WORKER-17 pass 305: trust proxy paridade cross-svc */
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '64kb' }));
 
 // ============================================================

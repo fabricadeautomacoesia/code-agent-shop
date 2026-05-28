@@ -40,6 +40,8 @@ const QA_RUN_INTERNAL_TOKEN = process.env.QA_RUN_INTERNAL_TOKEN || '';
 const CALLBACK_BASE = process.env.QA_CALLBACK_BASE_URL || `http://tasks.cas_qa-svc:${PORT}`;
 
 app.disable('x-powered-by');
+/* FIX-WORKER-17 pass 305: trust proxy paridade cross-svc */
+app.set('trust proxy', 1);
 // FIX-WORKER-12: callback usa raw body para validar HMAC byte-exact antes de parsear
 app.use('/qa/callback', express.raw({ type: '*/*', limit: '5mb' }));
 app.use(express.json({ limit: '5mb' }));

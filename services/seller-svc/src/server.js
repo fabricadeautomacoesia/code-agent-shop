@@ -11,6 +11,14 @@ const app = express();
 const PORT = parseInt(process.env.PORT_SELLER || '3011', 10);
 
 app.disable('x-powered-by');
+/* FIX-WORKER-17 pass 305: trust proxy paridade cross-svc (pass anterior gateway 304).
+   PRE-FIX: req.ip = gateway internal IP (não real client) -> audit_log.ip
+   inutil para forensics (todos events do mesmo gateway IP).
+   Auth/payment/product/search/vault ja tinham este fix. Seller/notif/order
+   estavam sem - inconsistencia DLP/audit cross-svc.
+   POST-FIX: trust proxy=1 (1 hop = Traefik -> gateway -> seller-svc).
+   req.ip agora le X-Forwarded-For correto. */
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '512kb' }));
 app.use(sanitize.middleware());
 
