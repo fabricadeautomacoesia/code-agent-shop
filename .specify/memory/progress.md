@@ -30999,3 +30999,28 @@ PROXIMA ITER:
 - W4 admin DLP audit-log viewer
 - W2 checkout E2E completion
 - VPS SSH unblock URGENTISSIMO (62h+ ciclos)
+
+## PASS 351 W3 PDP: 4 BUGS SEO json-ld.tsx (rich snippet broken)
+commit 01a1eec
+BUG 1 SITE_URL domain mismatch:
+  - 'cas.inovareinteligenciaartificial.com' subdomain inexistente
+  - host real: code-agent-shop.inovareinteligenciaartificial.com
+  - FIX: env-driven NEXT_PUBLIC_SITE_URL fallback real host
+BUG 2 availability status whitelist:
+  - approved standalone -> platform_owned reportado OutOfStock
+  - FIX: ['approved','platform_owned'].includes(status)
+BUG 3 review filter AFTER slice:
+  - slice(0,5).filter() rejeitava rating-only reviews -> 0 no SERP
+  - FIX: filter FIRST + slice depois
+BUG 4 breadcrumb categoria 404:
+  - /categoria/${slug} rota NAO EXISTE -> Google bot 404
+  - FIX: /products?category=${slug} paridade rota real
+
+W3 SEO rich snippet consolidation completa.
+84 passes acumulados (268->351) sem deploy VPS
+
+PROXIMA ITER:
+- W4 admin DLP audit-log viewer
+- W2 checkout E2E completion
+- W17 vault security audit
+- VPS SSH unblock URGENTISSIMO (63h+ ciclos)
