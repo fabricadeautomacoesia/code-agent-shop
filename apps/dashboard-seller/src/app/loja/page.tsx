@@ -82,35 +82,57 @@ export default function LojaPage() {
             <Shield className="w-5 h-5 text-yellow-400" /> KYC pendente
           </h3>
           <p className="text-sm text-white/70 mb-4">Complete o KYC para ativar sua loja e poder publicar produtos.</p>
+          {/* FIX-WORKER-5 pass 146 (a11y): KYC form 9 inputs htmlFor + id (WCAG 1.3.1)
+              + autoComplete (browser autofill from registro CPF/endereco)
+              + inputMode mobile-friendly (numeric p/ doc/CEP, text p/ outros) */}
           <form onSubmit={submitKyc} className="space-y-3">
             <div className="grid md:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-white/60 uppercase">Tipo</label>
-                <select value={kyc.document_type} onChange={(e) => setKyc({...kyc, document_type: e.target.value})}
+                <label htmlFor="kyc-doctype" className="text-xs text-white/60 uppercase">Tipo</label>
+                <select id="kyc-doctype" value={kyc.document_type} onChange={(e) => setKyc({...kyc, document_type: e.target.value})}
                   className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm">
                   <option value="cpf">CPF</option><option value="cnpj">CNPJ</option>
                 </select>
               </div>
               <div>
-                <label className="text-xs text-white/60 uppercase">Documento</label>
-                <input value={kyc.document_number} onChange={(e) => setKyc({...kyc, document_number: e.target.value})} required
+                <label htmlFor="kyc-docnum" className="text-xs text-white/60 uppercase">Documento</label>
+                <input id="kyc-docnum" value={kyc.document_number} onChange={(e) => setKyc({...kyc, document_number: e.target.value})} required
+                  autoComplete="off" inputMode="numeric"
                   className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
               </div>
             </div>
             <div>
-              <label className="text-xs text-white/60 uppercase">Razao social / nome completo</label>
-              <input value={kyc.legal_name} onChange={(e) => setKyc({...kyc, legal_name: e.target.value})} required
+              <label htmlFor="kyc-legal" className="text-xs text-white/60 uppercase">Razao social / nome completo</label>
+              <input id="kyc-legal" value={kyc.legal_name} onChange={(e) => setKyc({...kyc, legal_name: e.target.value})} required
+                autoComplete="name"
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
             </div>
-            <input placeholder="Endereco" value={kyc.address_line1} onChange={(e) => setKyc({...kyc, address_line1: e.target.value})} required
-              className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
+            <div>
+              <label htmlFor="kyc-addr1" className="sr-only">Endereco</label>
+              <input id="kyc-addr1" placeholder="Endereco" value={kyc.address_line1} onChange={(e) => setKyc({...kyc, address_line1: e.target.value})} required
+                autoComplete="street-address"
+                aria-label="Endereco"
+                className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
+            </div>
             <div className="grid grid-cols-3 gap-3">
-              <input placeholder="Cidade" value={kyc.address_city} onChange={(e) => setKyc({...kyc, address_city: e.target.value})} required
-                className="px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
-              <input placeholder="UF" maxLength={2} value={kyc.address_state} onChange={(e) => setKyc({...kyc, address_state: e.target.value.toUpperCase()})} required
-                className="px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
-              <input placeholder="CEP" value={kyc.address_zip} onChange={(e) => setKyc({...kyc, address_zip: e.target.value})} required
-                className="px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
+              <div>
+                <label htmlFor="kyc-city" className="sr-only">Cidade</label>
+                <input id="kyc-city" placeholder="Cidade" value={kyc.address_city} onChange={(e) => setKyc({...kyc, address_city: e.target.value})} required
+                  autoComplete="address-level2" aria-label="Cidade"
+                  className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
+              </div>
+              <div>
+                <label htmlFor="kyc-state" className="sr-only">UF</label>
+                <input id="kyc-state" placeholder="UF" maxLength={2} value={kyc.address_state} onChange={(e) => setKyc({...kyc, address_state: e.target.value.toUpperCase()})} required
+                  autoComplete="address-level1" aria-label="Estado UF"
+                  className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
+              </div>
+              <div>
+                <label htmlFor="kyc-zip" className="sr-only">CEP</label>
+                <input id="kyc-zip" placeholder="CEP" value={kyc.address_zip} onChange={(e) => setKyc({...kyc, address_zip: e.target.value})} required
+                  autoComplete="postal-code" inputMode="numeric" aria-label="CEP"
+                  className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
+              </div>
             </div>
             <button type="submit" disabled={action.busyKey === 'submit-kyc'}
               className="btn-primary disabled:opacity-50 disabled:cursor-wait">
@@ -123,25 +145,27 @@ export default function LojaPage() {
       <form onSubmit={save} className="space-y-6">
         <section className="glass p-6 space-y-4">
           <h3 className="font-display font-bold text-lg">Identidade da loja</h3>
+          {/* FIX-WORKER-5 pass 146 (a11y): store form 5 inputs htmlFor + id */}
           <div>
-            <label className="text-xs text-white/60 uppercase">Nome da loja</label>
-            <input value={form.store_name} onChange={(e) => setForm({...form, store_name: e.target.value})}
+            <label htmlFor="loja-name" className="text-xs text-white/60 uppercase">Nome da loja</label>
+            <input id="loja-name" value={form.store_name} onChange={(e) => setForm({...form, store_name: e.target.value})}
+              autoComplete="organization"
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase">Descricao</label>
-            <textarea value={form.store_description} onChange={(e) => setForm({...form, store_description: e.target.value})} rows={4}
+            <label htmlFor="loja-desc" className="text-xs text-white/60 uppercase">Descricao</label>
+            <textarea id="loja-desc" value={form.store_description} onChange={(e) => setForm({...form, store_description: e.target.value})} rows={4}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
           </div>
           <div className="grid md:grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-white/60 uppercase">URL banner</label>
-              <input value={form.store_banner_url} onChange={(e) => setForm({...form, store_banner_url: e.target.value})}
+              <label htmlFor="loja-banner" className="text-xs text-white/60 uppercase">URL banner</label>
+              <input id="loja-banner" type="url" inputMode="url" value={form.store_banner_url} onChange={(e) => setForm({...form, store_banner_url: e.target.value})}
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono text-xs" />
             </div>
             <div>
-              <label className="text-xs text-white/60 uppercase">URL logo</label>
-              <input value={form.store_logo_url} onChange={(e) => setForm({...form, store_logo_url: e.target.value})}
+              <label htmlFor="loja-logo" className="text-xs text-white/60 uppercase">URL logo</label>
+              <input id="loja-logo" type="url" inputMode="url" value={form.store_logo_url} onChange={(e) => setForm({...form, store_logo_url: e.target.value})}
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono text-xs" />
             </div>
           </div>
@@ -150,8 +174,9 @@ export default function LojaPage() {
         <section className="glass p-6 space-y-4">
           <h3 className="font-display font-bold text-lg">Pagamento Asaas</h3>
           <div>
-            <label className="text-xs text-white/60 uppercase">Chave PIX</label>
-            <input value={form.asaas_pix_key} onChange={(e) => setForm({...form, asaas_pix_key: e.target.value})}
+            <label htmlFor="loja-pix" className="text-xs text-white/60 uppercase">Chave PIX</label>
+            <input id="loja-pix" value={form.asaas_pix_key} onChange={(e) => setForm({...form, asaas_pix_key: e.target.value})}
+              autoComplete="off"
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
           </div>
           <label className="flex items-start gap-3 text-sm">
