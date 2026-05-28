@@ -31972,3 +31972,32 @@ POST-FIX:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (5 CRITICAL!)
 - W4 admin audit-log viewer
+
+## PASS 385 W6 AUTH: cpf_cnpj regex hardening (defense-in-depth Zod)
+commit b57b6e4
+BUG cpf_cnpj sem regex - aceita chars arbitrarios
+PRE-FIX: z.string().min(11).max(20).optional()
+  - 'abc12345678' (11 chars) Zod passa
+  - '<svg>11..../' (11+ chars) Zod passa
+  - Audit_log payload com input raw antes algoritmo
+  - 4 outros campos schema TEM regex (locale/timezone/phone)
+  - cpf_cnpj lagged
+
+POST-FIX:
+- regex /^[0-9./-]+$/ whitelist:
+  * Digitos + . / - (chars validos BR format)
+- Sem espacos, letras, chars especiais
+- Algoritmo DV validates apos normalize
+
+W6 cpf_cnpj defense layers:
+  1. Zod regex whitelist (pass 385)
+  2. Length min/max (pre-existing)
+  3. Algorithm isValidCpf/Cnpj (pass 97)
+  4. maskPII.cpf audit (pass 173)
+
+118 passes acumulados (268->385) sem deploy VPS
+5 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
