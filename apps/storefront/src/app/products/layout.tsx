@@ -8,7 +8,16 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     locale: 'pt_BR',
-    title: 'Catalogo - Code & Agent Shop',
+    url: 'https://cas.inovareinteligenciaartificial.com/products',
+    title: 'Catalogo Completo - Code & Agent Shop',
+    description: 'O maior marketplace de automacoes e agentes IA do Brasil. Filtros por categoria, kind, preco e tier.',
+    images: ['/opengraph-image'],
+  },
+  // FIX-WORKER-9 pass 118: + keywords + twitter card
+  keywords: ['catalogo', 'automacoes', 'agentes IA', 'n8n', 'workflows', 'scripts', 'templates', 'prompts'],
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Catalogo Completo | Code & Agent Shop',
     description: 'O maior marketplace de automacoes e agentes IA do Brasil.',
   },
 };

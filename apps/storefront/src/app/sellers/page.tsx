@@ -1,8 +1,24 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { Award, Star, Package } from 'lucide-react';
+import type { Metadata } from 'next';
 
 export const revalidate = 120;
+
+// FIX-WORKER-9 pass 118: metadata explicita p/ /sellers (SEO listagem)
+export const metadata: Metadata = {
+  title: 'Vendedores Verificados | Code & Agent Shop',
+  description: 'Conheca os desenvolvedores e vendedores oficiais do Code & Agent Shop. Compre direto de criadores verificados com reputacao publica, KYC validado e reviews reais.',
+  alternates: { canonical: '/sellers' },
+  openGraph: {
+    type: 'website',
+    url: 'https://cas.inovareinteligenciaartificial.com/sellers',
+    title: 'Vendedores Verificados | Code & Agent Shop',
+    description: 'Diretorio de desenvolvedores e vendedores oficiais com reputacao publica.',
+    images: ['/opengraph-image'],
+  },
+  keywords: ['vendedores', 'desenvolvedores', 'criadores', 'marketplace', 'automacoes'],
+};
 
 async function fetchSafe<T>(path: string): Promise<T | null> {
   try {
