@@ -31,23 +31,35 @@ const router = express.Router();
 //
 // Limits dimensionados para uso humano legitimo (user nao registra/recupera
 // senha mais que 1-2 vezes por hora) e bloquear bots automaticamente.
+// FIX-WORKER-17 pass 359 CRITICAL (keyGenerator missing - paridade pass 304):
+//   PRE-FIX: 3 limiters auth (register/forgot/reset) declarados "por IP" mas
+//   SEM keyGenerator -> usa req.ip (peer IP do Traefik shared).
+//   Auth-svc atras de gateway + Traefik = shared bucket DoS:
+//   - register: 5/15min global, atacante bot esgota -> NINGUEM registra
+//   - forgot: 3/hora global, atacante esgota -> impede victim reset legit
+//   - reset: 10/15min global, atacante brute-force tokens consome share
+//   POST-FIX: keyGenerator x-real-ip (paridade refreshLimiter linha 421 ja correto)
+//   Pattern V8 consolidacao: TODOS os limiters atras de proxy precisam keyGen.
 const registerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
   max: 5, // 5 registers por IP/15min = anti-spam
   message: { error: 'rate_limit_exceeded', message: 'Muitos registros recentes. Aguarde 15 minutos.' },
   standardHeaders: true, legacyHeaders: false,
+  keyGenerator: (req) => req.headers['x-real-ip'] || req.ip,
 });
 const forgotPasswordLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1h
   max: 3, // 3 forgot por IP/hora - protege victim de email bombing
   message: { error: 'rate_limit_exceeded', message: 'Muitas solicitacoes de recuperacao. Aguarde 1 hora.' },
   standardHeaders: true, legacyHeaders: false,
+  keyGenerator: (req) => req.headers['x-real-ip'] || req.ip,
 });
 const resetPasswordLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min (window do token)
   max: 10, // 10 tentativas com token errado = atacante brute-force detected
   message: { error: 'rate_limit_exceeded', message: 'Muitas tentativas. Solicite novo link.' },
   standardHeaders: true, legacyHeaders: false,
+  keyGenerator: (req) => req.headers['x-real-ip'] || req.ip,
 });
 const log = logger.child({ svc: 'auth-svc', mod: 'auth' });
 

@@ -96,12 +96,24 @@ const useRateLimit = rateLimit({
   keyGenerator: (req) => req.headers['x-real-ip'] || req.ip,
 });
 
+// FIX-WORKER-17 pass 359 CRITICAL (keyGenerator missing - paridade pass 304):
+//   PRE-FIX: provisionRateLimit SEM keyGenerator - usa req.ip (peer IP).
+//   Vault-svc esta atras do gateway + Traefik (SwarmDNS) - peer IP = Traefik
+//   compartilhado por TODOS os admins/sellers.
+//   IMPACTO: shared bucket attack (mesmo padrao pass 304 gateway):
+//   - Admin1+Admin2+Admin3 compartilham 5 req/min global
+//   - Atacante token admin comprometido esgota bucket -> outros admins
+//     ficam bloqueados de provisionar/revogar keys CRITICAL
+//   - Pass 304 corrigiu gateway, useRateLimit (linha 96) e readRateLimit
+//     (linha 121) mas provisionRateLimit ficou lagged
+//   POST-FIX: keyGenerator x-real-ip (paridade endpoints irmaos)
 const provisionRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'rate_limit_exceeded' },
+  keyGenerator: (req) => req.headers['x-real-ip'] || req.ip,
 });
 
 // FIX-WORKER-17 pass 280 (enumeration defense em endpoints read):
