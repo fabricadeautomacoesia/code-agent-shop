@@ -33,14 +33,18 @@ export function CompareDrawer() {
           <GitCompare className="w-4 h-4 text-magenta-glow" />
           <span className="text-sm font-semibold">Comparar ({items.length}/{COMPARE_MAX})</span>
         </div>
+        {/* FIX-WORKER-1 pass 158 (a11y): type='button' + aria-expanded + aria-hidden icons */}
         <div className="flex items-center gap-1">
-          <button onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? 'Expandir' : 'Recolher'}
-            className="p-1 rounded hover:bg-white/10 transition-colors">
-            {collapsed ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          <button type="button" onClick={() => setCollapsed(!collapsed)}
+            aria-label={collapsed ? 'Expandir comparacao' : 'Recolher comparacao'}
+            aria-expanded={!collapsed}
+            className="p-1 rounded hover:bg-white/10 transition-colors focus-visible:outline-2 focus-visible:outline-magenta">
+            {collapsed ? <ChevronUp className="w-4 h-4" aria-hidden="true" /> : <ChevronDown className="w-4 h-4" aria-hidden="true" />}
           </button>
-          <button onClick={clear} aria-label="Limpar comparacao"
-            className="p-1 rounded hover:bg-red-500/20 hover:text-red-300 transition-colors">
-            <Trash2 className="w-4 h-4" />
+          <button type="button" onClick={clear}
+            aria-label={`Limpar comparacao (${items.length} ${items.length === 1 ? 'item' : 'itens'})`}
+            className="p-1 rounded hover:bg-red-500/20 hover:text-red-300 transition-colors focus-visible:outline-2 focus-visible:outline-red-400">
+            <Trash2 className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -68,8 +72,10 @@ export function CompareDrawer() {
                     {p.is_free ? 'Gratis' : Api.formatBRL(p.price_cents)}
                   </div>
                 </div>
-                <button onClick={() => remove(p.id)} aria-label="Remover" className="p-1 rounded hover:bg-white/10">
-                  <X className="w-3.5 h-3.5 text-white/60" />
+                <button type="button" onClick={() => remove(p.id)}
+                  aria-label={`Remover ${p.title} da comparacao`}
+                  className="p-1 rounded hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-magenta">
+                  <X className="w-3.5 h-3.5 text-white/60" aria-hidden="true" />
                 </button>
               </li>
             ))}

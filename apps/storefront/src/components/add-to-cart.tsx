@@ -98,13 +98,16 @@ export function AddToCart({ productId, isFree }: { productId: string; isFree?: b
         {/* FIX bug 1: cross-disable - botao Baixar gratis fica disabled se outra op rodar
             (corner case: este pode estar visivel se isFree mas teoricamente sem buyNow ativo).
             Mantido disabled={loadingBuy} pois isFree so renderiza este botao - sem cross-state. */}
-        <button onClick={buyNow} disabled={loadingBuy} className="btn-primary w-full mb-3 text-base disabled:opacity-50">
-          {loadingBuy ? <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> : null}
+        {/* FIX-WORKER-3 pass 158 (a11y): type='button' explicit + aria-busy + aria-hidden Icons */}
+        <button type="button" onClick={buyNow} disabled={loadingBuy}
+          aria-busy={loadingBuy}
+          className="btn-primary w-full mb-3 text-base disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta">
+          {loadingBuy ? <Loader2 className="w-4 h-4 animate-spin inline mr-2" aria-hidden="true" /> : null}
           Baixar gratis
         </button>
         {err && (
           <div role="alert" className="flex items-start gap-2 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg p-2 mb-3">
-            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> <span>{err}</span>
+            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" /> <span>{err}</span>
           </div>
         )}
       </>
@@ -113,16 +116,18 @@ export function AddToCart({ productId, isFree }: { productId: string; isFree?: b
 
   return (
     <>
-      {/* FIX bug 1: cross-disable - botao buyNow disabled se loadingAdd OR loadingBuy */}
-      <button onClick={buyNow} disabled={anyLoading} aria-busy={loadingBuy} className="btn-primary w-full mb-3 text-base disabled:opacity-50 flex items-center justify-center gap-2">
-        {loadingBuy ? <><Loader2 className="w-4 h-4 animate-spin" /> Processando...</> : 'Comprar agora'}
+      {/* FIX bug 1: cross-disable - botao buyNow disabled se loadingAdd OR loadingBuy
+          FIX-WORKER-3 pass 158 (a11y): type='button' + aria-hidden em icons + focus-visible */}
+      <button type="button" onClick={buyNow} disabled={anyLoading} aria-busy={loadingBuy}
+        className="btn-primary w-full mb-3 text-base disabled:opacity-50 flex items-center justify-center gap-2 focus-visible:outline-2 focus-visible:outline-magenta">
+        {loadingBuy ? <><Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> Processando...</> : 'Comprar agora'}
       </button>
       {/* FIX bug 1: cross-disable - botao addToCart disabled se loadingBuy OR added OR loadingAdd */}
-      <button onClick={addToCart} disabled={anyLoading || added} aria-busy={loadingAdd}
-        className="btn-ghost w-full text-sm flex items-center justify-center gap-2 disabled:opacity-50">
-        {loadingAdd ? <><Loader2 className="w-4 h-4 animate-spin" /> Adicionando...</> :
-         added ?       <><Check className="w-4 h-4 text-green-400" /> Adicionado!</> :
-                       <><ShoppingCart className="w-4 h-4" /> Adicionar ao carrinho</>}
+      <button type="button" onClick={addToCart} disabled={anyLoading || added} aria-busy={loadingAdd}
+        className="btn-ghost w-full text-sm flex items-center justify-center gap-2 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta">
+        {loadingAdd ? <><Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> Adicionando...</> :
+         added ?       <><Check className="w-4 h-4 text-green-400" aria-hidden="true" /> Adicionado!</> :
+                       <><ShoppingCart className="w-4 h-4" aria-hidden="true" /> Adicionar ao carrinho</>}
       </button>
       {err && (
         <div role="alert" className="flex items-start gap-2 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg p-2 mt-2">
