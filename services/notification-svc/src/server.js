@@ -656,9 +656,25 @@ async function processOutbox() {
     } catch (e) {
       // FIX-13-2 (backoff): proxima tentativa com delay exponencial.
       // 1->30s, 2->2min, 3->10min, 4->1h, 5->terminal failed
+      // FIX-WORKER-13 pass 185 (jitter anti-thundering-herd):
+      //   PRE-FIX: backoff deterministic. SMTP outage afetando 100 emails
+      //   simultaneamente -> todos retentam exatos 30s depois -> burst spike
+      //   no SMTP que esta tentando recuperar -> outage prolongado.
+      //   FIX: jitter +/- 20% (full jitter pattern AWS Builder's Library).
+      //   Em vez de exato 30s -> entre 24s e 36s. 100 retries espalhados.
       const nextRetry = n.retry_count + 1;
-      const backoffSeconds = [30, 120, 600, 3600][n.retry_count] || 3600;
-      log.warn({ id: n.id, err: e.message, attempt: nextRetry, backoffSeconds }, '[notif.fail]');
+      const baseBackoff = [30, 120, 600, 3600][n.retry_count] || 3600;
+      // Random multiplier 0.8 .. 1.2 (jitter +/- 20%)
+      const jitter = 0.8 + Math.random() * 0.4;
+      const backoffSeconds = Math.floor(baseBackoff * jitter);
+      // FIX-WORKER-13 pass 185 (DLP failed_reason):
+      //   PRE-FIX: e.message raw -> pode conter Bearer/sk-/JWT de SMTP HTTP
+      //   error responses + tail Asaas API key em 401 responses Telegram.
+      //   audit_log + admin /webhooks dashboard renderiza failed_reason ->
+      //   secret leak na UI.
+      //   FIX: mask.text() defensivo (mesma DLP usada em audit_log).
+      const safeFailedReason = mask.text(e.message || '').slice(0, 500);
+      log.warn({ id: n.id, err: safeFailedReason, attempt: nextRetry, backoffSeconds }, '[notif.fail]');
       // FIX-WORKER-7 pass 26 (Regra N idempotent retry): WHERE guard
       // previne retry_count DOUBLE-INCREMENT em race scenario (worker A
       // e B ambos catch + UPDATE -> retry_count incrementa 2x em 1 falha).
@@ -671,7 +687,7 @@ async function processOutbox() {
                 locked_by = NULL,
                 locked_at = NULL
           WHERE id = $3 AND locked_by = $4 AND sent_status = 'pending'`,
-        [e.message.slice(0, 500), String(backoffSeconds), n.id, WORKER_ID]
+        [safeFailedReason, String(backoffSeconds), n.id, WORKER_ID]
       );
     }
   }
