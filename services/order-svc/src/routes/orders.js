@@ -260,6 +260,58 @@ router.post('/checkout',
       log.warn({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), user: req.user.sub }, '[cache.invalidate_fail.checkout]');
     }
 
+    /* FIX-WORKER-3 pass 445 (CRITICAL FREE ORDER FLOW BROKEN):
+       PRE-FIX bug end-to-end:
+       1. Free product (total_cents=0) -> button "Baixar gratis" -> /checkout
+       2. order-svc cria order com total_cents=0, payment_status=pending
+       3. setImmediate -> payment-svc /payments/asaas/create com value: 0/100 = 0
+       4. payment-svc linha 118 pass 134: amount < 100 -> 400 amount_too_small
+       5. Order stuck em pending_payment FOREVER
+       6. User "comprou gratis" mas NUNCA recebe license/download
+       SCOPE: 100% dos free products quebrados em checkout flow
+       POST-FIX: short-circuit free orders ANTES setImmediate payment-svc:
+       - total_cents === 0 -> UPDATE payment_status='paid' + status='fulfilled'
+         direto (auto-grant licenses como webhook PAYMENT_RECEIVED faria)
+       - SKIP payment-svc call (Asaas nao aceita value < R$5)
+       - Audit log free_order_auto_fulfill p/ tracing
+       - cache.del orders:user:* (paridade pass 206)
+       Pattern V8: free path = bypass payment gateway, direct fulfill */
+    if (result.total_cents === 0 || result.total_cents === '0') {
+      // FREE ORDER PATH - skip Asaas, auto-fulfill
+      setImmediate(async () => {
+        try {
+          await tx(async (c) => {
+            // UPDATE order para paid + fulfilled (status terminal free flow)
+            await c.query(
+              `UPDATE orders SET payment_status = 'paid', status = 'fulfilled',
+                                  paid_at = NOW(), updated_at = NOW()
+                WHERE id = $1 AND payment_status = 'pending'`,
+              [result.id]
+            );
+            // Audit free auto-fulfill (compliance trail)
+            await c.query(
+              `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+               VALUES ($1, 'user', 'order.free_auto_fulfill', 'order', $2, 'info', $3::JSONB)`,
+              [req.user.sub, result.id, JSON.stringify({
+                order_number: result.order_number,
+                total_cents: 0,
+                ip: req.ip,
+              })]
+            );
+          });
+          log.info({ order_id: result.id, free: true }, '[order.free_auto_fulfill]');
+          // Re-invalida cache p/ refletir status paid/fulfilled
+          cache.del(`orders:user:${req.user.sub}:*`).catch(() => {});
+        } catch (e) {
+          log.error({
+            err: mask.text(String(e.message || '').slice(0, 500)),
+            order_id: result.id,
+          }, '[order.free_auto_fulfill_failed]');
+        }
+      });
+      return; // skip payment-svc dispatch
+    }
+
     // Dispara payment-svc para criar cobranca Asaas (assincrono)
     setImmediate(async () => {
       try {

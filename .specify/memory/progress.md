@@ -34022,3 +34022,52 @@ W8 visual consistency series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 ALTA PRIORIDADE
+
+## PASS 445 W3 PDP CRITICAL: Free order flow broken end-to-end (7º CRITICAL)
+commit pendente
+BUG CRITICAL: 100% free products quebrados em checkout flow
+PRE-FIX end-to-end trace:
+1. Free product (is_free=true, total_cents=0) -> button "Baixar gratis"
+2. AddToCart.tsx pass 95-115 chama buyNow() -> /orders/cart/items + /checkout
+3. order-svc cria order com total_cents=0, payment_status=pending
+4. setImmediate -> payment-svc /payments/asaas/create com value=0/100=0
+5. payment-svc linha 118 pass 134: amount < 100 -> 400 amount_too_small
+6. Order stuck em pending_payment FOREVER
+7. User "comprou gratis" mas NUNCA recebe license/download
+
+SCOPE:
+- 100% dos produtos com is_free=true broken em checkout
+- "Baixar gratis" botao label LIE about flow (nao baixa imediato)
+- License/download never granted -> user perde valor + suporte ticket
+- Free products usados para lead-generation (demo/sample) = funil broken
+
+POST-FIX short-circuit em order-svc:
+- if (result.total_cents === 0) -> skip payment-svc dispatch
+- setImmediate auto-fulfill via tx():
+  - UPDATE orders SET payment_status='paid', status='fulfilled', paid_at=NOW()
+  - audit_log order.free_auto_fulfill (compliance trail)
+- cache.del orders:user:* (paridade pass 206)
+- Logs explicit p/ ops visibility
+- return early p/ skip payment-svc
+
+Pattern V8: free path = bypass payment gateway, direct fulfill ja paid+fulfilled.
+
+CRITICAL #7 cumulativo:
+  pass 289 cancelPayment missing
+  pass 304 gateway rateLimit keyGen
+  pass 354 gateway body limit order
+  pass 359 vault+auth keyGen
+  pass 384 dispute refund dispatch
+  pass 439 refundPayment value=0 guard
+  pass 445 free order flow broken <- NOVO
+
+W3 PDP critical flow series:
+  pass 95 isFree variant button text
+  pass 445 free order auto-fulfill backend <- ESTE
+
+178 passes acumulados (268->445) sem deploy VPS
+7 CRITICAL + 28 migrations pendentes apply (era 6)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE
