@@ -248,19 +248,53 @@ export function ProductTabs({ product, reviews, qna }: Props) {
             <p className="text-sm text-white/60 mb-6">Seja o primeiro a perguntar sobre este produto.</p>
           ) : (
             <div className="space-y-4 mb-6">
-              {qna.map((q: any) => (
-                <div key={q.id} className="border-b border-white/5 pb-4 last:border-0">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1">
-                      <div className="font-semibold text-sm mb-1">Q: {q.question}</div>
-                      {q.answer
-                        ? <div className="text-sm text-white/70 pl-4 border-l-2 border-magenta mt-1">R: {q.answer}</div>
-                        : <div className="text-xs text-white/40 italic mt-1">Aguardando resposta do vendedor...</div>}
+              {qna.map((q: any) => {
+                // FIX-WORKER-3 pass 365 (Q&A datas missing - paridade MLB UX):
+                //   PRE-FIX: PDP Q&A mostrava so question + answer texts.
+                //   MLB feature standard: "Perguntado ha 2 dias", "Respondido ha 1 dia"
+                //   - User precisa avaliar atualidade da resposta (preco/recursos mudaram?)
+                //   - Backend retorna q.asked_at + q.answered_at (pass 75 public/:slug/qna)
+                //     mas frontend ignorava esses fields = dados desperdiçados
+                //   POST-FIX: render dates com guard defensive (paridade pass 254/278)
+                //   + asker_name + answerer_name (LGPD friendly - display_name only)
+                const askedDate = q.asked_at && !isNaN(new Date(q.asked_at).getTime())
+                  ? new Date(q.asked_at).toLocaleDateString('pt-BR')
+                  : null;
+                const answeredDate = q.answered_at && !isNaN(new Date(q.answered_at).getTime())
+                  ? new Date(q.answered_at).toLocaleDateString('pt-BR')
+                  : null;
+                return (
+                  <div key={q.id} className="border-b border-white/5 pb-4 last:border-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <div className="font-semibold text-sm mb-1">Q: {q.question}</div>
+                        {(q.asker_name || askedDate) && (
+                          <div className="text-[10px] text-white/40 mb-1">
+                            {q.asker_name && <span>{q.asker_name}</span>}
+                            {q.asker_name && askedDate && <span> - </span>}
+                            {askedDate && <span>perguntou em {askedDate}</span>}
+                          </div>
+                        )}
+                        {q.answer
+                          ? (
+                            <div className="text-sm text-white/70 pl-4 border-l-2 border-magenta mt-1">
+                              <div>R: {q.answer}</div>
+                              {(q.answerer_name || answeredDate) && (
+                                <div className="text-[10px] text-white/40 mt-1">
+                                  {q.answerer_name && <span>{q.answerer_name}</span>}
+                                  {q.answerer_name && answeredDate && <span> - </span>}
+                                  {answeredDate && <span>respondeu em {answeredDate}</span>}
+                                </div>
+                              )}
+                            </div>
+                          )
+                          : <div className="text-xs text-white/40 italic mt-1">Aguardando resposta do vendedor...</div>}
+                      </div>
+                      <QnaUpvote qnaId={q.id} initialCount={q.upvote_count || 0} />
                     </div>
-                    <QnaUpvote qnaId={q.id} initialCount={q.upvote_count || 0} />
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
           <QnaForm productId={product.id} />
