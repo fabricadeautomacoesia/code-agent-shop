@@ -501,13 +501,34 @@ async function processWebhookEvent(evt) {
   const paymentId = evt.payment?.id;
   if (!paymentId) return;
 
+  // FIX-WORKER-11 pass 222 (CRITICAL semantica): PAYMENT_REFUND_FAILED corrigido.
+  // PRE-FIX bug: PAYMENT_REFUND_FAILED -> { ps: 'failed' }
+  //   ALLOWED_TRANSITIONS permite 'captured' -> 'failed'
+  //   Resultado: order capturada com sucesso + admin tenta refund + refund falha
+  //     -> payment_status virou 'failed' (WRONG semantica)
+  //   User UX: dashboard mostra pedido como 'pagamento falhou' mesmo apos paid
+  //   Admin UX: audit log mostra status transition errada
+  //
+  // FIX: PAYMENT_REFUND_FAILED = NO-OP em payment_status (mantem estado anterior)
+  //   Acao real: log warn + audit_log alert + notification admin
+  //   Refund failed = admin precisa investigar (insufficient funds, regulatory reject)
+  //   Order permanece 'captured' / 'paid' (sucesso original preservado)
+  //
+  // Asaas events semantica:
+  //   PAYMENT_RECEIVED/CONFIRMED -> dinheiro chegou (captured/paid)
+  //   PAYMENT_REFUNDED -> refund concluido (refunded)
+  //   PAYMENT_OVERDUE -> nao pago no prazo (failed)
+  //   PAYMENT_DELETED -> Asaas cancelou cobranca (cancelled)
+  //   PAYMENT_REFUND_FAILED -> refund tentou mas falhou (NAO afeta state pagamento)
+  //   PAYMENT_REFUND_REQUESTED -> admin iniciou refund (estado transitorio - log only)
   const map = {
     PAYMENT_RECEIVED:    { ps: 'captured', os: 'paid', paid_at: true },
     PAYMENT_CONFIRMED:   { ps: 'captured', os: 'paid', paid_at: true },
     PAYMENT_REFUNDED:    { ps: 'refunded', os: 'refunded' },
     PAYMENT_OVERDUE:     { ps: 'failed',   os: 'expired' },
     PAYMENT_DELETED:     { ps: 'failed',   os: 'cancelled' },
-    PAYMENT_REFUND_FAILED:{ ps: 'failed' },
+    // FIX pass 222: REFUND_FAILED nao transiciona state - log/alert only
+    PAYMENT_REFUND_FAILED: { logOnly: true, severity: 'critical' },
   };
   const action = map[evt.event];
   // FIX-WORKER-7 pass 22 (bug 3): eventos desconhecidos LOG WARN
@@ -563,6 +584,51 @@ async function processWebhookEvent(evt) {
         }, '[webhook.transition_blocked] state machine guard - ignorando reprocessamento');
         return;
       }
+    }
+
+    // FIX-WORKER-11 pass 222: logOnly events nao mudam state, apenas audit + admin alert.
+    // Usado em PAYMENT_REFUND_FAILED (refund attempt falhou MAS pagamento original
+    // permanece valido - admin precisa investigar manual).
+    if (action.logOnly) {
+      log.warn({
+        event: evt.event,
+        payment_id: paymentId,
+        order_id: order.id,
+        order_status: order.payment_status,
+        severity: action.severity,
+      }, '[webhook.log_only] evento Asaas requer atencao admin (state nao mudou)');
+
+      // Audit log critical severity
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES (NULL, 'service', $1, 'order', $2, $3, $4::JSONB)`,
+        ['asaas.' + evt.event.toLowerCase(), order.id, action.severity || 'warn',
+         JSON.stringify({
+           event: evt.event,
+           payment_id: paymentId,
+           order_status_at_event: order.payment_status,
+           note: 'Estado pagamento NAO foi alterado - acao admin necessaria',
+         })]
+      );
+
+      // Notification admin (in_app priority high)
+      // Capture admins via lookup (single query separado para nao bloquear webhook)
+      const admins = await c.query(
+        `SELECT id FROM users WHERE role IN ('admin','staff')
+                AND is_active = TRUE AND is_banned = FALSE
+                AND deleted_at IS NULL LIMIT 10`
+      );
+      for (const admin of admins.rows) {
+        await c.query(
+          `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
+           VALUES ($1, 'in_app', 'asaas_refund_failed',
+                   'Refund falhou: order ' || $2,
+                   $3, 3)`,
+          [admin.id, order.id.slice(0, 8),
+           `Asaas evento ${evt.event} para order ${order.id.slice(0, 8)} (payment ${paymentId}). Estado pagamento mantido como '${order.payment_status}'. Investigue motivos no painel Asaas.`]
+        ).catch(() => {});
+      }
+      return;  // Skip UPDATE orders completely - estado preserved
     }
 
     const cols = [];
