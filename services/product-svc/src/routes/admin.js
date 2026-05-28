@@ -286,8 +286,11 @@ router.post('/:id/force-approve',
 );
 
 // POST /products/admin/:id/platform-take (Clausula Master Revenda Direta)
+/* FIX-WORKER-4 pass 336: reason max() paridade pass 332-335 anti-DoS.
+   Outras endpoints /admin/:id/force-approve linha 195 + /archive 367 ja tinham
+   max(1000). platform-take ficou sem max - admin justificativa abusiva 1MB. */
 router.post('/:id/platform-take',
-  validate({ body: z.object({ reason: z.string().min(5) }) }),
+  validate({ body: z.object({ reason: z.string().min(5).max(1000) }) }),
   asyncHandler(async (req, res, next) => {
     const r = await query('SELECT platform_resale_enabled, seller_id, slug FROM products WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
     if (!r.rows.length) return next(errorHandler.notFound());

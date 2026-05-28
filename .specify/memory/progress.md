@@ -30437,3 +30437,35 @@ PROXIMA ITER:
 - W11 payment-svc audit additional schemas
 - W7 product-svc upload routes schema
 - VPS SSH unblock URGENTISSIMO (168 ciclos - 56h)
+
+
+============================================================
+PASS 336 - 2026-05-28 - W4 product-svc admin platform-take reason max
+============================================================
+Files: 1 modificado
+  - services/product-svc/src/routes/admin.js (platform-take reason max(1000))
+Lines: ~5 changed
+
+W4 (admin platform-take reason anti-DoS):
+- PRE-FIX: reason z.string().min(5) sem max() - inconsistente cross-endpoints
+  - force-approve linha 195: min(5).max(1000) OK
+  - archive linha 367: min(5).max(1000) OK
+  - platform-take linha 290: min(5) SEM max ❌
+- Admin abusivo poderia colar 1MB justificativa
+- POST-FIX: .max(1000) paridade outras endpoints admin
+
+Schema Hardening cross-svc atualizado:
+- 40+ fields hardened cross 6 services
+- 100% admin reason fields agora com max(1000)
+
+VPS SSH BLOQUEADO (169 ciclos - 56.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc --force
+- W4: admin platform-take com reason=1100 chars -> 400 Zod
+
+PROXIMA ITER:
+- W4 audit /admin/:id/archive optional() body padronizar
+- W7 product-svc upload routes
+- VPS SSH unblock URGENTISSIMO (169 ciclos - 56.3h)
