@@ -759,7 +759,7 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
                ) ORDER BY pv.created_at DESC)
                  FROM product_versions pv WHERE pv.product_id = p.id) AS versions,
               (SELECT json_agg(json_build_object(
-                 'id', pm.id, 'media_type', pm.media_type, 'url', pm.url,
+                 'id', pm.id, 'media_type', pm.kind, 'url', pm.url,
                  'alt_text', pm.alt_text, 'sort_order', pm.sort_order
                ) ORDER BY pm.sort_order)
                  FROM product_media pm WHERE pm.product_id = p.id) AS media,
