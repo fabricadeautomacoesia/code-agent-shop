@@ -32287,3 +32287,31 @@ W11 dual channel pattern:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 397 W6 AUTH: welcome email seller KYC link broken (404)
+commit 298bd32
+BUG seller welcome email link 404
+PRE-FIX: link = ${appUrl}/dashboard/seller/loja
+  - appUrl = storefront URL
+  - /dashboard/seller/loja NAO existe storefront -> 404
+  - Real path: seller.cas.../loja (subdomain dedicado)
+  - Seller clica link KYC -> 404 -> friccao onboarding
+  - Pattern pass 355 env-driven SELLER_URL aplicado em storefront mas
+    auth-svc welcome ficou lagged 42 passes
+
+POST-FIX:
+- env SELLER_APP_URL p/ KYC link
+- Default: https://seller.cas.inovareinteligenciaartificial.com
+- kycUrl = ${sellerAppUrl}/loja
+- Apenas seller path usa kycUrl (buyer mantido /products storefront)
+
+W6 env-driven URL consolidation:
+  pass 355 storefront notif-bell + json-ld
+  pass 357 storefront layout
+  pass 397 auth-svc welcome email <- ESTE
+
+130 passes acumulados (268->397) sem deploy VPS
+5 CRITICAL + 22 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
