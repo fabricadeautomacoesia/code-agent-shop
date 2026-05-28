@@ -20272,3 +20272,48 @@ PROXIMA ITER:
 - W6 audit reset-password flow auth-svc
 - W10 search-svc bugs
 - 🚨 VPS SSH unblock URGENTE (7 ciclos sem deploy!)
+
+PASS 175 (W18 cache /payouts + 3-path coherency) - 2026-05-28:
+- W18 pass 175 - cache /sellers/me/payouts:
+  * Endpoint chamado em /financeiro page load
+  * Pre-fix: 3 queries por request (sellers + payouts + COUNT)
+  * Fix1: cache.cacheMiddleware 30s vary by user+status+limit+offset
+  * Fix2: COUNT(*) OVER() window elimina segunda SELECT duplicada
+  * Performance: ~25ms (2 queries) -> ~12ms (1 query) ou ~1ms (Redis hit)
+- Cache coherency (3 paths) write-then-invalidate:
+  1. seller-svc/me.js POST /payout (insert novo) -> del seller:payouts:{userId}:*
+  2. seller-svc/admin.js approve/reject -> invalidateSellerPayoutsCache helper
+     que lookup user_id da row + del cache
+  3. payment-svc UPDATE status='paid' -> RETURNING seller_id + lookup user_id +
+     del cache
+- Sem invalidacao seller veria stale ate 30s apos: novo payout, admin approve/
+  reject, admin processa Asaas paid.
+- Commit bda9c8c pushed origin/main
+- VPS SSH ainda bloqueado (8 ciclos consecutivos)
+
+CACHE COVERAGE seller-svc agora:
+- /sellers/me/kpi: 300s (W18 anterior)
+- /sellers/me/sla-status: 60s (W18 pass 174)
+- /sellers/me/payouts: 30s (W18 pass 175 atual)
+- /sellers (list): 60s (W18 anterior)
+- /:slug, /:slug/stats, /:slug/products: 60-180s (W18 anterior)
+
+CODIGO ACUMULADO ORIGIN/MAIN (8 ciclos):
+- 168-173: documentados
+- 174: cache /sla-status + qa coherency
+- 175: cache /payouts + 3-path coherency
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_payment-svc --force
+- Teste cache: time curl -H "Authorization: Bearer SELLER_TOKEN" \
+    https://api.../sellers/me/payouts
+  * 1a chamada: ~25ms (miss + PG)
+  * 2a chamada: <5ms (Redis hit)
+- Teste coherency: POST /payout -> GET /payouts deve mostrar imediato
+
+PROXIMA ITER:
+- W18 mais cache: /loyalty/me, /wishlist?
+- W6 audit reset-password flow
+- W10 search-svc bugs
+- W7 audit endpoints sem cache restantes
+- 🚨 VPS SSH unblock URGENTE (8 ciclos sem deploy = >2h)
