@@ -17352,7 +17352,31 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Migration 053 idx sellers.asaas_wallet/customer (pass 132)
 - ✅ W9 enrich /promocoes metadata OG+twitter+keywords (pass 133)
 - ✅ W11 /installments validation amount<100 (pass 134)
-- ✅ Migration 054 coupons updated_at + trigger (pass 135 esta iter)
+- ✅ Migration 054 coupons updated_at + trigger (pass 135)
+- ✅ Admin pages metadata especifica em 9 layouts (pass 136 esta iter)
+
+W7 PASS 136 RESUMO - W4+W9 ADMIN PAGES TITLES ESPECIFICOS:
+- AUDIT dashboard-admin pages: TODAS herdavam title 'Admin - Code & Agent Shop'
+  do root layout, sem distincao por pagina
+- BUG UX: browser tab em multi-tabs nao distinguia Sellers/Orders/Payouts/etc
+  -> admin que abre 5 pages em tabs simultaneas via 'Admin... Admin... Admin...'
+- Constraint Next 16: 'use client' pages nao permitem export const metadata
+  no mesmo arquivo -> precisa layout.tsx separado server component
+- CREATED 9 layout.tsx (server components) com metadata especifica:
+  * /sellers -> 'Vendedores - Admin | Code & Agent Shop'
+  * /orders -> 'Pedidos - Admin | Code & Agent Shop'
+  * /payouts -> 'Payouts - Admin | Code & Agent Shop'
+  * /qa-queue -> 'QA Queue - Admin | Code & Agent Shop'
+  * /disputes -> 'Disputas - Admin | Code & Agent Shop'
+  * /products -> 'Produtos - Admin | Code & Agent Shop'
+  * /alerts -> 'Alertas - Admin | Code & Agent Shop'
+  * /audit-log -> 'Audit Log - Admin | Code & Agent Shop'
+  * /reports -> 'Reports - Admin | Code & Agent Shop'
+- robots: { index: false, follow: false } (auth-required, nao deve indexar)
+- description rica p/ contexto interno (Slack previews quando admin compartilha)
+- BUILD dashboard-admin OK + service converged
+- VALIDATED prod: 5 titles testados via curl, todos OK distintos
+- COMMIT 9a93633 pushed GitHub main + deployed prod
 
 W7 PASS 135 RESUMO - W14 ADD updated_at COLUMN EM COUPONS:
 - AUDIT 53 tabelas public + ones SEM updated_at:
