@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Package, ShoppingBag, Settings, Shield, LogOut, Store, Star, Heart, User } from 'lucide-react';
+import { Package, ShoppingBag, Settings, Shield, LogOut, Store, Star, Heart, User, Bell } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
@@ -61,6 +61,8 @@ export default function ContaPage() {
           { href: '/conta/perfil',   Icon: User,        label: 'Editar perfil',
             desc: me.cpf_cnpj ? 'Nome, CPF, telefone' : 'Complete CPF para pagar' },
           { href: '/conta/seguranca',Icon: Shield,      label: 'Seguranca + 2FA',desc: me.twofa_enabled ? '2FA ativo' : 'Ativar 2FA' },
+          // FIX-WORKER-1 pass 228: Preferencias de notificacao (W13 pass 227 LGPD)
+          { href: '/conta/notificacoes', Icon: Bell, label: 'Notificacoes', desc: 'Email/in-app/Telegram opt-in/out' },
           ...(me.role === 'seller'
             ? [{ href: '/seller/dashboard', Icon: Store, label: 'Painel vendedor', desc: 'Gerenciar loja' }]
             : [{ href: '/register?role=seller', Icon: Store, label: 'Tornar-se vendedor', desc: 'Comece a vender' }]
