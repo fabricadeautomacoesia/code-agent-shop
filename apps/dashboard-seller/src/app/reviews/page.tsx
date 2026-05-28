@@ -152,15 +152,27 @@ export default function SellerReviewsPage() {
                   <div className="text-xs text-white/40 mt-1">{fmtDate(r.reply_at)}</div>
                 </div>
               ) : (
+                {/* FIX-WORKER-5 pass 330: textarea maxLength + char counter UX.
+                    PRE-FIX: sem limit client - user digita >2000 chars -> backend
+                    reject com generic error (Zod max). UX confuso.
+                    POST-FIX: maxLength=2000 HTML + counter visual + over-limit warn. */}
                 <div className="border-t border-white/5 pt-3 mt-3 space-y-2">
                   <textarea
                     value={replies[r.id] || ''}
                     onChange={(e) => setReplies((p) => ({ ...p, [r.id]: e.target.value }))}
                     placeholder="Responda esta avaliacao publicamente..."
                     rows={2}
+                    maxLength={2000}
                     disabled={busy}
                     aria-label={`Resposta para avaliacao de ${r.buyer_name || 'cliente'}`}
+                    aria-describedby={`reply-counter-${r.id}`}
                     className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm focus:border-magenta focus:outline-none disabled:opacity-50" />
+                  <div id={`reply-counter-${r.id}`} aria-live="polite"
+                    className={`text-[10px] text-right ${
+                      (replies[r.id]?.length || 0) > 1900 ? 'text-yellow-400' : 'text-white/30'
+                    }`}>
+                    {replies[r.id]?.length || 0}/2000
+                  </div>
                   {/* FIX-WORKER-5 pass 172 (a11y V8 R23): type=button + aria-label */}
                   <button type="button" onClick={() => reply(r.id)} disabled={busy || !replies[r.id]?.trim()}
                     aria-label={`Enviar resposta para avaliacao de ${r.buyer_name || 'cliente'}`}

@@ -30191,3 +30191,46 @@ PROXIMA ITER:
 - W7 audit auth-svc cache.del auth:me confirm sem suffix (single key OK)
 - W4 admin dashboard verify
 - VPS SSH unblock URGENTISSIMO (162 ciclos - 54h)
+
+
+============================================================
+PASS 330 - 2026-05-28 - W5 seller reviews textarea maxLength + counter UX
+============================================================
+Files: 1 modificado
+  - apps/dashboard-seller/src/app/reviews/page.tsx (textarea maxLength + counter)
+Lines: ~15 added
+
+W5 (reviews reply textarea UX):
+- PRE-FIX: textarea sem maxLength - user digita >2000 chars -> backend reject
+- Generic Zod max error nao orienta usuario
+- POST-FIX:
+  - maxLength=2000 HTML5 (browser limita typing)
+  - Counter visual abaixo (current/2000)
+  - aria-describedby para SR
+  - aria-live polite p/ contador atualizar
+  - Cor yellow quando > 1900 (alerta proximidade limite)
+
+VPS SSH BLOQUEADO (163 ciclos - 54.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+MARCO 330 PASSES - resumo cumulativo (passes recentes consolidacao MARCO):
+- 270-287 Wallet UX cross-stack (18 passes)
+- 309-311 withRetry deadlock 5 hot paths
+- 282-324 DLP UA mask 23 endpoints cross-svc
+- 178-321 COUNT OVER 20 endpoints consolidated
+- 232-302 Cache key normalization 10 keys
+- 327-329 cache.del wildcard 6 locais cross-svc
+- 254-317 Defensive date helpers cross-app
+- 304 CRITICAL gateway rate-limit DoS
+- 289 CRITICAL asaas.cancelPayment
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-seller --force
+- W5: /seller/reviews - textarea de reply
+  Typing 1900+ chars -> counter yellow
+  Trying 2001 chars -> blocked by HTML5
+
+PROXIMA ITER:
+- W5 audit QnA reply textarea (paridade qna page)
+- W4 admin reviews moderation textarea
+- VPS SSH unblock URGENTISSIMO (163 ciclos - 54.3h)
