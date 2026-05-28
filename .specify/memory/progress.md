@@ -32564,3 +32564,31 @@ Pattern V8: PT-BR comma normalization cross-svc
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 406 W7 PRODUCT-SVC: LEFT JOIN categories is_active filter
+commit c9fa7b6
+BUG categoria inativa vaza category_slug em 3 endpoints
+PRE-FIX em 3 sites:
+- /products list (linha 727)
+- /products/:slug detail (linha 846)
+- /products/compare (linha 476)
+  LEFT JOIN categories (sem is_active filter)
+
+CENARIO:
+- Admin desativa categoria
+- Products FK preserved
+- Listagem retorna category_slug inativo
+- Frontend chip clicavel -> /categoria/X 404
+- UX broken silent
+
+POST-FIX:
+- LEFT JOIN ... AND c.is_active = TRUE em 3 sites
+- Categoria inativa -> category_slug NULL
+- Frontend skip chip (graceful)
+- Paridade Pattern V8 W7 defensive
+
+139 passes acumulados (268->406) sem deploy VPS
+5 CRITICAL + 23 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
