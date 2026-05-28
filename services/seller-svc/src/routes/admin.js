@@ -24,7 +24,7 @@ const router = express.Router();
 const log = logger.child({ svc: 'seller-svc', mod: 'admin' });
 router.use(jwt.requireAuth({ roles: ['admin','staff'] }));
 
-// FIX-WORKER-18 pass 6 + 197 + 199: helper invalidate cache apos admin mutations
+// FIX-WORKER-18 pass 6 + 197 + 199 + 203: helper invalidate cache apos admin mutations
 async function invalidateSellerCache(sellerId) {
   try {
     const r = await query('SELECT store_slug FROM sellers WHERE id = $1', [sellerId]);
@@ -32,6 +32,7 @@ async function invalidateSellerCache(sellerId) {
       cache.del('sellers:list:*'),                  // public list cache
       cache.del('seller:admin:all:*'),              // W18 pass 197: admin /all dashboard
       cache.del('seller:admin:pending-kyc:*'),      // W18 pass 199: admin /pending-kyc
+      cache.del('seller:admin:sla-risk:*'),         // W18 pass 203: admin /sla-risk
     ];
     if (r.rows.length) {
       const slug = r.rows[0].store_slug;
@@ -239,27 +240,63 @@ router.post('/:id/reactivate',
 // FIX-WORKER-4: GET /sellers/admin/sla-risk - sellers Classe B proximos do deadline SLA.
 // Critical para admin agir antes da revogacao automatica de API keys.
 // Threshold default: 3 dias (configuravel via query param ?days=N).
-router.get('/sla-risk', asyncHandler(async (req, res) => {
-  const days = Math.min(parseInt(req.query.days || '3', 10), 30);
-  const r = await query(
-    `SELECT s.id, s.store_name, s.store_slug, s.seller_class, s.sla_active,
-            s.sla_days, s.sla_last_upload_at, s.sla_next_deadline_at,
-            s.sla_revoked_count, s.status,
-            EXTRACT(EPOCH FROM (s.sla_next_deadline_at - NOW()))/86400 AS days_remaining,
-            u.email, u.full_name
-       FROM sellers s
-       JOIN users u ON u.id = s.user_id
-      WHERE s.seller_class = 'class_b'
-        AND s.sla_active = TRUE
-        AND s.sla_next_deadline_at IS NOT NULL
-        AND s.sla_next_deadline_at <= NOW() + ($1 || ' days')::INTERVAL
-        AND s.status NOT IN ('suspended','banned')
-      ORDER BY s.sla_next_deadline_at ASC LIMIT 100`,
-    [String(days)]
-  );
-  // FIX-WORKER-7 pass 60: LGPD role-tier masking
-  res.json({ at_risk: maskSellersForStaff(req, r.rows), count: r.rows.length, threshold_days: days });
-}));
+//
+// FIX-WORKER-18 pass 203 (4 melhorias compostas):
+// PRE-FIX:
+// - Hardcoded LIMIT 100 sem ?limit/?offset
+// - 'count: r.rows.length' bug paginated_total (mesmo pattern pass 189/201)
+// - ORDER BY sla_next_deadline_at ASC sem tiebreaker (Regra D)
+// - NO cache - admin /sla-risk dashboard polling sem proteção
+// POST-FIX:
+// + ?limit (1-200) + ?offset (>=0) paginacao V8 Regra E
+// + COUNT(*) OVER() window + has_more boolean response
+// + s.id ASC tiebreaker (Regra D)
+// + cache 60s vary by days+limit+offset (SLA deadline atualiza por upload/cron - 60s OK)
+const slaRiskCacheKey = (req) => {
+  const q = req.query;
+  return `seller:admin:sla-risk:d=${q.days||3}:lim=${q.limit||50}:off=${q.offset||0}`;
+};
+router.get('/sla-risk',
+  cache.cacheMiddleware(slaRiskCacheKey, 60),
+  asyncHandler(async (req, res) => {
+    const days = Math.min(parseInt(req.query.days || '3', 10), 30);
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    const r = await query(
+      `SELECT s.id, s.store_name, s.store_slug, s.seller_class, s.sla_active,
+              s.sla_days, s.sla_last_upload_at, s.sla_next_deadline_at,
+              s.sla_revoked_count, s.status,
+              EXTRACT(EPOCH FROM (s.sla_next_deadline_at - NOW()))/86400 AS days_remaining,
+              u.email, u.full_name,
+              COUNT(*) OVER()::INT AS _total
+         FROM sellers s
+         JOIN users u ON u.id = s.user_id
+        WHERE s.seller_class = 'class_b'
+          AND s.sla_active = TRUE
+          AND s.sla_next_deadline_at IS NOT NULL
+          AND s.sla_next_deadline_at <= NOW() + ($1 || ' days')::INTERVAL
+          AND s.status NOT IN ('suspended','banned')
+        ORDER BY s.sla_next_deadline_at ASC, s.id ASC
+        LIMIT $2 OFFSET $3`,
+      [String(days), limit, offset]
+    );
+
+    const total = r.rows[0]?._total ?? 0;
+    const rows = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
+
+    // FIX-WORKER-7 pass 60: LGPD role-tier masking
+    res.json({
+      at_risk: maskSellersForStaff(req, rows),
+      total,
+      count: rows.length,
+      limit,
+      offset,
+      threshold_days: days,
+      has_more: (offset + rows.length) < total,
+    });
+  })
+);
 
 // FIX-WORKER-4: GET /sellers/admin/all - listing geral com filtros + paginacao.
 // Suporta ?status=active|pending_kyc|suspended|banned, ?seller_class=class_a|class_b,
