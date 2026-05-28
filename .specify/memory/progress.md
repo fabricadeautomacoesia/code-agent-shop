@@ -32237,3 +32237,29 @@ Similar LLM fallback OpenAI->Gemini->Groq
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W18 perf optimization
+
+## PASS 395 W10 SEARCH: autocomplete low-similarity leak fix
+commit f353bb4
+BUG autocomplete vaza low-sim matches
+PRE-FIX: merged = [...highSim, ...r.rows, ...sim.rows]
+  sim.rows incluso 2x (filtered + full tail)
+  Low-sim items s<0.4 vazam para frontend
+  UX MLB esperava only high-confidence
+
+POST-FIX:
+- merged = [...highSim, ...r.rows] (sem tail)
+- Low-sim descartado intencional
+- Map dedup por slug preservado
+
+W10 autocomplete quality series:
+  pass 13 SQL wildcards + Pattern W7 6 bugs
+  pass 232 short-circuit q<2
+  pass 291 cache key normalization
+  pass 395 low-sim leak fix <- ESTE
+
+128 passes acumulados (268->395) sem deploy VPS
+5 CRITICAL + 22 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W18 perf optimization
