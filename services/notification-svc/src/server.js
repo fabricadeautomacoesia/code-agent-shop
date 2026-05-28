@@ -541,9 +541,20 @@ app.patch('/prefs', jwt.requireAuth(), asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'too_many_prefs', message: 'Max 100 prefs por request' });
   }
 
+  /* FIX-WORKER-13 pass 292 (template_code validation hardening):
+     PRE-FIX: aceita qualquer string nao vazia. Atacante legit user envia
+     100 prefs com template_code='<script>' / 'a'.repeat(80) / 'fake_template_X'
+     - Junk acumula em user_notification_prefs (sem FK enforcement)
+     - Outbox processor LEFT JOIN inutil para entradas fake
+     - DB bloat + storage waste em escala (100 prefs * N users malicious)
+     POST-FIX: regex whitelist alfanumerico + _ (templates patterns reais:
+     'security_refresh_reuse', 'password_reset', '2fa_disabled', etc).
+     Paridade KEY_ALIAS_REGEX vault pass 276. */
+  const TEMPLATE_CODE_REGEX = /^[a-z0-9_]{3,60}$/;
   let updated = 0, skipped = 0;
   for (const pref of body.prefs) {
     if (!pref.template_code || typeof pref.template_code !== 'string') { skipped++; continue; }
+    if (!TEMPLATE_CODE_REGEX.test(pref.template_code)) { skipped++; continue; }
     if (!PREFS_CHANNEL_ENUM.has(pref.channel)) { skipped++; continue; }
     if (typeof pref.is_enabled !== 'boolean') { skipped++; continue; }
 

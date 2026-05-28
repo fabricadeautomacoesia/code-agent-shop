@@ -333,10 +333,12 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
     // FIX bug 1: anti-replay (RFC 6238 §5.2) - track ultimo TOTP usado
     if (!authenticator.check(totp, secret, { window: 1 })) {
       req.fail2ban?.reportFailure();
+      /* FIX-WORKER-17 pass 292: ua_prefix via mask.text() paridade pass 282
+         (forgot+reset DLP) - 2FA paths estavam sem mask. PII em UA legado. */
       query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, 'system', '2fa.invalid_totp', 'user', $1, 'warn', $2::JSONB)`,
-        [user.id, JSON.stringify({ ip: req.ip, ua_prefix: (req.headers['user-agent'] || '').slice(0, 60) })]
+        [user.id, JSON.stringify({ ip: req.ip, ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)) })]
       ).catch(() => {});
       return next(errorHandler.unauthorized('invalid_totp', 'Codigo 2FA invalido'));
     }
@@ -349,13 +351,14 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
       if (lastUsedMs < 60_000) {
         req.fail2ban?.reportFailure();
         log.warn({ userId: user.id, ip: req.ip, lastUsedMs }, '[2fa.replay_blocked]');
+        /* FIX-WORKER-17 pass 292: ua_prefix mask.text() paridade pass 282 */
         query(
           `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
            VALUES ($1, 'system', '2fa.replay_attempt', 'user', $1, 'critical', $2::JSONB)`,
           [user.id, JSON.stringify({
             ip: req.ip,
             last_used_ms_ago: lastUsedMs,
-            ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+            ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
           })]
         ).catch(() => {});
         return next(errorHandler.unauthorized('totp_replay', 'Este codigo 2FA ja foi usado. Aguarde o proximo.'));

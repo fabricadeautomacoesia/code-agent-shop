@@ -28723,3 +28723,46 @@ PROXIMA ITER:
 - W3 WishlistButton toast "ja favoritado" UX message
 - W4 admin notification stats panel
 - VPS SSH unblock URGENTISSIMO (124 ciclos - 41.3h)
+
+
+============================================================
+PASS 292 - 2026-05-28 - W17 2FA DLP mask + W13 notif template_code regex
+============================================================
+Files: 2 modificados
+  - services/auth-svc/src/routes/auth.js (mask.text em 2 audit logs 2FA)
+  - services/notification-svc/src/server.js (TEMPLATE_CODE_REGEX prefs)
+Lines: ~15 added
+
+W17 (2FA audit_log DLP mask paridade pass 282):
+- 2 paths em login.js sem mask.text() em ua_prefix:
+  - 2fa.invalid_totp (linha 339) - raw ua
+  - 2fa.replay_attempt (linha 358) - raw ua
+- pass 282 ja aplicou em forgot+reset+logout audit
+- 2FA paths estavam sem - inconsistencia DLP
+- POST-FIX: mask.text() em ambos paths (paridade pass 282/272)
+
+W13 (notification prefs template_code regex validation):
+- PRE-FIX: aceita qualquer string nao-vazia
+- Atacante envia 100 prefs com template_code='<script>' / 'a'.repeat(80)
+  / 'fake_template_X' (sem FK enforcement)
+- Junk acumula em user_notification_prefs - DB bloat
+- POST-FIX: TEMPLATE_CODE_REGEX /^[a-z0-9_]{3,60}$/
+  - Paridade KEY_ALIAS_REGEX vault pass 276
+  - Templates reais ('security_refresh_reuse', '2fa_disabled') match
+  - Junk rejected (skipped++ counter)
+
+VPS SSH BLOQUEADO (125 ciclos - 41.7h sem deploy).
+Migs 069-083 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_auth-svc cas_notification-svc --force
+- W17: SELECT payload_after->>'ua_prefix' FROM audit_log
+  WHERE action IN ('2fa.invalid_totp','2fa.replay_attempt') LIMIT 5;
+  Esperado: '****' patterns masked (paridade auth.password_reset pass 282)
+- W13: POST /api/notifications/prefs body { prefs:[{template_code:'<script>', channel:'email', is_enabled:true}] }
+  Esperado: { ok:true, updated:0, skipped:1 } (regex reject)
+
+PROXIMA ITER:
+- W17 audit /2fa/enable disable paths para mesma DLP
+- W4 admin notification prefs UI consume TEMPLATE_CODE_REGEX (frontend mirror)
+- VPS SSH unblock URGENTISSIMO (125 ciclos - 41.7h)
