@@ -830,9 +830,26 @@ async function processOutbox() {
         // FIX-WORKER-13 pass 2 (XSS): isHtml=true escapa HTML antes de injetar no body_html
         bodyHtml = bodyHtml ? renderMustache(bodyHtml, ctx, true) : null;
       }
-      // Defense: nunca enviar com title vazio (anti-spam-filter)
-      if (!title || !title.trim()) title = '(sem assunto - revise template)';
-      if (!body || !body.trim()) body = '(sem conteudo)';
+      // FIX-WORKER-13 pass 285 (broken template -> permanent failure):
+      //   PRE-FIX: fallback '(sem assunto - revise template)' enviado AO USUARIO
+      //   - Email cliente abria "(sem assunto - revise template)" no subject
+      //   - UX fail + leak template framework status p/ atacante (probing)
+      //   - Spam filter risk: literal '(sem assunto' deteccao automatica
+      //   POST-FIX: detecta render result vazio -> throw permanent error
+      //   - sent_status='failed' imediato (sem retry waste)
+      //   - admin investiga via /admin/notifications failed_reason='render_empty_*'
+      //   - user NAO recebe email broken
+      //   Pattern V8: fail-fast com signal claro vs degrade silent.
+      if (!title || !title.trim()) {
+        const e = new Error('render_empty_title: template gerou title vazio (missing payload var ou template bugado)');
+        e.transient = false;
+        throw e;
+      }
+      if (!body || !body.trim()) {
+        const e = new Error('render_empty_body: template gerou body vazio (missing payload var ou template bugado)');
+        e.transient = false;
+        throw e;
+      }
 
       if (n.channel === 'email') {
         await sendEmail(n.email, title, body, bodyHtml);

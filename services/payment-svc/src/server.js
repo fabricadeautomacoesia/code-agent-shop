@@ -463,24 +463,42 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
   //
   // FIX-WORKER-11 pass 6: capturar event_row_id p/ poder atualizar processed_at/processing_error
   // depois do setImmediate.
+  /* FIX-WORKER-11 pass 285 (info disclosure event_id existence):
+     PRE-FIX flow:
+       1. INSERT signature_valid=<bool> ON CONFLICT DO NOTHING
+       2. Se duplicate -> 200 OK { duplicate:true } (mesmo se sig invalida!)
+       3. Se sig invalida -> 401
+     Atacante pode probe quais event_id sao validos: resend mesmo event_id
+     com sig INVALIDA -> recebe 200 duplicate em vez de 401 -> CONFIRMA que
+     event_id existe na DB. Information disclosure -> reconnaissance step
+     attack timing/replay.
+     POST-FIX: validar signature ANTES da duplicate check. Atacante sem
+     valid signature sempre recebe 401 - nao distingue duplicate vs new. */
+  if (!valid) {
+    // Audit invalid attempt mesmo bloqueado (forensics):
+    await query(
+      `INSERT INTO asaas_webhook_events (event_type, asaas_event_id, asaas_payment_id, payload, signature_valid)
+       VALUES ($1, $2, $3, $4::JSONB, FALSE)
+       ON CONFLICT (asaas_event_id) DO NOTHING`,
+      [data.event, data.id || null, data.payment?.id || null, JSON.stringify(data)]
+    );
+    log.warn({ event: data.event, ip: req.ip, ua: req.headers['user-agent'] }, '[webhook.invalid_signature]');
+    return res.status(401).json({ error: 'invalid_signature' });
+  }
+
+  // Signature VALID - normal idempotency path
   const insertResult = await query(
     `INSERT INTO asaas_webhook_events (event_type, asaas_event_id, asaas_payment_id, payload, signature_valid)
-     VALUES ($1, $2, $3, $4::JSONB, $5)
+     VALUES ($1, $2, $3, $4::JSONB, TRUE)
      ON CONFLICT (asaas_event_id) DO NOTHING
      RETURNING id`,
-    [data.event, data.id || null, data.payment?.id || null, JSON.stringify(data), valid]
+    [data.event, data.id || null, data.payment?.id || null, JSON.stringify(data)]
   );
   // Se ON CONFLICT triggered (duplicate event), rows[] empty -> duplicate ack
   if (data.id && !insertResult.rows.length) {
     return res.json({ ok: true, duplicate: true });
   }
   const eventRowId = insertResult.rows[0]?.id;
-
-  // Se invalido, NUNCA processa - retorna 401
-  if (!valid) {
-    log.warn({ event: data.event, ip: req.ip, ua: req.headers['user-agent'] }, '[webhook.invalid_signature]');
-    return res.status(401).json({ error: 'invalid_signature' });
-  }
 
   res.json({ ok: true });
 

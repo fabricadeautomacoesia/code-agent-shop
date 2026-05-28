@@ -28420,3 +28420,50 @@ PROXIMA ITER:
 - W7 product-svc admin force-approve atomicity audit
 - W4 admin dashboard rebuild notification stats consume pass 279 audit
 - VPS SSH unblock URGENTISSIMO (117 ciclos - 39h)
+
+
+============================================================
+PASS 285 - 2026-05-28 - W13 notif fail-fast + W11 webhook info disclosure
+============================================================
+Files: 2 modificados
+  - services/notification-svc/src/server.js (throw permanent vs fallback)
+  - services/payment-svc/src/server.js (sig check antes duplicate check)
+Lines: ~50 added
+
+W13 (notif outbox broken template fail-fast):
+- PRE-FIX: title vazio -> fallback "(sem assunto - revise template)" enviado AO USUARIO
+  - UX fail + leak template framework status p/ probing
+  - Spam filter risk (literal '(sem assunto' detection)
+- POST-FIX: throw permanent error -> sent_status='failed' imediato
+  - Sem retry waste (transient=false)
+  - failed_reason='render_empty_title' ou 'render_empty_body'
+  - Admin investiga via /admin/notifications, user NAO recebe email broken
+- Pattern V8: fail-fast com signal claro vs degrade silent
+
+W11 (webhook signature info disclosure):
+- PRE-FIX: flow INSERT(sig flag) -> duplicate check -> sig check
+  - Atacante resend duplicate event_id com sig INVALIDA -> 200 duplicate
+  - Confirma existencia event_id no DB -> reconnaissance
+- POST-FIX: sig validation ANTES de duplicate check
+  - sig invalid -> sempre 401 (audit row inserted forensics)
+  - Atacante NAO distingue duplicate vs new event
+- Compliance: prevent webhook replay/probe attack
+
+VPS SSH BLOQUEADO (118 ciclos - 39.3h sem deploy).
+Migs 069-081 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_notification-svc cas_payment-svc --force
+- W13: criar notif com title vazio (raw INSERT) -> outbox processa -> failed_reason
+  Query: SELECT failed_reason FROM notifications WHERE sent_status='failed'
+         AND failed_reason LIKE 'render_empty_%' ORDER BY created_at DESC LIMIT 5;
+- W11: curl webhook com event_id duplicado + sig errada -> 401 (nao 200 duplicate)
+  curl -X POST -H "asaas-access-token: FAKE" -H "Content-Type: application/json" \
+    -d '{"event":"PAYMENT_RECEIVED","id":"existing_event_id","payment":{"id":"x"}}' \
+    https://cas.../api/payments/asaas/webhook
+  Esperado: 401 invalid_signature (nao 200 duplicate)
+
+PROXIMA ITER:
+- W4 admin notifications panel filter failed_reason new buckets
+- W2 checkout race condition test (duplicate POST /checkout)
+- VPS SSH unblock URGENTISSIMO (118 ciclos - 39.3h)
