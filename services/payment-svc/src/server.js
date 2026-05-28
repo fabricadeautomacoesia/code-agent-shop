@@ -153,6 +153,7 @@ app.post('/payments/asaas/create',
   asaasCreateGuard,
   validate({ body: z.object({
     order_id: z.string().uuid(),
+    buyer_user_id: z.string().uuid().optional(), // FIX pass 117: internal-token path nao seta req.user
     installment_count: z.number().int().min(1).max(12).optional(),
   }) }),
   asyncHandler(async (req, res, next) => {
@@ -196,7 +197,8 @@ app.post('/payments/asaas/create',
            JOIN users u ON u.id = o.buyer_user_id AND u.deleted_at IS NULL
           WHERE o.id = $1 AND o.buyer_user_id = $2
           FOR UPDATE OF o`,
-        [req.body.order_id, req.user.sub]
+        // FIX pass 117: internal-token bypass req.user undefined - usar body fallback
+        [req.body.order_id, req.user?.sub || req.body.buyer_user_id]
       );
       if (!o.rows.length) {
         lockResult = { error: 'order_not_found' };

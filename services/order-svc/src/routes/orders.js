@@ -189,7 +189,9 @@ router.post('/checkout',
     setImmediate(async () => {
       try {
         const paymentUrl = process.env.UPSTREAM_PAYMENT || `http://tasks.cas_payment-svc:${process.env.PORT_PAYMENT || 3016}`;
-        const body = { order_id: result.id };
+        // FIX pass 117: payment-svc internal-token bypass nao seta req.user
+        // -> precisa do buyer_user_id no body para validar order ownership.
+        const body = { order_id: result.id, buyer_user_id: req.user.sub };
         // MLB-5: passa parcelas (somente cartao)
         if (req.body.installment_count && req.body.payment_method === 'credit_card') {
           body.installment_count = req.body.installment_count;
