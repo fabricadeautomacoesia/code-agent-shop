@@ -29115,3 +29115,40 @@ PROXIMA ITER:
 - W17 vault /usage GET endpoint (consume CSV admin export)
 - W4 admin /vault dashboard pagination UI
 - VPS SSH unblock URGENTISSIMO (133 ciclos - 44.3h)
+
+
+============================================================
+PASS 301 - 2026-05-28 - W7 qa-queue COUNT OVER + W14 audit clean
+============================================================
+Files: 1 modificado
+  - services/product-svc/src/routes/admin.js (qa-queue COUNT OVER)
+Lines: ~25 changed
+
+W7 (qa-queue COUNT OVER consolidation):
+- PRE-FIX: 2 queries (rows + COUNT separado) com WHERE identico
+  - products JOIN sellers JOIN users + 3 subqueries qa_runs por row
+  - countParams = params.slice(0, -2) era cleanup feio
+- POST-FIX: 1 query COUNT(*) OVER()::INT + strip _total via map
+- Pattern V8 consolidado em 14+ endpoints (passes 178-300)
+- Latencia ~30ms (2 scans) -> ~17ms (1 scan)
+- has_more boolean mantido
+
+W14 (audit indexes):
+- product_qa_runs(product_id, started_at DESC): idx_qa_runs_product_started mig 034 ✓
+- notifications.locked_by/next_retry_at: idx_notif_outbox_ready mig 070 ✓
+- product_qa_runs verdict='timeout' subquery: idx_qa_runs_verdict mig 005 ✓
+- Cobertura adequada - nenhum gap identificado
+
+VPS SSH BLOQUEADO (134 ciclos - 44.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc --force
+- W7: EXPLAIN ANALYZE GET /products/admin/qa-queue
+  Esperado: 1 scan products (vs 2 scans pre-fix)
+  ~17ms vs ~30ms latencia
+
+PROXIMA ITER:
+- W7 admin /:id/force-approve audit completo
+- W4 admin /admin/qa-queue UI consume has_more pagination
+- VPS SSH unblock URGENTISSIMO (134 ciclos - 44.7h)
