@@ -76,7 +76,8 @@ export default function PedidoPage() {
       <div className="flex flex-wrap items-start justify-between gap-3 mt-4 mb-8">
         <div className="min-w-0 flex-1">
           <h1 className="font-display font-bold text-2xl sm:text-3xl break-words">Pedido {order.order_number}</h1>
-          <p className="text-white/60 text-sm">{new Date(order.created_at).toLocaleString('pt-BR')}</p>
+          {/* FIX-WORKER-2 pass 316: usa Api.formatDate defensive helper */}
+          <p className="text-white/60 text-sm">{Api.formatDate(order.created_at)}</p>
         </div>
         <span className={`px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-2 flex-shrink-0 ${badge.cls}`}>
           <badge.Icon className="w-4 h-4" aria-hidden="true" /> {badge.label}

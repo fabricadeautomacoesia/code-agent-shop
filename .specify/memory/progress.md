@@ -29675,3 +29675,40 @@ PROXIMA ITER:
 - W5 audit other helper fns (fmtBRL, ouros) defensive
 - W4 admin dashboard refresh_reuse audit panel
 - VPS SSH unblock URGENTISSIMO (148 ciclos - 49.3h)
+
+
+============================================================
+PASS 316 - 2026-05-28 - W2 storefront Api.formatDate defensive helper
+============================================================
+Files: 2 modificados
+  - apps/storefront/src/lib/api.ts (Api.formatDate helper)
+  - apps/storefront/src/app/conta/pedidos/[id]/page.tsx (consume Api.formatDate)
+Lines: ~20 added
+
+W2 (storefront defensive date helper - paridade pass 315 cross-app):
+- PRE-FIX storefront: pages usavam new Date(d).toLocaleString diretamente
+- Sem isNaN guard - created_at=null/invalid -> 'Invalid Date' UX feio
+- /conta/pedidos/[id] linha 79 era um exemplo
+- POST-FIX (helper):
+  - Api.formatDate(d, opts?) centralizado
+  - null/undef -> '-'
+  - isNaN(getTime()) -> '-'
+  - valid -> toLocaleString('pt-BR') com opts opcional
+  - Cross-app defensive coverage NOW completa:
+    - storefront pass 254/283/306 (component-level) + pass 316 (lib-level)
+    - dashboard-seller pass 315 (lib-level)
+    - dashboard-admin pass 315 (lib-level)
+- Aplicado em pedidos/[id] - outros consumers pueden migrar gradualmente
+
+VPS SSH BLOQUEADO (149 ciclos - 49.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront --force
+- W2 manual: /conta/pedidos/<id> com order legacy (created_at null em fixture)
+  Esperado: '-' rendered em vez de 'Invalid Date'
+
+PROXIMA ITER:
+- W2 migrate restantes consumers (pontos/page, comparar, etc) para Api.formatDate
+- W14 audit notification.template_code coverage check
+- VPS SSH unblock URGENTISSIMO (149 ciclos - 49.7h)

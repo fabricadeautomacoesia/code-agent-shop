@@ -142,6 +142,20 @@ export const Api = {
   me:          (token: string) => api<{ user: any }>('/auth/me', { auth: token }),
   formatBRL:   (cents: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((cents || 0) / 100),
+  /* FIX-WORKER-2 pass 316: defensive date helper paridade cross-app pass 315.
+     PRE-FIX: pages usavam new Date(d).toLocaleString diretamente - sem isNaN
+     guard. created_at=null/undef/invalid -> 'Invalid Date' UX feio.
+     POST-FIX: helper centralizado:
+     - null/undef -> '-'
+     - invalid date string -> '-'
+     - valid -> toLocaleString('pt-BR') com opts opcional
+     Cobre /conta/pedidos/[id], pontos/page, comparar, etc consumers. */
+  formatDate: (d: string | null | undefined, opts?: Intl.DateTimeFormatOptions): string => {
+    if (!d) return '-';
+    const t = new Date(d).getTime();
+    if (isNaN(t)) return '-';
+    return new Date(d).toLocaleString('pt-BR', opts);
+  },
   /**
    * MLB-NEW WORKER 17: calcula parcelamento sem juros padrao Mercado Livre.
    * Regra: max 12x, parcela minima R$5 (500 cents). Retorna { n, perCents } ou null se < min.
