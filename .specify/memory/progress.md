@@ -21208,3 +21208,62 @@ PROXIMA ITER:
 - W17: vault auto-rotation swap atomico
 - W14: drop duplicate idx_loyalty_user_recent (apos confirmar pg_stat zero scans)
 - 🚨 VPS SSH unblock URGENTE (24 ciclos - ~8h sem deploy!)
+
+PASS 192 (W12 qa-worker LLM fallback 3 bugs) - 2026-05-28:
+- W12 audit qa-worker.py call_llm_fallback descobriu 3 bugs:
+
+BUG 1 (timeout budget esgotado):
+- PRE: LLM_TIMEOUT (60s) POR PROVIDER -> chain de 3 = 180s
+- Caller qa-svc tem 5min total budget - chain consumia 60% sozinho
+- POST: LLM_PROVIDER_TIMEOUT (default 20s) por provider
+- Budget total chain: 60s (predictable, mesmo orcamento mas dividido)
+
+BUG 2 (permanent errors triggering fallback waste):
+- PRE: r.raise_for_status() tratava 4xx e 5xx igualmente
+- Prompt malformado (400 schema error) -> fallback p/ Gemini com MESMO
+  prompt -> mesmo 400 -> fallback Groq -> 3 chamadas LLM falhas
+  + 3x cost (~$0.005 perdido por fail) + 3x retry storm
+- POST: _is_transient_error classification:
+  * Transient (fallback OK): timeout, 429 rate-limit, 5xx provider down
+  * Permanent (fail fast): 400/401/403/404 (request invalido)
+
+BUG 3 (DLP error message leak):
+- PRE: errors.append(f'openai: {e}') incluia Exception raw
+- Upstream 401 body pode conter 'Bearer <key>' echo
+- Upstream 400 validation pode conter 'sk-xxx' echo do payload
+- Audit log + admin dashboard renderiza error -> secret leak
+- POST: _sanitize_llm_error() preserva so type + status (sem body)
+
+Pattern industry (AWS SDK, Stripe SDK, Google Cloud client):
+- Per-attempt timeout (predictable budget)
+- Idempotent vs non-idempotent fallback classification
+- Sanitized error in audit/log paths
+
+Commit 9bb9df3 pushed origin/main
+VPS SSH ainda bloqueado (25 ciclos consecutivos)
+
+CONSOLIDADO DLP PATTERNS (recent passes):
+- pass 185: notification-svc failed_reason mask.text + jitter
+- pass 192: qa-worker LLM errors _sanitize (httpx exceptions strip)
+
+CODIGO ACUMULADO ORIGIN/MAIN (25 ciclos):
+- 168-191: documentados
+- 192: qa-worker LLM fallback 3 fixes
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-worker --force
+- ENV var LLM_PROVIDER_TIMEOUT_MS=20000 (default ja 20s)
+- Teste timeout:
+  Simular OpenAI 30s response - cliente cai timeout em 20s -> Gemini
+- Teste permanent error:
+  Enviar prompt malformado 50KB -> 400 -> fail fast (no Gemini call)
+  Verificar logs: 1 chamada OpenAI, 0 chamadas Gemini/Groq
+- Teste DLP:
+  Mock upstream 401 com 'Bearer leak123' body
+  RuntimeError final NAO deve conter 'Bearer leak123'
+
+PROXIMA ITER:
+- W18: cache /products/:slug/related ou /:slug/also-bought
+- W17: vault auto-rotation swap atomico
+- W4: dashboard-admin /aiops/llm-cost view (consume cost_usd_cents)
+- 🚨 VPS SSH unblock URGENTE (25 ciclos - ~8.3h sem deploy!)
