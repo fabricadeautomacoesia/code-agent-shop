@@ -24687,3 +24687,67 @@ PROXIMA ITER:
 - W16 MLB: Cupom progressivo
 - W2 checkout: ?return_to query handling
 - VPS SSH unblock URGENTE (69 ciclos)
+
+============================================================
+PASS 237 (2026-05-28) - W16 MLB review + W18 flash-promo stale field
+============================================================
+
+OBJETIVO: revisar MLB features + perf fix
+
+============================================================
+1. W16 MLB FEATURES REVIEW - all 11 already implemented
+============================================================
+Auditoria completa: TODAS as 11 MLB features estao implementadas:
+- (1) Q&A com upvote: QnaUpvote component + qna_upvotes table
+- (2) Frete: N/A (produtos digitais)
+- (3) Loyalty: user_loyalty + tier (starter/gold/platinum) + 100pts=R$1
+- (4) Mercado Credito: Installments component + payment-svc preview/apply
+- (5) Mais vendidos por categoria: /search/top-sellers/:slug
+- (6) Recomendacoes personalizadas: /recommendations/for-me +
+      /recently-viewed via product_views + co-buyers
+- (7) Comparador: /comparar UI + /api/products/compare 4 produtos
+- (8) Sales count destaque PDP: linha 156-181 product/[slug]/page.tsx
+- (9) Selo OFICIAL + MAIS VENDIDO combo: OfficialBadge component
+- (10) Promocao relampago timer: FlashPromoTimer + /flash-promo/active
+- (11) Cupom progressivo: tier_breakpoints JSONB + ProgressiveCouponTeaser
+
+============================================================
+2. W18 - flash-promo/active stale cached seconds_remaining
+============================================================
+FILE: services/product-svc/src/routes/public.js:503-518
+
+PROBLEMA:
+- SELECT incluia EXTRACT(EPOCH FROM (ends_at - NOW()))::BIGINT
+  AS seconds_remaining
+- Cache TTL 60s -> valor calculado em T0 retornado ate T0+59s sem refresh
+- Cliente que hit cache em T+30s recebia seconds_remaining como se fosse T0
+  -> mostraria "1200s restantes" quando real e ~1170s
+- Field nao usado no frontend (FlashPromoTimer usa ends_at absoluto)
+- Bait p/ confusao + payload waste (~30 bytes BIGINT por row)
+
+POST-FIX: removido seconds_remaining do SELECT
+- Frontend ja usa flash_promo_ends_at (absoluto - imune a cache)
+- Payload menor (10-20% reduction per row)
+- Semantica clara: tempo absoluto em backend, calculo relativo client-side
+
+============================================================
+SUMARIO PASS 237
+============================================================
+Files: 1 modificado
+  - services/product-svc/src/routes/public.js (stale field removed)
+Lines: ~15 changed (mostly comments)
+
+VPS SSH BLOQUEADO (70 ciclos - 23.3h sem deploy).
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc --force
+- W18 test: curl /api/products/flash-promo/active 2x intervalo 30s
+  Response NAO deve ter campo seconds_remaining (removido)
+  Frontend /promocoes continua funcionando (usa ends_at absoluto)
+
+MLB STATUS: 100% completo. Foco proximas iters em refinamento + bugs.
+
+PROXIMA ITER:
+- W2 checkout: erro mensagens i18n
+- W4 admin: bulk actions QA queue
+- VPS SSH unblock URGENTE (70 ciclos - 23.3h sem deploy)

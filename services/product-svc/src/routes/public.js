@@ -500,12 +500,22 @@ router.get('/flash-promo/active',
   asyncHandler(async (req, res) => {
   const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 20));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  // FIX-WORKER-18 pass 237 (stale cached relative time):
+  //   PRE-FIX: SELECT incluia EXTRACT(EPOCH FROM (ends_at - NOW()))::BIGINT
+  //   AS seconds_remaining. Cache TTL 60s -> valor "calculou em T0" retornava
+  //   T0+59s sem refresh. Cliente que chega 30s apos cache miss via
+  //   "termina em 1200s" mas timer deveria ja estar em 1170s. Race em
+  //   timer rendering (timer client-side calculado de absoluto OK, mas o
+  //   field cached era bait p/ confusao).
+  //   POST-FIX: removido seconds_remaining (campo unused - frontend
+  //   /promocoes linha 88 usa flash_promo_ends_at absoluto). Removendo
+  //   reduz payload por row (~30 bytes BIGINT serialized) + elimina
+  //   semantica confusa "cached relative time".
   const r = await query(
     `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind, p.cover_image_url,
             p.price_cents, p.currency, p.is_free, p.tech_stack, p.avg_rating, p.review_count,
             p.sales_count, p.is_platform_owned, p.flash_promo_discount_pct, p.flash_promo_ends_at,
             (p.price_cents * (1 - p.flash_promo_discount_pct/100))::BIGINT AS discounted_price_cents,
-            EXTRACT(EPOCH FROM (p.flash_promo_ends_at - NOW()))::BIGINT AS seconds_remaining,
             s.store_slug, s.store_name
        FROM products p
        LEFT JOIN sellers s ON s.id = p.seller_id
