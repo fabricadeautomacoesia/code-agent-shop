@@ -230,28 +230,28 @@ const UPSTREAMS = {
   aiops:        process.env.UPSTREAM_AIOPS        || `http://tasks.cas_aiops-svc:${process.env.PORT_AIOPS || 3006}`,
 };
 
-// FIX-WORKER-7 pass 48: body limit DEFAULT 1MB para TODAS rotas /api/*
-// EXCETO /uploads + /api/products/upload (que tem cap 32MB acima).
-// Rotas COM bodyLimitMiddleware especifico (auth=16KB) sao verificadas ANTES
-// deste middleware no path resolution - express usa ORDEM de declaracao.
-// Para garantir auth 16KB enforce, declarado ANTES desta linha.
-app.use('/api', bodyLimitMiddleware(BODY_LIMIT_DEFAULT));
-
-// Express strip do app.use(prefix) faz proxy receber apenas o resto.
-// Ex: GET /api/auth/login -> proxy.req.url = /login
-// Prepend o prefixo correto que cada svc espera no proprio router:
-// /uploads/* -> product-svc (sem prefix, serve static)
-// FIX-WORKER-7 pass 48: timeouts per-route otimizados.
-// PROFILES (heuristica baseada em workload):
-//   - FAST (5s): auth (fail-fast UX login)
-//   - DEFAULT (30s): products/search/orders/payments (DB queries normais)
-//   - SLOW (60s): qa (LLM analysis), uploads (binary 32MB+)
-//   - VERY_SLOW (120s): qa-worker callback (extremos)
+// FIX-WORKER-6 pass 354 CRITICAL (ORDEM Express middleware):
+//   PRE-FIX: app.use('/api', bodyLimitMiddleware(1MB)) declarado AQUI ANTES de
+//   /api/products/upload (32MB) + /api/auth (16KB).
+//   Express middleware runs IN ORDER de declaracao - matching /api/* sobre-
+//   limit 1MB rodava PRIMEIRO -> upload de 32MB era REJEITADO com 413
+//   antes de chegar ao middleware /api/products/upload (32MB).
+//
+//   IMPACTO PRODUCAO:
+//   - Seller upload de package ZIP > 1MB -> 413 payload_too_large
+//     (limite era 50MB no multer fileFilter mas gateway barrava em 1MB)
+//   - Comentario linha 235 ("Rotas COM bodyLimit especifico sao verificadas
+//     ANTES") era FALSO - express path matching nao prioriza specificidade,
+//     so ordem de declaracao.
+//
+//   POST-FIX: mover app.use('/api', 1MB DEFAULT) p/ APOS rotas com limit
+//   especifico. Order matters - upload/auth specifics ANTES, 1MB catchall
+//   DEPOIS. Comentario tambem corrigido.
 const TIMEOUT_FAST = 5000;
 const TIMEOUT_DEFAULT = 30000;
 const TIMEOUT_SLOW = 60000;
 
-// Uploads binarios: 32MB+ body limit + timeout maior
+// Uploads binarios: 32MB+ body limit + timeout maior (ANTES do /api catchall)
 app.use('/uploads',           bodyLimitMiddleware(BODY_LIMIT_UPLOADS),
                               proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/uploads' + p, timeout: TIMEOUT_SLOW }));
 
@@ -260,10 +260,19 @@ app.use('/api/products/upload', bodyLimitMiddleware(BODY_LIMIT_UPLOADS),
                                 proxy(UPSTREAMS.product,    { pathRewrite: (p) => '/products/upload' + p, timeout: TIMEOUT_SLOW }));
 
 // Auth login/register/2FA: fail-fast UX + body limit 16KB (anti DoS huge payloads)
-// Token verify backend deve ser ~10-50ms - timeout 5s eh generoso
+// FIX-WORKER-6 pass 354: declarado ANTES do /api catchall (1MB) - rotas
+// com limit especifico (16KB strict) precisam preceder /api default p/
+// auth-related abuse vector mitigation.
 app.use('/api/auth',          bodyLimitMiddleware(BODY_LIMIT_AUTH),
                               fail2ban.middleware(),
                               proxy(UPSTREAMS.auth,         { pathRewrite: (p) => '/auth' + p, timeout: TIMEOUT_FAST }));
+
+// FIX-WORKER-6 pass 354: /api catchall 1MB AGORA DEPOIS dos limits especificos
+// /api/products/upload (32MB) + /api/auth (16KB).
+// Express middleware match-by-prefix funciona, mas ORDEM determina qual roda
+// PRIMEIRO. Rotas especificas declaradas ANTES = ja consumiram next() ou
+// terminaram com 413. Catchall so atinge rotas SEM limit especifico declarado.
+app.use('/api', bodyLimitMiddleware(BODY_LIMIT_DEFAULT));
 // FIX-WORKER-7 pass 47: fail2ban tambem em endpoints sensitive (admin/payouts/payments).
 // Auth ja tinha (W6 historic). Brute-force protection patterns same.
 // vault/payments/orders - mutation endpoints + alto valor financeiro = bom candidato.
