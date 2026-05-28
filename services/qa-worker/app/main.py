@@ -305,13 +305,33 @@ def static_analysis(kind: str, text: str, description: str) -> dict:
         try:
             data = json.loads(text) if text.strip().startswith("{") else None
             if data and isinstance(data, dict):
-                nodes = data.get("nodes", [])
-                if not nodes:
+                # FIX-WORKER-12 pass 421 (defensive nodes parse - n8n malformed exports):
+                #   PRE-FIX: nodes = data.get("nodes", []) -> if None entao for loop crash
+                #   Cenarios reais:
+                #   - n8n_workflow.json com 'nodes': null (malformed export)
+                #   - 'nodes': {} (dict em vez de list - workflow drag-only)
+                #   - 'nodes': 'foo' (corrupted - aceita any type)
+                #   Pre-fix: any(... for n in nodes) -> TypeError iteration
+                #   - Catch linha 316 -> 'JSON invalido' false reject
+                #   - Score 0 mesmo workflow tecnicamente valido
+                #   POST-FIX: explicit isinstance(nodes, list) check
+                #   - None/dict/string -> issues 'formato invalido' (clearer message)
+                #   - Loop seguro apenas em listas reais
+                nodes = data.get("nodes")
+                if not isinstance(nodes, list):
+                    issues.append("Workflow n8n com formato invalido em 'nodes' (esperado lista).")
+                    sintaxe_ok = False
+                    nodes = []  # safe iteration
+                elif not nodes:
                     issues.append("Workflow n8n sem nos (nodes vazios).")
                     sintaxe_ok = False
                 trigger_types = ["webhook", "scheduleTrigger", "cron", "manualTrigger", "emailTrigger"]
-                has_trigger = any(any(t in n.get("type", "").lower() for t in trigger_types) for n in nodes)
-                if not has_trigger:
+                # FIX pass 421: defensive .get('type') p/ nodes nao-dict (corrupted entries)
+                has_trigger = any(
+                    isinstance(n, dict) and any(t in (n.get("type") or "").lower() for t in trigger_types)
+                    for n in nodes
+                )
+                if nodes and not has_trigger:
                     issues.append("Workflow n8n sem no de gatilho identificavel.")
         except Exception:
             issues.append("JSON do workflow n8n invalido.")
