@@ -17350,7 +17350,26 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Migration 052 idx_products_last_sale +platform_owned (pass 130)
 - ✅ MLB-14 RecentlyViewedGuest localStorage (pass 131)
 - ✅ Migration 053 idx sellers.asaas_wallet/customer (pass 132)
-- ✅ W9 enrich /promocoes metadata OG+twitter+keywords (pass 133 esta iter)
+- ✅ W9 enrich /promocoes metadata OG+twitter+keywords (pass 133)
+- ✅ W11 /installments validation amount<100 (pass 134 esta iter)
+
+W7 PASS 134 RESUMO - W11 INSTALLMENTS AMOUNT TOO SMALL FIX:
+- AUDIT /api/payments/installments/preview edge cases:
+  * amount_cents=0 retornava HTTP 200 + installments:[] (SILENT BUG)
+  * amount_cents=50 (50 centavos) retornava 200 + [] (SILENT BUG)
+  * UI exibia grid de parcelas vazio sem explicacao
+- FIX em services/payment-svc/src/server.js:
+  * amount<100 (< R$1,00) -> HTTP 400 'amount_too_small'
+  * Response inclui amount_cents + min_cents=100 p/ UI mensagem clara
+  * Pattern MP/ML retornam validation_error neste caso
+- REBUILD payment-svc + service converged
+- VALIDATED prod (cache miss via max=11 trick):
+  * /installments?amount_cents=0&max=11 HTTP 400 'amount_too_small'
+  * /installments?amount_cents=50&max=11 HTTP 400 explicit
+  * /installments?amount_cents=100 HTTP 200 (R$1,00 minimo permitido)
+- Nota cache: amount=0&max=12 ainda retorna 200 [] em prod (cache 600s TTL)
+  -> expira automaticamente em <10min sem intervencao manual
+- COMMIT d8d8584 pushed GitHub main + deployed prod
 
 W7 PASS 133 RESUMO - W9 SEO /promocoes ENRICHMENT:
 - AUDIT pages com metadata parcial:
