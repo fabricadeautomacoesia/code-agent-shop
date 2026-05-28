@@ -31136,3 +31136,27 @@ PROXIMA ITER:
 - W17 vault security audit
 - W4 admin DLP audit-log viewer
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 356 W4 ADMIN: payouts paid+rejected filter (auditoria)
+commit 9f8e169
+BUG: admin payouts dashboard so suporta pending|approved|all
+  - Backend tem 4 states (pending|approved|paid|rejected) - 50% inacessivel
+  - Admin NAO podia ver pagos/rejeitados via UI
+  - Auditoria forcada a query DB direto (slow + sem cache)
+  - Conciliacao Asaas / compliance gap
+
+POST-FIX:
+- seller-svc/admin.js VALID + paid + rejected + all_states
+- ORDER BY dinamico:
+  * pending/approved (ativos) = ASC (FIFO queue)
+  * paid/rejected (final) = DESC (recentes audit)
+- UI 5 filtros com Labels PT-BR + flex-wrap mobile
+- Backward-compat (all = pending+approved mantido)
+
+W4 admin auditability completa pipeline payouts.
+89 passes acumulados (268->356) sem deploy VPS
+
+PROXIMA ITER:
+- W17 vault security audit
+- W2 checkout E2E
+- VPS SSH unblock URGENTISSIMO (3 CRITICAL acumulados)
