@@ -99,8 +99,13 @@ export function ProductCard({ product }: { product: any }) {
             </div>
           )}
           <div className="mt-auto flex items-center justify-between pt-3 border-t border-white/5">
+            {/* FIX-WORKER-8 pass 255 (a11y Star decorativo):
+                Star icon era anunciado como "imagem" antes do rating numerico.
+                Pattern V8: icons decorativos sempre aria-hidden. Container span
+                tem rating semantico - icon eh visual only. Aplicado 1 instance
+                hot path (product-card cross-pages render). */}
             <div className="flex items-center gap-1.5 text-sm">
-              <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+              <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" aria-hidden="true" />
               <span className="font-semibold">{product.avg_rating ? Number(product.avg_rating).toFixed(1) : '-'}</span>
               <span className="text-xs text-white/40">({product.review_count || 0})</span>
             </div>

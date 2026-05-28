@@ -22,6 +22,8 @@ export default function CartPage() {
   const [loyalty, setLoyalty] = useState<any>(null);
   // FIX-WORKER-2 pass 249: redeem busy guard p/ anti-double-click race
   const [redeemBusy, setRedeemBusy] = useState(false);
+  // FIX-WORKER-2 pass 255: coupon busy guard (mesma logica anti-double-click)
+  const [couponBusy, setCouponBusy] = useState(false);
 
   async function load() {
     if (!token) return;
@@ -108,17 +110,19 @@ export default function CartPage() {
     }
   }
   // FIX-WORKER-2 pass 5: applyCoupon robustez
-  // Bugs antes:
-  // 1. coupon nao trimado -> " PROGRESSIVO15 " enviava com espacos -> 400
-  // 2. Sem feedback - input nao limpava apos aplicar com sucesso
-  // 3. Sem prevent de re-aplicar mesmo cupom ja ativo
-  // 4. Erro do backend ("invalid_coupon") nao tinha texto friendly para user
+  // FIX-WORKER-2 pass 255: loading guard (paridade applyRedeem pass 249)
+  //   Submit form 2x rapido -> 2 POST /cart/coupon em 200ms -> backend rate-limit
+  //   30/hr/user consome 2 tokens. Race entre 2 POST pode race condition em
+  //   carts.coupon_code (last write wins, mas audit_log gera 2 entries duplicados).
+  //   POST-FIX: coupon busy state + early-return guard.
   async function applyCoupon(e: React.FormEvent) {
     e.preventDefault();
+    if (couponBusy) return;
     setErr('');
     const code = coupon.trim().toUpperCase();
     if (!code) { setErr('Digite um codigo de cupom.'); return; }
     if (cart?.coupon_code === code) { setErr(`Cupom ${code} ja esta aplicado.`); return; }
+    setCouponBusy(true);
     try {
       await Api.cartCoupon(token!, code);
       setCoupon(''); // limpa input apos aplicar OK
@@ -130,6 +134,8 @@ export default function CartPage() {
       else if (/min_tier|tier/i.test(msg)) setErr(`Cupom ${code} exclusivo para tier superior.`);
       else if (/expired/i.test(msg)) setErr(`Cupom ${code} expirou.`);
       else setErr(msg || `Erro ao aplicar cupom ${code}.`);
+    } finally {
+      setCouponBusy(false);
     }
   }
 
@@ -228,11 +234,12 @@ export default function CartPage() {
                 style={{ textTransform: 'uppercase' }}
                 className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm focus:border-magenta focus:outline-none placeholder:normal-case placeholder:text-white/40" />
               <button type="submit"
-                disabled={!coupon.trim()}
-                aria-label="Aplicar cupom"
+                disabled={!coupon.trim() || couponBusy}
+                aria-label={couponBusy ? 'Aplicando cupom' : 'Aplicar cupom'}
+                aria-busy={couponBusy}
                 title="Aplicar cupom"
                 className="px-3 py-2 rounded-lg glass text-sm hover:border-magenta transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-white/10">
-                <Tag className="w-4 h-4" />
+                <Tag className="w-4 h-4" aria-hidden="true" />
               </button>
             </form>
 

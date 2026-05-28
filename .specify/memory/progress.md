@@ -26269,3 +26269,89 @@ PROXIMA ITER:
 - W4 admin: bulk select multiple payouts
 - W11 payment: dispute auto-create trigger
 - VPS SSH unblock URGENTISSIMO (87 ciclos - 29h!!)
+
+============================================================
+PASS 255 (2026-05-28) - W2 + W5 + W8 UX/defensive/a11y
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W2 storefront: cart applyCoupon loading guard (parity applyRedeem pass 249)
+- W5 dashboard-seller: upload defensive Number parse (zero price/duration)
+- W8 storefront: product-card Star icon aria-hidden
+
+============================================================
+1. W2 - cart applyCoupon loading guard
+============================================================
+FILE: apps/storefront/src/app/cart/page.tsx:110-138
+
+PROBLEMA:
+- applyCoupon submit form sem loading guard
+- Double-click rapido -> 2 POST /cart/coupon em 200ms
+- Backend rate-limit 30/hr/user consome 2 tokens
+- Race condition em carts.coupon_code (last write wins)
+- audit_log gera 2 entries duplicados (forense noise)
+
+POST-FIX (paridade applyRedeem pass 249):
+- couponBusy state + early-return guard
+- Botao disabled={!coupon.trim() || couponBusy}
+- aria-busy={couponBusy} + aria-label dinamico
+- Tag icon aria-hidden=true
+
+============================================================
+2. W5 - upload defensive Number parse (zero values)
+============================================================
+FILE: apps/dashboard-seller/src/app/upload/page.tsx:52-66
+
+PROBLEMA:
+- Number(form.price_cents) - input vazio -> Number("") = 0
+- Seller submit sem preencher price_cents -> backend Zod transform
+  aceitava (campo required mas null default era 0)
+- Produto criado com price_cents=0 mas isFree=false
+- Checkout futuro: Asaas rejeita value=0 OU cobra zero (revenue loss)
+- Mesmo problema estimated_install_min
+
+POST-FIX:
+- parseInt + Number.isFinite + > 0 check
+- action.run trigger throw para banner amigavel
+- "Preco deve ser maior que zero" mensagem clara
+
+============================================================
+3. W8 - product-card Star icon a11y
+============================================================
+FILE: apps/storefront/src/components/product-card.tsx:94-99
+
+PROBLEMA:
+- 10+ Star icons em storefront SEM aria-hidden (audit grep)
+- NVDA/JAWS anunciava "imagem Star" antes do rating numerico
+- Ruidoso + viola pattern V8 (decorativos sempre aria-hidden)
+
+POST-FIX:
+- aria-hidden="true" no Star em product-card (hot path render)
+- Container span tem rating semantico, icon eh visual only
+- Pattern V8: defesa em camada cross-page (proximos passes
+  podem fixar os outros 9 instances)
+
+============================================================
+SUMARIO PASS 255
+============================================================
+Files: 3 modificados
+  - apps/storefront/src/app/cart/page.tsx (coupon guard)
+  - apps/dashboard-seller/src/app/upload/page.tsx (Number parse)
+  - apps/storefront/src/components/product-card.tsx (Star a11y)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (88 ciclos - 29.3h sem deploy).
+Migs 069-075 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_dashboard-seller --force
+- W2 test: /cart aplica cupom + click submit rapido 5x ->
+  apenas 1 POST executa (era 2-3 race)
+- W5 test: /upload sem preencher price -> banner "Preco deve ser maior que zero"
+  (era criava draft com price_cents=0)
+- W8 test: NVDA navegar /products -> anuncia rating numerico SEM "imagem Star"
+
+PROXIMA ITER:
+- W8: aria-hidden nos 9 Stars restantes (PDP/comparar/cart-drawer/etc)
+- W4 admin: bulk select payouts
+- VPS SSH unblock URGENTISSIMO (88 ciclos - 29.3h!!!)

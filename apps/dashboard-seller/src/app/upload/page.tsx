@@ -51,11 +51,32 @@ export default function UploadPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    // FIX-WORKER-5 pass 255 (defensive number parse):
+    //   PRE-FIX: Number(form.price_cents) - input vazio "" -> Number("") = 0
+    //   Seller submetia produto sem preencher price_cents -> backend Zod aceitava
+    //   0 (campo era required mas com fallback no transform).
+    //   Resultado: produto criado com price_cents=0 (gratis sem isFree=true)
+    //   -> checkout futuro: Asaas rejeita value=0 ou cobra zero do buyer (loss).
+    //   POST-FIX: parseInt + NaN check + setErr early-return amigavel.
+    const price = parseInt(form.price_cents, 10);
+    const installMin = parseInt(form.estimated_install_min, 10);
+    if (!Number.isFinite(price) || price <= 0) {
+      action.run('create-draft', async () => {
+        throw new Error('Preco deve ser maior que zero (em centavos). Ex: 4990 = R$ 49,90');
+      });
+      return;
+    }
+    if (!Number.isFinite(installMin) || installMin <= 0) {
+      action.run('create-draft', async () => {
+        throw new Error('Tempo estimado de instalacao deve ser maior que zero (em minutos).');
+      });
+      return;
+    }
     action.run('create-draft', async () => {
       const payload = {
         ...form,
-        price_cents: Number(form.price_cents),
-        estimated_install_min: Number(form.estimated_install_min),
+        price_cents: price,
+        estimated_install_min: installMin,
         tech_stack: form.tech_stack.split(',').map((t) => t.trim()).filter(Boolean),
         api_keys_required: form.api_keys_required.split(',').map((t) => t.trim()).filter(Boolean),
       };
