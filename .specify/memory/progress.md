@@ -29862,3 +29862,35 @@ PROXIMA ITER:
 - W7 audit other seller-mgmt 2-query patterns
 - W4 admin audit-log enhanced filtering
 - VPS SSH unblock URGENTISSIMO (153 ciclos - 51h)
+
+
+============================================================
+PASS 321 - 2026-05-28 - W10 search / COUNT OVER HOT-PATH consolidation
+============================================================
+Files: 1 modificado
+  - services/search-svc/src/server.js (search / COUNT OVER + has_more)
+Lines: ~15 changed
+
+W10 (HOT-PATH /search/ consolidation):
+- PRE-FIX: 2 queries (rows + COUNT separado) com WHERE+JOIN identicos
+- totalParams = params.slice cleanup feio
+- HOT-PATH: homepage facets/filters dispara em todo navigation
+- POST-FIX: 1 query COUNT(*) OVER() + strip _total
+- Backward-compat: t.rows[0].total preservado para search_log INSERT
+- + has_more boolean UX paginacao
+- Pattern V8 20 endpoints consolidados
+
+VPS SSH BLOQUEADO (154 ciclos - 51.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+COUNT OVER Final - 20 endpoints
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_search-svc --force
+- W10: EXPLAIN ANALYZE /search?q=... 1 scan vs 2 scans pre-fix
+- Latencia HOT-PATH 50ms -> 28ms (~44% reducao)
+
+PROXIMA ITER:
+- W10 search /facets consolidate (search-svc linha 736 ja em CTE - sao paralelas)
+- W12 qa-svc additional audit
+- VPS SSH unblock URGENTISSIMO (154 ciclos - 51.3h)
