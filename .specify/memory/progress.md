@@ -29965,3 +29965,44 @@ PROXIMA ITER:
 - W4 audit log filter UA pattern detection
 - W11 webhook log signatures sample
 - VPS SSH unblock URGENTISSIMO (156 ciclos - 52h)
+
+
+============================================================
+PASS 324 - 2026-05-28 - W13 MARCO DLP UA mask cross-svc 100% COMPLETE
+============================================================
+Files: 1 modificado
+  - services/seller-svc/src/routes/loyalty.js (mask + service_token log)
+Lines: ~3 changed
+
+W13 (loyalty service_token UA mask - FINAL):
+- PRE-FIX: log.warn raw UA em service_token_invalid path
+- POST-FIX: mask.text() paridade pass 322/323 cross-svc
+- import mask adicionado em loyalty.js
+
+MARCO DLP UA MASK CROSS-SVC 100% COMPLETE:
+Verified via grep -rn "req.headers['user-agent']" services/
+Filtros excluindo: mask.text|safeUa|user_sessions|orders.user_agent|buyer_user_agent|null
+Resultado: 0 ocorrencias raw - TODOS UA loggados/auditados com mask DLP
+
+Total cross-svc DLP UA Coverage:
+- auth-svc: 15 audit_log paths (passes 282-322)
+- product-svc: 1 audit_log (pass 323)
+- vault-svc: 1 log.warn (pass 323)
+- qa-svc: 2 log.warn (pass 323)
+- payment-svc: 3 log.warn (pass 323)
+- seller-svc: 1 log.warn (pass 324)
+= 23 endpoints/logs com UA masked
+
+VPS SSH BLOQUEADO (157 ciclos - 52.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc --force
+- W13 verify final coverage:
+  docker service logs cas_seller-svc 2>&1 | grep service_token_invalid
+  Esperado: ua masked (no raw User-Agent)
+
+PROXIMA ITER:
+- W4 admin DLP audit dashboard (consume audit_log masked entries)
+- W11 final payment refund audit
+- VPS SSH unblock URGENTISSIMO (157 ciclos - 52.3h)

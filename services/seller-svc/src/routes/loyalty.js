@@ -4,7 +4,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, mask } = require('@cas/shared');
 
 const log = logger.child({ svc: 'seller-svc', mod: 'loyalty' });
 const router = express.Router();
@@ -29,7 +29,8 @@ function serviceTokenGuard(req, res, next) {
     valid = a.length === b.length && crypto.timingSafeEqual(a, b);
   } catch { valid = false; }
   if (!valid) {
-    log.warn({ ip: req.ip, user: req.user?.sub, ua: req.headers['user-agent'] },
+    /* FIX-WORKER-13 pass 324: ua mask.text() paridade pass 322/323 cross-svc DLP */
+    log.warn({ ip: req.ip, user: req.user?.sub, ua: mask.text(req.headers['user-agent'] || '') },
       '[loyalty.service_token_invalid]');
     return res.status(403).json({ error: 'service_token_required' });
   }
