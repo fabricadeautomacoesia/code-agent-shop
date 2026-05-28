@@ -32001,3 +32001,30 @@ W6 cpf_cnpj defense layers:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
+
+## PASS 386 W18: cache GET /products/me (dashboard-seller hot path)
+commit b0fab7d
+BUG GET /products/me sem cacheMiddleware
+PRE-FIX:
+  - Dashboard-seller polling cada navegacao
+  - JOIN sellers + COUNT OVER + filters
+  - 100 sellers = 100+ q/min PG load
+
+POST-FIX:
+- cacheMiddleware 30s + productsMeCacheKey
+- Vary by owner + status + kind + paginacao
+- Per-user isolation
+- Invalidation cross-route:
+  * seller-mgmt invalidate() + products:me:*
+  * admin invalidateProductCache + products:me:*
+
+W18 hot path consolidation:
+  pass 361 /qna/seller/pending
+  pass 386 /products/me <- ESTE
+
+119 passes acumulados (268->386) sem deploy VPS
+5 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
