@@ -17375,7 +17375,25 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Admin reports + payouts filter a11y (pass 155)
 - ✅ Storefront nav buttons type=button + focus-visible (pass 156)
 - ✅ Cart-drawer 4 buttons a11y rico (pass 157)
-- ✅ Compare-drawer + add-to-cart 6 buttons (pass 158 esta iter)
+- ✅ Compare-drawer + add-to-cart 6 buttons (pass 158)
+- ✅ Wishlist + price-alert + ask-quick 5 buttons (pass 159 esta iter)
+
+W7 PASS 159 RESUMO - W3 PDP TOGGLES + ASK MODAL A11Y:
+- AUDIT 3 components PDP secundarios sem type='button' (V8 Regra 23)
+- FIXES:
+  wishlist-button (2 buttons - card + PDP variants):
+  * type='button' em ambos variants
+  * card variant: +focus-visible:outline-magenta (faltava)
+  * Heart/Loader2 ja tinham aria-hidden (pass anterior)
+  price-alert-button (1 button):
+  * type='button' + aria-label/pressed/focus-visible ja existiam
+  ask-quick-button (2 buttons):
+  * 'Pergunte ao vendedor' open: type='button'
+  * X close modal: type='button'
+- 0 botoes sem type='button' restantes em components/* nucleo storefront
+- Pattern V8 Regra 23 100% applied em components principais
+- BUILD storefront OK + service converged
+- COMMIT 02fa2e9 pushed GitHub main + deployed prod
 
 W7 PASS 158 RESUMO - W1+W3 COMPARE+ADD-TO-CART A11Y:
 - AUDIT 2 components mais usados storefront:
