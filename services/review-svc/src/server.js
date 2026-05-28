@@ -1204,6 +1204,32 @@ app.get('/seller/received',
     const r = await query(sql, params);
     const total = r.rows[0]?._total ?? 0;
 
+    // FIX-WORKER-5 pass 373 (KPI aggregate cross-pages):
+    //   PRE-FIX: response retornava reviews paginated apenas.
+    //   Frontend dashboard-seller calculava avgRating client-side via
+    //   reviews.reduce/length - SO da pagina atual (max 50).
+    //   Seller com 500 reviews via avg de 50 = numero ERRADO no KPI header.
+    //   MLB dashboard standard: KPIs sao agregado completo, nao paginated.
+    //   POST-FIX: agg query separada (AVG + COUNT pending_reply) - retorno
+    //   {avg_rating, pending_reply_count} no top-level response. Frontend usa.
+    //   Pattern V8 W5 cross-page consistency consolidacao.
+    const aggSql = isAdmin
+      ? `SELECT
+           ROUND(AVG(r.rating)::numeric, 1) AS avg_rating,
+           COUNT(*) FILTER (WHERE r.reply_from_seller IS NULL) AS pending_reply_count
+         FROM product_reviews r
+         WHERE r.is_hidden = FALSE
+           AND ($1::UUID IS NULL OR r.seller_id = $1::UUID)`
+      : `SELECT
+           ROUND(AVG(r.rating)::numeric, 1) AS avg_rating,
+           COUNT(*) FILTER (WHERE r.reply_from_seller IS NULL) AS pending_reply_count
+         FROM product_reviews r
+         JOIN sellers s ON s.id = r.seller_id
+         WHERE s.user_id = $1 AND r.is_hidden = FALSE`;
+    const aggParams = isAdmin ? [sellerFilter] : [req.user.sub];
+    const aggResult = await query(aggSql, aggParams);
+    const agg = aggResult.rows[0] || {};
+
     const reviews = r.rows.map((row) => {
       const { _total, ...rest } = row;
       if (!isAdmin && rest.buyer_email) {
@@ -1216,6 +1242,9 @@ app.get('/seller/received',
       reviews,
       count: reviews.length,
       total,
+      // FIX pass 373: agregados cross-page p/ KPI dashboard
+      avg_rating: agg.avg_rating !== null ? Number(agg.avg_rating) : null,
+      pending_reply_count: Number(agg.pending_reply_count || 0),
       limit: lim,
       offset: off,
       has_more: (off + reviews.length) < total,

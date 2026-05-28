@@ -11,11 +11,23 @@ export default function SellerReviewsPage() {
   const [reviews, setReviews] = useState<any[]>([]);
   const [replies, setReplies] = useState<Record<string, string>>({});
   const [loadError, setLoadError] = useState('');
+  // FIX-WORKER-5 pass 373: KPIs cross-page (server-side aggregate vs client-side reduce)
+  const [stats, setStats] = useState<{ total: number; avg_rating: number | null; pending_reply_count: number }>({
+    total: 0, avg_rating: null, pending_reply_count: 0,
+  });
 
   async function load() {
     try {
-      const r = await sellerFetch<{ reviews: any[] }>('/reviews/seller/received');
+      const r = await sellerFetch<{
+        reviews: any[]; total: number; avg_rating: number | null; pending_reply_count: number;
+      }>('/reviews/seller/received');
       setReviews(r.reviews || []);
+      // FIX pass 373: stats agregados backend (todos seller reviews, nao so pagina)
+      setStats({
+        total: Number(r.total || 0),
+        avg_rating: r.avg_rating !== null && r.avg_rating !== undefined ? Number(r.avg_rating) : null,
+        pending_reply_count: Number(r.pending_reply_count || 0),
+      });
       setLoadError('');
     } catch (e: any) { setLoadError(e.message); }
   }
@@ -40,19 +52,22 @@ export default function SellerReviewsPage() {
     });
   }
 
-  const avgRating = reviews.length > 0
-    ? (reviews.reduce((s, r) => s + r.rating, 0) / reviews.length).toFixed(1) : '-';
-  const pendingReply = reviews.filter((r) => !r.reply_from_seller).length;
+  // FIX-WORKER-5 pass 373: usar stats agregados backend (era client reduce - subset)
+  // PRE-FIX: avgRating calculado SO da pagina atual (max 50). Seller 500 reviews
+  //   via avg de 50 -> KPI errado. POST-FIX: stats.avg_rating cobre TODOS reviews.
+  const avgRating = stats.avg_rating !== null ? stats.avg_rating.toFixed(1) : '-';
+  const pendingReply = stats.pending_reply_count;
+  const totalReviews = stats.total;
 
   return (
     <div>
       <h1 className="font-display font-bold text-4xl mb-2">Avaliacoes recebidas</h1>
-      <p className="text-white/60 mb-8">{reviews.length} review(s) - {pendingReply} sem resposta</p>
+      <p className="text-white/60 mb-8">{totalReviews} review(s) - {pendingReply} sem resposta</p>
 
       <div className="grid md:grid-cols-3 gap-4 mb-8">
         <div className="glass p-5">
           <div className="text-xs text-white/50 uppercase">Total de reviews</div>
-          <div className="font-display font-bold text-3xl text-magenta-glow">{reviews.length}</div>
+          <div className="font-display font-bold text-3xl text-magenta-glow">{totalReviews}</div>
         </div>
         <div className="glass p-5">
           <div className="text-xs text-white/50 uppercase">Avaliacao media</div>
