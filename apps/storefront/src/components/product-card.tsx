@@ -61,10 +61,17 @@ export function ProductCard({ product }: { product: any }) {
           }} />
         </div>
         <div className="p-5 flex flex-col flex-1">
+          {/* FIX-WORKER-15 pass 234 (mobile 375px overflow): kind="n8n_workflow" ->
+              "N8N WORKFLOW" (uppercase + tracking-wider) ocupa ~95px. Em mobile
+              375px grid-cols-2 com gaps card width ~167px. Tier badge "Lider Platinum"
+              ocupa 80px+. Sem truncate kind quebrava linha empurrando tier para
+              proxima row, distorcia altura cards do grid (misalinhamento).
+              POST-FIX: min-w-0 + truncate no kind + flex-shrink-0 no tier badge.
+              Resultado: kind trunca "N8N WORKFL..." e tier badge sempre visivel. */}
           <div className="flex items-start justify-between gap-2 mb-2">
-            <span className="text-xs text-white/40 uppercase tracking-wider">{product.kind?.replace(/_/g, ' ')}</span>
+            <span className="text-xs text-white/40 uppercase tracking-wider min-w-0 truncate">{product.kind?.replace(/_/g, ' ')}</span>
             {product.reputation_tier && (
-              <span className={`text-[10px] px-2 py-0.5 rounded-full ${tier.color}`}>{tier.label}</span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 ${tier.color}`}>{tier.label}</span>
             )}
           </div>
           {/* MLB-17 WORKER 16 pass 169: Trust mark "Lider Premium"/"Verificado" para tiers altos */}

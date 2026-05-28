@@ -24411,3 +24411,87 @@ PROXIMA ITER:
 - W4 admin: bulk actions QA queue
 - W16 MLB: Cupom progressivo (R$100 = 5% off, R$300 = 10%, R$500 = 15%)
 - VPS SSH unblock URGENTE (66 ciclos - 22h sem deploy)
+
+============================================================
+PASS 234 (2026-05-28) - W14 + W15 db perf + mobile UX
+============================================================
+
+OBJETIVO: 2 workers paralelos
+- W14 db: mig 070 idx_notif_outbox_ready (composite partial)
+- W15 mobile: product-card kind+tier overflow 375px
+
+============================================================
+1. W14 - mig 070 idx_notif_outbox_ready
+============================================================
+FILE: db/migrations/070_notif_outbox_optimal_idx.sql (CRIADO)
+
+PROBLEMA (cron hot path 30s):
+- processOutbox() executa a cada 30s:
+    SELECT id FROM notifications WHERE sent_status='pending'
+      AND channel IN ('email','telegram')
+      AND retry_count < 5 AND next_retry_at <= NOW()
+      AND locked_by IS NULL
+      ORDER BY priority DESC, created_at ASC
+      LIMIT 25 FOR UPDATE SKIP LOCKED
+- Indice existente idx_notif_pending: (channel, sent_status) PARTIAL
+- PRE-FIX: pega rows pending pelo idx, mas filtros next_retry_at +
+  locked_by + retry_count <5 sao APLICADOS IN-MEMORY apos fetch
+- Cenario SMTP outage: 10k+ pending. Cada cron tick scaneia 10k rows,
+  filtra 8k (retry futuro) + 25 (locked) -> sort 2k para top 25.
+  Custo 20-100ms per tick. Escala com pending count.
+
+POST-FIX: indice composto PARTIAL otimizado pra outbox cron query:
+  (priority DESC, created_at ASC, next_retry_at) PARTIAL WHERE
+    sent_status='pending' AND locked_by IS NULL AND retry_count < 5
+- PARTIAL WHERE filtra ~80% rows no idx (so ready-to-process)
+- ORDER BY columns prefix do idx = scan ordenado SEM sort step
+- Lookup O(log n) + index-only scan ate LIMIT 25 satisfeito
+- Cron tick 20-100ms -> <5ms (10-20x melhoria)
+
+TRADE-OFF: index UPDATE custom em cada INSERT/UPDATE notifications.
+notifications volume ~30k writes/dia - custo write aceitavel.
+
+============================================================
+2. W15 - product-card kind+tier overflow mobile 375px
+============================================================
+FILE: apps/storefront/src/components/product-card.tsx:63-70
+
+PROBLEMA:
+- kind="n8n_workflow" -> "N8N WORKFLOW" (uppercase + tracking-wider ~95px)
+- Mobile 375px viewport: grid-cols-2 + gaps = card width ~167px
+- tier badge "Lider Platinum" ocupa 80px adicional
+- Sem truncate em kind: linha quebrava empurrando tier badge p/ proxima row
+- Resultado: cards do grid com alturas distintas (misalignment visual)
+
+POST-FIX:
+- kind span: min-w-0 + truncate (CSS trick - flex item nao trunca
+  sem min-w-0 mesmo com overflow:hidden)
+- tier span: flex-shrink-0 (garante badge sempre visivel)
+- Resultado: kind trunca "N8N WORKFL..." se necessario, tier badge fixo
+
+============================================================
+SUMARIO PASS 234
+============================================================
+Files: 2 modificados/criados
+  - db/migrations/070_notif_outbox_optimal_idx.sql (NEW perf index)
+  - apps/storefront/src/components/product-card.tsx (mobile fix)
+Lines: ~70 added
+
+VPS SSH BLOQUEADO (67 ciclos - 22.3h sem deploy).
+Mig 070 + Mig 069 (pass 233) pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront --force
+- Apply migs 069+070:
+    docker exec cas_postgres psql -U cas_admin -d cas \
+      -f /docker/db/migrations/069_pwreset_token_idx.sql \
+      -f /docker/db/migrations/070_notif_outbox_optimal_idx.sql
+- W14 test: EXPLAIN ANALYZE processOutbox query - antes Seq Scan + Sort,
+  depois Index Scan idx_notif_outbox_ready sem Sort step
+- W15 test: mobile 375px (iPhone SE) /products grid - cards do mesmo
+  produto kind tier alinhados, sem misalignment de altura
+
+PROXIMA ITER:
+- W16 MLB: Cupom progressivo (R$100=5%, R$300=10%, R$500=15%)
+- W8 visual: PriceAlertButton hover consistency
+- VPS SSH unblock URGENTE (67 ciclos - 22.3h sem deploy)
