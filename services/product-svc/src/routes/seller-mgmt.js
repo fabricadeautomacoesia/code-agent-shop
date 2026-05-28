@@ -45,6 +45,11 @@ async function invalidate(productId) {
       //   Mega menu storefront precisa refletir realtime.
       cache.del('search:categories:v3'),
       cache.del('search:categories:*'),
+      // FIX-WORKER-18 pass 386: invalidate products:me cache (dashboard-seller list)
+      //   Pass 386 adicionou cacheMiddleware 30s em /products/me
+      //   Mutation (POST/PATCH/submit/version) precisa invalidar p/ seller ver
+      //   produto novo/editado imediato no dashboard.
+      cache.del('products:me:*'),
     ];
     if (productId) {
       // Lookup slug e invalida caches especificos do produto
@@ -144,7 +149,30 @@ const SELLER_PRODUCT_KIND = new Set([
 ]);
 const SELLER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-router.get('/', asyncHandler(async (req, res) => {
+// FIX-WORKER-18 pass 386 (cache hot path /products/me - dashboard-seller polling):
+//   PRE-FIX: GET /products/me SEM cacheMiddleware
+//   - Dashboard-seller /products page polling a cada navegacao
+//   - Query: JOIN sellers + COUNT(*) OVER + WHERE filters + ORDER BY paginated
+//   - Seller ativo ~50 products + filters = ~20-50ms PG
+//   - 100 sellers polling = 100+ queries/min
+//   POST-FIX: cacheMiddleware 30s vary by user + filters + paginacao
+//   - Invalidation via existing invalidate() helper (linha 37) ja chama
+//     cache.del('products:list:*') - novo prefix 'products:me' precisa
+//     ser incluido (BUG SIDE: invalidate nao cobria) - fix aqui tambem.
+//   - Per-user (admin/seller_id) p/ isolation
+//   - Pattern V8 paridade pass 361 qna:seller:pending cache
+const productsMeCacheKey = (req) => {
+  const q = req.query;
+  const isAdmin = req.user?.role === 'admin';
+  const owner = isAdmin
+    ? `admin:${q.seller_id || 'all'}`
+    : (req.user?.sub || 'anon');
+  return `products:me:${owner}:s=${q.status||''}:k=${q.kind||''}:lim=${q.limit||50}:off=${q.offset||0}`;
+};
+
+router.get('/',
+  cache.cacheMiddleware(productsMeCacheKey, 30),
+  asyncHandler(async (req, res) => {
   const isAdmin = req.user && req.user.role === 'admin';
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);

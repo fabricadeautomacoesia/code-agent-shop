@@ -27,6 +27,11 @@ async function invalidateProductCache(productId) {
       //   Tambem futuro-proof p/ v4+ via wildcard.
       cache.del('search:categories:v3'),
       cache.del('search:categories:*'),
+      // FIX-WORKER-18 pass 386: invalidate products:me cache (paridade seller-mgmt)
+      //   Admin force-approve/archive/platform-take afeta lista do seller -
+      //   /products/me com cache 30s mostra status stale ate TTL.
+      //   Inclui no batch p/ realtime UX seller dashboard.
+      cache.del('products:me:*'),
     ];
     if (productId) {
       const r = await query('SELECT slug FROM products WHERE id = $1', [productId]);
