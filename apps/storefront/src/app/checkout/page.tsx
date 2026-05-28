@@ -169,13 +169,19 @@ export default function CheckoutPage() {
       )}
 
       <div className="glass p-6 mb-6">
-        <h3 className="font-display font-bold text-lg mb-4">Forma de pagamento</h3>
+        {/* FIX-WORKER-2 pass 140 (a11y): radiogroup wrapper p/ payment methods.
+            ANTES: 3 botoes <button> soltos sem grupo semantico.
+            -> SR anunciava 3 botoes individuais sem 'Forma de pagamento, 1 de 3 selecionado'
+            AGORA: role=radiogroup + aria-labelledby + role=radio + aria-checked */}
+        <h3 id="payment-method-label" className="font-display font-bold text-lg mb-4">Forma de pagamento</h3>
         {/* FIX-WORKER-15: mobile-first - 1 col em 375px, 3 cols sm:+
             Antes: grid-cols-3 sempre -> textos cortados/quebrados em 375px (Pixel 5/iPhone SE) */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div role="radiogroup" aria-labelledby="payment-method-label"
+          className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {(['pix','credit_card','boleto'] as PaymentMethod[]).map((m) => (
-            <button key={m} onClick={() => setMethod(m)}
-              className={`p-4 rounded-lg border-2 text-left sm:text-center transition-all ${method === m ? 'border-magenta bg-magenta/10' : 'border-white/10 bg-white/5 hover:border-white/30'}`}>
+            <button key={m} type="button" onClick={() => setMethod(m)}
+              role="radio" aria-checked={method === m}
+              className={`p-4 rounded-lg border-2 text-left sm:text-center transition-all focus-visible:outline-2 focus-visible:outline-magenta ${method === m ? 'border-magenta bg-magenta/10' : 'border-white/10 bg-white/5 hover:border-white/30'}`}>
               <div className="font-display font-semibold capitalize">{m.replace('_', ' ')}</div>
               <div className="text-xs text-white/50 mt-1">
                 {m==='pix' && 'Aprovacao instantanea'}
@@ -190,12 +196,16 @@ export default function CheckoutPage() {
       {/* MLB-5: Mercado Credito - seletor de parcelas */}
       {method === 'credit_card' && installments.length > 0 && (
         <div className="glass p-6 mb-6">
-          <h3 className="font-display font-bold text-lg mb-1">Parcelar em quantas vezes?</h3>
+          {/* FIX-WORKER-2 pass 140 (a11y): radiogroup p/ installments (mesma padrao payment) */}
+          <h3 id="installments-label" className="font-display font-bold text-lg mb-1">Parcelar em quantas vezes?</h3>
           <p className="text-xs text-white/50 mb-4">Ate 3x sem juros - 4x a 12x com juros de 2,99% a.m.</p>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-72 overflow-y-auto pr-1">
+          <div role="radiogroup" aria-labelledby="installments-label"
+            className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-72 overflow-y-auto pr-1">
             {installments.map((p) => (
-              <button key={p.count} onClick={() => setInstallmentCount(p.count)}
-                className={`p-3 rounded-lg border-2 text-left transition-all ${installmentCount === p.count ? 'border-magenta bg-magenta/10' : 'border-white/10 bg-white/5 hover:border-white/30'}`}>
+              <button key={p.count} type="button" onClick={() => setInstallmentCount(p.count)}
+                role="radio" aria-checked={installmentCount === p.count}
+                aria-label={`${p.count}x de ${Api.formatBRL(p.per_cents)} por mes${p.interest_pct > 0 ? `, juros ${p.interest_pct.toFixed(1)}% ao mes, total ${Api.formatBRL(p.total_cents)}` : ', sem juros'}`}
+                className={`p-3 rounded-lg border-2 text-left transition-all focus-visible:outline-2 focus-visible:outline-magenta ${installmentCount === p.count ? 'border-magenta bg-magenta/10' : 'border-white/10 bg-white/5 hover:border-white/30'}`}>
                 <div className="font-display font-semibold text-sm">{p.count}x</div>
                 <div className="text-xs text-white/70">{Api.formatBRL(p.per_cents)}/mes</div>
                 <div className={`text-[10px] mt-1 ${p.interest_pct > 0 ? 'text-orange-300' : 'text-green-400'}`}>
