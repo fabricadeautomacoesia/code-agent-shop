@@ -31636,3 +31636,32 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
 - W2 checkout E2E
+
+## PASS 373 W5 SELLER: KPI avg_rating cross-page (server aggregate)
+commit b0e21b5
+BUG dashboard-seller reviews KPI numbers ERRADOS sellers grandes
+PRE-FIX:
+  - avgRating = reviews.reduce()/length CLIENT-SIDE
+  - reviews = pagina paginated (max 50)
+  - Seller 500 reviews -> avg de 50 subset = errado
+  - 'Total de reviews' tambem usava reviews.length
+  - MLB standard: KPIs sao agregado completo
+
+POST-FIX backend:
+- /seller/received: agg query AVG + COUNT pending_reply
+- Filter paridade lista (is_hidden + seller match)
+- Top-level avg_rating + pending_reply_count
+
+POST-FIX frontend:
+- stats state cross-page
+- KPI header usa stats.total/avg_rating/pending_reply_count
+- Cross-page consistency consolidation
+
+Pattern V8 W5: KPI dashboards sempre server-side aggregate
+
+106 passes acumulados (268->373) sem deploy VPS
+4 CRITICAL + 20 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
