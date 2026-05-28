@@ -888,10 +888,17 @@ app.post('/keys/:id/rotate',
     const rotDays = rotation_days || 90;
 
     // Tx atomico: lock antiga + insert nova + revoke antiga + audit
+    // FIX-WORKER-17 pass 412 (key_fingerprint forensic gap em audit_log):
+    //   PRE-FIX: SELECT sem key_fingerprint -> audit_log linha 939 logava
+    //   'old_fingerprint: <not_returned>' placeholder string
+    //   - Forense: 'qual fingerprint chave revogada?' = unknown via audit
+    //   - SOC2/LGPD compliance: rotation events sem identificacao precisa
+    //   - Admin investigation post-incident: link old->new key via fp impossivel
+    //   POST-FIX: + key_fingerprint no SELECT (cheap - mesma row lock)
     const result = await tx(async (c) => {
       const old = await c.query(
         `SELECT id, seller_id, provider, key_alias, is_platform_pool,
-                monthly_quota_usd_cents, is_active
+                monthly_quota_usd_cents, is_active, key_fingerprint
            FROM vault_api_keys
           WHERE id = $1::UUID
           FOR UPDATE`,
@@ -929,6 +936,7 @@ app.post('/keys/:id/rotate',
       );
 
       // Audit log
+      // FIX-WORKER-17 pass 412: old_fingerprint real (era placeholder string)
       await c.query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, $2, 'vault.rotate', 'vault_api_key', $3, 'warn', $4::JSONB)`,
@@ -936,7 +944,7 @@ app.post('/keys/:id/rotate',
          JSON.stringify({
            old_key_id: o.id,
            new_key_id: newKey.id,
-           old_fingerprint: '<not_returned>',
+           old_fingerprint: o.key_fingerprint,
            new_fingerprint: newKey.key_fingerprint,
            provider: o.provider,
            key_alias: o.key_alias,
