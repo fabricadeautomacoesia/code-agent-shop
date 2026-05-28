@@ -31309,3 +31309,35 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
 - W2 checkout E2E
+
+## PASS 362 W11 PAYMENT: defesa billingType validate (real money safety)
+commit 3a7d068
+BUG defensive em profundidade billingType
+PRE-FIX: billingMap[order.payment_method] inline -> undefined em DB invalido
+  - Asaas 400 obscuro
+  - Cenarios:
+    * Order anciao pre-mig com legacy payment_method
+    * Admin SQL UPDATE typo
+    * Bypass Zod via internal-token
+
+POST-FIX:
+- Extract billingType const + validate antes createPayment
+- log.error com payment_method real (debug)
+- HTTP 400 friendly: "Metodo X nao suportado"
+- Pattern V8: real money adapters precisam defense-in-depth
+
+W11 payment-svc fluxo createPayment auditado clean:
+  1. tx() FOR UPDATE order (race)
+  2. CPF/CNPJ check
+  3. customer Asaas + id fallback (221)
+  4. splits float precision (249)
+  5. billingType validate (362) <- ESTE
+  6. installmentValue Math.round (230)
+  7. UPDATE idempotente + cancelPayment (289)
+
+95 passes acumulados (268->362) sem deploy VPS
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (4 CRITICAL + 18 migrations)
+- W4 admin audit-log viewer
+- W2 checkout E2E
