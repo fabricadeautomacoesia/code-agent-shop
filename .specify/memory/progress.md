@@ -17384,7 +17384,36 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Admin audit-log + db-audit a11y rico + WAI-ARIA tabs (pass 164)
 - ✅ Admin /disputes 7 buttons + radiogroup (pass 165)
 - ✅ MLB-15 InstantDownloadBadge trust signal (pass 166)
-- ✅ MLB-16 PixDiscountBadge -5% incentivo PIX (pass 167 esta iter)
+- ✅ MLB-16 PixDiscountBadge -5% incentivo PIX (pass 167)
+- ✅ Migration 057 in_app auto-sent trigger (pass 168 esta iter)
+
+W7 PASS 168 RESUMO - W13 IN_APP NOTIFICATIONS AUTO-SENT TRIGGER:
+- AUDIT W13 notifications backlog: 3 in_app pending INFINITAMENTE
+  * test_bell (1.5 dias)
+  * product_new_version (idem)
+  * price_drop (idem)
+- ROOT CAUSE IDENTIFICADO:
+  * Default sent_status='pending' aplicado p/ TODOS canais (in_app/email/telegram)
+  * processOutbox cron WHERE channel IN ('email','telegram') ONLY
+  * in_app nao tem handler - UI fetch direto via GET /api/notifications
+  * Sem outbox processor, in_app fica orfao em 'pending' forever
+- IMPACTOS:
+  * Audit busca 'pending overdue' inclui in_app falsos-positivos
+  * Statistics dashboards mostram 'failed retry' incorreto
+  * sent_at nunca populado p/ in_app (impacta SLA tracking)
+- CREATED db/migrations/057_notifications_in_app_auto_sent.sql:
+  * fn_notif_in_app_auto_sent() PL/pgSQL function
+  * trg_notif_in_app_auto_sent BEFORE INSERT trigger
+  * Logic: IF channel='in_app' -> sent_status='sent' + sent_at=NOW()
+  * Backfill: UPDATE 3 rows existentes (sent_at=COALESCE(sent_at, created_at))
+- APPLIED via SSH em prod:
+  * CREATE FUNCTION + DROP TRIGGER (defensive) + CREATE TRIGGER OK
+  * UPDATE 3 backlog rows -> sent
+  * Pre count: 3 pending in_app | Post: 0 ✓
+  * Test INSERT trigger: sent_status='sent' + sent_at=true automatic
+  * Registrada em schema_migrations
+- 57 migrations totais (era 56)
+- COMMIT cf408a1 pushed GitHub main + applied prod
 
 W7 PASS 167 RESUMO - W16 MLB-16 PIX DISCOUNT BADGE:
 - AUDIT MLB features: 15 implementadas (pass 166), faltava incentivo PIX (BR universal)
