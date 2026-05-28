@@ -32759,3 +32759,32 @@ W17 vault forensic hardening:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 413 W3 PDP: QnaForm button disabled state UX (token consideration)
+commit 3d6b73c
+BUG QnaForm UX confusion sem token
+PRE-FIX:
+  canSubmit = !loading && length valida (SEM token check)
+  User nao logado digita -> button enabled -> clica -> redirect login -> texto perdido
+
+POST-FIX:
+- canSubmit = !loading && !!token && length valida
+- canLoginRedirect = !loading && !token
+- disabled = !canSubmit && !canLoginRedirect
+
+Behavior matrix:
+- Logged + curto: disabled
+- Logged + valido: enabled submit
+- Not-logged: enabled (login CTA sem digitar)
+
+Reduz atrito + zero perda texto
+
+W3 PDP UX:
+  pass 264 soft-nav redirect
+  pass 413 button disabled UX <- ESTE
+
+146 passes acumulados (268->413) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
