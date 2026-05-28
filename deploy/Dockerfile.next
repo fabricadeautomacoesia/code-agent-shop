@@ -1,23 +1,39 @@
+# FIX-WORKER-7 pass 111: APP build-arg para monorepo (era root-only).
+# Pre-fix: npm run build na raiz do repo (sem script "build" - eh monorepo workspaces).
+# Pos-fix: WORKDIR /app/apps/$APP antes do build.
+# Build: docker build -f deploy/Dockerfile.next --build-arg APP=storefront -t cas-storefront:latest .
+ARG APP=storefront
+
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
+COPY apps ./apps
+COPY packages ./packages
 RUN npm install --frozen-lockfile || npm install
 
 FROM node:20-alpine AS builder
+ARG APP
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY --from=deps /app/apps ./apps
+COPY --from=deps /app/packages ./packages
+COPY --from=deps /app/package.json ./package.json
 ENV NEXT_TELEMETRY_DISABLED=1
+WORKDIR /app/apps/${APP}
 RUN npm run build
 
 FROM node:20-alpine AS runner
+ARG APP
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
-COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
-COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=nextjs:nodejs /app/apps/${APP}/.next ./.next
+COPY --from=builder --chown=nextjs:nodejs /app/apps/${APP}/package.json ./package.json
+COPY --from=builder --chown=nextjs:nodejs /app/apps/${APP}/next.config.mjs ./next.config.mjs
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
-COPY --from=builder --chown=nextjs:nodejs /app/next.config.mjs ./next.config.mjs
+COPY --from=builder --chown=nextjs:nodejs /app/packages ./packages
+# Copia public se existir (defensive)
 RUN mkdir -p ./public && chown nextjs:nodejs ./public
 USER nextjs
+EXPOSE 3000
 CMD ["npm", "start"]
