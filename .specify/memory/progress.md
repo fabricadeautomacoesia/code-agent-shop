@@ -32846,3 +32846,30 @@ W18 aiops DLP consolidation cross-svc:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 416 W4 ADMIN: force-liquidate rate-limit paridade
+commit 11b9628
+BUG admin force-liquidate sem rate-limit
+PRE-FIX:
+- /payouts-pending-wallet/:id/force-liquidate sem limiter
+- Real-money mutation endpoint
+- Token admin compromised = mass spam
+- audit_log bloat + cache thrash + DB pool pressure
+
+POST-FIX:
+- forceLiquidateLimiter 5/min admin
+- Paridade pattern V8 admin mutations:
+  pass 201 product-svc/force-approve
+  pass 242 product-svc/archive
+  pass 378 product-svc/platform-take
+  pass 416 seller-svc/force-liquidate <- ESTE
+
+W4 admin real-money endpoints rate-limit cross-svc:
+  4 product-svc admin
+  1 seller-svc admin
+
+149 passes acumulados (268->416) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
