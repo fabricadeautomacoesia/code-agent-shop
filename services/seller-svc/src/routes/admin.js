@@ -1010,8 +1010,23 @@ router.get('/payouts-pending-wallet',
 // ALTERNATIVA simpler: marcar status='approved_manual' e cron pega no proximo ciclo.
 // Optei pela alternativa (sem service-to-service) - audit + admin marca + cron
 // processa no proximo run (max 24h, normalmente <5min se admin coordenar bem).
+// FIX-WORKER-4 pass 416 (rate-limit paridade pass 378 platform-take):
+//   PRE-FIX: force-liquidate sem rate-limit
+//   - Admin endpoint mutation real-money (libera pending wallet p/ cron Asaas)
+//   - Token admin compromised -> mass force-liquidate spam
+//   - Cada call: SELECT FOR UPDATE + INSERT audit + cache.del
+//   - 100 calls/min = audit_log bloat + cache thrash + DB pool pressure
+//   - Pattern V8 paridade product-svc admin/force-approve (pass 201)
+//     + platform-take (pass 378) + archive (pass 242)
+//   POST-FIX: forceLiquidateLimiter 5/min admin
+//   Razoavel: admin processa max 5-10 manual liquidations/min em peak ops
+const forceLiquidateLimiter = require('@cas/shared').rateLimiter.createLimiter({
+  windowMs: 60 * 1000, max: 5,
+  message: 'Muitas force-liquidates recentes. Aguarde 1 minuto.',
+});
 const FORCE_LIQ_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 router.post('/payouts-pending-wallet/:id/force-liquidate',
+  forceLiquidateLimiter, // FIX pass 416
   validate({ body: z.object({ reason: z.string().min(5).max(500) }) }),
   asyncHandler(async (req, res, next) => {
     if (!FORCE_LIQ_UUID_RE.test(req.params.id)) {
