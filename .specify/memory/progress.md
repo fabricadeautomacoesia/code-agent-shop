@@ -20237,3 +20237,38 @@ PROXIMA ITER:
 - W10 search-svc audit
 - W12 qa-svc audit
 - 🚨 VPS SSH unblock URGENTE (6 ciclos sem deploy)
+
+PASS 174 (W18 cache + W12 qa-coherency) - 2026-05-28:
+- W18 pass 174 - cache /sellers/me/sla-status:
+  * Chamada em CADA render do dashboard-seller (/page.tsx:86)
+  * Pre-fix: 100% miss em SELECT + EXTRACT + GREATEST por request
+  * Fix: cache.cacheMiddleware 60s vary by user.sub
+  * Performance esperada: ~15ms PG -> ~1ms Redis (15x faster)
+- W18 pass 174 - extension invalidateSellerCache:
+  * Helper agora invalida tambem seller:sla-status + seller:kpi
+  * Chamado em qualquer PATCH seller info
+- W12 pass 174 - qa-svc cache coherency:
+  * qa-svc QA approve updates sellers SLA mas NAO invalidava cache
+  * Bug: seller veria SLA stale ate 60s apos QA approve
+  * Fix: cache.del(seller:sla-status + seller:kpi) post-tx commit
+  * sellerUserIdToInvalidate captured dentro tx (atomic)
+  * Try/catch best-effort (cache fail nao quebra QA)
+- Commit e9d2214 pushed origin/main
+- VPS SSH ainda bloqueado (7 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN AGUARDANDO DEPLOY:
+- pass 168-173: ja documentados (a11y + DRY + migration 058)
+- pass 174: cache /sla-status + qa-svc cache coherency
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_qa-svc --force
+- Verificar: time curl -H "Authorization: Bearer SELLER_TOKEN" \
+    https://api.../sellers/me/sla-status (segunda chamada deve ser <5ms)
+- Logs: docker service logs cas_seller-svc | grep "sla-status"
+
+PROXIMA ITER:
+- W18 mais cache: /sellers/me/sla-history (chamado em /loja)
+- W7 audit endpoints sem cache em order-svc/payment-svc
+- W6 audit reset-password flow auth-svc
+- W10 search-svc bugs
+- 🚨 VPS SSH unblock URGENTE (7 ciclos sem deploy!)
