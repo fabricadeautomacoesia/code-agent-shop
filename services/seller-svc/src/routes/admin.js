@@ -674,19 +674,43 @@ router.get('/payouts/pending',
   cache.cacheMiddleware(payoutsPendingCacheKey, 20),
   asyncHandler(async (req, res) => {
     const statusParam = (req.query.status || 'pending').toString().toLowerCase();
-    const VALID = new Set(['pending','approved','all']);
+    // FIX-WORKER-4 pass 356: + paid + rejected + all_states
+    //   PRE-FIX: VALID = {pending, approved, all} - admin NAO podia ver
+    //   payouts concluidos (paid) ou rejeitados via dashboard.
+    //   Auditoria financeira / forense forcada a query DB direto (slow path).
+    //   Backend tem status (pending|approved|paid|rejected) - 50% inacessivel.
+    //   POST-FIX: + paid + rejected como filtros stand-alone +
+    //   'all_states' (overload do antigo 'all' incluindo final states).
+    //   'all' mantido p/ backward-compat (so ativos: pending+approved).
+    const VALID = new Set(['pending','approved','paid','rejected','all','all_states']);
     const status = VALID.has(statusParam) ? statusParam : 'pending';
     const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
     // FIX bug 6: parameterize status em vez de string interpolation
-    const whereParts = status === 'all'
-      ? [`p.status IN ('pending','approved')`]
-      : [`p.status = $1`];
-    const params = status === 'all' ? [] : [status];
+    // FIX-WORKER-4 pass 356: + all_states = todos estados (forense/auditoria)
+    let whereParts;
+    let params;
+    if (status === 'all') {
+      whereParts = [`p.status IN ('pending','approved')`];
+      params = [];
+    } else if (status === 'all_states') {
+      whereParts = [`p.status IN ('pending','approved','paid','rejected')`];
+      params = [];
+    } else {
+      whereParts = [`p.status = $1`];
+      params = [status];
+    }
     const iLim = params.length + 1;
     const iOff = params.length + 2;
     params.push(limit, offset);
+
+    // FIX-WORKER-4 pass 356: ORDER dinamico por status filter
+    //   pending/approved (ativos) = ASC (FIFO queue, oldest first p/ SLA)
+    //   paid/rejected (final) = DESC (recentes p/ auditoria)
+    //   all/all_states = DESC (mistura - prioriza visualizacao recente)
+    const orderDirection = (status === 'pending' || status === 'approved' || status === 'all')
+      ? 'ASC' : 'DESC';
 
     const r = await query(
       `SELECT p.id, p.seller_id, p.amount_cents, p.status, p.asaas_transfer_id,
@@ -696,7 +720,7 @@ router.get('/payouts/pending',
          FROM seller_payouts p
          JOIN sellers s ON s.id = p.seller_id
         WHERE ${whereParts.join(' AND ')}
-        ORDER BY p.requested_at ASC, p.id ASC
+        ORDER BY p.requested_at ${orderDirection}, p.id ${orderDirection}
         LIMIT $${iLim} OFFSET $${iOff}`,
       params
     );

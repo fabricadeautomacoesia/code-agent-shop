@@ -11,7 +11,11 @@ export default function PayoutsPage() {
   // FIX-WORKER-4 pass 4: filtro de status. Antes UI so via 'pending', nunca
   // mostrava botao "Transferir Asaas" (que dependia de status='approved').
   // Default 'all' garante que admin ve TODO o pipeline (pending+approved).
-  const [statusFilter, setStatusFilter] = useState<'pending'|'approved'|'all'>('all');
+  // FIX-WORKER-4 pass 356: + paid + rejected + all_states
+  //   Auditoria financeira / forense precisa ver payouts pagos+rejeitados.
+  //   Antes admin tinha que query DB direto (slow + sem cache).
+  //   Backend agora suporta 6 valores - UI expoe 5 (all_states substitui exclusive view).
+  const [statusFilter, setStatusFilter] = useState<'pending'|'approved'|'paid'|'rejected'|'all_states'>('pending');
 
   async function load() {
     try {
@@ -61,14 +65,23 @@ export default function PayoutsPage() {
           FIX-WORKER-4 pass 155 (a11y): role=radiogroup + role=radio + aria-checked
           + aria-labelledby p/ SR anunciar grupo semantico */}
       <h2 id="payouts-filter-label" className="sr-only">Filtrar payouts por status</h2>
-      <div role="radiogroup" aria-labelledby="payouts-filter-label" className="flex gap-2 mb-6">
-        {(['all','pending','approved'] as const).map((s) => (
-          <button key={s} type="button" onClick={() => setStatusFilter(s)}
-            role="radio" aria-checked={statusFilter === s}
+      {/* FIX-WORKER-4 pass 356: + paid + rejected + all_states filtros
+          Pipeline completo agora visivel admin: pending->approved->paid|rejected.
+          Auditoria forense via all_states. Labels PT-BR explicitos. */}
+      <div role="radiogroup" aria-labelledby="payouts-filter-label" className="flex gap-2 mb-6 flex-wrap">
+        {([
+          { v: 'pending',    l: 'Pendentes' },
+          { v: 'approved',   l: 'Aprovados' },
+          { v: 'paid',       l: 'Pagos' },
+          { v: 'rejected',   l: 'Rejeitados' },
+          { v: 'all_states', l: 'Todos (auditoria)' },
+        ] as const).map((s) => (
+          <button key={s.v} type="button" onClick={() => setStatusFilter(s.v)}
+            role="radio" aria-checked={statusFilter === s.v}
             className={`px-3 py-1.5 rounded-lg text-xs uppercase font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-magenta ${
-              statusFilter === s ? 'bg-gradient-to-r from-magenta to-violet-deep text-white' : 'glass hover:border-white/30'
+              statusFilter === s.v ? 'bg-gradient-to-r from-magenta to-violet-deep text-white' : 'glass hover:border-white/30'
             }`}>
-            {s === 'all' ? 'Todos ativos' : s}
+            {s.l}
           </button>
         ))}
       </div>
