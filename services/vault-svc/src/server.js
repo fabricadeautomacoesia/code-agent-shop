@@ -883,6 +883,158 @@ app.post('/usage', vaultUseGuard,
   })
 );
 
+// ============================================================
+// FIX-WORKER-17 pass 217: SELLER BYOK SELF-SERVICE endpoints
+// ============================================================
+// Pre-pass-217: TODO endpoints vault-svc eram adminOnly. BYOK sellers
+// dependiam de admin para provisionar/listar/revogar SUAS proprias keys.
+// Bottleneck operacional: admin queue lotada com requests sellers.
+//
+// Post-pass-217: 3 endpoints seller self-service:
+//   GET    /keys/me              - lista chaves do seller (sem encrypted_key leak)
+//   POST   /keys/me              - provisiona chave para SUA loja
+//   POST   /keys/me/:id/revoke   - revoga chave PROPRIA
+//
+// SECURITY HARDENING:
+// - Ownership check via sellers.user_id = req.user.sub (JOIN strict)
+// - SELECT NUNCA retorna encrypted_key/iv/auth_tag (apenas metadata + fingerprint)
+// - Seller NAO pode setar is_platform_pool=true (so admin pode)
+// - Provision rate-limit reused (provisionRateLimit existing)
+// - Audit log INSERT em provision + revoke (forense seller-led changes)
+
+const sellerKeyProvisionSchema = z.object({
+  provider: z.enum(['openai','anthropic','gemini','groq','cohere','mistral','azure-openai','custom']),
+  key_alias: z.string().min(3).max(100),
+  plain_key: z.string().min(10),
+  monthly_quota_usd_cents: z.number().int().positive().nullable().optional(),
+  // Seller NUNCA pode setar is_platform_pool (so admin):
+  // is_platform_pool: z.boolean()  REMOVED p/ seller schema
+  expires_at: z.string().datetime().optional(),
+  rotation_days: z.number().int().min(1).max(365).optional(),
+});
+
+// GET /api/vault/keys/me - lista chaves do seller logado (sem encrypted)
+app.get('/keys/me', sellerOrAdmin, asyncHandler(async (req, res) => {
+  // SECURITY: ownership via sellers.user_id (admin pode passar ?seller_id query)
+  const isAdmin = req.user && ['admin','staff'].includes(req.user.role);
+  const sellerFilter = isAdmin && req.query.seller_id ? req.query.seller_id : null;
+
+  // Para seller: lookup sua proprio seller_id via sellers table
+  let ownerSellerId;
+  if (isAdmin && sellerFilter) {
+    ownerSellerId = sellerFilter;
+  } else {
+    const s = await query('SELECT id FROM sellers WHERE user_id = $1', [req.user.sub]);
+    if (!s.rows.length) return res.status(404).json({ error: 'seller_not_found' });
+    ownerSellerId = s.rows[0].id;
+  }
+
+  // Explicit fields (NUNCA encrypted_key/iv/auth_tag - security):
+  const r = await query(
+    `SELECT id, provider, key_alias, key_fingerprint,
+            is_active, monthly_quota_usd_cents, usage_this_month_cents,
+            expires_at, rotation_due_at, last_used_at,
+            created_at, revoked_at
+       FROM vault_api_keys
+      WHERE seller_id = $1
+        AND is_platform_pool = FALSE
+      ORDER BY created_at DESC, id ASC
+      LIMIT 50`,
+    [ownerSellerId]
+  );
+  res.json({ keys: r.rows, count: r.rows.length });
+}));
+
+// POST /api/vault/keys/me - seller provisiona SUA chave
+app.post('/keys/me',
+  provisionRateLimit,  // reuse limiter existente
+  sellerOrAdmin,
+  validate({ body: sellerKeyProvisionSchema }),
+  asyncHandler(async (req, res, next) => {
+    const isAdmin = req.user && ['admin','staff'].includes(req.user.role);
+    // SECURITY: seller NUNCA pode setar is_platform_pool (force false)
+    const isPlatformPool = false;
+
+    let sellerId;
+    if (isAdmin && req.body.seller_id) {
+      sellerId = req.body.seller_id;
+    } else {
+      const s = await query('SELECT id FROM sellers WHERE user_id = $1', [req.user.sub]);
+      if (!s.rows.length) return next(errorHandler.notFound('seller_not_found'));
+      sellerId = s.rows[0].id;
+    }
+
+    const { provider, key_alias, plain_key, monthly_quota_usd_cents, expires_at, rotation_days } = req.body;
+    const { encrypted, iv, tag } = cryp.encrypt(plain_key);
+    const fp = cryp.sha256(plain_key).slice(0, 16);
+    const rotDays = rotation_days || 90;
+
+    const r = await query(
+      `INSERT INTO vault_api_keys
+         (seller_id, provider, key_alias, encrypted_key, iv, auth_tag, key_fingerprint,
+          monthly_quota_usd_cents, is_platform_pool, expires_at, rotation_due_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW() + ($11 || ' days')::INTERVAL)
+       RETURNING id, provider, key_alias, key_fingerprint, is_platform_pool,
+                 monthly_quota_usd_cents, created_at, rotation_due_at`,
+      [sellerId, provider, key_alias, encrypted, iv, tag, fp,
+       monthly_quota_usd_cents || null, isPlatformPool, expires_at || null, String(rotDays)]
+    );
+    // Audit log seller-led action
+    await query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'vault.seller_provision', 'vault_api_key', $3, 'info', $4::JSONB)`,
+      [req.user.sub, req.user.role, r.rows[0].id,
+       JSON.stringify({ provider, key_alias, fingerprint: fp, seller_id: sellerId, ip: req.ip })]
+    ).catch(() => {});
+
+    log.info({ provisioned: r.rows[0].id, provider, fp, seller_id: sellerId, by: req.user.sub },
+      '[vault.seller_provision]');
+    res.status(201).json(r.rows[0]);
+  })
+);
+
+// POST /api/vault/keys/me/:id/revoke - seller revoga SUA chave
+app.post('/keys/me/:id/revoke',
+  sellerOrAdmin,
+  validate({ body: z.object({ reason: z.string().min(3).max(500) }) }),
+  asyncHandler(async (req, res, next) => {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+    // SECURITY: ownership check - key.seller_id == seller.user_id == req.user.sub
+    // Admin bypass: pode revogar qualquer key (via /keys/:id/revoke endpoint admin)
+    const isAdmin = req.user && ['admin','staff'].includes(req.user.role);
+
+    const r = await query(
+      isAdmin
+        ? `UPDATE vault_api_keys
+              SET is_active = FALSE, revoked_at = NOW(), revoked_reason = $1
+            WHERE id = $2 AND is_active = TRUE
+            RETURNING id`
+        : `UPDATE vault_api_keys
+              SET is_active = FALSE, revoked_at = NOW(), revoked_reason = $1
+            WHERE id = $2 AND is_active = TRUE
+              AND seller_id IN (SELECT id FROM sellers WHERE user_id = $3)
+            RETURNING id`,
+      isAdmin ? [req.body.reason, req.params.id]
+              : [req.body.reason, req.params.id, req.user.sub]
+    );
+    if (!r.rows.length) {
+      return next(errorHandler.notFound('key_not_found_or_already_revoked'));
+    }
+    // Audit log
+    await query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'vault.seller_revoke', 'vault_api_key', $3, 'warn', $4::JSONB)`,
+      [req.user.sub, req.user.role, req.params.id,
+       JSON.stringify({ reason: req.body.reason.slice(0, 200), ip: req.ip })]
+    ).catch(() => {});
+
+    res.json({ ok: true, revoked: r.rows[0].id });
+  })
+);
+
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
 
