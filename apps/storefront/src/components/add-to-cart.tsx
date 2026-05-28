@@ -130,8 +130,12 @@ export function AddToCart({ productId, isFree }: { productId: string; isFree?: b
                        <><ShoppingCart className="w-4 h-4" aria-hidden="true" /> Adicionar ao carrinho</>}
       </button>
       {err && (
+        /* FIX-WORKER-3 pass 238 (a11y consistency): AlertCircle decorativo precisa
+           aria-hidden. Linha 110 (variant isFree) ja tinha, paga nao. NVDA/JAWS
+           anunciava "imagem AlertCircle" antes da mensagem - ruidoso e quebra
+           pattern V8 todos icons decorativos com aria-hidden. */
         <div role="alert" className="flex items-start gap-2 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg p-2 mt-2">
-          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> <span>{err}</span>
+          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" /> <span>{err}</span>
         </div>
       )}
     </>

@@ -40,7 +40,24 @@ export default function PedidoPage() {
       .catch((e) => setErr(e.message));
   }, [token, params.id]);
 
-  if (err) return <div className="container mx-auto px-6 py-16 text-center text-red-400">Erro: {err}</div>;
+  if (err) return (
+    /* FIX-WORKER-2 pass 238 (UX dead-end error): page mostrava "Erro: X" sem
+       CTAs. User stuck - sem voltar, retry ou navegar. Comum: pedido de outro
+       user (403), id inexistente (404), session expired pos-load (401).
+       POST-FIX: role=alert + 2 CTAs (Voltar conta + Tentar novamente refresh). */
+    <div className="container mx-auto px-6 py-16 max-w-md text-center">
+      <div role="alert" className="glass p-6">
+        <AlertCircle className="w-12 h-12 mx-auto mb-3 text-red-400" aria-hidden="true" />
+        <h1 className="font-display font-bold text-xl mb-2 text-red-400">Erro ao carregar pedido</h1>
+        <p className="text-sm text-white/70 mb-4">{err}</p>
+        <div className="flex gap-2 justify-center">
+          <Link href="/conta" className="btn-ghost text-sm">Voltar para conta</Link>
+          <button type="button" onClick={() => { setErr(''); router.refresh(); }}
+            className="btn-primary text-sm">Tentar novamente</button>
+        </div>
+      </div>
+    </div>
+  );
   if (!order) return <div className="container mx-auto px-6 py-16 text-center text-white/60">Carregando...</div>;
 
   const badge = STATUS_BADGE[order.status] || STATUS_BADGE.cart;

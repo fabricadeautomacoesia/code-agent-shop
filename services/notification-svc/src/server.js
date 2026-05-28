@@ -711,13 +711,22 @@ async function processOutbox() {
   //   - Se row nao existe -> default ENABLED (opt-out explicito needed)
   // Notifs criticas (security_*, password_reset, 2fa_*) BYPASS prefs check:
   //   Pattern industry - alerts seguranca SEMPRE enviadas mesmo opted-out.
+  // FIX-WORKER-13 pass 238 (case-insensitive critical bypass):
+  //   PRE-FIX: n.template_code IN (...) era case-sensitive. Bug latente:
+  //   migration legacy ou novo desenvolvedor poderia gravar template_code com
+  //   case diferente (ex: 'Security_Refresh_Reuse', 'PASSWORD_RESET') -> bypass
+  //   critical falhava -> security alert respeitava opt-out -> user proxy
+  //   nunca recebia alert "atividade suspeita" pois optou-out de tudo.
+  //   POST-FIX: LOWER() em ambos lados da comparison. Defensive case-fold
+  //   garante critical templates SEMPRE bypass mesmo com case drift.
   const CRITICAL_TEMPLATES = `'security_refresh_reuse', 'password_reset', '2fa_disabled', 'asaas_refund_failed'`;
   const pending = await query(
     `SELECT n.id, n.user_id, n.channel, n.template_code, n.title, n.body, n.body_html,
             n.priority, n.payload, n.retry_count, u.email, u.full_name, u.locale,
             -- W13 pass 227: user prefs override - opt-out support
+            -- W13 pass 238: LOWER() defensive case-fold em critical check
             CASE
-              WHEN n.template_code IN (${CRITICAL_TEMPLATES}) THEN TRUE
+              WHEN LOWER(n.template_code) IN (${CRITICAL_TEMPLATES}) THEN TRUE
               WHEN unp.is_enabled IS NULL THEN TRUE   -- default enabled
               ELSE unp.is_enabled
             END AS pref_enabled

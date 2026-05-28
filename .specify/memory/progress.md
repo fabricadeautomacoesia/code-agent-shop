@@ -24751,3 +24751,95 @@ PROXIMA ITER:
 - W2 checkout: erro mensagens i18n
 - W4 admin: bulk actions QA queue
 - VPS SSH unblock URGENTE (70 ciclos - 23.3h sem deploy)
+
+============================================================
+PASS 238 (2026-05-28) - W3 + W2 + W13 a11y/UX/security
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W3 storefront: add-to-cart AlertCircle aria-hidden inconsistency
+- W2 storefront: pedido detail dead-end error sem CTAs
+- W13 notification-svc: critical templates case-insensitive bypass
+
+============================================================
+1. W3 - add-to-cart AlertCircle aria-hidden parity
+============================================================
+FILE: apps/storefront/src/components/add-to-cart.tsx:134
+
+PROBLEMA:
+- Versao isFree (linha 110): <AlertCircle aria-hidden="true" /> OK
+- Versao paga (linha 134): <AlertCircle /> SEM aria-hidden
+- NVDA/JAWS anunciava "imagem AlertCircle" antes da mensagem
+- Quebra pattern V8 (todos icons decorativos com aria-hidden)
+- Inconsistencia entre 2 variants do mesmo componente
+
+POST-FIX: aria-hidden="true" no AlertCircle paga
+- Screen reader anuncia apenas role="alert" + mensagem
+- Padronizado com isFree variant
+
+============================================================
+2. W2 - /conta/pedidos/[id] dead-end error sem CTAs
+============================================================
+FILE: apps/storefront/src/app/conta/pedidos/[id]/page.tsx:43
+
+PROBLEMA:
+- if (err) return <div>Erro: {err}</div>
+- Sem role=alert, sem CTAs (voltar, retry)
+- Cenarios reais:
+  * Pedido de outro user -> 403
+  * ID inexistente -> 404
+  * Session expired pos-load -> 401
+- User stuck na tela: nao volta, nao tenta novamente, nao navega
+
+POST-FIX:
+- glass card centralizado com AlertCircle icon + role=alert
+- 2 CTAs:
+  * "Voltar para conta" (Link href=/conta)
+  * "Tentar novamente" (setErr('') + router.refresh())
+- AlertCircle decorativo com aria-hidden
+
+============================================================
+3. W13 - critical_templates case-sensitive bypass risk
+============================================================
+FILE: services/notification-svc/src/server.js:714-720
+
+PROBLEMA (defesa em profundidade):
+- CRITICAL_TEMPLATES check: n.template_code IN ('security_refresh_reuse',
+  'password_reset', '2fa_disabled', 'asaas_refund_failed')
+- Case-sensitive PG comparison
+- Cenario bug latente:
+  * Migration legacy ou dev novo gravava 'Security_Refresh_Reuse' (mixed)
+  * Bypass critical falhava -> notif tratada como normal opt-outable
+  * User que optou-out de tudo NUNCA recebia alert "atividade suspeita"
+  * Security gap silencioso - admin nao detectaria sem audit cross-check
+- LGPD/SOC2: security notifications precisam delivery garantido
+
+POST-FIX:
+- LOWER(n.template_code) IN (...lowercase list) - case-fold defensive
+- Templates literal continuam lowercase (canonical seed em mig 068)
+- Defensive contra futuro case drift (migration manual, hot-fix devs)
+
+============================================================
+SUMARIO PASS 238
+============================================================
+Files: 3 modificados
+  - apps/storefront/src/components/add-to-cart.tsx (a11y)
+  - apps/storefront/src/app/conta/pedidos/[id]/page.tsx (UX)
+  - services/notification-svc/src/server.js (case-fold)
+Lines: ~40 added
+
+VPS SSH BLOQUEADO (71 ciclos - 23.7h sem deploy).
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_notification-svc --force
+- W3: NVDA/VoiceOver navegar /product/X -> add to cart com erro forcado
+  Deve anunciar apenas "Erro: ..." (sem "imagem AlertCircle")
+- W2: acessar /conta/pedidos/00000000-0000-0000-0000-000000000000
+  Tela glass card + 2 CTAs aparecem (sem dead-end)
+- W13: INSERT notification com template_code='SECURITY_REFRESH_REUSE'
+  user opted-out -> notif sent normalmente (case bypass funciona)
+
+PROXIMA ITER:
+- W4 admin: bulk select QA queue
+- W12 qa-svc: timeout 5min cron
+- VPS SSH unblock URGENTE (71 ciclos - 23.7h)
