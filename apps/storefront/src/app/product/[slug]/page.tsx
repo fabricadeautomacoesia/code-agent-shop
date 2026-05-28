@@ -170,8 +170,13 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             <RecentSaleBadge lastSaleAt={product.last_sale_at} variant="pdp" />
             {/* MLB-NEW WORKER 14: wishlist_count badge (social proof "X pessoas favoritaram") */}
             {Number(product.wishlist_count) >= 10 && (
+              /* FIX-WORKER-15 pass 274 (a11y Heart decorativo):
+                 Texto adjacente "X+ favoritaram" carrega semantica.
+                 Heart icon decorativo - aria-hidden previne NVDA anunciar
+                 "imagem Heart X+ favoritaram" redundante.
+                 Pattern V8 a11y pass 255-256 (Star icons consolidated). */
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-pink-500/15 text-pink-300 text-xs font-semibold mb-4 ml-2 border border-pink-500/20">
-                <Heart className="w-3 h-3 fill-pink-400 text-pink-400" />
+                <Heart className="w-3 h-3 fill-pink-400 text-pink-400" aria-hidden="true" />
                 {Math.floor(Number(product.wishlist_count) / 10) * 10}+ favoritaram
               </div>
             )}

@@ -27808,3 +27808,78 @@ PROXIMA ITER:
 - W4 admin UI dashboard-admin /payouts-pending-wallet page consume endpoint
 - W11 forfeit cron (seller deleta conta sem liquidar)
 - VPS SSH unblock CRITICAL (106 ciclos - 35.3h MARCO!!!)
+
+============================================================
+PASS 274 (2026-05-28) - W4 admin UI + W15 a11y (closes payouts trio)
+============================================================
+
+OBJETIVO: 2 workers principais
+- W4 dashboard-admin: UI page consume endpoint pass 273
+- W15 storefront: PDP Heart icon aria-hidden
+
+============================================================
+1. W4 - dashboard-admin /payouts-pending-wallet page
+============================================================
+FILES (CRIADOS):
+- apps/dashboard-admin/src/app/payouts-pending-wallet/layout.tsx
+- apps/dashboard-admin/src/app/payouts-pending-wallet/page.tsx
+
+CONTEXTO (fecha COMPLETAMENTE o trio):
+- Pass 270: mig 078 schema + INSERT fallback order-svc
+- Pass 272: cron liquidator payment-svc 24h
+- Pass 273: endpoint admin GET seller-svc
+- Pass 274: UI page admin (este pass) - feature COMPLETA end-to-end
+
+UI FEATURES:
+- Stats cards: Total pendentes + Liquidaveis agora + Total em aberto
+- Filtro tabs (pending/liquidated/forfeited/all) com aria-pressed
+- Tabela com store_name + wallet_configured flag (green/orange icon)
+- Status badge color-coded (yellow/green/red)
+- Polling 30s + pausa em tab background (pattern pass 6 orders)
+- Cache lastUpdate timestamp UX
+- Empty state mensagem contextual
+
+============================================================
+2. W15 - PDP wishlist_count Heart aria-hidden
+============================================================
+FILE: apps/storefront/src/app/product/[slug]/page.tsx:172-177
+
+PROBLEMA:
+- <Heart> icon sem aria-hidden em badge "X+ favoritaram"
+- Texto adjacente carrega semantica
+- NVDA/JAWS anuncia "imagem Heart X+ favoritaram" redundante
+- Pattern V8 a11y consolidado pass 255-256
+
+POST-FIX: aria-hidden="true" em Heart decorative
+
+============================================================
+SUMARIO PASS 274
+============================================================
+Files: 3 modificados/criados
+  - apps/dashboard-admin/src/app/payouts-pending-wallet/layout.tsx (NEW)
+  - apps/dashboard-admin/src/app/payouts-pending-wallet/page.tsx (NEW)
+  - apps/storefront/src/app/product/[slug]/page.tsx (Heart a11y)
+Lines: ~170 added
+
+MARCO COMPLETO: trio pass 270/272/273/274 implementou feature
+payouts_pending_wallet END-TO-END:
+- Schema (mig 078) + indexes (mig 078, 079)
+- Backend INSERT fallback (order-svc)
+- Cron liquidator 24h (payment-svc)
+- Admin endpoint (seller-svc)
+- Admin UI consume (dashboard-admin) ESTE PASS
+
+VPS SSH BLOQUEADO (107 ciclos - 35.7h sem deploy).
+Migs 069-079 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_dashboard-admin --force
+- W4: admin login -> /admin/payouts-pending-wallet ->
+  Ver pendentes + filtro status + sellers com wallet_configured highlight
+- W15: NVDA navegar PDP com wishlist_count >= 10 ->
+  Anuncia "X+ favoritaram" sem "imagem Heart" preceding
+
+PROXIMA ITER:
+- W4 dashboard-admin nav link p/ nova page
+- W11 forfeit cron (seller delete account sem liquidar)
+- VPS SSH unblock CRITICAL (107 ciclos - 35.7h MARCO!!)
