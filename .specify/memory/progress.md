@@ -31934,3 +31934,41 @@ Pattern V8 W4 final consolidation
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W18 perf optimization
+
+## PASS 384 W11 *** 5o CRITICAL ***: refund dispatch (real money gap)
+commit cc9f374
+BUG CRITICAL REAL MONEY: dispute refund NUNCA disparado
+PRE-FIX: order-svc /admin/disputes/:id/resolve
+  - resolution_action='refund_approved' marcava status + notification
+  - MAS asaas.refundPayment() NUNCA EH CHAMADO
+  - asaas.js linha 80 exported, ZERO callers
+  - Buyer recebe email mas dinheiro NUNCA volta
+  - Pattern similar pass 289 asaas.cancelPayment missing
+
+POST-FIX:
+1. order-svc: setImmediate dispatch p/ payment-svc /payments/asaas/refund
+   - Fire-and-forget paridade checkout pattern
+   - dispute_id + refund_amount_cents + reason payload
+2. payment-svc novo /payments/asaas/refund:
+   - x-internal-token guard
+   - Lookup order via dispute_id JOIN
+   - asaas.refundPayment(payment_id, value_BRL, reason)
+   - Partial: cents -> BRL com min total cap
+   - Full refund: value=undefined
+   - Audit log atomic
+   - Asaas webhook PAYMENT_REFUNDED finaliza (pre-existing)
+   - PAYMENT_REFUND_FAILED alerta admin (pass 222)
+
+5o CRITICAL acumulado na consolidacao:
+  289 asaas.cancelPayment (double-charge)
+  304 gateway rateLimit (DoS)
+  354 gateway body limit (upload broken)
+  359 vault+auth keyGenerator (DoS)
+  384 dispute refund dispatch (real money loss) <- ESTE
+
+117 passes acumulados (268->384) sem deploy VPS
+5 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (5 CRITICAL!)
+- W4 admin audit-log viewer
