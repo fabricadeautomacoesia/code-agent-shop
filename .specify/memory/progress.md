@@ -32480,3 +32480,33 @@ Pattern V8 W14: migrations precisam EXCEPTION wrap
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Self-correction audit: search outras migrations sem EXCEPTION
+
+## PASS 403 W6 AUTH: user_sessions.user_agent DLP mask (paridade audit_log)
+commit bce0780
+BUG user_sessions.user_agent storage raw
+PRE-FIX:
+- /login INSERT user_sessions raw UA
+- /refresh INSERT rotation raw UA
+- audit_log paths JA mask (pass 282/322)
+- user_sessions ficou lagged
+
+DLP risks:
+- Custom UA corporate com Bearer/JWT
+- Sessions live 7d = exposure broader
+- Admin /sessions ve cleartext
+- LGPD minimização dados
+
+POST-FIX:
+- mask.text(UA prefix 200) em AMBOS inserts
+- Paridade audit_log/notifications
+
+W6 DLP mask user_agent cross-svc:
+  audit_log paths (282-400)
+  notifications.payload (282)
+  user_sessions (403) <- ESTE
+
+136 passes acumulados (268->403) sem deploy VPS
+5 CRITICAL + 23 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
