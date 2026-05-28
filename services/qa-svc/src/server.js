@@ -282,30 +282,51 @@ app.post('/qa/run',
           log.warn({ run_id }, '[qa.dispatch.no_secret] QA_CALLBACK_SECRET ausente - callbacks sem HMAC');
         }
 
-        // Opcao A: n8n se configurado (orquestracao externa)
+        // FIX-WORKER-12 pass 394 (worker fallback se N8N falha - resilience):
+        //   PRE-FIX: if (N8N_URL) -> n8n only. Se n8n falha (auth/network/timeout)
+        //   -> catch line 310 marca dispatch_failed. SEM fallback worker.
+        //   N8N outage = TODOS QA runs failing (single point of failure).
+        //   POST-FIX: try n8n primeiro, se falhar (n8nErr captured) tenta
+        //   worker fallback transparente. Aumenta resilience pipeline QA.
+        //   Worker fallback so funciona se WORKER_URL configurado (default OK).
+        let dispatched = false;
+        let n8nErr = null;
         if (N8N_URL) {
-          log.info({ run_id, url: N8N_URL }, '[qa.dispatch.n8n]');
-          await fetch(N8N_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Signature': signPayload(payload),
-              'X-Run-Id': run_id,
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(15000),
-          });
-          await query(`UPDATE product_qa_runs SET n8n_execution_id = $1 WHERE id = $2`,
-            [`pending-${run_id.slice(0, 8)}`, run_id]);
-        } else {
-          // Opcao B: chamada direta ao worker Python
-          log.info({ run_id, url: WORKER_URL }, '[qa.dispatch.worker]');
+          try {
+            log.info({ run_id, url: N8N_URL }, '[qa.dispatch.n8n]');
+            await fetch(N8N_URL, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Signature': signPayload(payload),
+                'X-Run-Id': run_id,
+              },
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(15000),
+            });
+            await query(`UPDATE product_qa_runs SET n8n_execution_id = $1 WHERE id = $2`,
+              [`pending-${run_id.slice(0, 8)}`, run_id]);
+            dispatched = true;
+          } catch (e) {
+            n8nErr = mask.text(String(e.message || '').slice(0, 300));
+            log.warn({ run_id, err: n8nErr }, '[qa.dispatch.n8n_failed] trying worker fallback');
+            // Continua p/ fallback worker (nao throw)
+          }
+        }
+        if (!dispatched) {
+          // Opcao B: chamada direta ao worker Python (fallback ou default)
+          log.info({ run_id, url: WORKER_URL, fallback: !!n8nErr }, '[qa.dispatch.worker]');
           await fetch(`${WORKER_URL}/analyze`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
             signal: AbortSignal.timeout(300000), // 5 min
           });
+          dispatched = true;
+          // Log audit se foi fallback (operational signal)
+          if (n8nErr) {
+            log.info({ run_id, n8n_err: n8nErr }, '[qa.dispatch.fallback_succeeded]');
+          }
         }
       } catch (e) {
         /* FIX-WORKER-12 pass 303 (DLP mask dispatch error):
