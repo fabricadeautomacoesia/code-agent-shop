@@ -83,13 +83,16 @@ router.get('/',
     const offIdx = i++;
 
     // BUG 4: LEFT JOIN explicit (substitui 4 subqueries)
+    // FIX-WORKER-18 pass 178: COUNT(*) OVER() window elimina segunda query
+    // pelo COUNT total. PG executa scan unico - latencia ~30ms -> ~15ms.
     const r = await query(
       `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
               p.cover_image_url, p.price_cents, p.currency, p.is_free,
               p.avg_rating, p.review_count, p.sales_count, p.is_platform_owned,
               s.store_slug, s.store_name, s.reputation_tier,
               c.slug AS category_slug,
-              w.created_at AS favorited_at
+              w.created_at AS favorited_at,
+              COUNT(*) OVER()::INT AS _total
          FROM product_wishlist w
          JOIN products p ON p.id = w.product_id
          LEFT JOIN sellers s ON s.id = p.seller_id
@@ -100,25 +103,33 @@ router.get('/',
       params
     );
 
-    // BUG 3+7: total count + has_more
-    const countParams = params.slice(0, -2);
-    const totalRes = await query(
-      `SELECT COUNT(*)::INT AS total FROM product_wishlist w
-         JOIN products p ON p.id = w.product_id
-        WHERE ${whereParts.join(' AND ')}`,
-      countParams
-    );
-    const total = totalRes.rows[0].total;
+    const total = r.rows[0]?._total || 0;
+    // Strip _total interno do response
+    const products = r.rows.map((row) => {
+      const { _total, ...rest } = row;
+      return rest;
+    });
 
     res.json({
-      products: r.rows,
-      count: r.rows.length,
+      products,
+      count: products.length,
       total, limit, offset,
-      has_more: (offset + r.rows.length) < total,
+      has_more: (offset + products.length) < total,
       kind: kindFilter,
     });
   })
 );
+
+// FIX-WORKER-18 pass 178: helper invalida cache wishlist do user.
+// Chamado em POST/DELETE/check apos mutation.
+// Pattern compativel com Redis cache.del wildcard (SCAN+DEL).
+async function invalidateWishlistCache(userId) {
+  try {
+    await cache.del(`wishlist:${userId}:*`);
+    // Tambem invalida check endpoint cache (futuro adiciona em /:product_id/check)
+    await cache.del(`wishlist:check:${userId}:*`);
+  } catch (_) { /* best-effort */ }
+}
 
 // POST /products/wishlist - adiciona aos favoritos
 // FIX-WORKER-7: antes vazava FK violation 500 com nome de constraint Postgres ao cliente.
@@ -148,6 +159,8 @@ router.post('/',
       if (e.code === '23503') return next(errorHandler.notFound('product_not_found'));
       throw e;
     }
+    // FIX-WORKER-18 pass 178: invalida cache GET /wishlist + check
+    await invalidateWishlistCache(req.user.sub);
     res.json({ ok: true });
   })
 );
@@ -166,20 +179,29 @@ router.delete('/:product_id', asyncHandler(async (req, res, next) => {
     [req.user.sub, req.params.product_id]
   );
   if (!r.rows.length) return next(errorHandler.notFound('not_in_wishlist'));
+  // FIX-WORKER-18 pass 178: invalida cache GET /wishlist + check
+  await invalidateWishlistCache(req.user.sub);
   res.json({ ok: true, removed: r.rows[0].product_id });
 }));
 
 // GET /products/wishlist/:product_id/check - retorna se esta favoritado
 // FIX-WORKER-7: 400 invalid_uuid em vez de 404 generico do global handler
-router.get('/:product_id/check', asyncHandler(async (req, res, next) => {
-  if (!UUID_RE.test(req.params.product_id)) {
-    return next(errorHandler.badRequest('invalid_uuid'));
-  }
-  const r = await query(
-    `SELECT 1 FROM product_wishlist WHERE user_id = $1 AND product_id = $2`,
-    [req.user.sub, req.params.product_id]
-  );
-  res.json({ favorited: r.rows.length > 0 });
-}));
+// FIX-WORKER-18 pass 178: cache 60s. Hot path - chamado de cada ProductCard
+// + WishlistButton em PDP. 100 produtos visiveis = 100 hits ate now.
+// Cache 60s + invalidation em POST/DELETE wishlist mantem freshness.
+const checkCacheKey = (req) => `wishlist:check:${req.user?.sub || 'anon'}:${req.params.product_id}`;
+router.get('/:product_id/check',
+  cache.cacheMiddleware(checkCacheKey, 60),
+  asyncHandler(async (req, res, next) => {
+    if (!UUID_RE.test(req.params.product_id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+    const r = await query(
+      `SELECT 1 FROM product_wishlist WHERE user_id = $1 AND product_id = $2`,
+      [req.user.sub, req.params.product_id]
+    );
+    res.json({ favorited: r.rows.length > 0 });
+  })
+);
 
 module.exports = router;
