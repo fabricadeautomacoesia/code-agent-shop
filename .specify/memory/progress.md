@@ -22239,3 +22239,70 @@ PROXIMA ITER:
 - W17: vault-svc seller BYOK endpoints
 - W14: audit views materialized (mv_seller_kpi refresh policy)
 - 🚨 VPS SSH unblock URGENTE (39 ciclos - 13h sem deploy!)
+
+PASS 207 (W6 gateway fail2ban 6 endpoints publicos) - 2026-05-28:
+- W6 audit gateway pathRewrite descobriu gap fail2ban em endpoints publicos
+
+PRE-FIX:
+- fail2ban.middleware() em apenas 7 endpoints sensiveis:
+  /api/auth (W6 historic), /api/sellers, /api/orders, /api/payments,
+  /api/notifications, /api/vault, /api/aiops
+- AUSENTE em endpoints publicos com mutations significativas:
+  /api/products (wishlist/review/qna POST), /api/qa, /api/reviews,
+  /api/qna, /api/search, /api/loyalty
+
+VULNERABILIDADES:
+- /api/products: brute-force wishlist add/remove, review submit
+- /api/reviews + /api/qna: mass spam ou brute-force ID existence
+- /api/search: scraping massivo catalog (1000+ req/s) sem IP ban
+  (search-svc tem searchLimiter MAS apenas user-id - anonymous unprotected)
+- /api/loyalty: brute-force redeem com diferentes points amounts
+- /api/qa: admin/seller endpoints (compromised admin token vector)
+
+Layer 2 defense gap: svcs tem rateLimiter per-user, mas:
+- Anonymous endpoints sem user_id = rate-limit nao funciona
+- fail2ban no gateway = IP-level brute force cross-svc
+
+POST-FIX (6 endpoints com fail2ban):
+- /api/products + fail2ban
+- /api/qa + fail2ban
+- /api/reviews + fail2ban
+- /api/qna + fail2ban
+- /api/search + fail2ban
+- /api/loyalty + fail2ban (+ /earn block ja existente preserved)
+
+PATTERN V8 DEFESA EM CAMADAS consolidado:
+- rate-limit per-user (rateLimiter dentro do svc)
+- + brute-force IP cross-svc (fail2ban no gateway)
+- = defesa em camadas independentes
+
+FAIL2BAN COVERAGE GATEWAY FINAL (13 endpoints):
+- /api/auth, /api/sellers, /api/orders, /api/payments,
+  /api/notifications, /api/vault, /api/aiops (7 existing)
+- /api/products, /api/qa, /api/reviews, /api/qna, /api/search,
+  /api/loyalty (6 NEW pass 207)
+- /api/uploads + /api/products/upload sao internas (sem proxy publico)
+
+Commit 0e4dc1d pushed origin/main (+27/-6)
+VPS SSH ainda bloqueado (40 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (40 ciclos):
+- 168-206: documentados
+- 207: gateway fail2ban 6 endpoints + defesa camadas
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_gateway --force
+- Test fail2ban:
+  for i in {1..50}; do
+    curl -X POST -H "Bearer invalid" /api/products/wishlist
+  done
+  Apos N falhas (threshold fail2ban) -> IP bloqueado 403
+- Verificar logs:
+  docker service logs cas_gateway | grep fail2ban
+  Esperado: entries de IPs flagged em endpoints novos
+
+PROXIMA ITER:
+- W17: vault-svc seller BYOK endpoints
+- W14: audit views materialized (mv_seller_kpi refresh)
+- W18: cache analytics endpoints (orderly polling endpoints)
+- 🚨 VPS SSH unblock URGENTE (40 ciclos - >13.3h sem deploy!)
