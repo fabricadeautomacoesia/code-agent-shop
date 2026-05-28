@@ -817,6 +817,16 @@ async function cleanupTimeSeriesData() {
       sql: `DELETE FROM asaas_webhook_events
              WHERE received_at < NOW() - INTERVAL '90 days'
                AND processed_at IS NOT NULL` },
+    // FIX-WORKER-14 pass 257 (fail2ban_log retention):
+    //   Brute-force attempts geram 1000+ rows/dia em outage de ataque.
+    //   Sem retention -> unbounded growth + idx_fail2ban_ip scan lento.
+    //   30 dias suficiente para investigation pos-incident (Snippet 23.4
+    //   in-memory eh fonte primaria - DB log e audit secundario).
+    //   IMPORTANT: NAO deletar bans ativos (banned_until > NOW()).
+    { name: 'fail2ban_log', days: 30,
+      sql: `DELETE FROM fail2ban_log
+             WHERE created_at < NOW() - INTERVAL '30 days'
+               AND (banned_until IS NULL OR banned_until < NOW())` },
   ];
   const results = await Promise.allSettled(cleanups.map(async (c) => {
     const r = await query(c.sql);

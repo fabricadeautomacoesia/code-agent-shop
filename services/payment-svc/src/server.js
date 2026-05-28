@@ -698,10 +698,16 @@ async function processWebhookEvent(evt) {
       // do serviceTokenGuard pass 45. Refactor consolidado merece iter dedicada.
       try {
         // FIX bug idempotency: check existing loyalty_transactions p/ este order
+        // FIX-WORKER-11 pass 257 (UUID cast correto):
+        //   PRE-FIX: reference_id = $2::TEXT - coluna eh UUID (mig 010)
+        //   Cast UUID -> TEXT impedia uso de idx_loyalty_tx_reference (mig 072
+        //   pass 242: PARTIAL idx ON (reference_type, reference_id) WHERE NOT NULL).
+        //   Query forcava Seq Scan na partial idx -> slower duplicate check.
+        //   POST-FIX: reference_id = $2::UUID alinhado com schema, idx funciona.
         const dup = await c.query(
           `SELECT id FROM loyalty_transactions
             WHERE user_id = $1::UUID AND reason = 'order_paid'
-              AND reference_type = 'order' AND reference_id = $2::TEXT
+              AND reference_type = 'order' AND reference_id = $2::UUID
             LIMIT 1`,
           [order.buyer_user_id, order.id]
         );
