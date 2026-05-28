@@ -1072,8 +1072,12 @@ app.post('/payments/payouts/:id/process',
     // Esta fase serializa entre admins concorrentes via FOR UPDATE.
     // Mark 'processing' = sinal p/ outros admins "alguem ja esta processando"
     // + cron reconcile detecta stuck (processing > 5min sem virar 'paid').
+    /* FIX-WORKER-11 pass 318: withRetry wrap (paridade pass 311 webhook).
+       2 admins racing payouts/approve+process simultaneo -> deadlock 40P01
+       em SELECT FOR UPDATE seller_payouts row. Pattern V8 hot-path real-money. */
     let payout;
     let phaseError;
+    await withRetry('payment.payout.process.tx', async () => {
     await tx(async (c) => {
       const r = await c.query(
         `SELECT p.id, p.seller_id, p.amount_cents, p.status, s.asaas_wallet_id
@@ -1105,6 +1109,7 @@ app.post('/payments/payouts/:id/process',
       );
       payout = row;
     });
+    }); // close withRetry pass 318
     if (phaseError === 'not_found') return next(errorHandler.notFound('payout_not_found'));
     if (phaseError === 'wallet_missing') return next(errorHandler.badRequest('seller_wallet_missing'));
     if (phaseError?.startsWith('not_approved')) {

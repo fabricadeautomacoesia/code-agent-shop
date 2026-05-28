@@ -43,7 +43,8 @@ export default function DownloadPage() {
           </div>
           <div>
             <h1 className="font-display font-bold text-2xl">{data.title}</h1>
-            <p className="text-sm text-white/60">Download liberado ate {new Date(data.expires_at).toLocaleDateString('pt-BR')}</p>
+            {/* FIX-WORKER-1 pass 318: Api.formatDate defensive guard */}
+            <p className="text-sm text-white/60">Download liberado ate {Api.formatDate(data.expires_at, { dateStyle: 'short' })}</p>
           </div>
         </div>
 

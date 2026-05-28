@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Star, Award, Package, TrendingUp, MapPin, Calendar, BadgeCheck, ShieldCheck } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, Api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
 
 export const revalidate = 60;
@@ -108,7 +108,8 @@ export default async function SellerPage({ params }: { params: Promise<{ slug: s
               <span className="flex items-center gap-2"><Package className="w-4 h-4" /> {seller.total_products_active || 0} produtos</span>
               <span className="flex items-center gap-2"><TrendingUp className="w-4 h-4" /> {seller.total_sales || 0} vendas</span>
               {seller.avg_rating && <span className="flex items-center gap-2"><Star className="w-4 h-4 fill-yellow-400 text-yellow-400" aria-hidden="true" /> {Number(seller.avg_rating).toFixed(1)}</span>}
-              <span className="flex items-center gap-2"><Calendar className="w-4 h-4" /> desde {new Date(seller.created_at).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}</span>
+              {/* FIX-WORKER-1 pass 318: Api.formatDate defensive guard */}
+              <span className="flex items-center gap-2"><Calendar className="w-4 h-4" /> desde {Api.formatDate(seller.created_at, { month: 'short', year: 'numeric' })}</span>
               <span className="font-mono text-xs">score {seller.reputation_score}</span>
             </div>
           </div>

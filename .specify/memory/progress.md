@@ -29763,3 +29763,44 @@ PROXIMA ITER:
 - W2 migrate restantes (downloads/[token], seller/[slug])
 - W14 audit other tables coverage
 - VPS SSH unblock URGENTISSIMO (150 ciclos - 50h)
+
+
+============================================================
+PASS 318 - 2026-05-28 - W1 storefront migrate + W11 payouts withRetry
+============================================================
+Files: 3 modificados
+  - apps/storefront/src/app/conta/downloads/[token]/page.tsx (Api.formatDate)
+  - apps/storefront/src/app/seller/[slug]/page.tsx (import + Api.formatDate)
+  - services/payment-svc/src/server.js (payouts/process withRetry wrap)
+Lines: ~15 changed
+
+W1 (storefront defensive date adoption - 2 mais pages):
+- /conta/downloads/[token]: expires_at -> Api.formatDate
+- /seller/[slug]: created_at -> Api.formatDate (+ import Api adicionado)
+- Cobertura storefront defensive date agora cobre 7 pages/components
+
+W11 (payment /payouts/:id/process withRetry):
+- Real-money out endpoint (admin aprovar Asaas transfer)
+- PRE-FIX: tx() sem withRetry - 2 admins concurrent race deadlock 40P01
+- Pass 23 ja mitigou via FOR UPDATE mas deadlock raro possivel
+- POST-FIX: withRetry('payment.payout.process.tx') wrap
+- Paridade pass 310/311 cross-svc deadlock defesa
+
+VPS SSH BLOQUEADO (151 ciclos - 50.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_payment-svc --force
+- W1: /seller/<slug> render created_at corretamente (sem 'Invalid Date')
+- W11: stress test payouts/process concurrent admins -> deadlock auto-retry
+
+withRetry coverage Final cross-svc:
+- pass 309 qa-worker callback HTTP
+- pass 310 qa-svc callback tx + vault /use pool tx
+- pass 311 payment webhook tx
+- pass 318 payment payouts/process tx
+
+PROXIMA ITER:
+- W2 migrate restantes notification-bell defensive
+- W14 audit final tables
+- VPS SSH unblock URGENTISSIMO (151 ciclos - 50.3h)
