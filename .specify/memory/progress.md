@@ -21154,3 +21154,57 @@ PROXIMA ITER:
 - W17: vault auto-rotation swap atomico (ate aqui so warn)
 - W7: app refactor loyalty.js INSERT ... ON CONFLICT (consumir migration 061)
 - 🚨 VPS SSH unblock URGENTE (23 ciclos - ~7.7h sem deploy!)
+
+PASS 191 (W7 loyalty.js INSERT ON CONFLICT consume migration 061) - 2026-05-28:
+- W7 refactor loyalty.js /earn endpoint p/ consumir migration 061
+  (idx_loyalty_idempotency partial UNIQUE criado em pass 190)
+
+PRE-FIX (race-prone identical pass 184 Asaas webhook bug):
+- SELECT WHERE (user_id, reason, reference_id) -> empty
+- Concurrent retry (order-svc network blip retry) SELECT tambem empty
+- Race window: ambos INSERT -> segundo dispara 23505 (UNIQUE violation)
+- errorHandler 500 -> order-svc retry storm
+- Cada order checkout fires este endpoint - bug critico em scale
+
+POST-FIX (race-safe ON CONFLICT pattern):
+- INSERT loyalty_transactions FIRST com ON CONFLICT DO NOTHING RETURNING id
+  ON CONFLICT (user_id, reason, reference_id) WHERE reference_id IS NOT NULL
+- Se rows[] empty: SELECT existing p/ retornar duplicate outcome
+- Else: proceed balance UPDATE + tier check + audit_log
+- Race-safe atomic via UNIQUE constraint
+- Happy path: 2 queries (SELECT dup + INSERT) -> 1 query (ON CONFLICT)
+
+ORDER semantico:
+- ANTES: SELECT dup -> FOR UPDATE balance -> UPDATE balance -> INSERT tx -> audit
+- DEPOIS: INSERT tx (ON CONFLICT short-circuit) -> FOR UPDATE balance -> UPDATE -> audit
+- Mesmo isolation, race-safe, mais performante
+
+EDGE CASE preserved:
+- reference_id NULL (admin_adjust manual sem ref):
+  Partial UNIQUE NAO cobre NULL -> permite duplicate (semantica original)
+  Skip ON CONFLICT branch quando NULL - INSERT direto
+
+Pattern consolidado V8 (ON CONFLICT race-safe idempotency):
+- pass 184: payment-svc Asaas webhook ON CONFLICT
+- pass 191: seller-svc /loyalty/earn ON CONFLICT (consume mig 061)
+
+Commit f44f80d pushed origin/main
+VPS SSH ainda bloqueado (24 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (24 ciclos):
+- 168-190: documentados
+- 191: loyalty.js ON CONFLICT race-safe
+
+LINKS PARA TESTE (apos VPS unblock + migration 061 apply):
+- Apply: psql -f /opt/cas/db/migrations/061_loyalty_idempotency_idx.sql
+- Rebuild: docker service update cas_seller-svc --force
+- Teste race (manual):
+  Disparar 2 POSTs concurrent /loyalty/earn com mesmo reference_id
+  Esperado: ambos 200 OK, 1 com duplicate:true
+  Antes (race): 1 deles 500 + order-svc retry loop
+
+PROXIMA ITER:
+- W18: cache /products/:slug/related ou /:slug/also-bought
+- W17: vault auto-rotation swap atomico
+- W14: drop duplicate idx_loyalty_user_recent (apos confirmar pg_stat zero scans)
+- 🚨 VPS SSH unblock URGENTE (24 ciclos - ~8h sem deploy!)
