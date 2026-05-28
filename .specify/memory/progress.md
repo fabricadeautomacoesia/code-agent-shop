@@ -23425,3 +23425,80 @@ PROXIMA ITER:
 - W18: cache /api/orders/admin/disputes/:id detalhe (admin investigation)
 - W13: notification-svc test endpoint admin alert delivery
 - 🚨 VPS SSH unblock URGENTE (55 ciclos - >18.3h sem deploy!)
+
+PASS 223 (W14+W11 migration 065 - asaas_refund_failed template) - 2026-05-28:
+- W14 + W11 cobertura para pass 222 PAYMENT_REFUND_FAILED notification template
+
+CONTEXTO:
+- W11 pass 222 introduziu PAYMENT_REFUND_FAILED logOnly handler
+- INSERT notifications channel='in_app' template_code='asaas_refund_failed'
+- TEMPLATE NAO EXISTIA em notification_templates table
+- Consequencia em prod: mustache render falha -> string raw nas notifs admin
+
+ESTRATEGIA DEFENSIVA (3 layers fallback - schema drift):
+
+LAYER 1 (mig 018+ schema novo):
+- INSERT (template_code, title_template, body_template, channels, category)
+- Categoria 'asaas_alerts' p/ filtros admin futuro
+
+LAYER 2 (schema sem category):
+- EXCEPTION undefined_column 'category'
+- INSERT sem coluna 'category'
+
+LAYER 3 (mig 008 schema original singular):
+- EXCEPTION undefined_column 'template_code'
+- INSERT (code, name, channel, body_template)
+
+TEMPLATE VARIABLES:
+- {{order_id_short}}: primeiros 8 chars order.id (slice 0,8)
+- {{payment_id}}: Asaas payment id
+- {{order_status}}: current payment_status (preserved post-fail)
+
+CONTENT EM PT-BR:
+'Asaas tentou processar refund para order X (payment Y) mas FALHOU.
+ Estado pagamento preservado como Z. Investigue no painel Asaas
+ (insufficient funds wallet, regulatory reject) e tome acao manual.'
+
+PATTERN V8 SCHEMA DRIFT TOLERANCE estabelecido:
+- DO $$ EXCEPTION ... END p/ multiple schemas em prod
+- 3 layers fallback INSERT
+- ON CONFLICT DO NOTHING idempotente
+- RAISE NOTICE p/ admin visibility
+
+PASS 222 + 223 end-to-end:
+1. PAYMENT_REFUND_FAILED webhook
+2. logOnly handler INSERT notifications template_code='asaas_refund_failed'
+3. notification-svc outbox renderiza template (com vars)
+4. Admin recebe notif legivel: 'Refund falhou: order abc12345'
+
+Commit a799c85 pushed origin/main (+68)
+VPS SSH ainda bloqueado (56 ciclos consecutivos)
+
+MIGRATIONS PROD-PENDING (8 acumuladas):
+- 058 audit_log actor_created composto
+- 059 wishlist + notif compound idx
+- 060 users email LOWER UNIQUE + backfill
+- 061 loyalty idempotency partial UNIQUE
+- 062 drop idx_loyalty_user_recent duplicate
+- 063 fn_refresh_all_seller_reputations bulk
+- 064 notif unread invalidate hint (doc-only)
+- 065 asaas_refund_failed template seed - NEW
+
+CODIGO ACUMULADO ORIGIN/MAIN (56 ciclos):
+- 168-222: documentados
+- 223: migration 065 notification template
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply: psql -f /opt/cas/db/migrations/065_*.sql
+- Verificar template criado:
+  SELECT template_code, channels, category FROM notification_templates
+   WHERE template_code = 'asaas_refund_failed';
+- Test end-to-end:
+  Mock PAYMENT_REFUND_FAILED webhook (pass 222)
+  Admin in_app notif renderizada legivel (sem {{vars}} raw)
+
+PROXIMA ITER:
+- W4 admin: vault-svc filter seller_id UI
+- W18: cache /api/orders/admin/disputes/:id detalhe
+- W13: validate template_code consistency cross-svc (audit)
+- 🚨 VPS SSH unblock URGENTE (56 ciclos - >18.7h sem deploy!)
