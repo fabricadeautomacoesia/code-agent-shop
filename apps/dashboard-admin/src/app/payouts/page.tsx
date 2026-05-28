@@ -57,11 +57,15 @@ export default function PayoutsPage() {
       <h1 className="font-display font-bold text-4xl mb-2">Saques</h1>
       <p className="text-white/60 mb-6">Pipeline de payouts: pending -&gt; approved -&gt; transferido Asaas</p>
 
-      {/* FIX-WORKER-4 pass 4: filtro 3-vias permite ver approved payouts e disparar transferir */}
-      <div className="flex gap-2 mb-6">
+      {/* FIX-WORKER-4 pass 4: filtro 3-vias permite ver approved payouts e disparar transferir
+          FIX-WORKER-4 pass 155 (a11y): role=radiogroup + role=radio + aria-checked
+          + aria-labelledby p/ SR anunciar grupo semantico */}
+      <h2 id="payouts-filter-label" className="sr-only">Filtrar payouts por status</h2>
+      <div role="radiogroup" aria-labelledby="payouts-filter-label" className="flex gap-2 mb-6">
         {(['all','pending','approved'] as const).map((s) => (
-          <button key={s} onClick={() => setStatusFilter(s)}
-            className={`px-3 py-1.5 rounded-lg text-xs uppercase font-semibold transition-colors ${
+          <button key={s} type="button" onClick={() => setStatusFilter(s)}
+            role="radio" aria-checked={statusFilter === s}
+            className={`px-3 py-1.5 rounded-lg text-xs uppercase font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-magenta ${
               statusFilter === s ? 'bg-gradient-to-r from-magenta to-violet-deep text-white' : 'glass hover:border-white/30'
             }`}>
             {s === 'all' ? 'Todos ativos' : s}

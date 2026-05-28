@@ -55,7 +55,9 @@ export default function AdminReportsPage() {
           <h1 className="font-display font-bold text-4xl mb-2">Denuncias</h1>
           <p className="text-white/60">Moderacao de produtos, sellers, reviews e Q&A</p>
         </div>
+        {/* FIX-WORKER-4 pass 155 (a11y): aria-label no select (consistente audit-log pattern) */}
         <select value={filter} onChange={(e) => setFilter(e.target.value)}
+          aria-label="Filtrar denuncias por status"
           className="glass px-4 py-2 text-sm bg-transparent text-white">
           <option value="open">Abertos</option>
           <option value="under_review">Em analise</option>
