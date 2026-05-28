@@ -349,14 +349,27 @@ app.get('/metrics/latest',
 //     Pattern pass 30 confirmed: alerts.message has "Reporter: $uuid, Motivo: ..."
 //     Plus payload may contain stack traces with PG_PASS/Bearer/JWT.
 //   BUG 5 Total count UX
+// FIX-WORKER-18 pass 202 (cache + window):
+// PRE-FIX:
+// - 2 queries por hit (rows + COUNT separado)
+// - NO cache - admin polling /admin/alerts hit DB toda chamada
+// - alerts table cresce ~50 rows/hora em sistema saudavel + bursts em prod issues
+// POST-FIX:
+// + COUNT(*) OVER() window aggregate (~30ms -> ~17ms)
+// + cache 10s (alerts SAO realtime-ish mas 10s OK trade-off vs DB pressure)
+//   Note: 10s curto vs outros (audit-log/metrics 30s) pq alerts SAO urgent
+//   Admin precisa ver novo critical alert em <15s tipico SLO
 const alertsHandler = asyncHandler(async (req, res) => {
   const days = Math.min(parseInt(req.query.days || '7', 10), 90);
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 100));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
+  // FIX-WORKER-18 pass 202: COUNT(*) OVER() window consolidation
+  // Pattern V8 consolidado em 11 endpoints anteriores (passes 178-201)
   const r = await query(
     `SELECT id, severity, source, code, title, message, target_type, target_id,
-            payload, acknowledged_at, created_at
+            payload, acknowledged_at, created_at,
+            COUNT(*) OVER()::INT AS _total
        FROM alerts
       WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
       ORDER BY created_at DESC, id DESC
@@ -364,28 +377,48 @@ const alertsHandler = asyncHandler(async (req, res) => {
     [String(days), limit, offset]
   );
 
+  const total = r.rows[0]?._total ?? 0;
+
   // DLP CRITICAL: payload + message podem conter secrets/PII
   // mask.obj() recursivo (sk-/Bearer/JWT/CPF/CNPJ/creditcard auto-mask)
-  const alerts = r.rows.map((row) => ({
-    ...row,
-    message: row.message ? mask.text(row.message) : null,
-    payload: row.payload ? mask.obj(row.payload) : null,
-  }));
-
-  // Total count UX paginacao
-  const totalRes = await query(
-    `SELECT COUNT(*)::INT AS total FROM alerts
-      WHERE created_at > NOW() - ($1 || ' days')::INTERVAL`,
-    [String(days)]
-  );
+  // + strip _total interno
+  const alerts = r.rows.map((row) => {
+    const { _total, ...rest } = row;
+    return {
+      ...rest,
+      message: rest.message ? mask.text(rest.message) : null,
+      payload: rest.payload ? mask.obj(rest.payload) : null,
+    };
+  });
 
   res.json({
-    alerts, count: alerts.length, total: totalRes.rows[0].total,
-    limit, offset, days,
+    alerts,
+    count: alerts.length,
+    total,
+    limit,
+    offset,
+    days,
+    has_more: (offset + alerts.length) < total,
   });
 });
-app.get('/alerts', jwt.requireAuth({ roles: ['admin','staff'] }), alertsHandler);
-app.get('/alerts/recent', jwt.requireAuth({ roles: ['admin','staff'] }), alertsHandler);
+// FIX-WORKER-18 pass 202: cache 10s vary by filtros.
+// Trade-off realtime vs DB pressure: alerts SAO urgent (admin polls 5-10s
+// para reagir rapido) mas 10s cache aceita pequena stale window vs
+// proteger DB pool. SLO admin <15s noticing new critical alert preserved.
+const alertsCacheKey = (req) => {
+  const q = req.query;
+  return `aiops:alerts:d=${q.days||7}:lim=${q.limit||100}:off=${q.offset||0}`;
+};
+app.get('/alerts',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware(alertsCacheKey, 10),
+  alertsHandler
+);
+app.get('/alerts/recent',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware(alertsCacheKey, 10),
+  alertsHandler
+);
 
 // FIX-WORKER-4 pass 12: GET /audit-log - admin lista acoes auditadas
 // Consume W14 pass 9 idx_audit_action_created (action, created_at DESC) para
