@@ -14,6 +14,8 @@ import { ShareButton } from '@/components/share-button';
 import { Installments } from '@/components/installments';
 import { OfficialBadge } from '@/components/official-badge';
 import { RecentlyViewedStrip } from '@/components/recently-viewed-strip';
+import { RecentlyViewedGuest } from '@/components/recently-viewed-guest';
+import { TrackProductViewClient } from '@/components/track-product-view-client';
 import { RecentSaleBadge } from '@/components/recent-sale-badge';
 import { JsonLd, productLd, breadcrumbLd } from '@/components/json-ld';
 
@@ -315,6 +317,16 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
 
       {/* MLB-NEW WORKER 16: RecentlyViewedStrip horizontal scroll (so renderiza se logado + >=3 outros vistos) */}
       <RecentlyViewedStrip excludeId={product.id} />
+
+      {/* MLB-14 WORKER 16 pass 131: tracking localStorage + Strip para GUESTS (nao logados) */}
+      <TrackProductViewClient product={{
+        slug: product.slug,
+        title: product.title,
+        cover_image_url: product.cover_image_url,
+        price_cents: product.price_cents,
+        is_free: product.is_free,
+      }} />
+      <RecentlyViewedGuest excludeSlug={product.slug} />
     </div>
   );
 }
