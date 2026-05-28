@@ -1110,6 +1110,15 @@ app.get('/keys/me', readRateLimit, sellerOrAdmin, asyncHandler(async (req, res) 
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
   const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
   // Explicit fields (NUNCA encrypted_key/iv/auth_tag - security):
+  // FIX-WORKER-17 pass 376 (tiebreaker direction parity - Regra D pass 251):
+  //   PRE-FIX: ORDER BY created_at DESC, id ASC (mixed direction)
+  //   PG default ASC para tiebreaker quando direction omitted - mas explicit
+  //   ASC + DESC misturados causam pagination drift em mass-insert burst:
+  //   - 10 keys provisioned mesmo created_at (rare mas possivel cron import)
+  //   - page 1 oset=0: [id=A1, A2, ...] (ASC entre mesmo ts)
+  //   - cache evict + insert -> ids reordenam, user ve key 2x ou pula uma
+  //   Pass 251 corrigiu orders endpoint, vault-svc ficou lagged.
+  //   POST-FIX: SAME direction (DESC, DESC) p/ ordering deterministic per snapshot.
   const r = await query(
     `SELECT id, provider, key_alias, key_fingerprint,
             is_active, monthly_quota_usd_cents, usage_this_month_cents,
@@ -1119,7 +1128,7 @@ app.get('/keys/me', readRateLimit, sellerOrAdmin, asyncHandler(async (req, res) 
        FROM vault_api_keys
       WHERE seller_id = $1
         AND is_platform_pool = FALSE
-      ORDER BY created_at DESC, id ASC
+      ORDER BY created_at DESC, id DESC
       LIMIT $2 OFFSET $3`,
     [ownerSellerId, lim, off]
   );
