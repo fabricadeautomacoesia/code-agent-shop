@@ -208,9 +208,24 @@ export default function PedidoPage() {
         </div>
       )}
 
-      <div className="mt-6 text-center">
-        <Link href={`/product/${items[0]?.snapshot?.slug || ''}`} className="text-sm text-white/60 hover:text-white">
-          Ver produto na vitrine
+      {/* FIX-WORKER-2 pass 389 (link 404 + UX multi-item):
+          PRE-FIX: Link href={`/product/${items[0]?.snapshot?.slug || ''}`}
+          - Se slug vazio -> /product/ -> 404 PDP catch-all
+          - Multi-item order: link so do PRIMEIRO item (UX confuso - qual produto?)
+          - 'Ver produto na vitrine' singular sugere 1 produto mas order tem N
+          POST-FIX:
+          - Skip link se slug vazio (fallback hide)
+          - Multi-item: cada item ja tem own actions na lista acima
+          - Single-item: link contextual com nome do produto
+          - Sempre link p/ catalogo /products como bottom fallback */}
+      <div className="mt-6 text-center space-y-2">
+        {items.length === 1 && items[0]?.snapshot?.slug && (
+          <Link href={`/product/${items[0].snapshot.slug}`} className="text-sm text-white/60 hover:text-white block">
+            Ver {items[0].snapshot?.title || 'produto'} na vitrine →
+          </Link>
+        )}
+        <Link href="/products" className="text-sm text-white/40 hover:text-white block">
+          Explorar mais produtos no catalogo
         </Link>
       </div>
     </div>
