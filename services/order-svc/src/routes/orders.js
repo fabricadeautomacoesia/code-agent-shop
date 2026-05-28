@@ -176,17 +176,30 @@ router.post('/checkout',
         const dl_token = crypto.randomUUID();
         const license_key = `CAS-${crypto.randomBytes(12).toString('hex').toUpperCase()}`;
         const snapshot = await c.query('SELECT fn_product_snapshot($1) AS s', [it.product_id]);
-        await c.query(
+        // FIX-WORKER-2 pass 369 (capture order_item_id p/ pending_wallet tracking):
+        //   PRE-FIX: order_item_id passado como null em payouts_pending_wallet
+        //   (comentario inline 214 'needs row lookup post-insert' - debt nunca pago).
+        //   Resultado: payouts_pending_wallet.order_item_id sempre NULL.
+        //   Impacto auditoria:
+        //   - Cron liquidation cross-reference item-level perdida
+        //   - Admin reconciliacao "qual item gerou esse pending payout" impossivel
+        //   - Schema mig 078 declara order_item_id REFERENCES order_items(id)
+        //     - FK util desperdicado
+        //   POST-FIX: RETURNING id do INSERT order_items + uso direto no
+        //   INSERT payouts_pending_wallet abaixo. 1 query extra zero (RETURNING free).
+        const itemIns = await c.query(
           `INSERT INTO order_items
              (order_id, product_id, product_version_id, seller_id, is_platform_owned,
               quantity, unit_price_cents, line_total_cents, commission_rate,
               commission_cents, seller_payout_cents, license_key, download_token,
               download_expires_at, snapshot)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW() + INTERVAL '365 days', $14::JSONB)`,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW() + INTERVAL '365 days', $14::JSONB)
+           RETURNING id`,
           [order.rows[0].id, it.product_id, null, it.seller_id || null,
            it.is_platform_owned, it.quantity, it.unit_price_cents, lineTotalCents,
            rate, commission, payout, license_key, dl_token, snapshot.rows[0].s]
         );
+        const orderItemId = itemIns.rows[0].id;
 
         // FIX-WORKER-11 pass 270 (split fallback queue):
         //   PRE-FIX (pass 268 identified): seller sem asaas_wallet_id ->
@@ -206,12 +219,13 @@ router.post('/checkout',
             );
           } else {
             // FALLBACK: seller sem wallet config - debt queue para futuro
+            // FIX pass 369: order_item_id agora capturado (era NULL antes)
             await c.query(
               `INSERT INTO payouts_pending_wallet
                  (order_id, order_item_id, seller_id, amount_cents, reason)
                VALUES ($1, $2, $3, $4, 'no_asaas_wallet')
-               ON CONFLICT DO NOTHING`,  // Defense double-process safety
-              [order.rows[0].id, null /* order_item_id needs row lookup post-insert */, it.seller_id, payout]
+               ON CONFLICT DO NOTHING`,
+              [order.rows[0].id, orderItemId, it.seller_id, payout]
             );
           }
         }
