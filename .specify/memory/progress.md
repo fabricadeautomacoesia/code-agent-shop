@@ -29184,3 +29184,37 @@ PROXIMA ITER:
 - W18 search-svc consolidate remaining cache keys + COUNT OVER opportunities
 - W4 admin qa-queue UI consume pass 301 has_more pagination
 - VPS SSH unblock URGENTISSIMO (135 ciclos - 45h)
+
+
+============================================================
+PASS 303 - 2026-05-28 - W12 qa dispatch DLP mask error
+============================================================
+Files: 1 modificado
+  - services/qa-svc/src/server.js (mask.text() em dispatch error)
+Lines: ~20 changed
+
+W12 (qa dispatch_failed DLP):
+- PRE-FIX: e.message raw em product_qa_runs.reasons + notifications.payload
+- n8n/worker fetch fail pode conter:
+  - 'Bearer abc123 invalid' (token vazado em response)
+  - stack traces com PG_PASS/sk-keys
+  - URLs com query string secrets
+- POST-FIX: safeErr = mask.text(e.message).slice(0,500)
+  - Aplicado em log + reasons ARRAY + notif payload
+- Paridade pass 277/285/289 cross-svc DLP error tracking
+
+W11 audit refund: state machine + audit log OK (passes 245+)
+
+VPS SSH BLOQUEADO (136 ciclos - 45.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-svc --force
+- W12 verify:
+  SELECT reasons FROM product_qa_runs WHERE verdict='error' ORDER BY started_at DESC LIMIT 3;
+  Esperado: dispatch_failed: <masked> (sem secrets visiveis)
+
+PROXIMA ITER:
+- W4 admin /admin/qa-queue UI consume mask error display
+- W17 /api/vault list error_stats_7d DLP audit
+- VPS SSH unblock URGENTISSIMO (136 ciclos - 45.3h)

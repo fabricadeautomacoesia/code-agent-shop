@@ -283,11 +283,21 @@ app.post('/qa/run',
           });
         }
       } catch (e) {
-        log.error({ run_id, err: e.message }, '[qa.dispatch_failed]');
+        /* FIX-WORKER-12 pass 303 (DLP mask dispatch error):
+           PRE-FIX: e.message raw em product_qa_runs.reasons + notifications.payload
+           - n8n fetch fail (auth 401, network timeout) error msg pode conter:
+             * 'Bearer abc123 invalid' (token vazado em response)
+             * stack traces com PG_PASS/sk-keys
+             * URLs com query string secrets
+           - Stored em DB + notification payload sem mask
+           POST-FIX: mask.text(e.message).slice(0, 200) antes storage
+           Paridade pass 277/285/289 error tracking DLP cross-svc. */
+        const safeErr = mask.text(String(e.message || '').slice(0, 500));
+        log.error({ run_id, err: safeErr }, '[qa.dispatch_failed]');
         await query(
           `UPDATE product_qa_runs SET verdict = 'error', finished_at = NOW(),
                                        reasons = ARRAY[$1] WHERE id = $2`,
-          [`dispatch_failed: ${e.message}`, run_id]
+          [`dispatch_failed: ${safeErr}`, run_id]
         );
         await query(`UPDATE products SET status = 'qa_pending', qa_verdict = 'pending' WHERE id = $1`, [product_id]);
         // FIX-WORKER-12 pass 6: notifica seller (dispatch silenciava falhas).
@@ -300,6 +310,7 @@ app.post('/qa/run',
               [product.seller_id]
             );
             if (sellerUser.rows.length) {
+              /* FIX-WORKER-12 pass 303: payload.error masked (safeErr ja calculado linha acima) */
               await query(
                 `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
                  VALUES ($1, 'in_app', 'qa_dispatch_failed',
@@ -308,7 +319,7 @@ app.post('/qa/run',
                 [
                   sellerUser.rows[0].user_id,
                   `Nao foi possivel iniciar a analise QA do produto "${product.title}". Tente reenviar para QA em alguns minutos.`,
-                  JSON.stringify({ product_id, run_id, error: String(e.message).slice(0, 200) })
+                  JSON.stringify({ product_id, run_id, error: safeErr.slice(0, 200) })
                 ]
               );
             }
