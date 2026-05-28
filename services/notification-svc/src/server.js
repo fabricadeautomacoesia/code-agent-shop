@@ -838,6 +838,19 @@ async function processOutbox() {
         await sendEmail(n.email, title, body, bodyHtml);
       } else if (n.channel === 'telegram') {
         await sendTelegram(`*${title}*\n${body}`);
+      } else {
+        // FIX-WORKER-13 pass 268 (unknown channel observability):
+        //   PRE-FIX: channel != email/telegram cai no UPDATE 'sent' sem envio.
+        //   Future channels (slack/sms/webhook) failure silencioso. Operacional:
+        //   INSERT notification(channel='sms') stuck pending percebido apenas
+        //   por user reclamacao 'nao recebi'.
+        //   POST-FIX: log.warn explicit + throw com transient=false
+        //   outbox marca como failed terminal (admin investiga via UI)
+        const e = new Error(`unsupported_channel: ${n.channel}`);
+        e.transient = false;
+        log.warn({ id: n.id, channel: n.channel },
+          '[notif.unsupported_channel] template_code usando canal nao implementado');
+        throw e;
       }
       // FIX-WORKER-7 pass 26 (Regra N + idempotent guard):
       // UPDATE com WHERE locked_by=worker_id E sent_status='pending'.

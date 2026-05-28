@@ -112,13 +112,17 @@ export default function PedidoPage() {
               )}
             </div>
           )}
+          {/* FIX-WORKER-2 pass 268 (tabnabbing defense parity):
+              Pass 230 W1 ja aplicou rel="noopener noreferrer" em notification-bell.
+              2 instances aqui (boleto + credit_card external links) ficaram desatualizadas.
+              Pattern V8: TODOS target="_blank" precisam rel=noopener noreferrer. */}
           {order.payment_method === 'boleto' && order.asaas_boleto_url && (
-            <a href={order.asaas_boleto_url} target="_blank" className="btn-primary block text-center max-w-md mx-auto">
+            <a href={order.asaas_boleto_url} target="_blank" rel="noopener noreferrer" className="btn-primary block text-center max-w-md mx-auto">
               Abrir boleto
             </a>
           )}
           {order.payment_method === 'credit_card' && order.asaas_invoice_url && (
-            <a href={order.asaas_invoice_url} target="_blank" className="btn-primary block text-center max-w-md mx-auto">
+            <a href={order.asaas_invoice_url} target="_blank" rel="noopener noreferrer" className="btn-primary block text-center max-w-md mx-auto">
               Pagar com cartao
             </a>
           )}

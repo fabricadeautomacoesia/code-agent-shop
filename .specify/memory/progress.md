@@ -27315,3 +27315,85 @@ PROXIMA ITER:
 - W2 cupom apply UX feedback
 - W17 vault rotate transactional
 - VPS SSH unblock CRITICAL (100 CICLOS MARCO - 33.3h!!!)
+
+============================================================
+PASS 268 (2026-05-28) - W2 + W13 + W11 audit
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W2 storefront: pedido detail tabnabbing defense
+- W13 notification: unknown channel observability
+- W11 audit: split fallback orphan flag identified (deferred)
+
+============================================================
+1. W2 - pedido detail target=_blank sem noopener noreferrer
+============================================================
+FILE: apps/storefront/src/app/conta/pedidos/[id]/page.tsx:115-124
+
+PROBLEMA:
+- 2 instances <a target="_blank"> sem rel="noopener noreferrer"
+  * boleto external link
+  * credit_card invoice external link
+- Pass 230 W1 ja aplicou em notification-bell - paridade missing
+- Tabnabbing: opener page acessivel via window.opener (legacy browsers)
+- Referrer leak: Asaas receives referrer from cas.io domain
+
+POST-FIX:
+- rel="noopener noreferrer" em ambos
+- Pattern V8: TODOS target="_blank" precisam dessas flags
+
+============================================================
+2. W13 - unknown channel observability outbox
+============================================================
+FILE: services/notification-svc/src/server.js:837-855
+
+PROBLEMA:
+- channel switch: email + telegram OK
+- Else branch ausente -> future channels (slack/sms/webhook) cai no
+  UPDATE 'sent' sem real envio
+- Silent failure: INSERT notification(channel='sms') marcado sent
+  apenas reclamacao user revela problema
+- Operacional cego em incidente
+
+POST-FIX:
+- Else branch: throw Error transient=false (permanent classification)
+- log.warn explicit com {id, channel}
+- Outbox processor marca terminal 'failed' apos retries -> admin investiga
+
+============================================================
+3. W11 - asaas_splits no-wallet edge case (deferred)
+============================================================
+FILE: services/order-svc/src/routes/orders.js:191-197
+
+PROBLEMA IDENTIFICADO (deferred fix):
+- INSERT asaas_splits so se !is_platform_owned && asaas_wallet_id && payout>0
+- Seller sem wallet config -> sem split INSERT -> receita 100% plataforma
+- Sem queue payout_pending para reconcile quando seller configurar wallet
+- Refactor grande necessario:
+  * Schema: payouts_pending_wallet table (order_id, seller_id, amount)
+  * Cron diario: detect seller now-has-wallet + transferir
+  * Frontend seller: badge "X vendas aguardando wallet config"
+DEFERRED: requer planning - documented em progress.md para proxima iter focada.
+
+============================================================
+SUMARIO PASS 268
+============================================================
+Files: 2 modificados
+  - apps/storefront/src/app/conta/pedidos/[id]/page.tsx (tabnabbing)
+  - services/notification-svc/src/server.js (channel observability)
+Lines: ~40 added
+
+VPS SSH BLOQUEADO (101 ciclos - 33.7h sem deploy).
+Migs 069-077 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_notification-svc --force
+- W2: /conta/pedidos/X com boleto -> inspecionar <a> Properties tab
+  rel="noopener noreferrer" presente
+- W13: INSERT notification (channel='sms') -> outbox processOutbox 30s ->
+  log warn '[notif.unsupported_channel]' + sent_status='failed'
+
+PROXIMA ITER:
+- W11 split fallback (DEDICATED ITER - schema change)
+- W4 admin bulk actions
+- VPS SSH unblock CRITICAL (101 ciclos - 33.7h)
