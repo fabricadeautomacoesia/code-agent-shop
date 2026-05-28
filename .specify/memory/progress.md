@@ -32873,3 +32873,33 @@ W4 admin real-money endpoints rate-limit cross-svc:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 417 W10+W7: is_active filter em cat slug lookups (paridade 411)
+commit 78f145f
+BUG cat slug lookups sem is_active em 3 sites:
+- search-svc /top-sellers/:category SELECT
+- search-svc /search ?category subquery
+- product-svc /products ?category subquery
+
+CENARIO:
+- Admin desativa cat -> endpoint /search?category=X retorna products
+- /top-sellers/X 200 OK com cat metadata
+- Frontend /categoria/X 404 (page filtra is_active)
+- Backend inconsistente com listagem /categories
+
+POST-FIX cross-svc:
+- /top-sellers/:category: WHERE slug=$1 AND is_active=TRUE
+- /search + /products subquery: + AND is_active=TRUE
+
+W7+W10 categories filter consolidacao COMPLETA:
+  pass 406 product-svc/public.js LEFT JOIN (list+detail+compare)
+  pass 411 wishlist + search + facets LEFT JOIN
+  pass 417 cat slug lookups + /top-sellers/ SELECT <- ESTE
+
+Pattern V8: TODO cat slug resolution precisa is_active filter
+
+150 passes acumulados (268->417) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
