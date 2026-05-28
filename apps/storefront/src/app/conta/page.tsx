@@ -40,8 +40,11 @@ export default function ContaPage() {
           <h1 className="font-display font-bold text-4xl">Ola, {me.display_name || me.full_name?.split(' ')[0]}</h1>
           <p className="text-white/60">{me.email} <span className="px-2 py-0.5 rounded-md bg-magenta/20 text-xs ml-2">{me.role}</span></p>
         </div>
-        <button onClick={logout} className="btn-ghost flex items-center gap-2 text-sm">
-          <LogOut className="w-4 h-4" /> Sair
+        {/* FIX-WORKER-1 pass 163 (a11y): type=button + aria-label + LogOut aria-hidden + focus-visible */}
+        <button type="button" onClick={logout}
+          aria-label="Sair da conta (logout)"
+          className="btn-ghost flex items-center gap-2 text-sm focus-visible:outline-2 focus-visible:outline-magenta">
+          <LogOut className="w-4 h-4" aria-hidden="true" /> Sair
         </button>
       </div>
 

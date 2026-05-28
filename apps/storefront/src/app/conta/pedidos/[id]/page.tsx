@@ -70,15 +70,20 @@ export default function PedidoPage() {
               <img src={`data:image/png;base64,${order.asaas_pix_qrcode}`} alt="PIX" className="w-56 h-56 mx-auto bg-white p-2 rounded-lg mb-4" />
               {order.asaas_pix_copy_paste && (
                 <div className="max-w-md mx-auto">
-                  <label className="text-xs text-white/60 block mb-1 text-left">Copia e cola PIX</label>
+                  {/* FIX-WORKER-2 pass 163 (a11y): htmlFor + id + type=button + aria-label + autoComplete=off PII */}
+                  <label htmlFor="pix-copy" className="text-xs text-white/60 block mb-1 text-left">Copia e cola PIX</label>
                   <div className="flex gap-2">
-                    <textarea readOnly value={order.asaas_pix_copy_paste}
+                    <textarea id="pix-copy" readOnly value={order.asaas_pix_copy_paste}
+                      autoComplete="off"
+                      aria-describedby="pix-copy-help"
                       className="flex-1 p-2 rounded bg-white/5 border border-white/10 text-xs font-mono" rows={3} />
-                    <button onClick={() => navigator.clipboard.writeText(order.asaas_pix_copy_paste)}
-                      className="p-2 hover:bg-white/5 rounded h-fit">
-                      <Copy className="w-4 h-4" />
+                    <button type="button" onClick={() => navigator.clipboard.writeText(order.asaas_pix_copy_paste)}
+                      aria-label="Copiar codigo PIX para area de transferencia"
+                      className="p-2 hover:bg-white/5 rounded h-fit focus-visible:outline-2 focus-visible:outline-magenta">
+                      <Copy className="w-4 h-4" aria-hidden="true" />
                     </button>
                   </div>
+                  <span id="pix-copy-help" className="sr-only">Cole este codigo no app do banco para pagar via PIX</span>
                 </div>
               )}
             </div>

@@ -49,11 +49,14 @@ export default function DownloadPage() {
 
         <div className="space-y-4">
           <div>
-            <label className="text-xs text-white/60 uppercase mb-1 block">License key (guarde com seguranca)</label>
+            {/* FIX-WORKER-1 pass 163 (a11y): aria-label + type=button + warning text com aria-describedby */}
+            <div className="text-xs text-white/60 uppercase mb-1 block">License key (guarde com seguranca)</div>
             <div className="flex gap-2">
-              <code className="flex-1 bg-black/30 px-4 py-3 rounded font-mono text-sm">{data.license_key}</code>
-              <button onClick={() => navigator.clipboard.writeText(data.license_key)} className="px-3 hover:bg-white/5 rounded">
-                <Copy className="w-4 h-4" />
+              <code aria-label="Sua license key (confidencial)" className="flex-1 bg-black/30 px-4 py-3 rounded font-mono text-sm">{data.license_key}</code>
+              <button type="button" onClick={() => navigator.clipboard.writeText(data.license_key)}
+                aria-label="Copiar license key para area de transferencia"
+                className="px-3 hover:bg-white/5 rounded focus-visible:outline-2 focus-visible:outline-magenta">
+                <Copy className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
           </div>
