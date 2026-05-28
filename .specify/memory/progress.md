@@ -31341,3 +31341,28 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (4 CRITICAL + 18 migrations)
 - W4 admin audit-log viewer
 - W2 checkout E2E
+
+## PASS 363 W6 AUTH: audit_log entry per session em revoke_all
+commit c0b4ce8
+BUG compliance forense /logout?revoke_all=true
+PRE-FIX: 1 INSERT audit_log usando revokedRows[0] apenas
+  - revoke_all 5 sessions revoga 5 mas audit_log 1 entry
+  - LGPD direito-acesso: user historico incompleto
+  - SOC2 CC1.4: per-session authorization decisions missing
+  - Forense incident response "qual session X revogada" sem granularity
+
+POST-FIX:
+- Bulk INSERT via UNNEST($::UUID[]) - O(1) 1 query, N rows
+- 1 audit_log entry POR session revogada
+- target_id cobre TODAS sessions individualmente
+- Performance: array param evita N INSERTs separados
+
+Pattern V8 W6: action plural -> audit_log plural (1:N nao 1:1)
+
+96 passes acumulados (268->363) sem deploy VPS
+4 CRITICAL + 18 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W2 checkout E2E
