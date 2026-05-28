@@ -580,7 +580,12 @@ const KIND_ENUM = new Set([
   'automation','ai_agent','n8n_workflow','node_script','python_script',
   'php_script','prompt_pack','template','dataset','other'
 ]);
-const SORT_ENUM = new Set(['relevance','newest','price_asc','price_desc','rating','sales']);
+// FIX-WORKER-7 pass 125: sync c/ search-svc SEARCH_SORT_ENUM (7 opcoes - tinha 6).
+// UI ProductsSortSelect oferece 'recent_sales' (Vendendo agora). Antes:
+// chamada direta /api/products?sort=recent_sales -> 400 invalid_sort.
+// Storefront /products page usa Api.search (search-svc) que aceita, mas
+// admin/seller dashboards podem chamar product-svc direto -> bug latente.
+const SORT_ENUM = new Set(['relevance','newest','price_asc','price_desc','rating','sales','recent_sales']);
 
 router.get('/',
   listLimiter,
@@ -638,6 +643,8 @@ router.get('/',
   }
 
   // BUG 1: + p.id ASC tiebreaker em TODOS sorts
+  // FIX-WORKER-7 pass 125: + recent_sales (sync c/ search-svc SORT_OPTIONS).
+  // Tiebreaker p.id ASC mantem Regra D em todos (W7 pass 12).
   const order = ({
     relevance:    'p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id ASC',
     newest:       'p.published_at DESC NULLS LAST, p.id ASC',
@@ -645,6 +652,7 @@ router.get('/',
     price_desc:   'p.price_cents DESC, p.id ASC',
     rating:       'p.avg_rating DESC NULLS LAST, p.review_count DESC, p.id ASC',
     sales:        'p.sales_count DESC, p.id ASC',
+    recent_sales: 'p.last_sale_at DESC NULLS LAST, p.sales_count DESC, p.id ASC',
   })[req.query.sort] || 'p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id ASC';
 
   params.push(lim, off);
