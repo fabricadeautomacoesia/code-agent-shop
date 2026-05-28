@@ -19,12 +19,25 @@ export const metadata: Metadata = {
   // FIX-WORKER-9 pass 3: canonical em root = home (/), child layouts overridem com canonical proprio
   // Sem isso: home tinha ZERO canonical + /products?sort=X eram indexadas como pages diferentes
   alternates: { canonical: '/' },
+  // FIX-WORKER-9 pass 116: openGraph completo - antes faltava images explicito
+  // que fazia OG tags retornarem 1/3 (so siteName via auto-meta). Audit prod
+  // detectou /produtos /promocoes /loja etc todos sem og:image + og:description
+  // crawlavel. Agora full schema 3/3 tags.
   openGraph: {
     type: 'website',
     locale: 'pt_BR',
-    title: 'Code & Agent Shop',
-    description: 'Marketplace B2B/B2C de automacoes e agentes IA.',
+    url: 'https://cas.inovareinteligenciaartificial.com',
+    title: 'Code & Agent Shop - Marketplace de Automacoes e IA',
+    description: 'Marketplace B2B/B2C de automacoes, agentes IA, workflows n8n, scripts Node/Python/PHP, prompts e templates testados. Compre direto de desenvolvedores ou da plataforma.',
     siteName: 'Code & Agent Shop',
+    images: [
+      {
+        url: '/opengraph-image',
+        width: 1200,
+        height: 630,
+        alt: 'Code & Agent Shop - Marketplace de Automacoes e IA',
+      },
+    ],
   },
   // FIX-WORKER-9 pass 2: twitter card padrao tambem (inherit opengraph-image automaticamente)
   twitter: {
