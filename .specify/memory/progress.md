@@ -31786,3 +31786,31 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
 - W18 perf optimization
+
+## PASS 379 W5 SELLER LOJA: maxLength alinhado backend Zod kycSchema
+commit 8cd3102
+BUG paridade backend Zod limits missing 4 KYC inputs
+PRE-FIX:
+  - document_number sem (Zod 11-20)
+  - legal_name sem (Zod 3-200)
+  - address_line1 sem (Zod 3-200)
+  - address_city sem (Zod 2-100)
+  - address_zip sem (Zod 5-20)
+
+POST-FIX:
+- maxLength + minLength alinhado kycSchema
+- HTML5 native enforcement browser
+- Fail-fast UX (user vê boundary visual)
+
+W5 maxLength alignment series:
+  pass 330 reviews
+  pass 331 qna
+  pass 337 loja store
+  pass 379 loja kyc <- ESTE
+
+112 passes acumulados (268->379) sem deploy VPS
+4 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
