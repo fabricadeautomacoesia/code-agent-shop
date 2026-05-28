@@ -294,7 +294,7 @@ router.post('/earn',
     try {
       await cache.del(`loyalty:me:${user_id}:*`);
     } catch (e) {
-      log.warn({ err: e.message, user: user_id }, '[cache.invalidate_fail]');
+      log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), user: user_id }, '[cache.invalidate_fail]');
     }
 
     res.json(result);

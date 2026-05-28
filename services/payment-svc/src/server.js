@@ -345,7 +345,7 @@ app.post('/payments/asaas/create',
     // 4. campos extras (PIX QR Code, boleto URL)
     let pix = null;
     if (order.payment_method === 'pix') {
-      try { pix = await asaas.getPixQrCode(payment.id); } catch (e) { log.warn({ err: e.message }, '[pix.qr.fail]'); }
+      try { pix = await asaas.getPixQrCode(payment.id); } catch (e) { log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[pix.qr.fail]'); }
     }
 
     // FIX-WORKER-7 pass 21: UPDATE idempotente anti-race condition.
@@ -379,7 +379,7 @@ app.post('/payments/asaas/create',
         await asaas.cancelPayment(payment.id);
         log.info({ payment_id: payment.id }, '[asaas.cancel.ok] duplicate payment cancelado com sucesso');
       } catch (e) {
-        log.error({ err: e.message, payment_id: payment.id },
+        log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), payment_id: payment.id },
           '[asaas.cancel.fail] duplicate Asaas payment criado mas falhou cancelar - investigar manual');
       }
       return next(errorHandler.badRequest('payment_already_authorized',
@@ -535,7 +535,7 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
         [orderLink.rows[0]?.id || null, eventRowId]
       );
     } catch (e) {
-      log.error({ err: e.message, eventRowId }, '[webhook.process.fail]');
+      log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), eventRowId }, '[webhook.process.fail]');
       await query(
         `UPDATE asaas_webhook_events
             SET processing_error = $1,
@@ -821,7 +821,7 @@ async function processWebhookEvent(evt) {
           }
         }
       } catch (e) {
-        log.error({ err: e.message, order_id: order.id }, '[loyalty.earn.fail]');
+        log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), order_id: order.id }, '[loyalty.earn.fail]');
       }
       // contadores de produto e seller
       // FIX-WORKER-14 pass 2: products.last_sale_at agora atualizado (era NULL sempre!)
@@ -982,7 +982,7 @@ async function processWebhookEvent(evt) {
       }
       await Promise.all(tasks);
     } catch (e) {
-      log.warn({ err: e.message, users: loyaltyUsersToInvalidate.size },
+      log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), users: loyaltyUsersToInvalidate.size },
         '[cache.invalidate_fail.refund]');
     }
   }
@@ -998,7 +998,7 @@ async function processWebhookEvent(evt) {
         cache.del('order:admin:disputes:*'),
       ]);
     } catch (e) {
-      log.warn({ err: e.message, order_id: orderIdToInvalidate },
+      log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), order_id: orderIdToInvalidate },
         '[cache.invalidate_fail.webhook]');
     }
   }
@@ -1139,7 +1139,7 @@ app.post('/payments/payouts/:id/process',
         externalReference: `payout:${req.params.id}`,
       });
     } catch (e) {
-      log.error({ err: e.message, payout_id: req.params.id },
+      log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), payout_id: req.params.id },
         '[payout.asaas.fail] transfer falhou - payout permanece processing p/ cron reconcile');
       // Audit fail ANTES de rethrow
       await query(
@@ -1196,7 +1196,7 @@ app.post('/payments/payouts/:id/process',
              `Saque processado: R$ ${(Number(payout.amount_cents)/100).toFixed(2)}`,
              `Seu saque de R$ ${(Number(payout.amount_cents)/100).toFixed(2)} foi processado e enviado para sua conta. Transfer ID Asaas: ${transfer.id}.`,
              JSON.stringify({ payout_id: req.params.id, asaas_transfer_id: transfer.id, amount_cents: payout.amount_cents })]
-          ).catch((e) => log.warn({ err: e.message }, '[payout.notif.fail]'));
+          ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payout.notif.fail]'));
         }
       } catch (_) { /* best-effort */ }
     }
@@ -1276,11 +1276,11 @@ async function reconcileWebhooks() {
             WHERE id = $2`,
           [String(e.message).slice(0, 500), row.id]
         ).catch(() => {});
-        log.warn({ webhook_id: row.id, err: e.message }, '[reconcile.fail]');
+        log.warn({ webhook_id: row.id, /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[reconcile.fail]');
       }
     }
   } catch (e) {
-    log.error({ err: e.message }, '[reconcile.batch.fail]');
+    log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[reconcile.batch.fail]');
   }
 }
 
@@ -1520,7 +1520,7 @@ app.post('/payments/webhooks/:id/reset',
 
 // Cron interval: 5min. setImmediate para 1a execucao apos 30s (let svc warm up)
 setTimeout(() => reconcileWebhooks().catch(() => {}), 30000);
-setInterval(() => reconcileWebhooks().catch((e) => log.error({ err: e.message }, '[reconcile.cron.fail]')), 5 * 60 * 1000);
+setInterval(() => reconcileWebhooks().catch((e) => log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[reconcile.cron.fail]')), 5 * 60 * 1000);
 log.info('[reconcile.cron] webhook reconciliation cron started (5min interval)');
 
 // ============================================================
@@ -1581,15 +1581,15 @@ async function liquidatePendingWalletPayouts() {
            `Payout pendente liquidado: R$ ${(Number(row.amount_cents)/100).toFixed(2)}`,
            `Voce configurou sua wallet Asaas e seu payout pendente foi liquidado. Valor: R$ ${(Number(row.amount_cents)/100).toFixed(2)}. Transfer ID: ${transfer.id}.`,
            JSON.stringify({ pending_id: row.id, order_id: row.order_id, asaas_transfer_id: transfer.id })]
-        ).catch((e) => log.warn({ err: e.message }, '[payouts_pending.notif.fail]'));
+        ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payouts_pending.notif.fail]'));
         log.info({ pending_id: row.id, transfer_id: transfer.id }, '[payouts_pending.liquidated.ok]');
       } catch (e) {
-        log.error({ pending_id: row.id, err: e.message }, '[payouts_pending.liquidate.fail]');
+        log.error({ pending_id: row.id, /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payouts_pending.liquidate.fail]');
         // Nao incrementa retry - admin investiga manualmente (Asaas/network issues)
       }
     }
   } catch (e) {
-    log.error({ err: e.message }, '[payouts_pending.cron.fail]');
+    log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payouts_pending.cron.fail]');
   }
 }
 // FIX-WORKER-11 pass 272: setInterval pattern (paridade reconcileWebhooks acima)
@@ -1597,7 +1597,7 @@ async function liquidatePendingWalletPayouts() {
 // Primeiro run apos 60s (warm-up + reconcileWebhooks ja rodou)
 setTimeout(() => liquidatePendingWalletPayouts().catch(() => {}), 60000);
 setInterval(() => liquidatePendingWalletPayouts().catch((e) =>
-  log.error({ err: e.message }, '[payouts_pending.cron.fail]')), 24 * 60 * 60 * 1000);
+  log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payouts_pending.cron.fail]')), 24 * 60 * 60 * 1000);
 log.info('[payouts_pending.cron] liquidate cron started (24h interval)');
 
 // ============================================================
@@ -1643,13 +1643,13 @@ async function forfeitOrphanPendingPayouts() {
       ).catch(() => {});
     }
   } catch (e) {
-    log.error({ err: e.message }, '[payouts_pending.forfeit.cron.fail]');
+    log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payouts_pending.forfeit.cron.fail]');
   }
 }
 // 24h interval offset 90s warm-up (apos liquidator 60s)
 setTimeout(() => forfeitOrphanPendingPayouts().catch(() => {}), 90000);
 setInterval(() => forfeitOrphanPendingPayouts().catch((e) =>
-  log.error({ err: e.message }, '[payouts_pending.forfeit.cron.fail]')), 24 * 60 * 60 * 1000);
+  log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payouts_pending.forfeit.cron.fail]')), 24 * 60 * 60 * 1000);
 log.info('[payouts_pending.forfeit.cron] forfeit cron started (24h interval, 90d threshold)');
 
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));

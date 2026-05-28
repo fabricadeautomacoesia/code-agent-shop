@@ -38,7 +38,7 @@ async function invalidateSellerCache(userId) {
       );
     }
     await Promise.all(tasks);
-  } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
+  } catch (e) { log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[cache.invalidate_fail]'); }
 }
 
 // FIX-WORKER-18 pass 231: cache key helper p/ GET /sellers/me (vary by user)
@@ -619,7 +619,7 @@ router.post('/payout',
     try {
       await cache.del(`seller:payouts:${req.user.sub}:*`);
     } catch (e) {
-      log.warn({ err: e.message, user: req.user.sub }, '[cache.invalidate_fail]');
+      log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), user: req.user.sub }, '[cache.invalidate_fail]');
     }
 
     res.status(201).json({ payout });

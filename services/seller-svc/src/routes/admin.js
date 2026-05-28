@@ -46,7 +46,7 @@ async function invalidateSellerCache(sellerId) {
       );
     }
     await Promise.all(tasks);
-  } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
+  } catch (e) { log.warn({ /* FIX pass 343 DLP */ err: require('@cas/shared').mask.text(String(e.message || '').slice(0, 300)) }, '[cache.invalidate_fail]'); }
 }
 
 // POST /sellers/admin/:id/promote-class-b - admin promove seller a Classe B
@@ -778,7 +778,7 @@ router.post('/payouts/:id/approve', asyncHandler(async (req, res, next) => {
       amount_cents: r.rows[0].amount_cents,
       ip: req.ip,
     })]
-  ).catch((e) => log.warn({ err: e.message }, '[payout.approve.audit_fail]'));
+  ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: require('@cas/shared').mask.text(String(e.message || '').slice(0, 300)) }, '[payout.approve.audit_fail]'));
   // payment-svc disparara Asaas transfer
   res.json({ ok: true, approved: r.rows[0].id });
 }));
@@ -813,7 +813,7 @@ router.post('/payouts/:id/reject',
         reason: require('@cas/shared').mask.text(req.body.reason.slice(0, 500)),
         ip: req.ip,
       })]
-    ).catch((e) => log.warn({ err: e.message }, '[payout.reject.audit_fail]'));
+    ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: require('@cas/shared').mask.text(String(e.message || '').slice(0, 300)) }, '[payout.reject.audit_fail]'));
     res.json({ ok: true, rejected: r.rows[0].id });
   })
 );
@@ -863,7 +863,7 @@ router.post('/mv-kpi/refresh',
       ).catch(() => {});
       res.json({ ok: true, refreshed: true, duration_ms: durationMs });
     } catch (e) {
-      log.error({ err: e.message, actor: req.user.sub },
+      log.error({ /* FIX pass 343 DLP */ err: require('@cas/shared').mask.text(String(e.message || '').slice(0, 300)), actor: req.user.sub },
         '[mv_seller_kpi.refresh.manual.fail]');
       await query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, severity, payload_after)

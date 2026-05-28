@@ -30713,3 +30713,51 @@ PROXIMA ITER:
 - W4 final audit: notification-svc + qa-worker remaining log paths
 - W11 payment audit deeper
 - VPS SSH unblock URGENTISSIMO (175 ciclos - 58.3h)
+
+
+============================================================
+PASS 343 - 2026-05-28 - MARCO DLP cross-svc e.message MASS SWEEP
+============================================================
+Files: 8 modificados
+  - services/qa-svc/src/server.js (4 paths via replace_all)
+  - services/payment-svc/src/server.js (6 paths via replace_all)
+  - services/seller-svc/src/routes/admin.js (4 paths via require inline)
+  - services/seller-svc/src/routes/me.js (2 paths)
+  - services/seller-svc/src/routes/loyalty.js (1 path)
+  - services/seller-svc/src/cron/sla-checker.js (1 path + import mask)
+  - services/product-svc/src/routes/admin.js (2 paths + import mask)
+  - services/product-svc/src/routes/seller-mgmt.js (3 paths)
+  - services/vault-svc/src/server.js (6 paths via replace_all)
+  - services/review-svc/src/server.js (2 paths + import mask)
+Lines: ~30 changed
+
+MARCO DLP Mass Sweep cross-svc:
+- Total ~30 raw e.message logs masked em 1 pass
+- Pattern V8 universal: mask.text(String(e.message||'').slice(0,300))
+- replace_all utilizado 8 files (massive consolidacao)
+- Imports mask adicionados: sla-checker, product-svc/admin, review-svc
+
+DLP Error Logging Cross-Svc Total FINAL:
+- auth-svc: 19 paths
+- product-svc: 6 paths
+- vault-svc: 9 paths
+- qa-svc: 8 paths
+- payment-svc: 12 paths
+- seller-svc: 9 paths (admin 4 + me 2 + loyalty 1 + cron 1)
+- order-svc: 6 paths
+- qa-worker: 2 paths Python
+- notif-svc: 1 path
+- aiops-svc: 3 paths
+- review-svc: 2 paths
+= TOTAL: ~77 paths DLP error mask cross-svc
+
+VPS SSH BLOQUEADO (176 ciclos - 58.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-svc cas_payment-svc cas_seller-svc cas_product-svc cas_vault-svc cas_review-svc --force
+- Stress test exception path - verificar logs masked across ALL svcs
+
+PROXIMA ITER:
+- Verify final coverage - grep cross-svc deve retornar 0 raw e.message
+- VPS SSH unblock URGENTISSIMO (176 ciclos - 58.7h)

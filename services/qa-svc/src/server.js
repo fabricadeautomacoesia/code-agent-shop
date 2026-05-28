@@ -644,7 +644,7 @@ app.post('/qa/callback',
           cache.del(`seller:kpi:${sellerUserIdToInvalidate}`),
         ]);
       } catch (e) {
-        log.warn({ err: e.message, user: sellerUserIdToInvalidate }, '[cache.invalidate_fail]');
+        log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), user: sellerUserIdToInvalidate }, '[cache.invalidate_fail]');
       }
     }
 
@@ -882,11 +882,11 @@ async function timeoutStuckRuns() {
         });
         log.info({ run_id: run.id, minutes }, '[qa.timeout.ok]');
       } catch (e) {
-        log.error({ run_id: run.id, err: e.message }, '[qa.timeout.fail]');
+        log.error({ run_id: run.id, /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[qa.timeout.fail]');
       }
     }
   } catch (e) {
-    log.error({ err: e.message }, '[qa.timeout.cron.fail]');
+    log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[qa.timeout.cron.fail]');
   }
 }
 
@@ -942,7 +942,7 @@ app.get('/qa/runs/stuck',
 
 // Cron interval: 5min + warmup 60s
 setTimeout(() => timeoutStuckRuns().catch(() => {}), 60000);
-setInterval(() => timeoutStuckRuns().catch((e) => log.error({ err: e.message }, '[qa.timeout.cron.fail]')), 5 * 60 * 1000);
+setInterval(() => timeoutStuckRuns().catch((e) => log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[qa.timeout.cron.fail]')), 5 * 60 * 1000);
 log.info('[qa.timeout.cron] stuck runs cron started (5min interval, 10min threshold)');
 
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));

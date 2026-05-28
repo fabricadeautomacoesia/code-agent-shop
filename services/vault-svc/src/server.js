@@ -279,7 +279,7 @@ async function rotationAlertCron() {
             AND n.created_at > NOW() - INTERVAL '1 day'
        )`,
       [keysJson]
-    ).catch((e) => log.warn({ err: e.message }, '[vault.rotation.notif.bulk.fail]'));
+    ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[vault.rotation.notif.bulk.fail]'));
 
     // Email - apenas keys overdue (1 separate bulk INSERT)
     await query(
@@ -310,9 +310,9 @@ async function rotationAlertCron() {
               AND n.created_at > NOW() - INTERVAL '1 day'
          )`,
       [keysJson]
-    ).catch((e) => log.warn({ err: e.message }, '[vault.rotation.email.bulk.fail]'));
+    ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[vault.rotation.email.bulk.fail]'));
   } catch (e) {
-    log.error({ err: e.message }, '[vault.rotation.cron.fail]');
+    log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[vault.rotation.cron.fail]');
   }
 }
 
@@ -385,7 +385,7 @@ app.get('/keys/rotation-due',
 // Cron 1x/dia as 09:00 UTC (06:00 BRT) - antes do horario comercial brasileiro
 // setTimeout para 1a execucao 60s apos start (warmup), depois 24h interval
 setTimeout(() => rotationAlertCron().catch(() => {}), 60000);
-setInterval(() => rotationAlertCron().catch((e) => log.error({ err: e.message }, '[rotation.cron.fail]')),
+setInterval(() => rotationAlertCron().catch((e) => log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[rotation.cron.fail]')),
   24 * 60 * 60 * 1000);
 log.info('[vault.rotation.cron] daily rotation alert cron started');
 
@@ -670,7 +670,7 @@ app.post('/use',
     } catch (e) {
       // FIX SEG-VAULT-2: nao vaza exception message ao cliente (DLP). Loga estruturado server-side.
       // Importante: NAO inclui k.encrypted_key/iv/tag no log (security).
-      log.error({ err: e.message, key_id: k.id, fp: k.key_fingerprint }, '[vault.decrypt_fail]');
+      log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), key_id: k.id, fp: k.key_fingerprint }, '[vault.decrypt_fail]');
       return next(errorHandler.serverError('decrypt_failed'));
     }
     // FIX-WORKER-17 pass 230 (audit log ordering): res.json acontecia ANTES do
@@ -699,7 +699,7 @@ app.post('/use',
           ip: req.ip,
         }),
       ]
-    ).catch((e) => log.warn({ err: e.message, key_id: k.id }, '[vault.use.audit_fail]'));
+    ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), key_id: k.id }, '[vault.use.audit_fail]'));
 
     // POST-fix audit-first ordering: response apenas APOS trail gravado
     res.json({

@@ -6,7 +6,7 @@ const express = require('express');
 const cron = require('node-cron');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache, rateLimiter, maskPII } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache, rateLimiter, maskPII, mask } = require('@cas/shared');
 
 const log = logger.child({ svc: 'review-svc' });
 const app = express();
@@ -1414,7 +1414,7 @@ async function refreshAllReputations() {
     ok = bulkResult.seller_count;
   } catch (e) {
     // Fallback per-seller loop (migration 063 nao aplicada ou erro bulk)
-    log.warn({ err: e.message }, '[reputation.bulk.fail] falling back per-seller');
+    log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[reputation.bulk.fail] falling back per-seller');
     const sellers = await query(`SELECT id FROM sellers WHERE status = 'active' AND deleted_at IS NULL`);
     for (const s of sellers.rows) {
       try {
@@ -1452,7 +1452,7 @@ async function refreshAllReputations() {
       })]
     ).catch(() => {});
   } catch (e) {
-    log.error({ err: e.message, ok, err, total: sellers.rows.length },
+    log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), ok, err, total: sellers.rows.length },
       '[reputation.refresh.fail] mv_seller_kpi NAO atualizado - admin investigar urgente');
     await query(
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, severity, payload_after)

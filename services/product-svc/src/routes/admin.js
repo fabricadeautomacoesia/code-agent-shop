@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII, mask } = require('@cas/shared');
 
 const router = express.Router();
 const log = logger.child({ svc: 'product-svc', mod: 'admin' });
@@ -36,7 +36,7 @@ async function invalidateProductCache(productId) {
       }
     }
     await Promise.all(tasks);
-  } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
+  } catch (e) { log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[cache.invalidate_fail]'); }
 }
 
 // GET /products/admin/qa-queue
@@ -395,7 +395,7 @@ router.post('/:id/archive',
         reason: req.body?.reason || null,
         ip: req.ip,
       })]
-    ).catch((e) => log.warn({ err: e.message }, '[product.archive.audit_fail]'));
+    ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[product.archive.audit_fail]'));
     // FIX-WORKER-7 pass 5: invalida tambem detail/reviews/qna por slug
     await invalidateProductCache(req.params.id);
     res.json({ ok: true, archived: r.rows[0].id });

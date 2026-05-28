@@ -55,7 +55,7 @@ async function invalidate(productId) {
       }
     }
     await Promise.all(tasks);
-  } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
+  } catch (e) { log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[cache.invalidate_fail]'); }
 }
 
 /* FIX-WORKER-7 pass 332 (anti-DoS schema hardening):
@@ -657,7 +657,7 @@ router.post('/:id/submit',
       },
       body: JSON.stringify({ product_id: productInfo.id, triggered_by: req.user.sub }),
       signal: ctrl.signal,
-    }).catch((e) => log.warn({ err: e.message }, '[qa.dispatch_failed]'))
+    }).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[qa.dispatch_failed]'))
       .finally(() => clearTimeout(timer));
 
     await invalidate(req.params.id);
@@ -836,7 +836,7 @@ router.post('/:id/versions',
       );
     } catch (e) {
       // Nao bloqueia o create de version se notification falhar
-      log.warn({ err: e.message, product_id: req.params.id }, '[version.notify_failed]');
+      log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), product_id: req.params.id }, '[version.notify_failed]');
     }
 
     res.status(201).json({ version });

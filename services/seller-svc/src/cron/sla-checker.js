@@ -2,7 +2,7 @@
 
 const cron = require('node-cron');
 const { query, tx } = require('@cas/db-client');
-const { logger } = require('@cas/shared');
+const { logger, mask } = require('@cas/shared');
 
 const log = logger.child({ svc: 'seller-svc', mod: 'sla-checker' });
 
@@ -110,7 +110,7 @@ async function checkSlaDeadlines() {
 
 function start() {
   // hourly
-  cron.schedule('7 * * * *', () => checkSlaDeadlines().catch((e) => log.error({ err: e.message }, '[sla.cron_error]')));
+  cron.schedule('7 * * * *', () => checkSlaDeadlines().catch((e) => log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[sla.cron_error]')));
   log.info('[sla-checker] cron hourly scheduled');
 }
 
