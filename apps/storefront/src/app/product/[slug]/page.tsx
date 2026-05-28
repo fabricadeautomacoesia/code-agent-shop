@@ -10,6 +10,7 @@ import { AlsoBought } from '@/components/also-bought';
 import { ProductTabs } from '@/components/product-tabs';
 import { AskQuickButton } from '@/components/ask-quick-button';
 import { CompareButton } from '@/components/compare-button';
+import { ShareButton } from '@/components/share-button';
 import { Installments } from '@/components/installments';
 import { OfficialBadge } from '@/components/official-badge';
 import { RecentlyViewedStrip } from '@/components/recently-viewed-strip';
@@ -194,6 +195,9 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
               cover_image_url: product.cover_image_url, price_cents: product.price_cents,
               is_free: product.is_free,
             }} />
+
+            {/* MLB-13 WORKER 16 pass 127: Compartilhar produto (WhatsApp/X/LinkedIn/Copy) */}
+            <ShareButton title={product.title} productSlug={product.slug} productId={product.id} />
 
             {/* MLB-NEW WORKER 16: Trust Signals badges (Garantia + Suporte + Updates) */}
             <div className="mt-5 space-y-2.5 text-xs">
