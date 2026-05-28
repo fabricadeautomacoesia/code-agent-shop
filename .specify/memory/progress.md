@@ -23118,3 +23118,89 @@ PROXIMA ITER:
 - W11: payment-svc Asaas refund edge cases
 - W13: notification-svc Telegram retry edge cases
 - 🚨 VPS SSH unblock URGENTE (51 ciclos - 17h sem deploy!)
+
+PASS 219 (W13 Telegram 4 bugs + outbox permanent error skip) - 2026-05-28:
+- W13 audit notification-svc Telegram path descobriu 4 bugs criticos:
+
+BUG 1 (markdown parse crashes):
+- parse_mode='Markdown' quebra em content nao escapado
+- 'Pedido #abc_123' ou 'product **Special**' -> Telegram 400 'can't parse'
+- Em prod: notification fail por parse error -> retry loop 5x ate dar up
+
+BUG 2 (sem error classification):
+- 429/5xx/4xx todos bubble up igual
+- 4xx (permanent) consumiam mesma retry budget que 5xx (transient)
+- 4 retries com mesma causa = waste 1+30s+2min+10min+1h time
+
+BUG 3 (token URL leak):
+- fetch URL tem 'bot{TELEGRAM_BOT_TOKEN}/sendMessage'
+- Upstream description pode incluir URL -> audit_log token leak
+
+BUG 4 (ignore retry_after):
+- Telegram 429 retorna parameters.retry_after (sec wait)
+- App usava backoff proprio - retentava antes do servidor permitir
+- Cascade 429 -> 429 -> 429
+
+POST-FIX (sendTelegram hardening):
+
+1. parse_mode REMOVED (plain text default):
+   - Sem schema error em content user
+   - Markdown VISUAL preserved (cliente Telegram render)
+
+2. e.transient flag classification:
+   - 429 + 5xx -> transient=true (caller retry safe)
+   - 400/401/403/404 -> transient=false (caller skip budget)
+   - Network/timeout -> transient=true (rede instavel)
+
+3. Token NUNCA em error message:
+   - Apenas status code + body description preservados
+   - DLP V8 cross-svc
+
+4. e.retryAfter captura:
+   - Parameters.retry_after extraido pos-429
+   - Caller usa: backoff = Math.max(jitter_backoff, retryAfter)
+
+OUTBOX PROCESSOR atualizado:
+- isPermanent = e.transient === false
+- retry_count = CASE WHEN isPermanent THEN 5 ELSE +1
+- sent_status = 'failed' imediato se permanent
+- backoffSeconds respeita retryAfter de Telegram
+- log.warn inclui { permanent: true|false }
+
+PATTERN AWS SDK RETRY CLASSIFICATION consolidado:
+- Transient: timeout, 429 rate-limit, 5xx server down
+- Permanent: 4xx schema/auth/not-found (fail fast)
+- Cross-svc: aplicavel futuro sendEmail (4xx vs 5xx SMTP)
+
+Commit cff4e15 pushed origin/main (+70/-21)
+VPS SSH ainda bloqueado (52 ciclos consecutivos)
+
+CONSOLIDADO DLP PATTERNS recentes:
+- pass 185: notification-svc failed_reason mask.text
+- pass 192: qa-worker LLM error sanitize
+- pass 219: notification-svc Telegram token URL leak fix + transient flag
+
+CODIGO ACUMULADO ORIGIN/MAIN (52 ciclos):
+- 168-218: documentados
+- 219: notification-svc Telegram retry + DLP + permanent skip
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_notification-svc --force
+- Test markdown content:
+  Inserir notification Telegram com 'Pedido #abc_123 (\"prod Special\")'
+  Antes: 400 'can't parse entities'
+  Depois: 200 OK plain text
+- Test permanent skip:
+  Mock Telegram 401 unauthorized
+  Antes: 5 retries waste 1h+ time
+  Depois: retry_count=5 imediato, sent_status='failed', log permanent=true
+- Test retry_after:
+  Mock Telegram 429 com retry_after=120
+  Antes: backoff 30s (next_retry_at era 30s)
+  Depois: backoff Math.max(jitter, 120) = ~144s
+
+PROXIMA ITER:
+- W11: payment-svc Asaas refund edge cases
+- W4 admin: vault-svc admin filtrar por seller_id (frontend)
+- W18: cache /api/notifications/me (com TTL care - mutations frequent)
+- 🚨 VPS SSH unblock URGENTE (52 ciclos - >17.3h sem deploy!)
