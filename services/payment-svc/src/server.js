@@ -200,10 +200,15 @@ app.post('/payments/asaas/create',
     let order;
     let lockResult;
     await tx(async (c) => {
+      /* FIX-WORKER-18 pass 314: consolida users.metadata SELECT (linha 243).
+         PRE-FIX: 2 queries separadas:
+           - linha 203 SELECT orders JOIN users (sem metadata)
+           - linha 243 SELECT users.metadata p/ asaas_customer_id
+         POST-FIX: + u.metadata aqui. Reduz 1 roundtrip DB por checkout. */
       const o = await c.query(
         `SELECT o.id, o.buyer_user_id, o.order_number, o.payment_status,
                 o.payment_method, o.total_cents, o.currency,
-                u.email, u.full_name, u.cpf_cnpj, u.phone_e164
+                u.email, u.full_name, u.cpf_cnpj, u.phone_e164, u.metadata AS user_metadata
            FROM orders o
            JOIN users u ON u.id = o.buyer_user_id AND u.deleted_at IS NULL
           WHERE o.id = $1 AND o.buyer_user_id = $2
@@ -240,8 +245,10 @@ app.post('/payments/asaas/create',
     }
 
     // 1. cria/usa customer Asaas (cache no users.metadata.asaas_customer_id)
-    const u = await query('SELECT metadata FROM users WHERE id = $1', [order.buyer_user_id]);
-    let customerId = u.rows[0]?.metadata?.asaas_customer_id;
+    /* FIX-WORKER-18 pass 314: usa user_metadata ja capturado no tx (linha 213).
+       PRE-FIX: 2nd SELECT users.metadata roundtrip - redundante.
+       POST-FIX: lookup direto em order.user_metadata. */
+    let customerId = order.user_metadata?.asaas_customer_id;
     if (!customerId) {
       const cust = await asaas.createCustomer({
         name: order.full_name,

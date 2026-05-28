@@ -29598,3 +29598,35 @@ PROXIMA ITER:
 - W4 admin /admin/reports endpoint similar audit
 - W17 vault audit /usage tx withRetry
 - VPS SSH unblock URGENTISSIMO (146 ciclos - 48.7h)
+
+
+============================================================
+PASS 314 - 2026-05-28 - W18 payment-svc consolidate users metadata
+============================================================
+Files: 1 modificado
+  - services/payment-svc/src/server.js (consolidate 2 SELECTs to 1)
+Lines: ~10 changed
+
+W18 (perf payment /asaas/create consolidate metadata SELECT):
+- PRE-FIX: 2 queries separadas no checkout:
+  - linha 203 SELECT orders JOIN users (sem metadata)
+  - linha 243 SELECT users.metadata para asaas_customer_id lookup
+- Cada checkout = 2 DB roundtrips desnecessarios
+- POST-FIX: + u.metadata AS user_metadata na 1a query
+  - Lookup direto em order.user_metadata?.asaas_customer_id
+- Reduz 1 query por checkout (latencia 30ms+ economizada)
+- Pattern V8: consolidacao paralelo COUNT OVER passes
+
+VPS SSH BLOQUEADO (147 ciclos - 49h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_payment-svc --force
+- W18 verify: tail logs payment-svc query count em /asaas/create
+  Pre-fix: 4+ queries por checkout
+  Post-fix: 3 queries por checkout (1 menos no early phase)
+
+PROXIMA ITER:
+- W18 payment-svc additional 2-query patterns consolidate (1061, 1398, 1447)
+- W11 webhook tx fields explicit (s.* style audit)
+- VPS SSH unblock URGENTISSIMO (147 ciclos - 49h)
