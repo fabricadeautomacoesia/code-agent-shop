@@ -94,18 +94,24 @@ export default function SellerQnaPage() {
                 </div>
 
                 <div className="space-y-2">
+                  {/* FIX-WORKER-5 pass 147 (a11y): aria-label dinamico identifica
+                      qual pergunta cada textarea responde (multiplos forms no DOM).
+                      htmlFor/id seria impraticavel - 1 textarea por question dinamica. */}
                   <textarea
                     value={answers[q.id] || ''}
                     onChange={(e) => setAnswers((p) => ({ ...p, [q.id]: e.target.value }))}
                     placeholder="Sua resposta..."
                     rows={3}
                     disabled={busy}
+                    aria-label={`Resposta para pergunta: ${q.question.slice(0, 60)}${q.question.length > 60 ? '...' : ''}`}
                     className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none text-sm disabled:opacity-50" />
                   <button
+                    type="button"
                     onClick={() => reply(q.id)}
                     disabled={busy || !(answers[q.id]?.trim())}
+                    aria-label={`Enviar resposta para: ${q.question.slice(0, 40)}${q.question.length > 40 ? '...' : ''}`}
                     className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait">
-                    <Send className="w-4 h-4" /> {busy ? 'Enviando...' : 'Responder'}
+                    <Send className="w-4 h-4" aria-hidden="true" /> {busy ? 'Enviando...' : 'Responder'}
                   </button>
                 </div>
               </div>
