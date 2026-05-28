@@ -17325,7 +17325,41 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ order-svc cart.js PATCH /items/:id + coupon/preview (pass 105) - 5 bugs
 - ✅ order-svc cart.js POST /coupon (pass 106) - 4 bugs rate+race+audit
 - ✅ product-svc /:id/force-approve (pass 107) - 7 bugs admin override
-- ✅ DEPLOY VPS PROD EXECUTADO via SSH (pass 108 esta iter) - 107 W7 passes LIVE
+- ✅ DEPLOY VPS PROD EXECUTADO via SSH (pass 108) - 107 W7 passes LIVE
+- ✅ Fix /sla-history + /kpi schema mismatch (pass 109 esta iter) - 2 bugs prod
+
+W7 PASS 109 RESUMO - AUDIT REAL + FIX:
+- Audit completo via curl em prod com tokens JWT real (buyer + seller):
+  * BUYER (teste1@cas.io): 8 endpoints OK (auth/me, orders, notifications,
+    unread-count, wishlist, cart, recently-viewed, recommendations)
+  * SELLER (vendedor1@cas.io): 4 OK (me, payouts, sellers public, /me/products,
+    qna/seller/pending, reviews/seller/received) + 2 BUGS encontrados:
+    - /sellers/me/sla-history -> 500 column h.event_type does not exist
+    - /sellers/me/kpi -> 500 column k.total_sales does not exist
+- ROOT CAUSE: Pattern W7 pass 70 + 72 escreveu queries com columns que NAO existem
+  no schema real prod (codigo otimista assumindo schema fictico). Migrations 010+
+  cobrem outras cols mas seller_sla_history + mv_seller_kpi tem schemas distintos.
+- FIX seller_sla_history (descobri via psql \\d):
+  Real: id, seller_id, event (text), deadline_was, actual_upload_at,
+        days_overdue, actor_user_id, notes, created_at
+  Removidos do SELECT: event_type, previous_class, new_class,
+    previous_status, new_status, reason
+- FIX mv_seller_kpi (descobri via psql \\d):
+  Real: seller_id, user_id, seller_class, status, reputation_tier,
+        reputation_score, products_active, products_pending_qa,
+        gross_revenue_cents, net_payout_cents, platform_commission_cents,
+        total_orders, avg_rating, review_count, open_disputes,
+        sla_next_deadline_at, updated_at
+  Mudancas: WHERE k.user_id direto (mv ja tem user_id denorm); removidos
+    total_sales/total_revenue_cents/refund_rate/on_time_qa_rate/response_rate;
+    adicionados gross_revenue_cents/net_payout_cents/platform_commission_cents/
+    total_orders/open_disputes/sla_next_deadline_at.
+- VALIDACAO POS-FIX (curl prod):
+  * /sellers/me/sla-history -> HTTP 200 {history:[],total:0,...}
+  * /sellers/me/kpi -> HTTP 200 com reputation_score=4000, class_a, status=active
+- Pattern W7 em 119 endpoints LIVE em prod - 109 micro-iters
+- Aprendizado pass 109: Pattern W7 deve incluir Regra X "schema-real-validation"
+  via psql \\d antes de assumir column names em queries.
 
 W7 PASS 108 RESUMO - DEPLOY PROD REAL:
 - Descoberto que sandbox tem Node.js 24 + npm. Instalado pacote ssh2 em
