@@ -176,10 +176,32 @@ async function releaseSpikeBlocks() {
 // CLEANUP RETENCAO 30d
 // ============================================================
 async function cleanupMetrics() {
-  const r = await query(
-    `DELETE FROM metrics_history WHERE collected_at < NOW() - INTERVAL '30 days' RETURNING id`
-  );
-  log.info({ deleted: r.rowCount }, '[metrics.cleanup]');
+  // FIX-WORKER-18 pass 253 (batched delete + lock window):
+  //   PRE-FIX: DELETE WHERE ... RETURNING id (single transaction)
+  //   Cenario backlog: outage cleanupMetrics cron 30 dias acumula 1M+ rows
+  //   (metrics_history ~1440 rows/dia por host). Single DELETE lock tabela
+  //   minutos -> outras queries metrics_history bloqueadas (collectMetrics
+  //   INSERT, /aiops/metrics SELECT).
+  //   POST-FIX: batched DELETE com LIMIT 5000 + loop ate 0 rows. Cada batch
+  //   commit independente -> outras queries entre batches respira.
+  //   Pattern PG hot-path retention - cleanup nao bloqueia prod.
+  let totalDeleted = 0;
+  let batchDeleted = 0;
+  const MAX_BATCHES = 50; // hard cap p/ nao rodar indefinido (50 * 5000 = 250k max per cron tick)
+  for (let i = 0; i < MAX_BATCHES; i++) {
+    const r = await query(
+      `DELETE FROM metrics_history
+        WHERE id IN (
+          SELECT id FROM metrics_history
+           WHERE collected_at < NOW() - INTERVAL '30 days'
+           LIMIT 5000
+        )`
+    );
+    batchDeleted = r.rowCount || 0;
+    totalDeleted += batchDeleted;
+    if (batchDeleted < 5000) break; // nao ha mais o que deletar
+  }
+  log.info({ deleted: totalDeleted }, '[metrics.cleanup]');
 }
 
 // ============================================================

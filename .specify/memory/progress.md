@@ -26098,3 +26098,89 @@ PROXIMA ITER:
 - W4 admin: bulk select multi-payouts
 - W16 MLB: BNPL/parcelamento UI (Mercado Credito ja partial)
 - VPS SSH unblock URGENTISSIMO (85 ciclos - 28.3h)
+
+============================================================
+PASS 253 (2026-05-28) - W9 + W4 + W18 SEO/defensive/perf
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W9 dashboard-admin: /vault + /webhooks layouts faltantes
+- W4 dashboard-admin: orders stats defensive Number + icons a11y
+- W18 aiops-svc: cleanupMetrics batched delete (lock window)
+
+============================================================
+1. W9 - /vault + /webhooks metadata layouts
+============================================================
+FILES: apps/dashboard-admin/src/app/vault/layout.tsx (CRIADO)
+       apps/dashboard-admin/src/app/webhooks/layout.tsx (CRIADO)
+
+PROBLEMA:
+- /vault: page critica admin (cofre AES-256-GCM) sem layout.tsx -> metadata
+  root generic. Embora auth gateway bloqueie public, defesa em camada:
+  robots noindex obrigatorio + title especifico para shares internos
+- /webhooks: dead-letter queue Asaas (payment forense) - mesmo gap
+
+POST-FIX:
+- Ambos com title + description tematicos
+- robots: { index: false, follow: false }
+- Pattern paridade com /llm-cost, /db-audit (pass 250)
+
+============================================================
+2. W4 - orders stats undefined render + icons a11y
+============================================================
+FILE: apps/dashboard-admin/src/app/orders/page.tsx:84-92
+
+PROBLEMA:
+- {stats.count_paid} e {stats.count_pending} sem defensive cast
+- Backend transient state retornava NULL/undefined -> UI render "undefined"
+- Total revenue ja tinha || 0 fallback - paridade missing nos counts
+- Icons (ShoppingBag, Clock, TrendingUp) sem aria-hidden
+
+POST-FIX:
+- {Number(stats.count_paid) || 0} - paridade com fmtBRL fallback
+- aria-hidden="true" nos 3 icons decorative (pattern V8 a11y)
+
+============================================================
+3. W18 - cleanupMetrics batched delete
+============================================================
+FILE: services/aiops-svc/src/server.js:178-205
+
+PROBLEMA (lock window):
+- DELETE FROM metrics_history WHERE ... RETURNING id (single tx)
+- metrics_history ~1440 rows/dia por host
+- Outage cron 30+ dias acumula 1M+ rows pending deletion
+- Single DELETE lock TABLE inteira por MINUTOS
+- collectMetrics INSERT bloqueia, /aiops/metrics SELECT bloqueia
+- AIOps health monitoring fica cego durante cleanup
+
+POST-FIX:
+- Loop batched: DELETE LIMIT 5000 ate retorno < 5000
+- MAX_BATCHES=50 hard cap (250k max/cron tick)
+- Cada batch commit independente -> outras queries respiram
+- Pattern PG retention hot-path - cleanup nao bloqueia prod
+
+============================================================
+SUMARIO PASS 253
+============================================================
+Files: 4 modificados/criados
+  - apps/dashboard-admin/src/app/vault/layout.tsx (NEW SEO)
+  - apps/dashboard-admin/src/app/webhooks/layout.tsx (NEW SEO)
+  - apps/dashboard-admin/src/app/orders/page.tsx (defensive Number)
+  - services/aiops-svc/src/server.js (batched cleanup)
+Lines: ~80 added
+
+VPS SSH BLOQUEADO (86 ciclos - 28.7h sem deploy).
+Migs 069-075 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-admin cas_aiops-svc --force
+- W9 test: curl admin.cas/vault -> title 'Vault de API keys - Admin'
+- W4 test: simular backend retornando {} em /orders/admin/recent ->
+  UI mostra "0" nos cards (era "undefined")
+- W18 test: insert 100k rows metrics_history >30d -> rodar cleanupMetrics
+  Cada batch ~50-200ms, total ~10-20s (era 1+ minute lock single tx)
+
+PROXIMA ITER:
+- W2 checkout: cupom + redeem cumulativo validation
+- W6 auth: 2fa setup QR code regenerate
+- VPS SSH unblock URGENTISSIMO (86 ciclos - 28.7h)

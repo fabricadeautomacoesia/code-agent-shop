@@ -78,17 +78,23 @@ export default function AdminOrdersPage() {
         </div>
       )}
 
+      {/* FIX-WORKER-4 pass 253 (defensive Number cast + aria-hidden icons):
+          Stats null/undefined em backend transient state -> renderia "undefined"
+          ou "null" literal em cards de admin (uglyUX + percepcao de bug).
+          Total revenue ja tinha || 0 fallback; counts NAO. Pattern V8 defensive
+          render: Number() cast com fallback 0 em todos numericos.
+          Tambem aria-hidden em icons decorativos (Star/ShoppingBag/Clock pattern). */}
       <div className="grid md:grid-cols-3 gap-4 mb-8">
         <div className="glass p-5">
-          <div className="stat-label flex items-center gap-2"><ShoppingBag className="w-3 h-3" /> Pedidos pagos</div>
-          <div className="stat-value text-green-400">{stats.count_paid}</div>
+          <div className="stat-label flex items-center gap-2"><ShoppingBag className="w-3 h-3" aria-hidden="true" /> Pedidos pagos</div>
+          <div className="stat-value text-green-400">{Number(stats.count_paid) || 0}</div>
         </div>
         <div className="glass p-5">
-          <div className="stat-label flex items-center gap-2"><Clock className="w-3 h-3" /> Pendentes</div>
-          <div className="stat-value text-yellow-400">{stats.count_pending}</div>
+          <div className="stat-label flex items-center gap-2"><Clock className="w-3 h-3" aria-hidden="true" /> Pendentes</div>
+          <div className="stat-value text-yellow-400">{Number(stats.count_pending) || 0}</div>
         </div>
         <div className="glass p-5">
-          <div className="stat-label flex items-center gap-2"><TrendingUp className="w-3 h-3" /> Receita total</div>
+          <div className="stat-label flex items-center gap-2"><TrendingUp className="w-3 h-3" aria-hidden="true" /> Receita total</div>
           <div className="stat-value">{fmtBRL(stats.total_revenue || 0)}</div>
         </div>
       </div>
