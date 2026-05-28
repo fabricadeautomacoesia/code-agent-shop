@@ -181,11 +181,17 @@ router.get('/', asyncHandler(async (req, res) => {
     ? 'LEFT JOIN sellers s ON s.id = p.seller_id'  // admin: LEFT JOIN (platform_owned products sem seller)
     : 'JOIN sellers s ON s.id = p.seller_id';      // seller: INNER JOIN (ownership)
 
+  /* FIX-WORKER-7 pass 320: COUNT(*) OVER() window consolidation.
+     PRE-FIX: 2 queries (rows + COUNT) com WHERE+JOIN identicos +
+     countParams = params.slice(0, -2) cleanup feio.
+     Pattern V8 19+ endpoints (passes 178-319).
+     POST-FIX: 1 query + strip _total + has_more. */
   const r = await query(
     `SELECT p.id, p.slug, p.title, p.status, p.kind, p.price_cents, p.currency,
             p.qa_verdict, p.qa_confidence_score,
             p.sales_count, p.avg_rating, p.review_count,
-            p.created_at, p.published_at
+            p.created_at, p.published_at,
+            COUNT(*) OVER()::INT AS _total
        FROM products p
        ${joinClause}
       WHERE ${whereParts.join(' AND ')}
@@ -194,20 +200,15 @@ router.get('/', asyncHandler(async (req, res) => {
     params
   );
 
-  // Total count
-  const countParams = params.slice(0, -2);
-  const totalRes = await query(
-    `SELECT COUNT(*)::INT AS total FROM products p ${joinClause} WHERE ${whereParts.join(' AND ')}`,
-    countParams
-  );
-  const total = totalRes.rows[0].total;
+  const total = r.rows[0]?._total ?? 0;
+  const products = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
 
   res.json({
-    products: r.rows,
+    products,
     total,
     limit,
     offset,
-    has_more: (offset + r.rows.length) < total,
+    has_more: (offset + products.length) < total,
     filters: {
       status: statusFilter,
       kind: kindFilter,

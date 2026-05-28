@@ -29832,3 +29832,33 @@ PROXIMA ITER:
 - W18 product-svc additional consolidations
 - W4 admin /audit-log enhance
 - VPS SSH unblock URGENTISSIMO (152 ciclos - 50.7h)
+
+
+============================================================
+PASS 320 - 2026-05-28 - W7 product-svc seller-mgmt GET / COUNT OVER
+============================================================
+Files: 1 modificado
+  - services/product-svc/src/routes/seller-mgmt.js (GET / COUNT OVER)
+Lines: ~15 changed
+
+W7 (products/me list consolidation):
+- PRE-FIX: 2 queries (rows + COUNT) com WHERE+JOIN identicos
+- countParams = params.slice(0, -2) - cleanup feio
+- POST-FIX: 1 query COUNT(*) OVER() + strip _total via map
+- Pattern V8 19+ endpoints (passes 178-319)
+- Latencia ~30ms (2 scans) -> ~17ms (1 scan)
+
+VPS SSH BLOQUEADO (153 ciclos - 51h sem deploy).
+Migs 069-084 pendentes apply.
+
+COUNT OVER Final - 19 endpoints (passes 178-320)
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc --force
+- W7: EXPLAIN ANALYZE /products/me?limit=20 - 1 scan vs 2 pre-fix
+- Frontend dashboard-seller /products list nao quebrar (mesma shape response)
+
+PROXIMA ITER:
+- W7 audit other seller-mgmt 2-query patterns
+- W4 admin audit-log enhanced filtering
+- VPS SSH unblock URGENTISSIMO (153 ciclos - 51h)
