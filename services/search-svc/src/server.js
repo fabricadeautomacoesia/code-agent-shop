@@ -126,7 +126,8 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
     i++;
   }
   if (category) {
-    where.push(`p.category_id = (SELECT id FROM categories WHERE slug = $${i++})`);
+    // FIX pass 417: + AND is_active=TRUE subquery cat lookup (paridade /top-sellers/:category)
+    where.push(`p.category_id = (SELECT id FROM categories WHERE slug = $${i++} AND is_active = TRUE)`);
     params.push(category);
   }
   if (kind)      { where.push(`p.kind = $${i++}`); params.push(kind); }
@@ -477,9 +478,16 @@ app.get('/top-sellers/:category',
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
   const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 50));
   // 1) Resolve categoria e valida existencia
+  // FIX-WORKER-10 pass 417 (is_active filter cat lookup - paridade 411):
+  //   PRE-FIX: WHERE slug=$1 sem is_active filter
+  //   - Admin desativa categoria -> endpoint ainda retorna products + category
+  //   - Inconsistente com /categories (linha 651 filtra is_active)
+  //   - Frontend /categoria/[slug] renderiza cat inativa
+  //   - Pattern V8 pass 406+411 fixou cross-svc, top-sellers/:category lagged
+  //   POST-FIX: + AND is_active = TRUE (404 graceful se inativa)
   const catR = await query(
     `SELECT id, slug, name, name_singular, description, parent_id
-       FROM categories WHERE slug = $1`, [req.params.category]
+       FROM categories WHERE slug = $1 AND is_active = TRUE`, [req.params.category]
   );
   if (!catR.rows.length) {
     return res.status(404).json({ error: 'category_not_found', slug: req.params.category });

@@ -663,7 +663,8 @@ router.get('/',
   let i = 1;
 
   if (req.query.category) {
-    where.push(`p.category_id = (SELECT id FROM categories WHERE slug = $${i++})`);
+    // FIX-WORKER-7 pass 417: is_active filter paridade cross-svc (search 417)
+    where.push(`p.category_id = (SELECT id FROM categories WHERE slug = $${i++} AND is_active = TRUE)`);
     params.push(req.query.category);
   }
   if (req.query.kind) {
