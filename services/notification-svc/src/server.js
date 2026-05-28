@@ -223,9 +223,14 @@ app.get('/', jwt.requireAuth(), asyncHandler(async (req, res) => {
   // como 'product_approved'/'welcome_bonus' que o UI precisa para inferir URL fallback
   // quando cta_url e null. Confirmado nao-sensitive em audit-W13).
   const whereExtra = unreadOnly ? ' AND is_read = FALSE' : '';
+  // FIX-WORKER-18 pass 179: COUNT(*) OVER() window consolida COUNT separado.
+  // Pre-fix: 2 queries (SELECT + COUNT - PG scan duplo).
+  // Post-fix: 1 query (window scan unico) - ~30ms -> ~15ms.
+  // BONUS W14-179: novo idx_notif_user_channel_created cobre WHERE + ORDER.
   const r = await query(
     `SELECT id, channel, template_code, title, body, body_html, cta_label, cta_url, icon,
-            priority, payload, is_read, read_at, created_at
+            priority, payload, is_read, read_at, created_at,
+            COUNT(*) OVER()::INT AS _total
        FROM notifications
       WHERE user_id = $1 AND channel = 'in_app'${whereExtra}
       ORDER BY created_at DESC, id DESC
@@ -236,18 +241,14 @@ app.get('/', jwt.requireAuth(), asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 62: DLP mask.obj em payload (defense-in-depth)
   // Embora user veja SUAS notifs, payload pode ter sensitive data:
   // welcome bonus -> cpf raw; order notification -> Bearer; reset_password -> token
-  const notifications = r.rows.map((row) => ({
-    ...row,
-    payload: row.payload ? mask.obj(row.payload) : null,
-  }));
-
-  // Total count para UX has_more / "Carregar mais"
-  const totalRes = await query(
-    `SELECT COUNT(*)::INT AS total FROM notifications
-      WHERE user_id = $1 AND channel = 'in_app'${whereExtra}`,
-    [req.user.sub]
-  );
-  const total = totalRes.rows[0].total;
+  const notifications = r.rows.map((row) => {
+    const { _total, ...rest } = row;
+    return {
+      ...rest,
+      payload: rest.payload ? mask.obj(rest.payload) : null,
+    };
+  });
+  const total = r.rows[0]?._total || 0;
 
   res.json({
     notifications,
