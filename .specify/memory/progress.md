@@ -17341,7 +17341,26 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ generateMetadata dinamico /categoria/[slug] (pass 121)
 - ✅ MLB-12 Buscas Recentes localStorage (pass 122)
 - ✅ Fix /facets HTTP 500 enum cast (pass 123)
-- ✅ Migration 050 trigger updated_at user_loyalty (pass 124 esta iter)
+- ✅ Migration 050 trigger updated_at user_loyalty (pass 124)
+- ✅ Sync product-svc SORT_ENUM (+recent_sales) (pass 125 esta iter)
+
+W7 PASS 125 RESUMO - W7 SORT_ENUM SYNC product-svc vs search-svc:
+- AUDIT W6 auth-svc endpoints: 10 endpoints OK (register/login/forgot/reset/refresh/logout/2fa)
+- AUDIT W7 product-svc endpoints: 9/10 OK + 1 mismatch:
+  * search-svc SEARCH_SORT_ENUM: 7 opts (+recent_sales p/ MLB Vendendo agora)
+  * product-svc SORT_ENUM: 6 opts (FALTA recent_sales)
+  * UI ProductsSortSelect oferece 7 opcoes
+  * Storefront /products usa Api.search (OK), MAS admin/seller dashboards
+    podem chamar product-svc direto -> 400 invalid_sort
+- FIX em services/product-svc/src/routes/public.js:
+  * SORT_ENUM: +'recent_sales' (7 opts agora)
+  * ORDER BY map: +recent_sales -> 'p.last_sale_at DESC NULLS LAST, p.sales_count DESC, p.id ASC'
+  * Tiebreaker Regra D (p.id ASC) mantido
+- REBUILD product-svc + service converged
+- VALIDATED prod:
+  * /api/products?sort=recent_sales HTTP 200 + retorna produtos ordenados
+  * /api/products?sort=foo HTTP 400 + allowed:[7 opts] (era 6 - confirmado sync)
+- COMMIT a0b40db pushed GitHub main + deployed prod
 
 W7 PASS 124 RESUMO - W14 TRIGGER updated_at user_loyalty:
 - AUDIT 13 tabelas c/ coluna updated_at vs triggers existentes:
