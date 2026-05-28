@@ -35,6 +35,18 @@ app.use(sanitize.middleware());
 // attacks, nao taxa de tentativas). Combinado com rate-limit, defese em profundidade.
 app.use(fail2ban.middleware());
 
+// FIX-WORKER-17 pass 247 (cache-control no-store):
+//   vault endpoints retornam dados sensiveis: fingerprints, plain_key (em /use),
+//   key_alias, provider info. Sem Cache-Control header explicit, proxy intermediario
+//   (Traefik, CDN futuro, browser cache) PODE armazenar response. Embora HTTPS evite
+//   shared proxies, defesa em profundidade requer no-store em endpoints crypto.
+//   Pattern V8: APIs com material sensivel SEMPRE Cache-Control: no-store + Pragma.
+app.use((_req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  next();
+});
+
 app.get('/health', (_req, res) => res.json({ ok: true, svc: 'vault-svc' }));
 
 const adminOnly = jwt.requireAuth({ roles: ['admin', 'staff'] });

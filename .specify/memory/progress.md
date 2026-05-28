@@ -25594,3 +25594,84 @@ PROXIMA ITER:
 - W2 checkout: bulk select notifications
 - W17 vault: encrypted secret zeroize on shutdown
 - VPS SSH unblock URGENTISSIMO (79 ciclos - 26.3h)
+
+============================================================
+PASS 247 (2026-05-28) - W11 + W17 state machine + cache
+============================================================
+
+OBJETIVO: 2 workers (W14 skip - sem gap)
+- W11 payment-svc: ALLOWED_TRANSITIONS pending->refunded gap
+- W17 vault-svc: Cache-Control no-store global
+
+============================================================
+1. W11 - state machine pending->refunded gap
+============================================================
+FILE: services/payment-svc/src/server.js:517-524
+
+PROBLEMA:
+- ALLOWED_TRANSITIONS:
+  'pending' -> ['authorized', 'captured', 'failed']  ← falta 'refunded'
+- Cenario edge case mas real:
+  * Order criada em payment_status='pending'
+  * User paga diretamente Asaas via PIX antes do nosso webhook chegar
+  * Admin/buyer abre dispute imediatamente
+  * Asaas refund -> webhook PAYMENT_REFUNDED chega
+  * Order ainda 'pending' (nunca recebeu CONFIRMED)
+  * State machine bloqueia transition 'pending' -> 'refunded'
+  * Log info: 'transition nao permitida'
+  * Estado fica 'pending' (incorreto - Asaas reembolsou cliente real)
+  * Order eternamente pendente apesar refund processado
+
+POST-FIX:
+- 'pending' -> ['authorized','captured','failed','refunded']
+- Edge case raro mas legitimo path em fluxos parallel/fast
+- Webhook PAYMENT_REFUNDED agora processa corretamente sem state machine block
+
+============================================================
+2. W17 - vault Cache-Control no-store global
+============================================================
+FILE: services/vault-svc/src/server.js:37-44
+
+PROBLEMA (defense in depth):
+- vault endpoints retornam dados sensiveis:
+  * /use plain_key (chave LLM crypto)
+  * /keys list/get key_fingerprint
+  * /usage cost details + provider mapping
+- Sem Cache-Control header explicito, proxy intermediario PODE cachear
+- HTTPS evita shared proxies, MAS:
+  * Browser private cache pode armazenar admin requests
+  * Future CDN/edge proxy poderia cachear sem perceber
+  * Internal mesh proxies (sidecar) potencial leak
+- Pattern V8: APIs crypto SEMPRE no-store + Pragma
+
+POST-FIX: middleware global:
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+  res.set('Pragma', 'no-cache')
+- Aplicado em todas responses vault-svc (defesa em camada)
+- Custo: 2 headers extras (~70 bytes per response)
+
+============================================================
+SUMARIO PASS 247
+============================================================
+Files: 2 modificados
+  - services/payment-svc/src/server.js (state machine fix)
+  - services/vault-svc/src/server.js (cache-control middleware)
+Lines: ~35 added
+
+VPS SSH BLOQUEADO (80 ciclos - 26.7h sem deploy).
+Migs 069+070+071+072+073 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_payment-svc cas_vault-svc --force
+- W11 test: simular order pending + webhook PAYMENT_REFUNDED
+  Order transition para 'refunded' sem state machine block
+  SELECT payment_status FROM orders WHERE id=X -> 'refunded'
+- W17 test: curl -I https://api.cas/api/vault/keys/me -H Authorization
+  Response headers DEVE conter:
+  Cache-Control: no-store, no-cache, must-revalidate, private
+  Pragma: no-cache
+
+PROXIMA ITER:
+- W3 PDP: badge "lider seller" rendering
+- W8 visual: glassmorphism opacity unified
+- VPS SSH unblock URGENTISSIMO (80 ciclos - 26.7h!!!)

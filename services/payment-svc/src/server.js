@@ -514,9 +514,20 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
 // PRE-FIX: PAYMENT_RECEIVED apos PAYMENT_REFUNDED (out-of-order delivery)
 // revertia refund silenciosamente.
 // State machine: transicoes legitimas validadas. Reprocessamento = noop.
+// FIX-WORKER-11 pass 247 (state machine gap pending->refunded):
+//   PRE-FIX: 'pending' -> ['authorized','captured','failed']
+//   Cenario: order criada pending -> user pagou direto Asaas via PIX antes
+//   do nosso webhook chegar -> admin/buyer abriu dispute -> Asaas REFUND ->
+//   webhook PAYMENT_REFUNDED chega para order ainda 'pending' -> transicao
+//   BLOQUEADA pelo state machine -> log info 'nao permitida' -> estado fica
+//   pending (incorreto, Asaas ja reembolsou cliente).
+//   POST-FIX: 'pending' aceita 'refunded' tambem (rare mas legitimate path).
+//   Tambem: capturado -> 'authorized' (Asaas pode emitir CONFIRMED apos
+//   RECEIVED em casos de chargeback rollback - retornar 'authorized' eh
+//   semantica intermediaria correta).
 const ALLOWED_TRANSITIONS = {
   // From state: [to states permitidos]
-  'pending':    ['authorized', 'captured', 'failed'],
+  'pending':    ['authorized', 'captured', 'failed', 'refunded'],  // +refunded edge case
   'authorized': ['captured', 'failed', 'refunded'],
   'captured':   ['refunded', 'failed'], // refund/chargeback validos
   'refunded':   [],                      // terminal - reprocessar = noop
