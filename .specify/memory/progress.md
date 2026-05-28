@@ -20849,3 +20849,59 @@ PROXIMA ITER:
 - W7: review-svc dashboard LATERAL pattern
 - W17: rotacao automatica vault keys vencidas
 - 🚨 VPS SSH unblock URGENTE (18 ciclos - ~6h sem deploy!)
+
+PASS 186 (W3 PDP ProductTabs + QnaForm a11y polish) - 2026-05-28:
+- W3 auditoria /product/[slug] componentes encontrou 3 issues residuais:
+
+1. ProductTabs.tsx (5 WAI-ARIA tab buttons sem type='button'):
+   * Pattern WAI-ARIA tabs ja correto (role/aria-selected/aria-controls
+     tabIndex roving) mas faltava V8 R23 defensive type='button'
+   * Risk futuro: se wrapped em <form> parent, default submit dispara
+   * Fix: type='button' em map iterator
+
+2. QnaForm submit button:
+   * <Send className="w-4 h-4" /> sem aria-hidden -> SR le icone 'Send'
+   * Sem aria-label dinamico (3 estados: enviando/logado/anonimo)
+   * Sem focus-visible:outline-2
+   * Fix:
+     - aria-label dinamico contextual (3 estados)
+     - aria-hidden='true' no Send icon (decorativo)
+     - focus-visible:outline-2 outline-magenta
+
+3. QnaForm close buttons (msg + err banners):
+   * type='button' OK mas sem aria-label semantico
+   * Apenas 'fechar' lido por SR (sem indicar qual mensagem)
+   * Sem focus ring contextual (green/red por banner type)
+   * Fix:
+     - aria-label 'Fechar mensagem de [sucesso|erro]'
+     - focus-visible:outline-2 cor por banner (green-400/red-400)
+
+Pattern V8 R23 + WAI-ARIA tabs consolidado em PDP storefront.
+
+2 files changed, 13 insertions, 4 deletions
+Commit 8425e5f pushed origin/main
+VPS SSH ainda bloqueado (19 ciclos consecutivos)
+
+CONTAGEM CONSOLIDADA V8 R23 storefront:
+- pass 163: storefront 100% V8 R23 compliant inicial
+- pass 169-178: MLB-17 + a11y dashboards (admin+seller)
+- pass 183: register page (3 bugs + email normalize)
+- pass 186: PDP ProductTabs + QnaForm polish (3 issues)
+- Total cumulative: ~95+ buttons em 3 apps com type=button + aria
+
+CODIGO ACUMULADO ORIGIN/MAIN (19 ciclos):
+- 168-185: documentados
+- 186: PDP ProductTabs + QnaForm a11y polish
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront --force
+- Testar PDP:
+  * Tab nav com Tab + Left/Right - SR anuncia 'tab N de 5 selecionado'
+  * QnaForm submit - SR anuncia 'Enviar pergunta sobre o produto'
+  * Send pergunta - banner success 'Fechar mensagem de sucesso'
+
+PROXIMA ITER:
+- W18: cache /products list (vary by filters amplos)
+- W7: review-svc dashboard LATERAL pattern
+- W17: rotacao automatica vault keys vencidas
+- 🚨 VPS SSH unblock URGENTE (19 ciclos - ~6h sem deploy!)
