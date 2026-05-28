@@ -17353,7 +17353,24 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ W9 enrich /promocoes metadata OG+twitter+keywords (pass 133)
 - ✅ W11 /installments validation amount<100 (pass 134)
 - ✅ Migration 054 coupons updated_at + trigger (pass 135)
-- ✅ Admin pages metadata especifica em 9 layouts (pass 136 esta iter)
+- ✅ Admin pages metadata especifica em 9 layouts (pass 136)
+- ✅ QnaForm a11y WCAG 1.3.1 + aria-live (pass 137 esta iter)
+
+W7 PASS 137 RESUMO - W3 QnaForm a11y FIX:
+- AUDIT components PDP: QnaForm tinha 3 violacoes WCAG/ARIA:
+  * BUG 1 (WCAG 1.3.1): <label> sem htmlFor + <textarea> sem id
+    -> NVDA/JAWS anunciavam 'campo edicao' sem contexto 'Fazer uma pergunta'
+  * BUG 2: char counter (5/2000) mudava sem aria-live -> SR nao anunciava
+  * BUG 3: msg success aparecia visual MAS sem role/aria-live -> SR nao anunciava
+    (err ja tinha role=alert OK, mas msg estava silencioso)
+- FIXES:
+  * label htmlFor='qna-question' + textarea id='qna-question'
+  * aria-describedby='qna-counter' liga textarea ao counter
+  * id='qna-counter' + aria-live='polite' no counter
+  * role='status' + aria-live='polite' no msg success
+  * aria-hidden='true' no MessageCircle icon (decorativo)
+- Pattern WAI-ARIA forms applied (label-input association + announce)
+- BUILD storefront OK + service converged + commit ad71d25 pushed
 
 W7 PASS 136 RESUMO - W4+W9 ADMIN PAGES TITLES ESPECIFICOS:
 - AUDIT dashboard-admin pages: TODAS herdavam title 'Admin - Code & Agent Shop'
