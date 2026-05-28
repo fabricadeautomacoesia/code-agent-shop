@@ -20792,3 +20792,60 @@ PROXIMA ITER:
 - W7: review-svc dashboard LATERAL pattern
 - W13: notification-svc retry backoff edge cases
 - 🚨 VPS SSH unblock URGENTE (17 ciclos - ~5.5h sem deploy!)
+
+PASS 185 (W13 jitter anti-thundering-herd + DLP failed_reason) - 2026-05-28:
+- W13 audit notification-svc outbox processor retry path encontrou 2 bugs:
+
+BUG 1: backoff deterministic (thundering herd risk)
+- PRE: backoffSeconds = [30, 120, 600, 3600][retry_count] exato
+- Cenario real: SMTP outage afeta 100 emails simultaneamente
+- Todos retentam EXATOS 30s/2min/10min/1h depois
+- Burst spike no SMTP recuperando -> outage prolongado, retry-storm
+- FIX: jitter +/- 20% (full jitter AWS Builder's Library pattern)
+  const jitter = 0.8 + Math.random() * 0.4;
+  const backoffSeconds = Math.floor(baseBackoff * jitter);
+  Exato 30s -> entre 24s e 36s (100 retries espalhados em 12s window)
+
+BUG 2: failed_reason DLP leak
+- PRE: e.message raw stored em DB + renderizado admin /webhooks UI
+- Pode conter:
+  * Bearer/sk-/JWT de SMTP HTTP error responses 401
+  * Tail Asaas API key em 401 Telegram responses
+  * CPF/CNPJ em validation errors do upstream
+- Admin investiga error -> ve secrets pelo dashboard
+- FIX: mask.text(e.message) defensive
+  Mesma DLP de audit_log (CPF/Bearer/sk-/JWT regex auto-mask)
+
+Pattern AWS Builder's Library:
+  "Always introduce some jitter to prevent synchronized retries.
+   Full jitter is preferable to equal jitter for most use cases."
+Pattern V8 DLP cross-svc:
+  "Secret never armazenado em DB plain text - mask.text() em qualquer
+   campo livre escrito pelo sistema (Bearer/sk-/JWT auto-detect)."
+
+Commit fbece8a pushed origin/main
+VPS SSH ainda bloqueado (18 ciclos consecutivos)
+
+W13 audit consolidado:
+- pass 168: migration 057 in_app auto-sent trigger
+- pass 179: migration 059 notif user+channel+created index +
+           COUNT(*) OVER() window consolidation
+- pass 185: jitter + DLP failed_reason
+
+CODIGO ACUMULADO ORIGIN/MAIN (18 ciclos):
+- 168-184: documentados
+- 185: notification-svc jitter + DLP
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_notification-svc --force
+- Teste jitter: 10 emails falham simultaneos
+  Verificar next_retry_at no DB - devem estar entre 24-36s no futuro,
+  NAO todos exatos 30s
+- Teste DLP: simular erro SMTP com Bearer no payload
+  SELECT failed_reason FROM notifications WHERE ... -> deve ter [BEARER_MASKED]
+
+PROXIMA ITER:
+- W18: cache /products list (vary by filters amplos)
+- W7: review-svc dashboard LATERAL pattern
+- W17: rotacao automatica vault keys vencidas
+- 🚨 VPS SSH unblock URGENTE (18 ciclos - ~6h sem deploy!)
