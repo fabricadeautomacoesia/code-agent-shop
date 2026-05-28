@@ -22104,3 +22104,73 @@ PROXIMA ITER:
 - W11: payment-svc Asaas /process payout endpoint review
 - W18: gateway cache /aiops/status (admin polls)
 - 🚨 VPS SSH unblock URGENTE (37 ciclos - >12.3h sem deploy!)
+
+PASS 205 (W11 CRITICAL payout /process rate-limit + cache coherency) - 2026-05-28:
+- W11 audit POST /payments/payouts/:id/process descobriu 2 bugs CRITICOS:
+
+BUG 1 (real-money rate-limit missing):
+- Endpoint REAL MONEY OUT - mais critico que /checkout (pass 196)
+- Zero rate-limit antes
+- Atacante/admin com token spam /process:
+  * Asaas createTransfer disparado N vezes
+  * Mesmo com idempotent UPDATE guard, tx FOR UPDATE pega lock breve
+  * 100 reqs/s -> pressao DB severa + Asaas API rate-limit upstream
+  * audit_log enche de tentativas payout.process_start
+- Pattern V8 W7 high-impact $ mutations DEVEM ter limiter
+
+FIX 1 (payoutProcessLimiter):
+- 30 process/hora/admin
+- Limite generoso vs /checkout 20/h pq admin mass payout day pode 50+/dia
+- rateLimiter adicionado aos imports payment-svc
+
+BUG 2 (cache invalidation incompleta):
+- Apenas seller:payouts:{userId}:* invalidado (pass 175 seller view)
+- seller:admin:payouts-pending:* (pass 198 admin view) NAO invalidado
+- UX broken: admin clica process -> Asaas confirma -> dashboard
+  ainda mostra payout 'approved' por ate 20s
+
+FIX 2:
+- Promise.all bulk: ambos caches invalidados pos UPDATE 'paid'
+- Pattern V8 cache coherency cross-svc
+
+CONSOLIDADO PATTERN V8 RATE-LIMITERS em mutations criticas:
+- /auth/forgot-password (3/h IP)
+- /auth/reset-password
+- /auth/patch-me (20/h user)
+- /orders/checkout (20/h user) - pass 196
+- /orders/disputes/open (5/h IP)
+- /payments/payouts/:id/process (30/h admin) - pass 205 NEW
+- /reviews/qna varios
+- /vault/keys/provision + /use
+
+CONSOLIDADO CACHE COHERENCY cross-svc (payouts):
+- pass 175 seller-svc admin approve/reject -> seller:payouts:{user}:*
+- pass 175 payment-svc /process UPDATE paid -> seller:payouts:{user}:*
+- pass 198 seller-svc admin/payouts/pending (cache 20s)
+- pass 205 payment-svc /process UPDATE paid -> +seller:admin:payouts-pending:*
+  (estendido pass 175 helper)
+
+Commit 68cd4f4 pushed origin/main (+33/-4)
+VPS SSH ainda bloqueado (38 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (38 ciclos):
+- 168-204: documentados
+- 205: payment-svc /process rate-limit + cache coherency
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_payment-svc --force
+- Test rate-limit:
+  for i in {1..35}; do
+    curl -X POST -H "Bearer \$ADMIN" /api/payments/payouts/{id}/process
+  done
+  Esperado: primeiros 30 = 200 OK (ou error business), restantes = 429
+- Test coherency:
+  POST /process -> 200 paid
+  GET /sellers/admin/payouts/pending (admin dashboard)
+  Esperado: payout 'paid' status atualizado imediato (no stale)
+
+PROXIMA ITER:
+- W17: vault-svc seller endpoints BYOK
+- W18: cache /aiops/status (admin polls)
+- W13: notification-svc Telegram retry edge cases
+- 🚨 VPS SSH unblock URGENTE (38 ciclos - >12.7h sem deploy!)
