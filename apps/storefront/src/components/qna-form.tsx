@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { MessageCircle, Send } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
@@ -16,6 +17,7 @@ const MAX_LEN = 2000;
  * Envia POST /api/qna se logado, redirect para /login se nao.
  */
 export function QnaForm({ productId, onSubmitted }: { productId: string; onSubmitted?: () => void }) {
+  const router = useRouter();
   const { token } = useAuth();
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
@@ -30,7 +32,14 @@ export function QnaForm({ productId, onSubmitted }: { productId: string; onSubmi
     e.preventDefault();
     setErr(''); setMsg('');
     if (!token) {
-      window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+      // FIX-WORKER-3 pass 264 (soft-nav login redirect):
+      //   PRE-FIX: window.location.href = '/login?next=...' (hard redirect)
+      //   Perde state React + re-baixa bundle JS (lento em mobile 3G)
+      //   Pattern V8 add-to-cart pass 3 ja usa router.push (Next soft-nav)
+      //   QnaForm ficou desatualizado - paridade cross-component.
+      //   POST-FIX: router.push preserva history + soft transition
+      const next = encodeURIComponent(window.location.pathname);
+      router.push(`/login?next=${next}`);
       return;
     }
     // FIX-WORKER-3 pass 3: este check ja deveria estar barrado pelo disabled

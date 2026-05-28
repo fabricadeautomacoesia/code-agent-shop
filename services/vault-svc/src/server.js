@@ -975,6 +975,16 @@ const sellerKeyProvisionSchema = z.object({
 app.get('/keys/me', sellerOrAdmin, asyncHandler(async (req, res) => {
   // SECURITY: ownership via sellers.user_id (admin pode passar ?seller_id query)
   const isAdmin = req.user && ['admin','staff'].includes(req.user.role);
+  // FIX-WORKER-17 pass 264 (UUID validation defense):
+  //   PRE-FIX: req.query.seller_id passava direto p/ PG WHERE seller_id = $1
+  //   String malformada (admin typo ou attacker probe) -> PG cast UUID 22P02
+  //   -> errorHandler 500 leak (info disclosure: PG version, schema hints)
+  //   POST-FIX: regex UUID test + 400 invalid_uuid amigavel + log.warn
+  //   Mesma pattern outros endpoints vault (pass 236 revoke UUID guard).
+  const VAULT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (isAdmin && req.query.seller_id && !VAULT_UUID_RE.test(String(req.query.seller_id))) {
+    return res.status(400).json({ error: 'invalid_seller_id', expected: 'UUID v4 format' });
+  }
   const sellerFilter = isAdmin && req.query.seller_id ? req.query.seller_id : null;
 
   // Para seller: lookup sua proprio seller_id via sellers table

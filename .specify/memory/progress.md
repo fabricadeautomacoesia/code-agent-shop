@@ -27040,3 +27040,80 @@ PROXIMA ITER:
 - W4 force-approve idempotency check
 - W17 vault decrypt cache (LRU)
 - VPS SSH unblock URGENTISSIMO (96 ciclos - 32h MARCO)
+
+============================================================
+PASS 264 (2026-05-28) - W3 + W9 + W17
+============================================================
+
+OBJETIVO: 3 workers paralelos (W9 audit skipped - all clean)
+- W3 storefront: qna-form hard redirect -> router.push (soft-nav)
+- W17 vault-svc: /keys/me seller_id UUID validation
+
+============================================================
+1. W3 - qna-form window.location -> router.push
+============================================================
+FILE: apps/storefront/src/components/qna-form.tsx:33
+
+PROBLEMA:
+- Anonymous user clica submit pergunta:
+  window.location.href = '/login?next=...'
+- Hard redirect:
+  * Perde React state (form data, scroll position, modals)
+  * Re-baixa bundle JS (lento mobile 3G)
+  * Sem history transition
+- Pattern V8 add-to-cart pass 3 ja usou router.push (Next soft-nav)
+- QnaForm ficou desatualizado - paridade cross-component
+
+POST-FIX:
+- import { useRouter } from 'next/navigation'
+- const router = useRouter() no component
+- router.push(`/login?next=${next}`) preserva history + soft transition
+- Pattern V8 consistente
+
+============================================================
+2. W9 - SEO audit (clean)
+============================================================
+Auditadas 7 pages sem layout.tsx mas com metadata inline:
+- cloud-code-ilimitado, comparar, privacidade, promocoes, sobre,
+  termos - todas tem export const metadata em page.tsx
+- product/[slug] tem generateMetadata dentro da page (Next aceita)
+Nenhuma gap real encontrada esta iter.
+
+============================================================
+3. W17 - /keys/me ?seller_id UUID guard
+============================================================
+FILE: services/vault-svc/src/server.js:975-988
+
+PROBLEMA:
+- Admin endpoint accepts ?seller_id query
+- PRE-FIX: passava direto p/ PG WHERE seller_id = $1
+- String malformada (typo, attacker probe) -> PG cast UUID 22P02
+- errorHandler 500 -> info disclosure (PG version, schema hints)
+- Other vault endpoints (revoke pass 236, rotate pass 243) ja UUID guard
+
+POST-FIX:
+- VAULT_UUID_RE regex test
+- 400 invalid_seller_id + expected format hint
+- Paridade defense pattern cross-endpoints
+
+============================================================
+SUMARIO PASS 264
+============================================================
+Files: 2 modificados
+  - apps/storefront/src/components/qna-form.tsx (router.push)
+  - services/vault-svc/src/server.js (UUID guard)
+Lines: ~30 added
+
+VPS SSH BLOQUEADO (97 ciclos - 32.3h sem deploy).
+Migs 069-076 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_vault-svc --force
+- W3: anon /product/X -> submit pergunta -> /login soft-nav (sem reload)
+- W17: curl GET /api/vault/keys/me?seller_id=invalid (admin token)
+  -> 400 invalid_seller_id (era 500 PG 22P02)
+
+PROXIMA ITER:
+- W2 checkout cupom validate UI
+- W4 admin force-approve audit dedup
+- VPS SSH unblock CRITICAL (97 ciclos - 32.3h)
