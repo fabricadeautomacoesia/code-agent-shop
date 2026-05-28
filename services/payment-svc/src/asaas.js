@@ -1,6 +1,6 @@
 'use strict';
 
-const { logger, withRetry } = require('@cas/shared');
+const { logger, withRetry, mask } = require('@cas/shared');
 const log = logger.child({ svc: 'payment-svc', mod: 'asaas' });
 
 const BASE = process.env.ASAAS_API_URL || 'https://api.asaas.com/v3';
@@ -19,7 +19,14 @@ async function api(method, path, body) {
     let data;
     try { data = JSON.parse(text); } catch { data = { raw: text }; }
     if (!r.ok) {
-      log.warn({ method, path, status: r.status, data }, '[asaas.err]');
+      /* FIX-WORKER-11 pass 306: DLP mask Asaas error response em logs.
+         PRE-FIX: log.warn raw 'data' field. Asaas error responses ecoam o
+         payload original com CPF/CNPJ + email + cardNumber prefix.
+         Pino logs Pino-pretty + datadog dump objeto inteiro = PII leak.
+         POST-FIX: mask.obj(data) recursive DLP mask antes log.
+         err.data preservado raw para upstream caller decide format. */
+      const safeData = data && typeof data === 'object' ? mask.obj(data) : data;
+      log.warn({ method, path, status: r.status, data: safeData }, '[asaas.err]');
       const err = new Error(`asaas_${r.status}`);
       err.status = r.status;
       err.data = data;

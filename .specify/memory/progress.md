@@ -29298,3 +29298,38 @@ PROXIMA ITER:
 - W4 admin status dashboard mostra rate-limit drops per-IP
 - W17 audit other svcs (qa-worker.py Python, llm-router?) trust proxy equivalents
 - VPS SSH unblock URGENTISSIMO (138 ciclos - 46h)
+
+
+============================================================
+PASS 306 - 2026-05-28 - W1 notif-bell date guard + W11 asaas DLP log
+============================================================
+Files: 2 modificados
+  - apps/storefront/src/components/notification-bell.tsx (defensive date)
+  - services/payment-svc/src/asaas.js (mask.obj asaas error log)
+Lines: ~15 added
+
+W1 (notification-bell defensive date):
+- PRE-FIX: new Date(n.created_at).toLocaleString sem isNaN guard
+- created_at null/invalid -> 'Invalid Date' UX feio
+- POST-FIX: paridade pass 254/283 - !isNaN check + '-' fallback
+
+W11 (asaas error log DLP):
+- PRE-FIX: log.warn({ data }) raw - Asaas error response ecoa payload
+- payload original tem CPF/CNPJ/email/cardNumber prefix
+- Pino logs + datadog dump = PII leak em log aggregator
+- POST-FIX: import mask + mask.obj(data) recursive antes log
+- err.data preservado raw para caller decide (defense in depth)
+
+VPS SSH BLOQUEADO (139 ciclos - 46.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_payment-svc --force
+- W1: NotificationBell renderiza notif com created_at=null -> '-' (nao Invalid Date)
+- W11: tail logs payment-svc apos Asaas 4xx error
+  Esperado: data fields PII mascarados (CPF '***', email '****')
+
+PROXIMA ITER:
+- W11 payment-svc audit getPayment/refundPayment DLP cobertura
+- W4 admin notification-bell stats panel
+- VPS SSH unblock URGENTISSIMO (139 ciclos - 46.3h)

@@ -241,7 +241,12 @@ export function NotificationBell() {
                         <div className="text-sm font-semibold truncate">{n.title}</div>
                         <div className="text-xs text-white/60 mt-1 line-clamp-2">{n.body}</div>
                         <div className="text-[10px] text-white/40 mt-1 flex items-center gap-1.5">
-                          {new Date(n.created_at).toLocaleString('pt-BR')}
+                          {/* FIX-WORKER-1 pass 306: defensive date guard paridade pass 254/283
+                              created_at null/invalid -> "Invalid Date" UX feio.
+                              POST-FIX: !isNaN check + fallback '-'. */}
+                          {n.created_at && !isNaN(new Date(n.created_at).getTime())
+                            ? new Date(n.created_at).toLocaleString('pt-BR')
+                            : '-'}
                           {url && <span className="text-magenta">- {n.cta_label || 'Abrir'} <ExternalLink className="w-2.5 h-2.5 inline" /></span>}
                         </div>
                       </div>
