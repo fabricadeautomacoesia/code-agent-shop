@@ -22946,3 +22946,89 @@ PROXIMA ITER:
 - W11: payment-svc PAYMENT_REFUND_FAILED retry edge cases
 - W13: notification-svc Telegram retry edge cases
 - 🚨 VPS SSH unblock URGENTE (49 ciclos - >16.3h sem deploy!)
+
+PASS 217 - MILESTONE 50 ciclos SSH (W17 vault BYOK seller endpoints) - 2026-05-28:
+
+MILESTONE: 50 ciclos consecutivos VPS SSH bloqueado.
+W17 finalmente implementa BYOK (Bring Your Own Key) self-service.
+
+PRE-PASS-217:
+- TODO endpoints vault-svc eram adminOnly
+- BYOK sellers dependiam de admin para gerenciar SUAS keys
+- Helper 'sellerOrAdmin' declared pass 0 mas NUNCA usado
+- Bottleneck operacional admin queue
+
+POST-PASS-217 (3 endpoints NEW):
+
+1. GET /api/vault/keys/me:
+   - Ownership: sellers.user_id = req.user.sub
+   - Admin bypass ?seller_id query
+   - SECURITY: explicit fields - NUNCA retorna encrypted_key/iv/auth_tag
+   - Filtro is_platform_pool=FALSE (seller nao ve pool platform)
+
+2. POST /api/vault/keys/me:
+   - reuse provisionRateLimit existente
+   - sellerKeyProvisionSchema (sem is_platform_pool flag admin-only)
+   - SECURITY: is_platform_pool forced FALSE (cant escalate)
+   - Encrypt + fingerprint + rotation_due_at default 90d
+   - Audit log 'vault.seller_provision' info severity
+
+3. POST /api/vault/keys/me/:id/revoke:
+   - UUID validation
+   - SECURITY: ownership via WHERE seller_id IN (sellers.user_id check)
+   - Admin bypass: pode revogar qualquer key (endpoint admin existente)
+   - Audit log 'vault.seller_revoke' warn severity
+
+PATTERN V8 BYOK SELF-SERVICE estabelecido:
+- /me endpoints (vs admin endpoints separados)
+- Ownership via JOIN strict (sellers.user_id)
+- Schema separado nega flags admin-only
+- Audit log forense para seller-led changes
+- SECURITY: encrypted_key NUNCA exposto (nem em /me list)
+
+CASOS DE USO seller dashboard /loja BYOK section futuro:
+- Listar minhas keys + usage current month
+- Adicionar nova key (OpenAI/Anthropic/Gemini)
+- Revogar key (apos rotation manual)
+- SEM dependencia admin queue (autonomia seller)
+
+ENDPOINTS VAULT-SVC FINAL (10 total):
+admin (7):
+- POST /keys (provision), GET /keys (list paginado)
+- GET /keys/rotation-due (alertas)
+- POST /keys/:id/revoke, POST /keys/:id/rotate
+- POST /use (internal), POST /usage (internal)
+
+seller (3 NEW):
+- GET /keys/me (list seller keys)
+- POST /keys/me (provision SUA key)
+- POST /keys/me/:id/revoke (revoga PROPRIA)
+
+Commit cbfe8ab pushed origin/main (+152 lines)
+VPS SSH ainda bloqueado (50 ciclos consecutivos!)
+
+CODIGO ACUMULADO ORIGIN/MAIN (50 ciclos = MILESTONE):
+- 168-216: documentados
+- 217: vault-svc BYOK seller self-service (3 endpoints)
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_vault-svc --force
+- Test list (seller token):
+  curl -H "Bearer \$SELLER" /api/vault/keys/me
+  Esperado: { keys: [], count: 0 } (seller novo)
+- Test provision:
+  curl -X POST -H "Bearer \$SELLER" -d '{
+    "provider":"openai","key_alias":"my-key","plain_key":"sk-..."}' \
+    /api/vault/keys/me
+  Esperado: 201 com id, fingerprint, rotation_due_at
+- Test revoke:
+  curl -X POST -H "Bearer \$SELLER" -d '{"reason":"key expired"}' \
+    /api/vault/keys/me/{id}/revoke
+  Esperado: 200 { ok:true, revoked:id }
+- Test ownership: seller A tenta revogar key seller B -> 404
+
+PROXIMA ITER:
+- W4 frontend: dashboard-seller /loja page BYOK section (consume endpoints)
+- W11: payment-svc Asaas refund edge cases
+- W13: notification-svc Telegram retry edge cases
+- 🚨 VPS SSH unblock URGENTE (50 ciclos - >16.7h sem deploy!)
