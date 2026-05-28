@@ -847,4 +847,64 @@ router.post('/mv-kpi/refresh',
   })
 );
 
+// FIX-WORKER-4 pass 273 (admin UI consume mig 078 payouts_pending_wallet):
+//   Pass 270 mig 078 + pass 272 cron liquidator implementaram backend.
+//   Admin dashboard precisa visibility do que esta pending p/ investigar
+//   sellers sem wallet config (operational triage).
+//
+// GET /sellers/admin/payouts-pending-wallet?status=pending|liquidated|forfeited|all
+// + ?limit/offset pattern V8 W7 pass E
+// + COUNT(*) OVER() window pattern V8 W18 pass 178+
+// + JOIN sellers para mostrar store_name (debug rapido)
+// + Cache 30s (admin polling friendly)
+const pendingWalletCacheKey = (req) => {
+  const q = req.query;
+  return `seller:admin:pending-wallet:s=${q.status||'pending'}:lim=${q.limit||50}:off=${q.offset||0}`;
+};
+
+router.get('/payouts-pending-wallet',
+  cache.cacheMiddleware(pendingWalletCacheKey, 30),
+  asyncHandler(async (req, res) => {
+    const statusParam = (req.query.status || 'pending').toString().toLowerCase();
+    const VALID_STATUS = new Set(['pending', 'liquidated', 'forfeited', 'all']);
+    const status = VALID_STATUS.has(statusParam) ? statusParam : 'pending';
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    const whereParts = status === 'all'
+      ? ['1=1']
+      : ['pw.status = $1'];
+    const params = status === 'all' ? [] : [status];
+    const iLim = params.length + 1;
+    const iOff = params.length + 2;
+    params.push(limit, offset);
+
+    const r = await query(
+      `SELECT pw.id, pw.order_id, pw.order_item_id, pw.seller_id,
+              pw.amount_cents, pw.status, pw.reason,
+              pw.created_at, pw.liquidated_at, pw.forfeited_at,
+              pw.asaas_transfer_id,
+              s.store_name, s.store_slug,
+              s.asaas_wallet_id IS NOT NULL AS wallet_configured,
+              COUNT(*) OVER()::INT AS _total
+         FROM payouts_pending_wallet pw
+         JOIN sellers s ON s.id = pw.seller_id
+        WHERE ${whereParts.join(' AND ')}
+        ORDER BY pw.created_at ASC, pw.id ASC
+        LIMIT $${iLim} OFFSET $${iOff}`,
+      params
+    );
+
+    const total = r.rows[0]?._total ?? 0;
+    const payouts = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
+
+    res.json({
+      payouts,
+      total, limit, offset,
+      status,
+      has_more: (offset + payouts.length) < total,
+    });
+  })
+);
+
 module.exports = router;

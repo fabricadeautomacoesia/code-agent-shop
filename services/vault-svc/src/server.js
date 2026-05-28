@@ -127,18 +127,40 @@ app.post('/keys', provisionRateLimit, adminOnly, validate({ body: provisionSchem
   const fp = cryp.sha256(plain_key).slice(0, 16);
   // 90 days default - alinhado com PCI/SOC2 recomendacoes
   const rotDays = rotation_days || 90;
-  const r = await query(
-    `INSERT INTO vault_api_keys
-       (seller_id, provider, key_alias, encrypted_key, iv, auth_tag, key_fingerprint,
-        monthly_quota_usd_cents, is_platform_pool, expires_at, rotation_due_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-             NOW() + ($11 || ' days')::INTERVAL)
-     RETURNING id, provider, key_alias, key_fingerprint, is_platform_pool,
-               monthly_quota_usd_cents, created_at, rotation_due_at`,
-    [seller_id || null, provider, key_alias, encrypted, iv, tag, fp,
-     monthly_quota_usd_cents || null, is_platform_pool, expires_at || null,
-     String(rotDays)]
-  );
+  // FIX-WORKER-17 pass 273 (admin provision audit + tx atomicity):
+  //   PRE-FIX: admin /keys POST inseria vault_api_keys SEM tx() + SEM audit_log
+  //   - Seller path /keys/me ja tinha audit (linha 1051) + tx (pass 269)
+  //   - Admin path lagged - COMPLIANCE GAP critico:
+  //     * SOC2 CC1.4: documented authorization decisions
+  //     * LGPD direito-acesso: "quem provisionou X em data Y" sem resposta
+  //     * Vault keys = AES-256-GCM secrets - forensics OBRIGATORIO
+  //   POST-FIX: tx() wrap + audit_log INSERT atomic (paridade /keys/me pass 269)
+  let r;
+  await tx(async (c) => {
+    r = await c.query(
+      `INSERT INTO vault_api_keys
+         (seller_id, provider, key_alias, encrypted_key, iv, auth_tag, key_fingerprint,
+          monthly_quota_usd_cents, is_platform_pool, expires_at, rotation_due_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+               NOW() + ($11 || ' days')::INTERVAL)
+       RETURNING id, provider, key_alias, key_fingerprint, is_platform_pool,
+                 monthly_quota_usd_cents, created_at, rotation_due_at`,
+      [seller_id || null, provider, key_alias, encrypted, iv, tag, fp,
+       monthly_quota_usd_cents || null, is_platform_pool, expires_at || null,
+       String(rotDays)]
+    );
+    // Audit log - compliance critical (admin provision = high-impact)
+    await c.query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'vault.admin_provision', 'vault_api_key', $3, 'warn', $4::JSONB)`,
+      [req.user.sub, req.user.role, r.rows[0].id,
+       JSON.stringify({
+         provider, key_alias, fingerprint: fp,
+         seller_id: seller_id || null,
+         is_platform_pool, ip: req.ip,
+       })]
+    );
+  });
   log.info({ provisioned: r.rows[0].id, provider, fp, rotation_due_at: r.rows[0].rotation_due_at },
     '[vault.provision]');
   res.status(201).json(r.rows[0]);

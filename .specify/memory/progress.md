@@ -27708,3 +27708,103 @@ PROXIMA ITER:
 - W4 admin /payouts_pending_wallet UI view
 - W11 reconcile cron multi-svc dashboard
 - VPS SSH unblock CRITICAL (105 ciclos - 35h MARCO!!!)
+
+============================================================
+PASS 273 (2026-05-28) - W4 + W17 + W18 fecha loop pass 270
+============================================================
+
+OBJETIVO: 3 workers paralelos (fecha trio mig 078/272/273)
+- W4 seller-svc: GET /admin/payouts-pending-wallet (UI consume)
+- W17 vault-svc: admin /keys provision audit + tx (compliance)
+- W18 db: mig 079 idx_pending_wallet_pending_queue (perf cron+admin)
+
+============================================================
+1. W4 - admin endpoint /payouts-pending-wallet
+============================================================
+FILE: services/seller-svc/src/routes/admin.js:850-906
+
+CONTEXTO (fecha loop pass 270 + 272):
+- Pass 270 W11 mig 078 + INSERT fallback order-svc
+- Pass 272 W11 cron liquidatePendingWalletPayouts
+- Pass 273 W4 UI admin para visibility/triage
+
+ENDPOINT:
+- GET /sellers/admin/payouts-pending-wallet?status=pending|liquidated|forfeited|all
+- COUNT(*) OVER() window pattern V8
+- JOIN sellers para store_name + wallet_configured flag
+- Pagination ?limit/offset (max 200)
+- Cache 30s (admin polling friendly)
+- Status filter parameterized (anti SQL injection)
+
+============================================================
+2. W17 - admin /keys provision audit + tx
+============================================================
+FILE: services/vault-svc/src/server.js:128-160
+
+PROBLEMA (compliance gap):
+- Admin /keys POST inseria vault_api_keys SEM tx() + SEM audit_log
+- Seller path /keys/me ja tinha audit (pass 217) + tx (pass 269)
+- Admin path lagged - SOC2 CC1.4 + LGPD compliance gap
+- Vault keys = AES-256-GCM secrets - forensics OBRIGATORIO
+- "quem provisionou X em data Y" sem resposta no audit
+
+POST-FIX:
+- tx() wrap INSERT vault + INSERT audit_log atomic
+- action='vault.admin_provision' severity='warn'
+- Payload: {provider, key_alias, fingerprint, seller_id, is_platform_pool, ip}
+- Paridade /keys/me pass 269 (seller path)
+
+============================================================
+3. W18 - mig 079 idx_pending_wallet_pending_queue
+============================================================
+FILE: db/migrations/079_pending_wallet_admin_idx.sql (NEW)
+
+PROBLEMA:
+- Pass 270 mig 078 criou 3 indices em payouts_pending_wallet
+- Mas admin query (W4) + cron liquidator (W11):
+  WHERE status='pending' ORDER BY created_at ASC
+- Idx_pending_wallet_created ordena DESC (wrong direction)
+- Idx_pending_wallet_seller_pending so cobre seller path
+- Sem idx FIFO ASC -> Sort step in-memory cron + admin
+
+POST-FIX:
+- CREATE INDEX PARTIAL (created_at ASC, id ASC) WHERE status='pending'
+- FIFO oldest first (admin SLA + cron retry order)
+- Index Scan elimina Sort step
+
+============================================================
+SUMARIO PASS 273
+============================================================
+Files: 3 modificados/criados
+  - services/seller-svc/src/routes/admin.js (endpoint admin)
+  - services/vault-svc/src/server.js (admin provision audit + tx)
+  - db/migrations/079_pending_wallet_admin_idx.sql (NEW PARTIAL idx)
+Lines: ~110 added
+
+MARCO: trio pass 270/272/273 implementa feature COMPLETA:
+- mig 078 schema + 3 indices
+- order-svc INSERT fallback
+- payment-svc cron liquidator 24h
+- seller-svc admin endpoint (este pass)
+- db PARTIAL FIFO idx (este pass)
+- vault-svc admin audit gap (este pass bonus)
+
+VPS SSH BLOQUEADO (106 ciclos - 35.3h sem deploy).
+Migs 069-079 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_vault-svc --force
+- Apply mig 079:
+    docker exec cas_postgres psql -U cas_admin -d cas \
+      -f /docker/db/migrations/079_pending_wallet_admin_idx.sql
+- W4: curl admin token GET /api/sellers/admin/payouts-pending-wallet
+  Response: payouts[] com wallet_configured flag
+- W17: admin provision /keys -> SELECT action FROM audit_log WHERE
+  action='vault.admin_provision' DESC LIMIT 1
+- W18: EXPLAIN ANALYZE SELECT FROM payouts_pending_wallet WHERE status='pending'
+  ORDER BY created_at ASC -> Index Scan idx_pending_wallet_pending_queue
+
+PROXIMA ITER:
+- W4 admin UI dashboard-admin /payouts-pending-wallet page consume endpoint
+- W11 forfeit cron (seller deleta conta sem liquidar)
+- VPS SSH unblock CRITICAL (106 ciclos - 35.3h MARCO!!!)
