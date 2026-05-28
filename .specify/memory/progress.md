@@ -30511,3 +30511,44 @@ PROXIMA ITER:
 - W5 /upload form maxLength alignment (description min(50).max(30000) pass 332)
 - W5 /products/[id]/edit form maxLength alignment
 - VPS SSH unblock URGENTISSIMO (170 ciclos - 56.7h)
+
+
+============================================================
+PASS 338 - 2026-05-28 - W7 seller upload form maxLength alignment
+============================================================
+Files: 1 modificado
+  - apps/dashboard-seller/src/app/upload/page.tsx (4 maxLength + 1 counter)
+Lines: ~15 changed
+
+W7 (upload form HTML maxLength alinhado backend Zod pass 332):
+- PRE-FIX: 4 fields sem maxLength HTML5:
+  - title (backend min(5).max(200))
+  - subtitle (backend max(300))
+  - description (backend min(50).max(30000))
+  - install_instructions (backend max(10000))
+- POST-FIX:
+  - title: minLength + maxLength 200
+  - subtitle: maxLength 300
+  - description: maxLength 30000 + counter visual (yellow > 28500, orange < 50)
+  - install_instructions: maxLength 10000
+
+Coverage maxLength alignment dashboard-seller cumulative:
+- /reviews reply (pass 330): 1 textarea
+- /qna answer (pass 331): 1 textarea
+- /loja form (pass 337): 5 inputs/textarea
+- /upload form (pass 338): 4 inputs/textarea
+Total: 11 inputs com maxLength HTML5 alinhado backend Zod
+
+VPS SSH BLOQUEADO (171 ciclos - 57h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-seller --force
+- W7: /seller/upload - typing 201 chars no title = HTML5 blocks
+  description 28500+ chars = counter yellow
+  description < 50 = counter orange (warn min)
+
+PROXIMA ITER:
+- W5 /products/[id]/edit form maxLength alignment (PATCH schema pass 332)
+- W7 audit storefront forms (qna-form, review-form ja OK)
+- VPS SSH unblock URGENTISSIMO (171 ciclos - 57h)

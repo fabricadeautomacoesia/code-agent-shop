@@ -105,14 +105,17 @@ export default function UploadPage() {
         <section className="glass p-6 space-y-4">
           <h3 className="font-display font-bold text-lg">Identidade</h3>
           {/* FIX-WORKER-5 pass 145 (a11y): 14 labels c/ htmlFor + inputs c/ id (WCAG 1.3.1) */}
+          {/* FIX-WORKER-7 pass 338: maxLength alinhado backend Zod (pass 332):
+              - title min(5).max(200), subtitle max(300), description min(50).max(30000)
+              - install_instructions max(10000) */}
           <div>
             <label htmlFor="up-title" className="text-xs text-white/60 uppercase">Titulo</label>
-            <input id="up-title" value={form.title} onChange={(e) => setForm({...form, title: e.target.value})} required minLength={5}
+            <input id="up-title" value={form.title} onChange={(e) => setForm({...form, title: e.target.value})} required minLength={5} maxLength={200}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm focus:border-magenta focus:outline-none" />
           </div>
           <div>
             <label htmlFor="up-subtitle" className="text-xs text-white/60 uppercase">Subtitulo</label>
-            <input id="up-subtitle" value={form.subtitle} onChange={(e) => setForm({...form, subtitle: e.target.value})}
+            <input id="up-subtitle" value={form.subtitle} onChange={(e) => setForm({...form, subtitle: e.target.value})} maxLength={300}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
           </div>
           <div className="grid md:grid-cols-2 gap-4">
@@ -145,9 +148,13 @@ export default function UploadPage() {
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
           </div>
           <div>
-            <label htmlFor="up-desc" className="text-xs text-white/60 uppercase">Descricao completa (min 50 chars)</label>
-            <textarea id="up-desc" value={form.description} onChange={(e) => setForm({...form, description: e.target.value})} required minLength={50} rows={6}
+            <label htmlFor="up-desc" className="text-xs text-white/60 uppercase">Descricao completa (min 50, max 30000 chars)</label>
+            <textarea id="up-desc" value={form.description} onChange={(e) => setForm({...form, description: e.target.value})} required minLength={50} maxLength={30000} rows={6}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
+            <div className={`text-[10px] text-right mt-1 ${
+              (form.description?.length || 0) > 28500 ? 'text-yellow-400' :
+              (form.description?.length || 0) < 50 ? 'text-orange-400' : 'text-white/30'
+            }`}>{form.description?.length || 0}/30000{(form.description?.length || 0) < 50 ? ' (min 50)' : ''}</div>
           </div>
         </section>
 
@@ -164,8 +171,8 @@ export default function UploadPage() {
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
           </div>
           <div>
-            <label htmlFor="up-install" className="text-xs text-white/60 uppercase">Instrucoes de instalacao</label>
-            <textarea id="up-install" value={form.install_instructions} onChange={(e) => setForm({...form, install_instructions: e.target.value})} rows={4}
+            <label htmlFor="up-install" className="text-xs text-white/60 uppercase">Instrucoes de instalacao (max 10000)</label>
+            <textarea id="up-install" value={form.install_instructions} onChange={(e) => setForm({...form, install_instructions: e.target.value})} rows={4} maxLength={10000}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
           </div>
           <div>
