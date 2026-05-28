@@ -65,6 +65,8 @@ export function friendlyAuthError(e: any): string {
   if (ERROR_MESSAGES[code]) return ERROR_MESSAGES[code];
 
   // validation_error com details[0]: extrai path + reason
+  // FIX pass 111: bloco if estava OK mas faltava abertura - sintaxe quebrada
+  if (e?.data?.error === 'validation_error' && Array.isArray(e?.data?.details) && e.data.details[0]) {
     const d = e.data.details[0];
     const field = Array.isArray(d.path) ? d.path[d.path.length - 1] : d.path;
     // FIX-WORKER-1 pass 2: mensagens PT-BR especificas por campo (UX > generico)
