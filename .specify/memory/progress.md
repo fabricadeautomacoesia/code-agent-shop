@@ -33250,3 +33250,43 @@ Pattern V8 W4: ALL error banners need role=alert + retry/dismiss button
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 428 W2 CHECKOUT: /conta/pedidos error handling + retry (FALSE NEGATIVE bug)
+commit pendente
+BUG /conta/pedidos silent failure -> "voce nao tem pedidos" FALSE NEGATIVE
+PRE-FIX:
+- Api.api('/orders').then(setOrders).finally(setLoading) SEM .catch()
+- Gateway 502 / token 401 / network offline -> orders fica []
+- UI mostra empty state "Voce ainda nao fez nenhum pedido"
+- User com 50 pedidos historicos ve tela vazia -> panic
+- Sem retry button -> F5 manual obrigatorio
+- console.error silent (catch missing) -> SR nao anuncia
+
+SCOPE CRITICAL:
+- Trust killer: user paga, V8 token expira, recarrega pedidos -> "voce nao tem"
+- User pensa: "pagamento foi roubado/perdido"
+- Suporte recebe ticket de fraude false alarme
+- Pattern V8 anti-padrao - silent catch sempre rompe UX critical paths
+
+POST-FIX:
+- + load() helper extraido (state encapsulado p/ retry)
+- + error state (separar empty vs failure)
+- 401 expired -> redirect /login?next=/conta/pedidos (token refresh path)
+- Outros erros -> banner role=alert + retry button
+- Render condicional: loading -> "Carregando" | error -> null (banner above shows) | empty -> empty state
+- Paridade W4 pass 427 (loadError + retry pattern)
+
+W2 silent failure series:
+  pass 428 /conta/pedidos error handling <- ESTE
+
+Pattern V8 W2: API failures em listing pages MUST distinguish empty vs error
+- Empty state so quando .ok response retorna lista vazia
+- Erro state so quando .catch dispara
+- 401/403 -> redirect (token expirou)
+- Outros -> banner role=alert + retry
+
+161 passes acumulados (268->428) sem deploy VPS
+5 CRITICAL + 25 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO

@@ -26,13 +26,33 @@ export default function PedidosPage() {
   const { token } = useAuth();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // FIX-WORKER-2 pass 428 (silent failure UX bug):
+  //   PRE-FIX: Api.api(...).then(setOrders).finally(setLoading) sem .catch()
+  //   - Gateway 502 / 401 expired / network offline -> orders fica []
+  //   - UI mostra "Voce ainda nao fez nenhum pedido" (FALSE NEGATIVE)
+  //   - User com 50 pedidos historicos ve tela vazia = panico
+  //   - Sem retry button = F5 manual
+  //   - Console.error silent (catch missing) = SR nao anuncia
+  //   POST-FIX:
+  //   - + error state + load() helper
+  //   - 401 -> redirect /login (token expirou pos-render)
+  //   - Outros erros -> banner role=alert + retry button
+  //   - Pattern paridade dashboard-admin pass 427 (loadError + retry)
+  const [error, setError] = useState('');
 
-  useEffect(() => {
+  function load() {
     if (!token) { router.push('/login'); return; }
+    setLoading(true); setError('');
     Api.api<{ orders: any[] }>('/orders', { auth: token, cache: 'no-store' })
       .then((r) => setOrders(r.orders || []))
+      .catch((e: any) => {
+        // 401: token expirou - redirect login (em vez de mostrar erro misto)
+        if (e?.status === 401) { router.push('/login?next=/conta/pedidos'); return; }
+        setError(e?.message || 'Erro ao carregar pedidos. Tente novamente.');
+      })
       .finally(() => setLoading(false));
-  }, [token]);
+  }
+  useEffect(() => { load(); }, [token]);
 
   return (
     <div className="container mx-auto px-6 py-8 max-w-4xl">
@@ -40,9 +60,21 @@ export default function PedidosPage() {
       <h1 className="font-display font-bold text-4xl mt-4 mb-2">Meus pedidos</h1>
       <p className="text-white/60 mb-8">{orders.length} pedido(s) no historico</p>
 
+      {/* FIX-WORKER-2 pass 428: error banner role=alert + retry (paridade W4 pass 427)
+          Distingue erro real de lista vazia - antes a colisao causava FALSE NEGATIVE
+          ("voce ainda nao fez nenhum pedido" quando havia 50 historicos). */}
+      {error && (
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>{error}</span>
+          <button type="button" onClick={load}
+            aria-label="Tentar carregar pedidos novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">retry</button>
+        </div>
+      )}
+
       {loading ? (
         <div className="text-center py-12 text-white/60">Carregando...</div>
-      ) : orders.length === 0 ? (
+      ) : error ? null : orders.length === 0 ? (
         <div className="glass p-12 text-center">
           <Package className="w-16 h-16 mx-auto mb-4 text-white/30" />
           <p className="text-xl mb-4">Voce ainda nao fez nenhum pedido</p>
