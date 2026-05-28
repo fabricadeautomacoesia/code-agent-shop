@@ -609,9 +609,10 @@ router.get('/admin/disputes',
       [statusFilter, lim]
     );
     // Counts agregados (para badges UI). Window 90d cobre admin queue.
+    // FIX pass 110: opened_at -> created_at (schema real)
     const stats = await query(
       `SELECT status::TEXT AS status, COUNT(*)::INT AS n FROM disputes
-        WHERE opened_at > NOW() - INTERVAL '90 days'
+        WHERE created_at > NOW() - INTERVAL '90 days'
         GROUP BY status`
     );
     const counts = stats.rows.reduce((acc, r) => ({ ...acc, [r.status]: r.n }), {});
