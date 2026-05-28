@@ -32028,3 +32028,28 @@ W18 hot path consolidation:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
+
+## PASS 387 W12 QA-WORKER: parse_score_response defensive (LLM output drift)
+commit eed27e4
+3 defensive gaps em parse_score_response:
+1. PT-BR LLM '0,85' -> ValueError -> false negative
+2. NaN passa max/min clamp -> PG serialize crash
+3. reasons dict -> str() itera KEYS (UX broken)
+
+POST-FIX:
+- Normalize comma to dot (PT-BR LLM)
+- math.isfinite() rejeita NaN/inf
+- reasons/suggestions defensive type check
+- + import math top-level
+
+W12 LLM hardening:
+  pass 366 QA_CONFIDENCE_THRESHOLD env
+  pass 335 callback Zod schema
+  pass 387 parse_score worker <- ESTE
+
+120 passes acumulados (268->387) sem deploy VPS
+5 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
