@@ -408,7 +408,22 @@ async def _call_openai(prompt: str) -> tuple[str, str, str, dict]:
         )
         r.raise_for_status()
         d = r.json()
-        return d["choices"][0]["message"]["content"], "openai", OPENAI_MODEL, d.get("usage", {})
+        # FIX-WORKER-12 pass 248 (defensive shape):
+        #   PRE-FIX: d["choices"][0]["message"]["content"] direto - KeyError se
+        #   API retorna {} ou {"choices":[]} (edge cases: quota exceeded silent
+        #   200, A/B test new response shape, malformed JSON parsed empty).
+        #   Crash propaga -> callback nunca enviado -> run stuck em 'running'
+        #   ate cron timeout 10min consumir budget LLM novamente.
+        #   POST-FIX: defensive .get chain - raise RuntimeError com context
+        #   detail. Permite fallback chain capturar como transient error.
+        choices = d.get("choices") or []
+        if not choices:
+            raise RuntimeError(f"openai_empty_response (model={OPENAI_MODEL})")
+        msg = (choices[0] or {}).get("message") or {}
+        content = msg.get("content") or ""
+        if not content:
+            raise RuntimeError(f"openai_no_content (model={OPENAI_MODEL})")
+        return content, "openai", OPENAI_MODEL, d.get("usage", {})
 
 
 async def _call_gemini(prompt: str) -> tuple[str, str, str, dict]:
@@ -420,7 +435,16 @@ async def _call_gemini(prompt: str) -> tuple[str, str, str, dict]:
         })
         r.raise_for_status()
         d = r.json()
-        content = d["candidates"][0]["content"]["parts"][0]["text"]
+        # FIX-WORKER-12 pass 248: defensive (mesmo pattern OpenAI)
+        # Gemini retorna {"candidates":[]} quando safety filters blocam prompt
+        candidates = d.get("candidates") or []
+        if not candidates:
+            block_reason = d.get("promptFeedback", {}).get("blockReason", "unknown")
+            raise RuntimeError(f"gemini_no_candidates (reason={block_reason})")
+        parts = (candidates[0] or {}).get("content", {}).get("parts") or []
+        content = parts[0].get("text", "") if parts else ""
+        if not content:
+            raise RuntimeError(f"gemini_empty_content (model={GEMINI_MODEL})")
         meta = d.get("usageMetadata", {})
         return content, "gemini", GEMINI_MODEL, {
             "prompt_tokens": meta.get("promptTokenCount", 0),
@@ -442,7 +466,15 @@ async def _call_groq(prompt: str) -> tuple[str, str, str, dict]:
         )
         r.raise_for_status()
         d = r.json()
-        return d["choices"][0]["message"]["content"], "groq", GROQ_MODEL, d.get("usage", {})
+        # FIX-WORKER-12 pass 248: defensive (paridade OpenAI/Gemini)
+        choices = d.get("choices") or []
+        if not choices:
+            raise RuntimeError(f"groq_empty_response (model={GROQ_MODEL})")
+        msg = (choices[0] or {}).get("message") or {}
+        content = msg.get("content") or ""
+        if not content:
+            raise RuntimeError(f"groq_no_content (model={GROQ_MODEL})")
+        return content, "groq", GROQ_MODEL, d.get("usage", {})
 
 
 # ============================================================

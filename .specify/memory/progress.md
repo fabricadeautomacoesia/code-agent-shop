@@ -25675,3 +25675,83 @@ PROXIMA ITER:
 - W3 PDP: badge "lider seller" rendering
 - W8 visual: glassmorphism opacity unified
 - VPS SSH unblock URGENTISSIMO (80 ciclos - 26.7h!!!)
+
+============================================================
+PASS 248 (2026-05-28) - W12 + W5 LLM defensive + UX
+============================================================
+
+OBJETIVO: 2 workers (W10 skip - sem gap)
+- W12 qa-worker: LLM response defensive access (3 providers)
+- W5 dashboard-seller: qna empty input UX + a11y
+
+============================================================
+1. W12 - LLM response defensive access
+============================================================
+FILE: services/qa-worker/app/main.py:397-469
+
+PROBLEMA (3 providers afetados):
+- _call_openai: d["choices"][0]["message"]["content"] - KeyError se {} ou {"choices":[]}
+- _call_gemini: d["candidates"][0]["content"]["parts"][0]["text"] - mesmo problema
+- _call_groq: d["choices"][0]["message"]["content"] - mesmo
+
+Edge cases reais:
+- OpenAI quota exceeded silent 200 (some plans)
+- Gemini safety filters block prompt -> {"candidates":[], "promptFeedback":{"blockReason":"SAFETY"}}
+- A/B test new response shape (OpenAI experimental)
+- Malformed JSON parsed as empty dict
+
+Crash propaga -> callback nunca enviado -> run stuck em 'running'
+ate cron timeout 10min consumir budget LLM novamente.
+
+POST-FIX (3 funcs):
+- choices = d.get("choices") or []; if not choices: raise RuntimeError(...)
+- msg = (choices[0] or {}).get("message") or {}
+- content = msg.get("content") or ""; if not content: raise (...)
+- Gemini: extract promptFeedback.blockReason p/ telemetry
+- RuntimeError captura pelo fallback chain pre-existente como transient error
+- Proximo provider tenta automaticamente
+
+============================================================
+2. W5 - qna empty input silent + loadError a11y
+============================================================
+FILE: apps/dashboard-seller/src/app/qna/page.tsx:28-50
+
+PROBLEMA A (silent UX):
+- reply(id) com input vazio: if (!ans || ans.trim().length < 1) return;
+- User clicava "Responder" -> NADA acontecia
+- Botao continuava enabled, sem feedback visual nem mensagem
+- Percepcao de bug ("clique nao funciona")
+
+PROBLEMA B (a11y parity):
+- loadError div sem role="alert"
+- action.error e action.success ja tinham (linha 50-63)
+- Inconsistencia screen reader
+
+POST-FIX:
+A. action.run trigger com throw Error -> banner amigavel surge
+   "Resposta minima 5 caracteres - preencha o campo antes de enviar."
+   Bumped min de 1 para 5 chars (qualidade minima resposta)
+B. loadError com role="alert" - paridade pattern V8
+
+============================================================
+SUMARIO PASS 248
+============================================================
+Files: 2 modificados
+  - services/qa-worker/app/main.py (LLM 3 providers defensive)
+  - apps/dashboard-seller/src/app/qna/page.tsx (UX + a11y)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (81 ciclos - 27h sem deploy).
+Migs 069+070+071+072+073 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-worker cas_dashboard-seller --force
+- W12: simular OpenAI quota exceeded -> qa-worker tenta Gemini automaticamente
+  Run nao fica stuck em 'running' (callback chega com error context)
+- W5 silent: /seller/qna -> click "Responder" sem texto -> banner vermelho
+- W5 a11y: simular network fail load -> NVDA anuncia "Erro carregando lista"
+
+PROXIMA ITER:
+- W4 admin: bulk select pending payouts
+- W11 payment: dispute auto-open trigger
+- VPS SSH unblock URGENTISSIMO (81 ciclos - 27h!!!)

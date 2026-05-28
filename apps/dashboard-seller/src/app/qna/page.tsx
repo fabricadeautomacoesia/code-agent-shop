@@ -27,7 +27,17 @@ export default function SellerQnaPage() {
 
   async function reply(id: string) {
     const ans = answers[id];
-    if (!ans || ans.trim().length < 1) return;
+    // FIX-WORKER-5 pass 248 (silent empty input UX):
+    //   PRE-FIX: if (!ans || ans.trim().length < 1) return;
+    //   User clicava "Responder" com input vazio -> NADA acontecia
+    //   Botao continuava enabled, sem feedback. Falsa percepcao de bug.
+    //   POST-FIX: usa action.run com throw -> banner amigavel surge.
+    if (!ans || ans.trim().length < 5) {
+      action.run(`answer-${id}`, async () => {
+        throw new Error('Resposta minima 5 caracteres - preencha o campo antes de enviar.');
+      });
+      return;
+    }
     action.run(`answer-${id}`, async () => {
       await sellerFetch(`/qna/${id}/answer`, {
         method: 'POST', body: JSON.stringify({ answer: ans.trim() })
@@ -44,7 +54,13 @@ export default function SellerQnaPage() {
         Responda perguntas dos clientes em ate 24h para manter sua reputacao alta
       </p>
 
-      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+      {/* FIX-WORKER-5 pass 248 (a11y parity): loadError sem role=alert
+          enquanto action.error/success ja tem - padronizado (pattern V8). */}
+      {loadError && (
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">
+          Erro carregando lista: {loadError}
+        </div>
+      )}
 
       {/* FIX-WORKER-5 pass 2 + 172 (a11y V8 R23) */}
       {action.error && (
