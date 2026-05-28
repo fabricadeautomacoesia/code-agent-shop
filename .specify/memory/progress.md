@@ -20371,3 +20371,44 @@ PROXIMA ITER:
 - W6 audit reset-password flow
 - W10 search-svc bugs
 - 🚨 VPS SSH unblock URGENTE (9 ciclos sem deploy = >2.5h)
+
+PASS 177 (W9 CRITICAL SEO noindex + robots.txt) - 2026-05-28:
+- AUDITORIA W9 storefront: 100% paginas tem metadata (via layout cascade
+  ou inline). Pages "missing" da grep eram cobertas por layout parents.
+  Encontradas 2 truly missing apenas em [token]/[id] dynamic - todos ja
+  tinham generateMetadata.
+- BUG CRITICO descoberto em DASHBOARDS:
+  * dashboard-admin layout.tsx: { title: 'Admin...' } SOLO - sem robots
+  * dashboard-seller layout.tsx: { title: 'Painel...' } SOLO - sem robots
+  * Sem nenhum robots.txt em ambos
+  * Risco: Google indexa /vault /sellers /payouts se URL leak
+    (search results expoem KPIs, wallet IDs, KYC data)
+- FIX (defesa em profundidade):
+  1. metadata Metadata type + description + robots { index:false, follow:false, nocache:true }
+  2. NEW: apps/dashboard-admin/src/app/robots.ts (Next.js MetadataRoute)
+  3. NEW: apps/dashboard-seller/src/app/robots.ts
+     Ambos Disallow: / para userAgent: '*'
+  4. (ja existia) JWT gateway auth requireRole=admin|seller
+- Total 4 files changed, 72 insertions
+- Commit 3b600c1 pushed origin/main
+- VPS SSH ainda bloqueado (10 ciclos consecutivos)
+
+VERIFICACAO POS-DEPLOY:
+- curl https://admin.../robots.txt -> User-agent: * \n Disallow: /
+- curl https://seller.../robots.txt -> mesmo
+- view-source: -> <meta name="robots" content="noindex, nofollow, nocache">
+
+CODIGO ACUMULADO ORIGIN/MAIN (10 ciclos):
+- 168-176: documentados
+- 177: SEO noindex dashboards
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-admin cas_dashboard-seller --force
+- curl -s https://admin.inovareinteligenciaartificial.com/robots.txt
+- curl -s https://seller.inovareinteligenciaartificial.com/robots.txt
+
+PROXIMA ITER:
+- W18: cache /wishlist, /notifications/me
+- W6 audit reset-password flow
+- W10 search-svc bugs (autocomplete trie)
+- 🚨 VPS SSH unblock URGENTE (10 ciclos - >3h sem deploy!)
