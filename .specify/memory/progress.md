@@ -17355,7 +17355,32 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Migration 054 coupons updated_at + trigger (pass 135)
 - ✅ Admin pages metadata especifica em 9 layouts (pass 136)
 - ✅ QnaForm a11y WCAG 1.3.1 + aria-live (pass 137)
-- ✅ ReviewForm a11y radiogroup + WCAG 1.3.1 (pass 138 esta iter)
+- ✅ ReviewForm a11y radiogroup + WCAG 1.3.1 (pass 138)
+- ✅ Register form a11y + autoComplete (pass 139 esta iter)
+
+W7 PASS 139 RESUMO - W1 /register a11y WCAG 1.3.1 + autoComplete + progressbar:
+- AUDIT /register page: continuacao W3 pass 137/138 (QnaForm + ReviewForm a11y)
+- 4 BUGS identificados:
+  * BUG 1 (WCAG 1.3.1): 5 <label> sem htmlFor + 5 <input> sem id
+    -> NVDA/JAWS desassociavam labels (anunciavam apenas 'campo edicao')
+  * BUG 2: mobile keyboards - faltava autoComplete + inputMode
+    -> usuario via teclado generico em vez de email/tel/numeric apropriado
+  * BUG 3: password strength bar mudava sem semantica progressbar
+    -> SR nao anunciava progressao da forca
+  * BUG 4: CPF input sem placeholder formato (UX confusion)
+- FIXES (5 inputs):
+  * reg-fullname: htmlFor + id + autoComplete='name' + type='text'
+  * reg-email: htmlFor + id + autoComplete='email' + inputMode='email'
+  * reg-password: htmlFor + id + autoComplete='new-password'
+    + aria-describedby='reg-pw-strength'
+  * reg-cpfcnpj: htmlFor + id + autoComplete='off' + inputMode='numeric'
+    + placeholder '000.000.000-00 ou 00.000.000/0000-00'
+  * reg-phone: htmlFor + id + type='tel' + autoComplete='tel' + inputMode='tel'
+  * pw-strength: role='progressbar' + aria-valuemin/max/now + aria-label dinamico
+    aria-label: 'Forca da senha: 3 de 4' (anuncia mudancas)
+- 3 forms storefront agora a11y compliant (QnaForm + ReviewForm + Register)
+- BUILD storefront OK + service converged
+- COMMIT 557de61 pushed GitHub main + deployed prod
 
 W7 PASS 138 RESUMO - W3 ReviewForm a11y RADIOGROUP FIX:
 - AUDIT review-form.tsx (continuacao W3 pass 137): 4 violacoes WCAG/ARIA:
