@@ -536,6 +536,14 @@ app.post('/read-all',
 
     // FIX-WORKER-18 pass 212: invalida cache unread-count (todas viraram TRUE)
     await cache.del(`notifs:unread-count:${req.user.sub}`).catch(() => {});
+    // FIX-WORKER-13 pass 422 (notifs:list invalidation paridade /:id/read pass 404):
+    //   PRE-FIX: /read-all so invalida unread-count
+    //   - /:id/read (linhas 471+473) JA invalida ambos (unread + list)
+    //   - /read-all paridade lagged - mass-mark NAO invalida list cache
+    //   - NotificationBell dropdown mostra is_read=false stale por 20s TTL
+    //   - User: 'cliquei marcar todas mas badge ainda nao limpou'
+    //   POST-FIX: + cache.del notifs:list:USER:* wildcard
+    await cache.del(`notifs:list:${req.user.sub}:*`).catch(() => {});
 
     res.json({ ok: true, marked: r.rowCount, has_more: hasMore, batch_limit: 1000 });
   })
