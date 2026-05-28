@@ -30110,3 +30110,45 @@ PROXIMA ITER:
 - W7 audit /reviews POST cache invalidate similar
 - W4 admin QnA moderation panel
 - VPS SSH unblock URGENTISSIMO (160 ciclos - 53.3h)
+
+
+============================================================
+PASS 328 - 2026-05-28 - W7 product-svc cache.del qna wildcard fix
+============================================================
+Files: 2 modificados
+  - services/product-svc/src/routes/admin.js (invalidateAdminCache qna :*)
+  - services/product-svc/src/routes/seller-mgmt.js (invalidate qna :*)
+Lines: ~10 changed
+
+W7 (product-svc cache.del wildcard cross-routes):
+- PRE-FIX paridade pass 327 bug class:
+  - admin.js linha 30 cache.del('products:qna:${slug}') sem wildcard
+  - seller-mgmt.js linha 52 mesma
+- Keys reais tem suffix ':lim=X:p=Y:ans=Z' (pass 298)
+- del() era no-op silencioso
+- Bug UX: admin force-approve OU seller submit nao invalidava qna cache
+- POST-FIX 2 locais:
+  - admin.js invalidateAdminCache (helper)
+  - seller-mgmt.js invalidate (helper)
+  - slug.toLowerCase().trim() + ':*' wildcard
+
+Total cache.del wildcard cumulative cross-svc:
+- review-svc pass 327: 2 locais (POST qna + answer)
+- product-svc pass 328: 2 locais (admin helper + seller-mgmt helper)
+- products:detail key sem suffix - mantem sem wildcard (correto)
+- products:reviews/qna keys com suffix - todos agora com wildcard
+
+VPS SSH BLOQUEADO (161 ciclos - 53.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc --force
+- W7 verify:
+  Admin force-approve produto -> verificar redis-cli KEYS 'cas:products:qna:<slug>:*'
+  Esperado: 0 (deletado pelo invalidate)
+  GET /products/<slug>/qna -> nova qna aparece imediato
+
+PROXIMA ITER:
+- W7 audit auth-svc cache.del auth:me (single key - confirma sem wildcard)
+- W4 admin dashboard verify mock data
+- VPS SSH unblock URGENTISSIMO (161 ciclos - 53.7h)

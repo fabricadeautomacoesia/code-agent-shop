@@ -45,11 +45,12 @@ async function invalidate(productId) {
       // Lookup slug e invalida caches especificos do produto
       const r = await query('SELECT slug FROM products WHERE id = $1', [productId]);
       if (r.rows.length) {
-        const slug = r.rows[0].slug;
+        /* FIX-WORKER-7 pass 328: wildcard paridade pass 327 - qna keys tem suffix */
+        const slug = String(r.rows[0].slug).toLowerCase().trim();
         tasks.push(
           cache.del(`products:detail:${slug}`),
           cache.del(`products:reviews:${slug}:*`),
-          cache.del(`products:qna:${slug}`)
+          cache.del(`products:qna:${slug}:*`)
         );
       }
     }

@@ -24,10 +24,14 @@ async function invalidateProductCache(productId) {
       const r = await query('SELECT slug FROM products WHERE id = $1', [productId]);
       if (r.rows.length) {
         const slug = r.rows[0].slug;
+        /* FIX-WORKER-7 pass 328: cache.del wildcard paridade pass 327 review-svc
+           products:qna keys tem suffix ':lim=X:p=Y:ans=Z' (pass 298).
+           Sem :* del era no-op. */
+        const slugNorm = String(slug).toLowerCase().trim();
         tasks.push(
-          cache.del(`products:detail:${slug}`),
-          cache.del(`products:reviews:${slug}:*`),
-          cache.del(`products:qna:${slug}`)
+          cache.del(`products:detail:${slugNorm}`),
+          cache.del(`products:reviews:${slugNorm}:*`),
+          cache.del(`products:qna:${slugNorm}:*`)
         );
       }
     }
