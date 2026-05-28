@@ -68,7 +68,11 @@ export default function EditProductPage() {
   }
 
   async function submit() {
-    if (!confirm('Enviar para QA automatizado? Voce nao podera editar ate o resultado.')) return;
+    const { confirmDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog('Enviar para QA automatizado?', {
+      body: 'Voce nao podera editar ate o resultado.',
+      variant: 'danger', confirmLabel: 'Enviar para QA',
+    })) return;
     action.run('submit', async () => {
       await sellerFetch(`/products/me/${id}/submit`, { method: 'POST' });
       router.push('/products');

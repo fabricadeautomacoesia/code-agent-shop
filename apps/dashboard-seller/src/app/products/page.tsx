@@ -32,7 +32,11 @@ export default function SellerProductsPage() {
   const action = useSellerAction(load);
 
   async function submitQA(id: string) {
-    if (!confirm('Enviar para QA automatizado? O pipeline LLM avaliara seu produto. Confidence < 80% = rejeitado.')) return;
+    const { confirmDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog('Enviar para QA automatizado?', {
+      body: 'O pipeline LLM avaliara seu produto. Confidence < 80% = rejeitado.',
+      confirmLabel: 'Enviar para QA',
+    })) return;
     action.run(`submit-${id}`, async () => {
       await sellerFetch(`/products/me/${id}/submit`, { method: 'POST' });
       return `Produto ${id.slice(0, 8)}... enviado para QA`;

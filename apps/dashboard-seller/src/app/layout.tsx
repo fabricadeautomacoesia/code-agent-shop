@@ -1,6 +1,7 @@
 import './globals.css';
 import Link from 'next/link';
 import { LayoutDashboard, Package, MessageCircle, DollarSign, Settings, Upload, Star } from 'lucide-react';
+import { PromptDialogProvider } from '@/components/prompt-dialog';
 
 export const metadata = { title: 'Painel do Vendedor - Code & Agent Shop' };
 
@@ -41,6 +42,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </aside>
           <main className="flex-1 p-8 overflow-x-hidden">{children}</main>
         </div>
+        {/* FIX-WORKER-5 pass 151: PromptDialog global p/ substituir window.prompt/confirm */}
+        <PromptDialogProvider />
       </body>
     </html>
   );
