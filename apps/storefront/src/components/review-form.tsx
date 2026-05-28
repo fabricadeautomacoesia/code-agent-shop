@@ -69,33 +69,42 @@ export function ReviewForm({ productId, orderId, productTitle, onSubmitted }: {
     <form onSubmit={submit} className="glass p-6 space-y-4">
       <h3 className="font-display font-bold text-lg">Avalie {productTitle}</h3>
 
-      <div>
-        <label className="text-xs text-white/60 uppercase block mb-2">Nota</label>
+      {/* FIX-WORKER-3 pass 138 (a11y): radiogroup wrapper p/ rating buttons.
+          ANTES: <label>Nota</label> + <div role-less> com buttons aria-pressed
+          -> SR anunciava 5 botoes soltos sem grupo semantico nem total.
+          AGORA: role=radiogroup + aria-labelledby + group label visible. */}
+      <div role="radiogroup" aria-labelledby="review-rating-label">
+        <label id="review-rating-label" className="text-xs text-white/60 uppercase block mb-2">Nota</label>
         <div className="flex gap-1">
           {[1,2,3,4,5].map((n) => (
             <button key={n} type="button"
+              role="radio"
               onClick={() => setRating(n)}
               onMouseEnter={() => setHoverRating(n)}
               onMouseLeave={() => setHoverRating(0)}
               aria-label={`Avaliar ${n} ${n === 1 ? 'estrela' : 'estrelas'}`}
-              aria-pressed={rating === n}
+              aria-checked={rating === n}
               className="p-1 hover:scale-110 transition-transform focus-visible:outline-2 focus-visible:outline-magenta rounded">
-              <Star className={`w-8 h-8 ${(hoverRating || rating) >= n ? 'fill-yellow-400 text-yellow-400' : 'text-white/20'}`} />
+              <Star className={`w-8 h-8 ${(hoverRating || rating) >= n ? 'fill-yellow-400 text-yellow-400' : 'text-white/20'}`} aria-hidden="true" />
             </button>
           ))}
-          {rating > 0 && <span className="ml-3 self-center font-bold text-lg">{rating}/5</span>}
+          {rating > 0 && <span aria-live="polite" className="ml-3 self-center font-bold text-lg">{rating}/5</span>}
         </div>
       </div>
 
       <div>
-        <label className="text-xs text-white/60 uppercase block mb-1">Titulo (opcional)</label>
+        {/* FIX-WORKER-3 pass 138 (a11y): htmlFor + id (WCAG 1.3.1) */}
+        <label htmlFor="review-title" className="text-xs text-white/60 uppercase block mb-1">Titulo (opcional)</label>
         <div className="relative">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={TITLE_MAX}
+          <input id="review-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={TITLE_MAX}
             placeholder="Ex: Funcionou perfeitamente"
+            aria-describedby={title.length > 0 ? 'review-title-counter' : undefined}
             className="w-full px-3 py-2 pr-16 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none text-sm" />
-          {/* FIX-WORKER-3 pass 4: contador chars visivel (consistente com qna-form) */}
+          {/* FIX-WORKER-3 pass 4: contador chars visivel (consistente com qna-form)
+              FIX-WORKER-3 pass 138 (a11y): id + aria-live polite */}
           {title.length > 0 && (
-            <div className={`absolute right-2 top-1/2 -translate-y-1/2 text-[10px] ${
+            <div id="review-title-counter" aria-live="polite"
+              className={`absolute right-2 top-1/2 -translate-y-1/2 text-[10px] ${
               title.length > TITLE_MAX ? 'text-red-400' :
               title.length > TITLE_MAX * 0.9 ? 'text-yellow-400' : 'text-white/40'
             }`}>
@@ -106,13 +115,16 @@ export function ReviewForm({ productId, orderId, productTitle, onSubmitted }: {
       </div>
 
       <div>
-        <label className="text-xs text-white/60 uppercase block mb-1">Comentario (opcional)</label>
+        {/* FIX-WORKER-3 pass 138 (a11y): htmlFor + id (WCAG 1.3.1) */}
+        <label htmlFor="review-body" className="text-xs text-white/60 uppercase block mb-1">Comentario (opcional)</label>
         <div className="relative">
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} maxLength={BODY_MAX} rows={4}
+          <textarea id="review-body" value={body} onChange={(e) => setBody(e.target.value)} maxLength={BODY_MAX} rows={4}
             placeholder="Conte sua experiencia com este produto..."
+            aria-describedby={body.length > 0 ? 'review-body-counter' : undefined}
             className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none text-sm" />
           {body.length > 0 && (
-            <div className={`absolute bottom-2 right-3 text-[10px] ${
+            <div id="review-body-counter" aria-live="polite"
+              className={`absolute bottom-2 right-3 text-[10px] ${
               body.length > BODY_MAX ? 'text-red-400' :
               body.length > BODY_MAX * 0.9 ? 'text-yellow-400' : 'text-white/40'
             }`}>
