@@ -33653,3 +33653,51 @@ Pattern V8 W13: user_notification_prefs MUST aplicar em TODOS canais
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 437 W14 DB SCHEMA: functional idx LOWER(template_code) (consume pass 436)
+commit pendente
+GAP perf hot-path: pass 436 JOIN com LOWER() kills PK lookup
+PRE-FIX:
+- Pass 436 adicionou LEFT JOIN user_notification_prefs em hot-path notification-svc:
+  LEFT JOIN ON unp.user_id=n.user_id
+            AND LOWER(unp.template_code)=LOWER(n.template_code)
+            AND unp.channel=n.channel
+- user_notification_prefs PK = (user_id, template_code, channel) - RAW (sem LOWER)
+- PG planner NAO usa PK quando LOWER() na expr ON
+- Forcado a:
+  - Para cada notif row (LIMIT 20-50) -> Seq Scan/Hash Join unp
+  - unp prod cresce ~N_users * M_templates * C_channels (~100k+ rows)
+  - GET / list hot-path: ~150ms -> ~500ms+ em prod
+  - GET /unread-count poll cada client = thrash DB cumulativo
+
+SELF-DETECT pass 436:
+- Pass 436 fix LGPD/UX cobriu sem considerar perf consume
+- LOWER() defensive (pass 238) era OK em processOutbox (loop pequeno)
+- Mas em LEFT JOIN hot-path = full scan disaster
+- Mesma pattern bug pass 423 (idx_products_cat_sales PARTIAL WHERE mismatch)
+
+POST-FIX mig 095:
+- CREATE INDEX idx_unotif_prefs_lower_lookup
+  ON user_notification_prefs(user_id, LOWER(template_code), channel)
+- Functional expression index com LOWER embed
+- PG planner agora encontra match exato p/ JOIN LOWER expr
+- Index Scan O(log N) vs Seq Scan O(N)
+- Latencia esperada GET / list: ~500ms -> ~30ms (16x com 100k prefs)
+- GET /unread-count: <5ms hit (com cache 20s pass 212 = 99% cache hit)
+
+Note: idx_unotif_prefs_user (mig 016) preservado p/ outras queries (lookup by user only).
+
+W14 perf consume series:
+  pass 423 idx_products_cat_sales widen platform_owned
+  pass 430 idx_audit_target_created PARTIAL
+  pass 437 idx_unotif_prefs_lower_lookup func expr <- ESTE
+
+Pattern V8 W14: quando WHERE/JOIN inclui LOWER()/UPPER() expression, idx MUST
+incluir expression embed (functional index) p/ planner reconhecer match.
+
+170 passes acumulados (268->437) sem deploy VPS
+5 CRITICAL + 27 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Apply mig 095 prod p/ medir EXPLAIN ANALYZE com prefs >10k rows
