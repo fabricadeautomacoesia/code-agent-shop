@@ -31160,3 +31160,29 @@ PROXIMA ITER:
 - W17 vault security audit
 - W2 checkout E2E
 - VPS SSH unblock URGENTISSIMO (3 CRITICAL acumulados)
+
+## PASS 357 W9 SEO: env-driven openGraph.url paridade metadataBase
+commit 2224521
+BUG drift metadataBase env-driven vs openGraph.url hardcoded
+  - metadataBase usa NEXT_PUBLIC_SITE_URL
+  - openGraph.url hardcoded 'cas.inovareinteligenciaartificial.com'
+  - 2 tags HTML diferentes: canonical env, og:url hardcoded
+  - Stack.yml alt deploy (code-agent-shop.com.br) sofria mais
+  - Crawlers WhatsApp/Slack/Twitter/LinkedIn usam og:url -> host antigo
+
+POST-FIX:
+  - const SITE_URL DRY (paridade pass 355 json-ld + notification-bell)
+  - openGraph.url + metadataBase ambos via SITE_URL
+  - Paridade cross-tags HTML
+
+W9 SEO env-driven consolidation cross-files:
+  * notification-bell SELLER_DASH_URL (pass 355)
+  * json-ld SITE_URL (pass 355)
+  * layout.tsx openGraph.url + metadataBase (pass 357) <- ESTE
+
+90 passes acumulados (268->357) sem deploy VPS
+
+PROXIMA ITER:
+- W17 vault security audit
+- W2 checkout E2E
+- VPS SSH unblock URGENTISSIMO (3 CRITICAL acumulados)
