@@ -531,20 +531,78 @@ router.post('/:id/kyc/reject',
 // Feature inteira invisivel ao admin -> transfers Asaas dependiam de cron/manual.
 // FIX: aceitar ?status=pending|approved|all (default backward-compat = pending).
 // Quando ?status=approved ou all, UI ve approved payouts e pode disparar /process.
-router.get('/payouts/pending', asyncHandler(async (req, res) => {
-  const statusParam = (req.query.status || 'pending').toString().toLowerCase();
-  const VALID = new Set(['pending','approved','all']);
-  const status = VALID.has(statusParam) ? statusParam : 'pending';
-  const where = status === 'all'
-    ? `p.status IN ('pending','approved')`
-    : `p.status = '${status}'`;
-  const r = await query(
-    `SELECT p.*, s.store_name FROM seller_payouts p
-       JOIN sellers s ON s.id = p.seller_id
-      WHERE ${where} ORDER BY p.requested_at ASC LIMIT 100`
-  );
-  res.json({ payouts: r.rows, filter: { status } });
-}));
+// FIX-WORKER-18 pass 198 (5 melhorias compostas):
+// PRE-FIX 5 bugs:
+// 1. SELECT p.* - Regra I leak (rejected_reason texto livre + asaas_transfer_id PII)
+// 2. Hardcoded LIMIT 100 sem pagination - prod 200+ pending = invisiveis
+// 3. ORDER BY requested_at ASC sem tiebreaker (Regra D)
+// 4. NO COUNT total - UI 'X de Y' impossivel
+// 5. NO cache - admin dashboard polling sem cache (mesmo pattern pass 197)
+//
+// POST-FIX:
+// + cache.cacheMiddleware 20s vary by status (curto pq mutations frequentes)
+// + Explicit SELECT fields (positiva whitelist)
+// + COUNT(*) OVER() window total + has_more
+// + tiebreaker + p.id ASC (determinismo)
+// + DLP mask.text rejected_reason (admin pode escrever CPF/Bearer no motivo)
+// + ?limit + ?offset (pattern V8 W7 pass E)
+// + Parameterized $1 em vez de string interpolation status
+const payoutsPendingCacheKey = (req) => {
+  const q = req.query;
+  return `seller:admin:payouts-pending:s=${q.status||'pending'}:lim=${q.limit||50}:off=${q.offset||0}`;
+};
+
+router.get('/payouts/pending',
+  cache.cacheMiddleware(payoutsPendingCacheKey, 20),
+  asyncHandler(async (req, res) => {
+    const statusParam = (req.query.status || 'pending').toString().toLowerCase();
+    const VALID = new Set(['pending','approved','all']);
+    const status = VALID.has(statusParam) ? statusParam : 'pending';
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    // FIX bug 6: parameterize status em vez de string interpolation
+    const whereParts = status === 'all'
+      ? [`p.status IN ('pending','approved')`]
+      : [`p.status = $1`];
+    const params = status === 'all' ? [] : [status];
+    const iLim = params.length + 1;
+    const iOff = params.length + 2;
+    params.push(limit, offset);
+
+    const r = await query(
+      `SELECT p.id, p.seller_id, p.amount_cents, p.status, p.asaas_transfer_id,
+              p.requested_at, p.approved_at, p.paid_at, p.rejected_reason,
+              s.store_name,
+              COUNT(*) OVER()::INT AS _total
+         FROM seller_payouts p
+         JOIN sellers s ON s.id = p.seller_id
+        WHERE ${whereParts.join(' AND ')}
+        ORDER BY p.requested_at ASC, p.id ASC
+        LIMIT $${iLim} OFFSET $${iOff}`,
+      params
+    );
+
+    const total = r.rows[0]?._total ?? 0;
+    // FIX bug 1: explicit fields + DLP mask rejected_reason (admin escreve free-text)
+    const payouts = r.rows.map((row) => {
+      const { _total, rejected_reason, ...rest } = row;
+      return {
+        ...rest,
+        rejected_reason: rejected_reason ? require('@cas/shared').mask.text(rejected_reason) : null,
+      };
+    });
+
+    res.json({
+      payouts,
+      total,
+      limit,
+      offset,
+      has_more: (offset + payouts.length) < total,
+      filter: { status },
+    });
+  })
+);
 
 // FIX-WORKER-4: regex UUID antes de bater no DB
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -563,7 +621,14 @@ async function invalidateSellerPayoutsCache(payoutId) {
       [payoutId]
     );
     const userId = r.rows[0]?.user_id;
-    if (userId) await cache.del(`seller:payouts:${userId}:*`);
+    // FIX-WORKER-18 pass 175 + 198: invalidate seller view + admin dashboard view
+    const tasks = [
+      cache.del('seller:admin:payouts-pending:*'),  // W18 pass 198 (admin dashboard)
+    ];
+    if (userId) {
+      tasks.push(cache.del(`seller:payouts:${userId}:*`));  // pass 175 (seller view)
+    }
+    await Promise.all(tasks);
   } catch (_) { /* best-effort */ }
 }
 
