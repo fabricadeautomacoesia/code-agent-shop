@@ -497,18 +497,30 @@ router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
   if (!u.rows.length) return next(errorHandler.unauthorized('user_not_found'));
   const user = u.rows[0];
   if (user.is_banned) {
-    // Revoga session atual (mesmo se nao revoked antes) + clear cookie
-    await query(
+    // FIX-WORKER-6 pass 233 (banned cascade revoke): se user e banned,
+    // TODAS sessoes dele devem ser revogadas. PRE-FIX revogava apenas a
+    // sessao atual (WHERE id=$1). Cenario:
+    //   Admin bane user. User tem 3 dispositivos com refresh tokens validos.
+    //   Apenas o que tentou /refresh era revogado. Os outros 2 continuavam
+    //   gerando access tokens 15min ate proxima rotation. Bypass parcial.
+    // POST-FIX: cascade revoke WHERE user_id=$1 (mesmo pattern refresh_reuse
+    // breach detection linha 444-451). Banned user perde TODOS dispositivos.
+    const cascaded = await query(
       `UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(),
                                  revoked_reason = 'user_banned_on_refresh'
-        WHERE id = $1 AND is_revoked = FALSE`,
-      [s.rows[0].id]
+        WHERE user_id = $1 AND is_revoked = FALSE
+        RETURNING id`,
+      [user.id]
     );
     // Audit critical (admin precisa saber que banned user tentou access)
     query(
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
        VALUES ($1, 'system', 'auth.refresh_banned_user_blocked', 'user', $1, 'critical', $2::JSONB)`,
-      [user.id, JSON.stringify({ ip: req.ip, session_id: s.rows[0].id })]
+      [user.id, JSON.stringify({
+        ip: req.ip,
+        session_id: s.rows[0].id,
+        cascaded_sessions: cascaded.rowCount,
+      })]
     ).catch(() => {});
     res.clearCookie(REFRESH_COOKIE, { path: '/' });
     return next(errorHandler.forbidden('user_banned', 'Conta banida.'));

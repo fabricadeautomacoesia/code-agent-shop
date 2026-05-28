@@ -39,7 +39,15 @@ function ResetInner() {
     setErr('');
     if (password !== confirm) { setErr('Senhas nao coincidem'); return; }
     if (password.length < 8) { setErr('Senha muito curta (min 8)'); return; }
-    if (!/[A-Z]/.test(password) || !/[0-9]/.test(password)) { setErr('Senha precisa de maiuscula e numero'); return; }
+    // FIX-WORKER-1 pass 233 (client/backend rule parity): backend auth.js:775
+    // exige maiuscula + numero + caractere especial. Client validava apenas 2 de 3
+    // -> user submetia senha "Senha123" sem special char -> backend 400 com
+    // mensagem generica via friendlyAuthError. UX: criar regra fail-fast client
+    // alinhada com backend Zod schema (incluir especial).
+    if (!/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^\w\s]/.test(password)) {
+      setErr('Senha precisa de maiuscula, numero e caractere especial (!@#$%^&* etc)');
+      return;
+    }
     setLoading(true);
     try {
       await Api.api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) });

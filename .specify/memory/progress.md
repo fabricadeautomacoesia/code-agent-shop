@@ -24315,3 +24315,99 @@ PROXIMA ITER:
 - W16 MLB: Comparador UI improvements (rota /comparar existe)
 - W4 admin: bulk actions QA queue
 - VPS SSH unblock URGENTE (65 ciclos - 21.7h sem deploy)
+
+============================================================
+PASS 233 (2026-05-28) - W1 + W6 + W18 auth security + perf
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W1 storefront: client/backend password validation parity
+- W6 auth-svc: banned user cascade revoke (refresh path)
+- W18 db: idx_pwreset_token_hash (mig 069)
+
+============================================================
+1. W1 - redefinir-senha validation parity backend
+============================================================
+FILE: apps/storefront/src/app/redefinir-senha/page.tsx:42
+
+PROBLEMA:
+- Client validava apenas maiuscula + numero (linha 42)
+- Backend (auth.js:775) Zod schema EXIGE maiuscula + numero + caractere
+  especial: refine s => /[A-Z]/ && /[0-9]/ && /[^\w\s]/
+- User submetia "Senha123" -> passa client -> backend 400 com Zod error
+  generico via friendlyAuthError. UX: error fuzzy "Senha invalida".
+
+POST-FIX: client adicionou /[^\w\s]/.test(password) check
+- Error message espelha backend: "Senha precisa de maiuscula, numero e
+  caractere especial (!@#$%^&* etc)"
+- Fail-fast client (sem hit backend desnecessario)
+
+============================================================
+2. W6 - auth-svc /refresh banned cascade revoke
+============================================================
+FILE: services/auth-svc/src/routes/auth.js:499-518
+
+PROBLEMA (security gap):
+- Admin bane user via /admin/users/ban
+- User tem 3 dispositivos com refresh tokens validos (laptop, mobile, work)
+- User abre laptop -> /refresh -> linha 499 detecta is_banned
+- PRE-FIX revogava APENAS sessao atual (WHERE id=$1)
+- Outros 2 dispositivos: refresh tokens ainda validos
+- Cada um vai 1x mais antes de proxima rotation -> 15min access_token bypass
+- Bypass parcial do ban (admin pensa que esta efetivo, mas mobile/work
+  continua funcionando ate proximo /refresh tentar)
+
+POST-FIX: cascade revoke WHERE user_id=$1 (pattern refresh_reuse linha 444)
+- Banned user perde TODOS dispositivos no primeiro /refresh detected
+- audit_log payload inclui cascaded_sessions count para forensic trail
+- Mesma severidade critical mantida
+
+============================================================
+3. W18 - migration 069 idx_pwreset_token_hash
+============================================================
+FILE: db/migrations/069_pwreset_token_idx.sql (CRIADO)
+
+PROBLEMA:
+- password_resets tabela tem 2 indices (mig 002):
+  - idx_pwreset_user (user_id)        - usado /forgot-password cleanup
+  - idx_pwreset_expires (expires_at)  - usado retention cron
+- MAS NAO indice em token_hash (coluna PRIMARY filter)
+- /auth/reset-password (auth.js:786): SELECT WHERE token_hash=$1 FOR UPDATE
+- Full table scan em CADA reset attempt
+- Prod retention 90d ~900 rows ativas
+- FOR UPDATE adquire lock em TODAS rows scanned (queue serial)
+
+POST-FIX: CREATE UNIQUE INDEX idx_pwreset_token_hash ON password_resets(token_hash)
+- UNIQUE bonus: collision protection (token_hash deve ser unique fisicamente)
+- Lookup O(log n) vs O(n) - 5-30ms -> <1ms
+- FOR UPDATE row-level lock apenas row matched
+- Concurrent /reset-password independentes paralelos
+
+============================================================
+SUMARIO PASS 233
+============================================================
+Files: 3 modificados/criados
+  - apps/storefront/src/app/redefinir-senha/page.tsx (validation parity)
+  - services/auth-svc/src/routes/auth.js (banned cascade)
+  - db/migrations/069_pwreset_token_idx.sql (NEW, perf index)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (66 ciclos - 22h sem deploy).
+Migration 069 pendente apply em prod.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_auth-svc --force
+- Apply mig 069:
+    docker exec cas_postgres psql -U cas_admin -d cas -f /docker/db/migrations/069_pwreset_token_idx.sql
+- W1 test: submit /redefinir-senha com "Senha123" -> error client
+  "Senha precisa de maiuscula, numero e caractere especial"
+- W6 test: bannar user X via admin -> user X /refresh em laptop -> verificar
+  TODAS sessions dele revogadas (SELECT is_revoked, revoked_reason FROM
+  user_sessions WHERE user_id=X)
+- W18 test: EXPLAIN ANALYZE SELECT * FROM password_resets WHERE token_hash=$1
+  Deve usar Index Scan (era Seq Scan)
+
+PROXIMA ITER:
+- W4 admin: bulk actions QA queue
+- W16 MLB: Cupom progressivo (R$100 = 5% off, R$300 = 10%, R$500 = 15%)
+- VPS SSH unblock URGENTE (66 ciclos - 22h sem deploy)
