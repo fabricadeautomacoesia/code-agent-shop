@@ -33100,3 +33100,38 @@ W18 perf series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Apply mig 093 prod p/ medir EXPLAIN ANALYZE real
+
+## PASS 424 W1 AUTH: register/page.tsx clearErr UX parity
+commit pendente
+BUG register era unica auth page sem clearErr() onChange
+PRE-FIX:
+- login pass 5: clearErr cross-fields
+- esqueci-senha pass 4: clearErr email
+- redefinir-senha pass 3: clearErr senha+confirm
+- register: NENHUM input limpa erro
+
+CENARIO:
+- User clica "Criar conta" -> backend 400 "Email ja em uso"
+- Banner red error aparece
+- User troca email para novo valido
+- Banner red PERSISTE durante digitacao
+- UX confuso (input verde acima + error red embaixo)
+
+POST-FIX:
+- function clearErr() added (espelha login pass 5)
+- onPass() chama clearErr()
+- 4 outros inputs (full_name, email, cpf_cnpj, phone_e164) chamam clearErr no onChange
+
+W1 UX parity series:
+  pass 4 esqueci-senha clearErr
+  pass 3 redefinir-senha clearErr
+  pass 5 login clearErr
+  pass 424 register clearErr <- ESTE
+
+Pattern V8 W1: error banner deve dismiss em sign-of-correction
+
+157 passes acumulados (268->424) sem deploy VPS
+5 CRITICAL + 25 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO

@@ -22,8 +22,19 @@ function RegisterInner() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // FIX-WORKER-1 pass 424 (UX parity login/forgot/reset):
+  //   PRE-FIX: register era unica auth page SEM clearErr() onChange.
+  //   - login pass 5: clearErr cross-fields
+  //   - esqueci-senha pass 4: clearErr email
+  //   - redefinir-senha pass 3: clearErr senha+confirm
+  //   - register: NENHUM input limpa erro -> "Email ja em uso" persistia mesmo
+  //     apos user digitar novo email valido. Banner red embaixo conflita com
+  //     novo input verde acima -> usuario confuso ("aindo ha erro?").
+  //   POST-FIX: clearErr() chamado em todos os 5 inputs (paridade cross-page).
+  function clearErr() { if (error) setError(''); }
   function onPass(v: string) {
     setForm({ ...form, password: v });
+    clearErr();
     // FIX-WORKER-1 pass 254 (pwScore regex parity backend):
     //   PRE-FIX: /[!@#$%^&*]/ restringia special chars a apenas 8 caracteres
     //   Backend (auth.js:775 Zod) aceita /[^\w\s]/ (qualquer non-word non-space)
@@ -113,13 +124,13 @@ function RegisterInner() {
             AGORA: WAI-ARIA forms pattern + browser autofill correto. */}
         <div>
           <label htmlFor="reg-fullname" className="text-sm text-white/70 mb-1.5 block">Nome completo</label>
-          <input id="reg-fullname" required value={form.full_name} onChange={(e) => setForm({...form, full_name: e.target.value})}
+          <input id="reg-fullname" required value={form.full_name} onChange={(e) => { setForm({...form, full_name: e.target.value}); clearErr(); }}
             autoComplete="name" type="text"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
         </div>
         <div>
           <label htmlFor="reg-email" className="text-sm text-white/70 mb-1.5 block">Email</label>
-          <input id="reg-email" type="email" required value={form.email} onChange={(e) => setForm({...form, email: e.target.value})}
+          <input id="reg-email" type="email" required value={form.email} onChange={(e) => { setForm({...form, email: e.target.value}); clearErr(); }}
             autoComplete="email" inputMode="email"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
         </div>
@@ -144,14 +155,14 @@ function RegisterInner() {
         </div>
         <div>
           <label htmlFor="reg-cpfcnpj" className="text-sm text-white/70 mb-1.5 block">CPF/CNPJ {role==='buyer' && <span className="text-white/40">(opcional)</span>}</label>
-          <input id="reg-cpfcnpj" value={form.cpf_cnpj} onChange={(e) => setForm({...form, cpf_cnpj: e.target.value})}
+          <input id="reg-cpfcnpj" value={form.cpf_cnpj} onChange={(e) => { setForm({...form, cpf_cnpj: e.target.value}); clearErr(); }}
             autoComplete="off" inputMode="numeric"
             placeholder="000.000.000-00 ou 00.000.000/0000-00"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
         </div>
         <div>
           <label htmlFor="reg-phone" className="text-sm text-white/70 mb-1.5 block">Telefone E.164 (+5511...)</label>
-          <input id="reg-phone" type="tel" value={form.phone_e164} onChange={(e) => setForm({...form, phone_e164: e.target.value})}
+          <input id="reg-phone" type="tel" value={form.phone_e164} onChange={(e) => { setForm({...form, phone_e164: e.target.value}); clearErr(); }}
             autoComplete="tel" inputMode="tel"
             placeholder="+5511999999999"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
