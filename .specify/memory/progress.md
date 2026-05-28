@@ -23502,3 +23502,101 @@ PROXIMA ITER:
 - W18: cache /api/orders/admin/disputes/:id detalhe
 - W13: validate template_code consistency cross-svc (audit)
 - 🚨 VPS SSH unblock URGENTE (56 ciclos - >18.7h sem deploy!)
+
+PASS 224 (W13 audit cross-svc + migration 066 batch seed templates) - 2026-05-28:
+- W13 cross-svc audit revelou gap critico notification_templates
+
+AUDIT FINDINGS:
+- ~10 template_codes referenciados em INSERT notifications cross-svc:
+  auth-svc, payment-svc, qa-svc, review-svc, seller-svc, product-svc
+- Pre-pass-224: APENAS 3 templates seeded em notification_templates
+  (product_new_version mig 018, vault_rotation_due mig 036,
+   asaas_refund_failed mig 065 pass 223)
+- 7+ templates faltantes -> mustache render falha silenciosamente
+- Resultado em prod: body raw com {{vars}} aparecia em notif UI
+  (admin/seller/buyer viam strings literal {{name}}/{{order_number}}/etc)
+
+MIGRATION 066 SEED 8 TEMPLATES:
+
+1. welcome (auth-svc registro):
+   'Bem-vindo ao Code & Agent Shop, {{name}}!' + 100pts bonus
+
+2. password_reset (auth-svc forgot-password):
+   'Redefinicao de senha' + {{url}} expira 15min
+
+3. loyalty_tier_up (seller-svc loyalty + payment-svc):
+   'Voce subiu para tier {{tier}}!' + {{points}} lifetime
+
+4. order_paid (payment-svc PAYMENT_RECEIVED webhook):
+   'Pedido confirmado - {{order_number}}'
+
+5. order_refunded (payment-svc PAYMENT_REFUNDED webhook):
+   'Reembolso processado' + creditado em ate 5d uteis
+
+6. seller_new_sale (payment-svc seller notify):
+   'Nova venda: {{product_title}}' + {{net_amount}}
+
+7. seller_sale_refunded (payment-svc refund seller side):
+   'Venda estornada' + saldo ajustado
+
+8. security_refresh_reuse (auth-svc refresh token reuse):
+   'Alerta de seguranca' + sessoes revogadas + change pass CTA
+
+CATEGORIA AUTO-DERIVED via CASE:
+- order_*    -> 'orders'
+- seller_*   -> 'seller_alerts'
+- security_* -> 'security'
+- loyalty_*  -> 'loyalty'
+- DEFAULT    -> 'general'
+
+LOOP via DO $$ + jsonb_array_elements (reduce duplication).
+ON CONFLICT DO UPDATE em LAYER 1 (idempotente refresh).
+ON CONFLICT DO NOTHING em LAYERS 2/3 (preserve admin manual edits).
+
+ESTRATEGIA DEFENSIVA REUSE mig 065 (3 layers):
+- LAYER 1: mig 018+ schema (template_code, title_template, channels[], category)
+- LAYER 2: sem category (mig 018 anterior)
+- LAYER 3: mig 008 schema original (code, channel singular)
+
+DEBT REMAINING (templates ainda nao seeded):
+- qa_dispatch_failed, qa_run_timeout (qa-svc internal alerts)
+- asaas_webhook_event (alerts genericos)
+- 2fa_disabled (auth-svc)
+- product_approved, product_rejected (qa-svc seller notify)
+- TODO future iter
+
+Commit 260d247 pushed origin/main (+91)
+VPS SSH ainda bloqueado (57 ciclos consecutivos)
+
+MIGRATIONS PROD-PENDING (9 acumuladas):
+- 058 audit_log actor_created composto
+- 059 wishlist + notif compound idx
+- 060 users email LOWER UNIQUE + backfill
+- 061 loyalty idempotency partial UNIQUE
+- 062 drop idx_loyalty_user_recent duplicate
+- 063 fn_refresh_all_seller_reputations bulk
+- 064 notif unread invalidate hint (doc-only)
+- 065 asaas_refund_failed template
+- 066 batch seed 8 templates NEW
+
+CODIGO ACUMULADO ORIGIN/MAIN (57 ciclos):
+- 168-223: documentados
+- 224: migration 066 batch templates
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply: psql -f /opt/cas/db/migrations/066_*.sql
+- Verificar 8 templates criados:
+  SELECT template_code, category, channels FROM notification_templates
+   WHERE template_code IN ('welcome','password_reset','loyalty_tier_up',
+     'order_paid','order_refunded','seller_new_sale',
+     'seller_sale_refunded','security_refresh_reuse');
+- Test end-to-end:
+  Register novo user -> notif welcome com {{name}} renderizado corretamente
+  Force password reset -> link {{url}} no email
+  Checkout pago -> seller recebe seller_new_sale
+
+PROXIMA ITER:
+- W13: seed qa_dispatch_failed/qa_run_timeout/product_approved templates
+- W4 admin: vault-svc filter seller_id UI
+- W18: cache /api/orders/admin/disputes/:id detalhe
+- 🚨 VPS SSH unblock URGENTE (57 ciclos - 19h sem deploy!)
