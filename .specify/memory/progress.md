@@ -31395,3 +31395,31 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
 - W2 checkout E2E
+
+## PASS 365 W3 PDP: Q&A datas + asker/answerer name (MLB paridade)
+commit 66c80ef
+BUG UX gap em Q&A tab PDP
+PRE-FIX: PDP Q&A mostrava apenas question + answer
+  - Backend retorna asked_at + answered_at + asker_name + answerer_name
+  - Frontend ignorava 4 fields -> dados desperdicados
+  - User nao avaliava freshness (preco/recursos stale?)
+  - MLB feature padrao: "Perguntado ha 2 dias"
+
+POST-FIX:
+- Render asker_name + asked_at (defensive date guard)
+- Render answerer_name + answered_at quando q.answer presente
+- LGPD: display_name only (sem email)
+- Pattern V8 isNaN(new Date().getTime()) fallback null
+- Visual subtle text-[10px] white/40
+
+W3 MLB Q&A paridade completa:
+  pass 349 upvote cache invalidation realtime
+  pass 365 datas + names visiveis <- ESTE
+
+98 passes acumulados (268->365) sem deploy VPS
+4 CRITICAL + 18 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W2 checkout E2E
