@@ -308,7 +308,25 @@ app.get('/health', (_req, res) => res.json({
 //   Sem ?unread_only filter, query escana too many rows quando user tem
 //   1000+ read + 5 unread. Idx mig 029 (idx_notif_user_unread) existe
 //   especificamente p/ partial WHERE is_read=FALSE. Filter explicit usa idx.
-app.get('/', jwt.requireAuth(), asyncHandler(async (req, res) => {
+// FIX-WORKER-18 pass 404 (cache GET /notifications - hot path NotificationBell):
+//   PRE-FIX: GET /notifications SEM cacheMiddleware
+//   - NotificationBell dropdown abertura -> query DB per click
+//   - 100 users ativos x 5 clicks = 500 queries/session
+//   - Query: SELECT + COUNT OVER + ORDER + LIMIT (idx cobre mas DB hit)
+//   - /unread-count JA cached 20s (pass 175) mas GET /  ficou lagged
+//   POST-FIX: cacheMiddleware 20s per-user (paridade /unread-count)
+//   - Invalidation cross-mutation:
+//     * /:id/read (single read)
+//     * /mark-all-read
+//     * INSERT notification (cross-svc - cobre via cache.del cross)
+//   - Pattern V8 hot path consolidation (pass 361 qna seller, 386 products me)
+const notifListCacheKey = (req) => {
+  const q = req.query;
+  return `notifs:list:${req.user?.sub || 'anon'}:lim=${q.limit||30}:off=${q.offset||0}:u=${q.unread_only||''}`;
+};
+app.get('/', jwt.requireAuth(),
+  cache.cacheMiddleware(notifListCacheKey, 20),
+  asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
   const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 30, 100));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
@@ -451,6 +469,8 @@ app.post('/:id/read',
   );
   // FIX-WORKER-18 pass 212: invalida cache unread-count (acabou de mudar)
   await cache.del(`notifs:unread-count:${req.user.sub}`).catch(() => {});
+  // FIX-WORKER-18 pass 404: invalida cache notifs list (NotificationBell dropdown)
+  await cache.del(`notifs:list:${req.user.sub}:*`).catch(() => {});
   res.json({ ok: true, unread_count_remaining: remaining.rows[0]?.n || 0 });
 }));
 
