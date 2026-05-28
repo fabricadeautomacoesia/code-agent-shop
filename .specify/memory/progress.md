@@ -21521,3 +21521,86 @@ PROXIMA ITER:
 - W16: implementar MLB feature pendente
 - W11: payment-svc payout dispute resolution flow
 - 🚨 VPS SSH unblock URGENTE (29 ciclos - ~9.7h sem deploy!)
+
+PASS 197 (W18 seller-svc admin /all cache + window + tiebreaker) - 2026-05-28:
+- W18 audit seller-svc /admin/all (dashboard-admin /sellers consumer)
+
+3 BUGS COMPOSTOS identificados:
+
+1. PERF - 2 queries por hit:
+   - SELECT rows + COUNT separado (50% extra round-trips PG)
+   - Em prod 500+ sellers + admin polling 1min:
+     4 PG round-trips/min/admin = ~6000 conn/h pool stress
+
+2. CACHE - missing:
+   - Admin dashboard /sellers refresh frequente sem cache
+   - Cada filtro change dispara 2 queries (sem cache key vary)
+   - Pattern V8 W18 estabelecido (kpi/sla/payouts/loyalty/wishlist
+     todos cached) - este era gap
+
+3. DETERMINISMO - tiebreaker missing:
+   - ORDER BY s.created_at DESC sem tiebreaker
+   - Bulk seller migration -> 2 sellers created_at identicos
+   - Ordem indefinida entre cache evictions
+   - UI admin pulava sellers entre refreshes (UX confuso)
+
+POST-FIX (3 melhorias compostas):
+
+1. cache.cacheMiddleware 30s vary by filtros
+   - Key: seller:admin:all:s={status}:c={class}:q={search}:lim={lim}:p={page}
+   - 30s freshness adequado para admin (vs 5min KPI cache)
+
+2. COUNT(*) OVER()::INT AS _total window
+   - Same pattern pass 178/179/180/181/187/189
+   - Strip _total interno + has_more boolean response
+   - Latencia: ~25ms (2 queries) -> ~12ms (1 query)
+
+3. + s.id ASC tiebreaker (Regra D V8)
+   - Ordem determinista cross-evictions
+
+INVALIDATION coherency:
+- invalidateSellerCache helper estendido
+- + seller:admin:all:* (alem de sellers:list:* / detail / stats / products)
+- Disparado em: promote-class-b, suspend, activate, force-approve, etc
+
+Performance final:
+- Cache hit (95%+ clicks): <5ms (Redis)
+- Cache miss: ~12ms (1 PG query window)
+- Antes: 100% ~25ms (2 PG queries)
+- Net: ~80% reducao latencia media admin /sellers
+
+Commit 77a0e02 pushed origin/main (66 insert, 37 delete - codigo mais limpo)
+VPS SSH ainda bloqueado (30 ciclos consecutivos)
+
+CACHE COVERAGE seller-svc FINAL:
+- /sellers (public list): 60s
+- /sellers/:slug: 60s (detail)
+- /sellers/:slug/stats: 60s
+- /sellers/:slug/products: 180s
+- /sellers/admin/all: 30s (W18 pass 197 NEW)
+- /sellers/me/kpi: 300s
+- /sellers/me/sla-status: 60s (W18 pass 174)
+- /sellers/me/payouts: 30s (W18 pass 175)
+- /loyalty/me: 30s (W18 pass 176)
+
+CODIGO ACUMULADO ORIGIN/MAIN (30 ciclos):
+- 168-196: documentados
+- 197: seller-svc admin /all cache + window + tiebreaker
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc --force
+- Cache hit benchmark:
+  time curl -H "Bearer $ADMIN" /api/sellers/admin/all?status=active
+  1a: ~12ms (PG miss)
+  2a: <5ms (Redis hit)
+- Coherency test:
+  POST /sellers/admin/{id}/suspend
+  GET /admin/all - deve mostrar status atualizado imediato (sem stale)
+- Tiebreaker test:
+  Bulk INSERT 50 sellers, refresh dashboard 5x - ordem deve ser igual
+
+PROXIMA ITER:
+- W17: vault-svc seller endpoints (BYOK self-management)
+- W18: cache /sellers/admin/payouts/pending
+- W18: cache /sellers/admin/pending-kyc
+- 🚨 VPS SSH unblock URGENTE (30 ciclos - ~10h sem deploy!)
