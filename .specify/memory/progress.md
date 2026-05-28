@@ -17354,7 +17354,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ W11 /installments validation amount<100 (pass 134)
 - ✅ Migration 054 coupons updated_at + trigger (pass 135)
 - ✅ Admin pages metadata especifica em 9 layouts (pass 136)
-- ✅ QnaForm a11y WCAG 1.3.1 + aria-live (pass 137 esta iter)
+- ✅ QnaForm a11y WCAG 1.3.1 + aria-live (pass 137)
+- ✅ ReviewForm a11y radiogroup + WCAG 1.3.1 (pass 138 esta iter)
+
+W7 PASS 138 RESUMO - W3 ReviewForm a11y RADIOGROUP FIX:
+- AUDIT review-form.tsx (continuacao W3 pass 137): 4 violacoes WCAG/ARIA:
+  * BUG 1 (WCAG 1.3.1): 3 <label> sem htmlFor + inputs sem id (rating/title/body)
+    -> SR desassociava labels e campos
+  * BUG 2: rating 5 buttons aria-pressed soltos sem grupo
+    -> SR anunciava 5 botoes individuais sem 'Nota: opcao X de 5'
+  * BUG 3: title/body counters mudavam sem aria-live
+  * BUG 4: '5/5' rating display sem aria-live
+- FIXES:
+  * div role=radiogroup + aria-labelledby='review-rating-label'
+  * Label id='review-rating-label' p/ associar grupo
+  * 5 buttons role=radio + aria-checked (era aria-pressed)
+  * htmlFor='review-title' + id='review-title'
+  * aria-describedby liga input ao counter quando counter visivel
+  * htmlFor='review-body' + id='review-body'
+  * 2 counters id + aria-live='polite'
+  * '{rating}/5' display aria-live='polite'
+  * aria-hidden='true' no Star icon (decorativo)
+- Pattern WAI-ARIA radiogroup applied (review pattern Mercado Livre style)
+- BUILD storefront OK + service converged
+- COMMIT 7ea8208 pushed GitHub main + deployed prod
 
 W7 PASS 137 RESUMO - W3 QnaForm a11y FIX:
 - AUDIT components PDP: QnaForm tinha 3 violacoes WCAG/ARIA:
