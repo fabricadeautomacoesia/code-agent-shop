@@ -17356,7 +17356,29 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Admin pages metadata especifica em 9 layouts (pass 136)
 - ✅ QnaForm a11y WCAG 1.3.1 + aria-live (pass 137)
 - ✅ ReviewForm a11y radiogroup + WCAG 1.3.1 (pass 138)
-- ✅ Register form a11y + autoComplete (pass 139 esta iter)
+- ✅ Register form a11y + autoComplete (pass 139)
+- ✅ Checkout payment + installments radiogroup (pass 140 esta iter)
+
+W7 PASS 140 RESUMO - W2 /checkout a11y RADIOGROUP DUPLO:
+- AUDIT /checkout (continuacao a11y suite pass 137-139): 2 grupos radio missing
+- 2 BUGS WAI-ARIA:
+  * Payment method: 3 botoes PIX/credit_card/boleto SEM radiogroup
+    -> SR anunciava botoes individuais sem 'Forma de pagamento, 1 de 3'
+  * Installments (1x-12x): ate 12 botoes SEM radiogroup
+    -> SR anunciava 12 botoes soltos sem detalhes/contexto
+- FIXES:
+  * Payment: div role=radiogroup + aria-labelledby='payment-method-label'
+    H3 id='payment-method-label' associado
+    3 buttons role=radio + aria-checked
+  * Installments: div role=radiogroup + aria-labelledby='installments-label'
+    Buttons role=radio + aria-checked
+    aria-label rico per parcela:
+    '3x de R\$X por mes, juros 2.99% ao mes, total R\$Y'
+    OU '1x de R\$X por mes, sem juros'
+  * +focus-visible:outline em ambos grupos
+- 4 forms storefront a11y compliant (QnaForm + ReviewForm + Register + Checkout)
+- BUILD storefront OK + service converged
+- COMMIT 1ca09f9 pushed GitHub main + deployed prod
 
 W7 PASS 139 RESUMO - W1 /register a11y WCAG 1.3.1 + autoComplete + progressbar:
 - AUDIT /register page: continuacao W3 pass 137/138 (QnaForm + ReviewForm a11y)
