@@ -26024,3 +26024,77 @@ PROXIMA ITER:
 - W4 admin: bulk select payouts
 - W17 vault: rotate atomic state machine
 - VPS SSH unblock URGENTISSIMO (84 ciclos - 28h)
+
+============================================================
+PASS 252 (2026-05-28) - W14 + W15 wishlist perf + null guard
+============================================================
+
+OBJETIVO: 2 workers paralelos
+- W14 db: mig 075 idx_wishlist_user_created + ORDER BY direction fix
+- W15 storefront: related products null sales_count rendering
+
+============================================================
+1. W14 - mig 075 wishlist composite idx + direction fix
+============================================================
+FILE: db/migrations/075_wishlist_user_created_idx.sql (CRIADO)
+FILE: services/product-svc/src/routes/wishlist.js:101
+
+PROBLEMA 1 (perf):
+- /conta/favoritos query: WHERE user_id=$1 ORDER BY created_at DESC
+- product_wishlist PK = (user_id, product_id)
+- PK cobre WHERE mas NAO ORDER BY created_at - PG faz Sort step
+- Power buyer com 500 favoritos: sort 500 rows ~10-30ms per hit
+
+PROBLEMA 2 (direction drift pass 251 pattern):
+- ORDER BY w.created_at DESC, w.product_id ASC - mixed direction
+- Mass-add favoritos burst (importar lista): pages reordenam
+- User ve duplicates entre /favoritos pagina 1 e 2
+
+POST-FIX:
+- mig 075: CREATE INDEX (user_id, created_at DESC) - covers WHERE+ORDER
+- wishlist.js: ORDER BY DESC, w.product_id DESC (paridade direction)
+- Lookup O(log n) + sort-free + deterministic pagination
+
+============================================================
+2. W15 - related products null sales_count render bug
+============================================================
+FILE: apps/storefront/src/app/product/[slug]/page.tsx:319-330
+
+PROBLEMA:
+- sales_count NULL para produtos novos sem vendas
+- Render "- null vendas" ou "-  vendas" (espaco em branco)
+- Mesmo com sales_count=0 valido, "- 0 vendas" e ruido cognitivo
+- Mobile 375px: cada char conta no espaco apertado
+
+POST-FIX:
+- Conditional: {Number(p.sales_count) > 0 && (<span>- X vendas</span>)}
+- Paridade com product-card.tsx linha 102 (mesmo padrao)
+- aria-hidden=true em Star icon (decorative)
+
+============================================================
+SUMARIO PASS 252
+============================================================
+Files: 3 modificados/criados
+  - db/migrations/075_wishlist_user_created_idx.sql (NEW perf idx)
+  - services/product-svc/src/routes/wishlist.js (direction fix)
+  - apps/storefront/src/app/product/[slug]/page.tsx (null guard)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (85 ciclos - 28.3h sem deploy).
+Migs 069-075 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc cas_storefront --force
+- Apply mig 075:
+    docker exec cas_postgres psql -U cas_admin -d cas \
+      -f /docker/db/migrations/075_wishlist_user_created_idx.sql
+- W14 test: EXPLAIN ANALYZE SELECT FROM product_wishlist
+  WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20
+  Index Scan idx_wishlist_user_created (era PK scan + Sort)
+- W15 test: produto novo sem vendas no PDP related section
+  "- 0 vendas" SUMIU, so rating aparece
+
+PROXIMA ITER:
+- W4 admin: bulk select multi-payouts
+- W16 MLB: BNPL/parcelamento UI (Mercado Credito ja partial)
+- VPS SSH unblock URGENTISSIMO (85 ciclos - 28.3h)

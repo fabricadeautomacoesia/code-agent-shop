@@ -318,10 +318,18 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="font-display font-semibold text-sm line-clamp-2 group-hover:text-magenta">{p.title}</div>
+                    {/* FIX-WORKER-15 pass 252 (defensive nulls + mobile):
+                        sales_count NULL renderizava "- null vendas" ou "-  vendas".
+                        Produto novo (zero sales) tambem mostrava "- 0 vendas"
+                        que e ruido cognitivo em mobile (espaco precioso 375px).
+                        POST-FIX: so renderiza sales_count se > 0. Pattern W3 pass 7
+                        + paridade product-card linha 102. */}
                     <div className="flex items-center gap-1 mt-1 text-xs">
-                      <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
+                      <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" aria-hidden="true" />
                       <span>{p.avg_rating ? Number(p.avg_rating).toFixed(1) : '-'}</span>
-                      <span className="text-white/40">- {p.sales_count} vendas</span>
+                      {Number(p.sales_count) > 0 && (
+                        <span className="text-white/40">- {p.sales_count} vendas</span>
+                      )}
                     </div>
                     <div className="font-display font-bold text-magenta-glow mt-1">{p.is_free ? 'Gratis' : Api.formatBRL(p.price_cents)}</div>
                     {/* MLB-NEW WORKER 17: parcelas em produto relacionado */}

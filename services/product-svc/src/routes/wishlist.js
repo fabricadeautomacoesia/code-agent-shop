@@ -98,7 +98,7 @@ router.get('/',
          LEFT JOIN sellers s ON s.id = p.seller_id
          LEFT JOIN categories c ON c.id = p.category_id
         WHERE ${whereParts.join(' AND ')}
-        ORDER BY w.created_at DESC, w.product_id ASC
+        ORDER BY w.created_at DESC, w.product_id DESC
         LIMIT $${limIdx} OFFSET $${offIdx}`,
       params
     );
