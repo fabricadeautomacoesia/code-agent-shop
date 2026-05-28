@@ -1,7 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { LayoutDashboard, Package, MessageCircle, DollarSign, Settings, Upload, Star } from 'lucide-react';
+import { LayoutDashboard, Package, MessageCircle, DollarSign, Settings, Upload, Star, KeyRound } from 'lucide-react';
 import { PromptDialogProvider } from '@/components/prompt-dialog';
 
 // FIX-WORKER-9 pass 177 (CRITICAL SEO/PRIVACY): paineis seller tem KPIs $, payouts,
@@ -22,6 +22,8 @@ const NAV = [
   { href: '/reviews',    Icon: Star,            label: 'Avaliacoes' },
   { href: '/financeiro', Icon: DollarSign,      label: 'Financeiro' },
   { href: '/loja',       Icon: Settings,        label: 'Minha loja' },
+  // FIX-WORKER-5 pass 218: BYOK API keys (consume vault-svc seller endpoints W17-217)
+  { href: '/byok',       Icon: KeyRound,        label: 'API Keys (BYOK)' },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
