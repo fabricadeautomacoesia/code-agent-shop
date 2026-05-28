@@ -22603,3 +22603,75 @@ PROXIMA ITER:
 - W11: payment-svc Asaas webhook payload edge cases
 - W18: cache /api/notifications/me unread-count endpoint
 - 🚨 VPS SSH unblock URGENTE (44 ciclos - >14.7h sem deploy!)
+
+PASS 212 (W18 notification-svc /unread-count cache + invalidation) - 2026-05-28:
+- W18 audit GET /api/notifications/unread-count (NotificationBell hot path)
+
+PRE-FIX:
+- NotificationBell frontend polling 30s sem cache - hit DB toda chamada
+- Multi-tab user (mesmo logado em 3 abas) = 3 queries identicas/30s
+- mig 020 idx_notif_user_channel_created garante <2ms mas N tabs *
+  polling sustained = waste
+
+POST-FIX (2 melhorias):
+
+1. cache.cacheMiddleware 20s vary by user.sub:
+   - Key: notifs:unread-count:{user.sub} (single entry per user)
+   - 20s TTL curto - bell atualiza rapido apos in-svc actions
+   - Trade-off acceptable: stale window 20s vs cross-svc complexity
+
+2. Invalidation in-svc 2 paths:
+   - POST /:id/read - apos UPDATE is_read=TRUE single notif
+   - POST /read-all - apos bulk UPDATE (1000 max)
+
+Migration 064 (documentational only):
+- Future-proofing marker para PG NOTIFY trigger
+- Real-time cross-svc invalidation futuro (quando WebSocket/SSE implementado)
+- Por ora TTL 20s aceita stale para cross-svc INSERT notifications
+  (qa-svc, order-svc, payment-svc, seller-svc, review-svc inserem)
+
+TRADE-OFF DOCUMENTADO:
+- TTL 20s = 20s stale max apos novo notif insert (cross-svc)
+- Alternativa: cache.del em CADA svc apos INSERT notification = ~5 svcs
+  importing cache + 5 cache.del calls cross-codebase
+- TTL curto + future PG NOTIFY trigger = escolha pragmatica
+
+CACHE COVERAGE notification-svc:
+- /unread-count: 20s (pass 212 NEW)
+- /me: NO cache (intentional - DLP overhead per request + cross-svc INSERTs)
+- /:id/read: invalidate trigger (pass 212 NEW)
+- /read-all: invalidate trigger (pass 212 NEW)
+
+Commit f392d04 pushed origin/main (+82/-10)
+VPS SSH ainda bloqueado (45 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (45 ciclos):
+- 168-211: documentados
+- 212: notification-svc /unread-count cache + migration 064 (doc)
+
+MIGRATIONS PROD-PENDING (7 acumuladas):
+- 058 audit_log actor_created composto
+- 059 wishlist + notif compound idx
+- 060 users email LOWER UNIQUE + backfill
+- 061 loyalty idempotency partial UNIQUE
+- 062 drop idx_loyalty_user_recent duplicate
+- 063 fn_refresh_all_seller_reputations bulk
+- 064 notif unread invalidate hint (documentational only)
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_notification-svc --force
+- Cache hit benchmark:
+  time curl -H "Authorization: Bearer \$TOKEN" /api/notifications/unread-count
+  1a: ~2ms (PG idx fast)
+  2a: <1ms (Redis hit)
+- Multi-tab test:
+  3 tabs polling 30s = 1 PG query / 30s (vs 3 antes)
+- Coherency test:
+  POST /:id/read -> cache invalidated
+  GET /unread-count -> esperado: count atualizado imediato (sem 20s stale)
+
+PROXIMA ITER:
+- W17: vault-svc seller BYOK endpoints
+- W11: payment-svc Asaas refund edge cases (chargebacks duplicates)
+- W7: review-svc QnA upvote race conditions
+- 🚨 VPS SSH unblock URGENTE (45 ciclos - 15h sem deploy!)
