@@ -127,12 +127,19 @@ app.post('/', reviewLimiter, jwt.requireAuth(), validate({ body: reviewSchema })
   }
 
   // Cache invalidate FORA do tx (acceptable - falha cache nao breaka DB)
+  // FIX-WORKER-18 pass 350 (paridade key normalization detail):
+  //   PRE-FIX: cache.del(`products:detail:${slug}`) usava slug raw mas pass 350
+  //   normalizou a SAVE key p/ slugNorm = trim().toLowerCase(). Resultado:
+  //   POST review -> invalidation MISSED (key mismatch slug vs slugNorm) -> PDP
+  //   exibia rating/review_count stale por 60s (TTL). MLB-broken silenciosamente.
+  //   POST-FIX: normalize slug aqui paridade com public.js linha 796.
   const slugR = await query('SELECT slug FROM products WHERE id = $1', [b.product_id]);
   if (slugR.rows.length) {
     const slug = slugR.rows[0].slug;
+    const slugNorm = String(slug || '').trim().toLowerCase();
     await Promise.all([
-      cache.del(`products:reviews:${slug}:*`).catch(() => {}),
-      cache.del(`products:detail:${slug}`).catch(() => {}),
+      cache.del(`products:reviews:${slugNorm}:*`).catch(() => {}),
+      cache.del(`products:detail:${slugNorm}`).catch(() => {}),
     ]);
   }
   res.status(201).json({ review });
@@ -372,7 +379,9 @@ app.post('/:id/reply',
 
     if (result?.slug) {
       // Invalida cache PDP reviews (reply visivel)
-      await cache.del(`products:reviews:${result.slug}:*`).catch(() => {});
+      // FIX-WORKER-18 pass 350: slug normalization paridade public.js linha 796
+      const slugNorm = String(result.slug || '').trim().toLowerCase();
+      await cache.del(`products:reviews:${slugNorm}:*`).catch(() => {});
     }
     res.json({ ok: true, reply_by_admin: result.reply_by_admin });
   })

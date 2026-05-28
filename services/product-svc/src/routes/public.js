@@ -783,7 +783,18 @@ router.get('/',
 router.get('/:slug', asyncHandler(async (req, res, next) => {
   // MLB-NEW WORKER 16 / FIX-WORKER-18 pass 2: is_top_seller via subquery correlacionada
   // Threshold min 5 vendas. Combo "OFICIAL MAIS VENDIDO" = is_platform_owned AND is_top_seller.
-  const cacheKey = `products:detail:${req.params.slug}`;
+  //
+  // FIX-WORKER-18 pass 350 (cache key normalization - hottest endpoint of site):
+  //   PRE-FIX: cacheKey = `products:detail:${req.params.slug}` sem normalizacao.
+  //   Atacante hammer /Product-X, /PRODUCT-X, /product-x criava 3 entries Redis
+  //   distintas p/ MESMO product (slugs PG sao case-insensitive em LOWER(slug)
+  //   queries reais mas estes paths chegam aqui literalmente).
+  //   Cache pollution + memory waste + DB hit em paridade de cada variante.
+  //   Pass 298 normalizou outras keys (related, reviews, qna) mas DETAIL ficou.
+  //   POST-FIX: toLowerCase().trim() consolidation pattern paridade pass 298+327.
+  //   Tambem cache de 404 (null sentinel) ja era 10s defensive vs DoS amp.
+  const slugNorm = String(req.params.slug || '').trim().toLowerCase();
+  const cacheKey = `products:detail:${slugNorm}`;
   // FIX-WORKER-18 pass 5: withCache retorna {value, hit} - destructuring necessario
   const { value: product } = await cache.withCache(cacheKey, 60, async () => {
     // FIX-WORKER-7 pass 74 BUG 1: positive whitelist (sem p.*)
