@@ -360,7 +360,21 @@ app.get('/autocomplete',
 // FIX-WORKER-10: aceita ?category=slug para filtrar uma categoria (antes era ignorado)
 // FIX-WORKER-18: cache 120s - top-sellers muda pouco (sales_count atualiza por order paid)
 app.get('/top-sellers',
-  cache.cacheMiddleware((req) => `search:top-sellers:per=${req.query.per_category || 4}:cat=${req.query.category || ''}`, 120),
+  /* FIX-WORKER-10 pass 291: cache key normalization paridade ao handler.
+     PRE-FIX: cache key usa req.query.category RAW (sem trim/lower).
+     Cache pollution scenarios:
+     - ?category=ai-agents vs ?category=AI-AGENTS -> 2 entries
+     - ?category=ai-agents%20 (trailing space) -> 3a entry
+     - ?per_category= (empty string) vs missing -> 4a entry
+     Handler ja normaliza via .toString().trim() linha 366, mas cache key
+     nao. Resultado: cache miss rate alta + Redis MEMORY USAGE inflado.
+     POST-FIX: aplicar mesma normalizacao toString().trim().toLowerCase()
+     na cache key. paridade _autocompleteCacheKey pass 232. */
+  cache.cacheMiddleware((req) => {
+    const per = Math.min(parseInt(req.query.per_category || '4', 10) || 4, 12);
+    const cat = (req.query.category || '').toString().trim().toLowerCase();
+    return `search:top-sellers:per=${per}:cat=${cat}`;
+  }, 120),
   asyncHandler(async (req, res) => {
   const perCategory = Math.min(parseInt(req.query.per_category || '4', 10), 12);
   const catFilter = (req.query.category || '').toString().trim();
@@ -424,7 +438,12 @@ app.get('/top-sellers',
 // via render-on-demand somam). top-sellers/:category roda 3 subqueries por linha
 // (sellers x3) - cache poupa CPU + DB pool. Key inclui params + limit.
 app.get('/top-sellers/:category',
-  cache.cacheMiddleware((req) => `search:top-sellers:cat=${req.params.category}:lim=${req.query.limit || 12}`, 180),
+  /* FIX-WORKER-10 pass 291: paridade /top-sellers cache key normalization */
+  cache.cacheMiddleware((req) => {
+    const cat = (req.params.category || '').toString().trim().toLowerCase();
+    const lim = Math.min(parseInt(req.query.limit || '12', 10) || 12, 50);
+    return `search:top-sellers:cat=${cat}:lim=${lim}`;
+  }, 180),
   asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
   const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 50));

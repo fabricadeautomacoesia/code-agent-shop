@@ -28681,3 +28681,45 @@ PROXIMA ITER:
 - W3 PDP WishlistButton consume already_exists (toast diferente)
 - W4 admin notification cleanup KPI dashboard
 - VPS SSH unblock URGENTISSIMO (123 ciclos - 41h)
+
+
+============================================================
+PASS 291 - 2026-05-28 - W3 wishlist already_exists + W10 cache key normalize
+============================================================
+Files: 2 modificados
+  - apps/storefront/src/components/wishlist-button.tsx (consume already_exists)
+  - services/search-svc/src/server.js (cache key normalization 2 endpoints)
+Lines: ~35 added/changed
+
+W3 (WishlistButton consume backend pass 290):
+- Cenario: double-click rapido passa loading guard (<16ms race)
+- 1a POST: { already_exists:false } 2a POST: { already_exists:true }
+- POST-FIX: cast Api.api<{ already_exists?: boolean }>
+- Already_exists -> log.debug (sem ruido user)
+- State otimistic ja consistente (favorited=true em ambos cases)
+
+W10 (cache key normalization /top-sellers + /top-sellers/:category):
+- PRE-FIX: cache keys usavam req.query/params RAW (sem trim/lower)
+- Cache pollution scenarios:
+  - ?category=ai-agents vs ?category=AI-AGENTS -> 2 entries
+  - ?category=ai-agents%20 (trailing space) -> 3a entry
+  - ?per_category= empty vs missing -> 4a entry
+- Handler ja normalizava (linha 366) mas cache key nao - inconsistencia
+- POST-FIX: .toString().trim().toLowerCase() em ambas cache keys
+- + parseInt + clamp em per_category/limit (defensive)
+- Paridade _autocompleteCacheKey pass 232 (hash sha256)
+
+VPS SSH BLOQUEADO (124 ciclos - 41.3h sem deploy).
+Migs 069-083 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_search-svc --force
+- W3: PDP -> double-click rapido heart icon -> sem flicker UI + sem error
+- W10: verificar Redis MEMORY USAGE pos-warmup vs pre-fix
+  redis-cli --scan --pattern 'search:top-sellers:*' | wc -l
+  Esperado: menos entries totais (mesma chave para variants case)
+
+PROXIMA ITER:
+- W3 WishlistButton toast "ja favoritado" UX message
+- W4 admin notification stats panel
+- VPS SSH unblock URGENTISSIMO (124 ciclos - 41.3h)

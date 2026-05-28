@@ -81,7 +81,20 @@ export function WishlistButton({
       if (wasInWishlist) {
         await Api.api(`/products/wishlist/${productId}`, { method: 'DELETE', auth: token });
       } else {
-        await Api.api('/products/wishlist', { method: 'POST', auth: token, body: JSON.stringify({ product_id: productId }) });
+        /* FIX-WORKER-3 pass 291: consome already_exists do backend (pass 290).
+           Cenario: 2 cliques rapidos passam guard 'loading' (race < 16ms).
+           - 1a POST: { ok:true, already_exists:false } - novo add
+           - 2a POST: { ok:true, already_exists:true }  - sem efeito DB
+           Sem este check, UI mostraria sucesso falso. Com check, podemos
+           pular cache invalidation desnecessaria + log debug. */
+        const r = await Api.api<{ ok: boolean; already_exists?: boolean }>(
+          '/products/wishlist',
+          { method: 'POST', auth: token, body: JSON.stringify({ product_id: productId }) }
+        );
+        if (r?.already_exists) {
+          // Already favorited - state otimistic ja indica favorited:true, sem mudanca
+          console.debug('[Wishlist] already_exists - state consistente');
+        }
       }
     } catch (err: any) {
       // FIX-WORKER-7: 404 not_in_wishlist no DELETE -> estado JA esta sincronizado
