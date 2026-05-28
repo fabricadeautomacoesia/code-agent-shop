@@ -12,7 +12,15 @@ export function JsonLd({ data }: { data: Record<string, any> | Record<string, an
   );
 }
 
-const SITE_URL = 'https://cas.inovareinteligenciaartificial.com';
+// FIX-WORKER-3 pass 351: domain mismatch -> SEO broken
+// PRE-FIX: SITE_URL = 'cas.inovareinteligenciaartificial.com' (subdomain inexistente)
+//   - URLs em productLd/breadcrumbLd/organizationLd apontavam p/ host fantasma
+//   - Google SERP exibia URL quebrada -> rich snippet rejeitado
+//   - canonical link tambem afetado (sitemap, OpenGraph url)
+// POST-FIX: env-driven (NEXT_PUBLIC_SITE_URL) com fallback no host real
+//   code-agent-shop.inovareinteligenciaartificial.com.
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ||
+  'https://code-agent-shop.inovareinteligenciaartificial.com';
 
 export function productLd(product: any, reviews: any[] = []) {
   const url = `${SITE_URL}/product/${product.slug}`;
@@ -41,7 +49,12 @@ export function productLd(product: any, reviews: any[] = []) {
       url,
       priceCurrency: product.currency || 'BRL',
       price: product.is_free ? '0.00' : (product.price_cents / 100).toFixed(2),
-      availability: product.status === 'approved' ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+      // FIX-WORKER-3 pass 351: status whitelist paridade query backend
+      //   PRE-FIX: status === 'approved' standalone -> products platform_owned
+      //   eram exibidos no PDP (query approved|platform_owned) mas schema.org
+      //   reportava OutOfStock -> Google penalizava produtos oficiais.
+      //   POST-FIX: whitelist ['approved','platform_owned'] consolidation.
+      availability: ['approved','platform_owned'].includes(product.status) ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
       // FIX-WORKER-16/SEO: itemCondition obrigatorio para Google Shopping
       itemCondition: 'https://schema.org/NewCondition',
       // FIX-WORKER-16/SEO: priceValidUntil (1 ano apos publicacao - Google sugere)
@@ -71,19 +84,28 @@ export function productLd(product: any, reviews: any[] = []) {
       },
     },
     aggregateRating: aggRating,
-    review: reviews.slice(0, 5).map((r: any) => ({
-      '@type': 'Review',
-      author: { '@type': 'Person', name: r.buyer_name || 'Cliente CAS' },
-      reviewRating: {
-        '@type': 'Rating',
-        ratingValue: r.rating,
-        bestRating: '5',
-        worstRating: '1',
-      },
-      reviewBody: r.body,
-      name: r.title || undefined,
-      datePublished: r.created_at,
-    })).filter((r: any) => r.reviewBody),
+    // FIX-WORKER-3 pass 351: filter BEFORE slice(0,5)
+    //   PRE-FIX: slice(0,5).filter(r => r.reviewBody)
+    //   Cenario: primeiras 5 reviews na resposta sao todas rating-only sem body
+    //   (MLB allow "rating without comment"). Filter rejeitava todas as 5 -> SERP
+    //   exibia 0 reviews mesmo com 10+ disponiveis -> rich snippet broken.
+    //   POST-FIX: filter FIRST -> slice depois (top 5 com body validos).
+    review: reviews
+      .filter((r: any) => r && r.body && String(r.body).trim().length > 0)
+      .slice(0, 5)
+      .map((r: any) => ({
+        '@type': 'Review',
+        author: { '@type': 'Person', name: r.buyer_name || 'Cliente CAS' },
+        reviewRating: {
+          '@type': 'Rating',
+          ratingValue: r.rating,
+          bestRating: '5',
+          worstRating: '1',
+        },
+        reviewBody: r.body,
+        name: r.title || undefined,
+        datePublished: r.created_at,
+      })),
   };
 }
 
@@ -92,7 +114,12 @@ export function breadcrumbLd(product: any) {
     { name: 'Catalogo', url: `${SITE_URL}/products` },
   ];
   if (product.category_name && product.category_slug) {
-    items.push({ name: product.category_name, url: `${SITE_URL}/categoria/${product.category_slug}` });
+    // FIX-WORKER-3 pass 351: breadcrumb URL paridade rota real
+    //   PRE-FIX: /categoria/${slug} - rota NAO EXISTE (404)
+    //   Page.tsx linha 126 usa /products?category=${slug} (filtro de query)
+    //   Google bot seguia breadcrumb link -> 404 -> penaliza SEO + UX usuario
+    //   POST-FIX: alinhar com rota real /products?category=
+    items.push({ name: product.category_name, url: `${SITE_URL}/products?category=${product.category_slug}` });
   }
   items.push({ name: product.title, url: `${SITE_URL}/product/${product.slug}` });
 
