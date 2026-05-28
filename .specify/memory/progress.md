@@ -32731,3 +32731,31 @@ Pattern V8: filter no JOIN condition graceful
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 412 W17 VAULT: rotate audit_log old_fingerprint real
+commit 8b6b546
+BUG audit_log forensic gap em vault.rotate
+PRE-FIX:
+  SELECT (sem key_fingerprint)
+  audit_log old_fingerprint: '<not_returned>' (placeholder)
+
+PROBLEMA:
+- Forense: 'qual fingerprint revogada?' = unknown
+- SOC2/LGPD compliance: rotation events sem ID preciso
+- Admin investigation: link old->new fp impossivel
+- Audit dashboard '<not_returned>' literal feio
+
+POST-FIX:
+- SELECT key_fingerprint adicionado
+- audit_log uses o.key_fingerprint real
+- Forense link old->new preservado
+
+W17 vault forensic hardening:
+  pass 269/273 admin provision audit
+  pass 412 rotate fingerprint <- ESTE
+
+145 passes acumulados (268->412) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
