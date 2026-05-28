@@ -17,6 +17,14 @@ async function invalidateSellerCache(userId) {
     // Lookup store_slug por user_id
     const r = await query('SELECT store_slug FROM sellers WHERE user_id = $1', [userId]);
     const tasks = [cache.del('sellers:list:*')];
+    // FIX-WORKER-18 pass 174: invalidar tambem sla-status + kpi per-user
+    // (W18-174 adicionou cache 60s em /sla-status, antes ja existia cache em /kpi)
+    if (userId) {
+      tasks.push(
+        cache.del(`seller:sla-status:${userId}`),
+        cache.del(`seller:kpi:${userId}`)
+      );
+    }
     if (r.rows.length) {
       const slug = r.rows[0].store_slug;
       tasks.push(
@@ -334,17 +342,29 @@ router.post('/kyc',
 );
 
 // GET /sellers/me/sla-status - timer da Classe B
-router.get('/sla-status', asyncHandler(async (req, res) => {
-  const r = await query(
-    `SELECT id, seller_class, sla_active, sla_days, sla_last_upload_at, sla_next_deadline_at,
-            sla_revoked_count, status,
-            GREATEST(0, EXTRACT(DAY FROM (sla_next_deadline_at - NOW())))::INT AS days_remaining,
-            EXTRACT(EPOCH FROM (sla_next_deadline_at - NOW()))::BIGINT AS seconds_remaining
-       FROM sellers WHERE user_id = $1`, [req.user.sub]
-  );
-  if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
-  res.json({ sla: r.rows[0] });
-}));
+// FIX-WORKER-18 pass 174: cache 60s per-user. Endpoint chamado em CADA render
+// do dashboard-seller (/page.tsx:86 fetchJSON). SLA timer muda ~1x/dia, mas
+// FIRE deadline change pode acontecer apos POST /upload (invalidacao trigger).
+// PRE-FIX: 100% miss em SELECT + 2 EXTRACT + GREATEST per request.
+// FIX: cache.cacheMiddleware 60s vary by user.sub.
+//
+// Invalidacao: ja existe em invalidateSellerCache() helper (chamado em PATCH).
+// Acrescenta seller:sla-status:{userId} a invalidacao quando relevante (POST /upload).
+const slaStatusCacheKey = (req) => `seller:sla-status:${req.user?.sub || 'anon'}`;
+router.get('/sla-status',
+  cache.cacheMiddleware(slaStatusCacheKey, 60),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `SELECT id, seller_class, sla_active, sla_days, sla_last_upload_at, sla_next_deadline_at,
+              sla_revoked_count, status,
+              GREATEST(0, EXTRACT(DAY FROM (sla_next_deadline_at - NOW())))::INT AS days_remaining,
+              EXTRACT(EPOCH FROM (sla_next_deadline_at - NOW()))::BIGINT AS seconds_remaining
+         FROM sellers WHERE user_id = $1`, [req.user.sub]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
+    res.json({ sla: r.rows[0] });
+  })
+);
 
 // GET /sellers/me/sla-history
 // GET /sellers/me/sla-history - historico SLA do seller

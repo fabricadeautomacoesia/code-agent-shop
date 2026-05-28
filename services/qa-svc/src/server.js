@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, startup, mask } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, startup, mask, cache } = require('@cas/shared');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
 // QA_CALLBACK_SECRET obrigatorio (HMAC do worker -> autenticidade de scores).
@@ -390,6 +390,8 @@ app.post('/qa/callback',
     const TERMINAL_VERDICTS = new Set(['approved', 'rejected', 'error', 'timeout']);
 
     let stateMachineBlocked = false;
+    // FIX-WORKER-12 pass 174: captura user_id do seller p/ invalidacao cache pos-tx
+    let sellerUserIdToInvalidate = null;
 
     await tx(async (c) => {
       // FIX bug 3 (Regra K): SELECT FOR UPDATE em product_qa_runs - lock primeiro
@@ -554,7 +556,25 @@ app.post('/qa/callback',
         [`qa.${verdict}`, product_id, approved ? 'info' : 'warn',
          JSON.stringify({ confidence: b.confidence_score, reasons: b.reasons, provider: b.llm_provider })]
       );
+      // FIX-WORKER-12 pass 174 (cache-coherency): captura seller user_id p/
+      // invalidacao pos-tx (cache seller-svc /sla-status + /kpi 60-300s).
+      // Sem invalidacao seller veria SLA stale ate 60s apos QA approve.
+      sellerUserIdToInvalidate = u.rows?.[0]?.user_id || null;
     });
+
+    // FIX-WORKER-12 pass 174: cache invalidation pos-tx commit (best-effort).
+    // Evita: seller submete produto -> QA approve -> dashboard mostra SLA timer
+    // antigo por ate 60s (TTL cache /sla-status W18-174).
+    if (approved && sellerUserIdToInvalidate) {
+      try {
+        await Promise.all([
+          cache.del(`seller:sla-status:${sellerUserIdToInvalidate}`),
+          cache.del(`seller:kpi:${sellerUserIdToInvalidate}`),
+        ]);
+      } catch (e) {
+        log.warn({ err: e.message, user: sellerUserIdToInvalidate }, '[cache.invalidate_fail]');
+      }
+    }
 
     // FIX-WORKER-7 pass 27: response indicates state machine block.
     // n8n retry idempotente: recebe ok=true mesmo se bloqueado.
