@@ -1008,7 +1008,32 @@ app.post('/usage', vaultUseGuard,
     //   Auto-disable logic baseado em quota nunca dispara (quota stuck)
     //   POST-FIX: tx() wrap atomic - all-or-nothing
     //   Mesmo pattern de pass 247 W11 outras tx-wrapped writes vault.
+    // FIX-WORKER-17 pass 390 (key existence + is_active guard):
+    //   PRE-FIX: INSERT vault_key_usage SEM verify key_id valido/ativo
+    //   - FK constraint apenas valida row existe (nao is_active)
+    //   - UPDATE counter em key revogada (chave morta acumula billing inflado)
+    //   - UPDATE rowCount=0 silent quando id wrong = consistency gap
+    //   - vault_key_usage tem entry mas counter nunca incrementa
+    //   - Billing audit dashboard: usage tracked mas quota nao bate
+    //   POST-FIX: SELECT FOR UPDATE upfront (verify exists + active)
+    //   - Lock key durante incremento (anti-race usage burst)
+    //   - is_active=FALSE -> 410 Gone (chave revogada nao aceita usage)
+    //   - row nao existe -> 404 (admin/svc passou id invalido)
+    //   - UPDATE com RETURNING + check rowCount=1 (idempotent guard)
+    let outcome;
     await tx(async (c) => {
+      const keyCheck = await c.query(
+        `SELECT id, is_active FROM vault_api_keys WHERE id = $1::UUID FOR UPDATE`,
+        [b.key_id]
+      );
+      if (!keyCheck.rows.length) {
+        outcome = { error: 'key_not_found' };
+        return;
+      }
+      if (!keyCheck.rows[0].is_active) {
+        outcome = { error: 'key_revoked' };
+        return;
+      }
       /* FIX-WORKER-17 pass 298: DLP mask error_message antes storage.
          LLM exception stacks podem conter sk-/Bearer/JWT/PG_PASS leak.
          Paridade pass 277 (qa-worker download_failed), pass 285 (notif
@@ -1023,11 +1048,26 @@ app.post('/usage', vaultUseGuard,
          b.tokens_input||null, b.tokens_output||null, b.cost_usd_cents, b.duration_ms||null,
          b.success, safeErr, req.ip]
       );
-      await c.query(
-        `UPDATE vault_api_keys SET usage_this_month_cents = usage_this_month_cents + $1 WHERE id = $2`,
+      // UPDATE com WHERE is_active=TRUE adicional (defense-in-depth, FOR UPDATE ja garante)
+      const upd = await c.query(
+        `UPDATE vault_api_keys SET usage_this_month_cents = usage_this_month_cents + $1
+          WHERE id = $2::UUID AND is_active = TRUE`,
         [b.cost_usd_cents, b.key_id]
       );
+      if (upd.rowCount !== 1) {
+        // Defensive: race entre SELECT FOR UPDATE check e UPDATE (impossivel com lock mas log warn)
+        log.warn({ key_id: b.key_id, rowCount: upd.rowCount },
+          '[vault.usage.counter_update_unexpected] FOR UPDATE lock perdido?');
+      }
     });
+    if (outcome?.error === 'key_not_found') {
+      log.warn({ ip: req.ip, key_id: b.key_id }, '[vault.usage.key_not_found]');
+      return res.status(404).json({ error: 'key_not_found', message: 'Chave nao encontrada.' });
+    }
+    if (outcome?.error === 'key_revoked') {
+      log.warn({ ip: req.ip, key_id: b.key_id }, '[vault.usage.key_revoked]');
+      return res.status(410).json({ error: 'key_revoked', message: 'Chave revogada nao aceita novos usage records.' });
+    }
     res.json({ ok: true });
   })
 );
