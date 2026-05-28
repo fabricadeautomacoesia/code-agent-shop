@@ -20736,3 +20736,59 @@ PROXIMA ITER:
 - W11: payment-svc Asaas webhook idempotency
 - W7: review-svc dashboard LATERAL pattern
 - 🚨 VPS SSH unblock URGENTE (16 ciclos - ~5h sem deploy!)
+
+PASS 184 (W11 CRITICAL Asaas webhook race idempotency) - 2026-05-28:
+- W11 auditoria payment-svc /payments/asaas/webhook descobriu race
+  condition CRITICA na idempotency check:
+
+PRE-FIX bug race:
+1. Webhook A com data.id='X' chega
+   SELECT WHERE asaas_event_id = 'X' -> empty -> continua
+2. Webhook A' (Asaas retry concurrent, mesmo data.id) chega
+   SELECT tambem empty (race window entre SELECT e INSERT)
+3. Ambos requests rodam INSERT
+4. Segundo INSERT dispara PG 23505 (UNIQUE asaas_event_id violation)
+5. errorHandler retorna 500 ao Asaas
+6. Asaas considera fail -> retry loop (exponential backoff)
+7. Logs Sentry flood + DB pool spam
+
+POST-FIX:
+- INSERT ... ON CONFLICT (asaas_event_id) DO NOTHING RETURNING id
+- Atomic single query (vs pre-check SELECT + INSERT separate = 2 queries)
+- Race-safe pq PG enforça UNIQUE constraint atomicamente
+- Performance: 50% reducao DB roundtrip (1 query vs 2)
+- Se conflict: rows[] empty -> retorna {ok:true, duplicate:true} ack
+- HTTP 200 ack mesmo em duplicate (Asaas para retry)
+
+CAVEAT: data.id=NULL events (rare custom hooks Asaas sem event_id)
+ainda permitidos duplicates - retry_count na tabela trackeia reprocessing.
+
+PADRAO: ON CONFLICT DO NOTHING idiomatic PG para idempotent inserts
+em endpoints externos (webhooks, queues, etc).
+
+Commit f1618ca pushed origin/main
+VPS SSH ainda bloqueado (17 ciclos consecutivos)
+
+CONSOLIDADO RACE/IDEMPOTENCY (recent):
+- pass 174: qa-svc cache coherency post-tx (sla-status + kpi)
+- pass 175: payouts coherency 3-path (seller insert + admin approve + paid)
+- pass 176: loyalty:me coherency cross-svc (order-svc checkout debit)
+- pass 184: Asaas webhook ON CONFLICT atomic (race fix)
+
+CODIGO ACUMULADO ORIGIN/MAIN (17 ciclos):
+- 168-183: documentados
+- 184: payment-svc Asaas webhook race fix
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_payment-svc --force
+- Teste race (manual):
+  Disparar 2 webhooks concurrent com mesmo data.id - ambos devem
+  retornar {ok:true} (1 com duplicate:true). Antes: 1 deles 500.
+- Monitor: tail -F /var/log/cas_payment-svc | grep 23505
+  -> Esperado: zero ocorrencias (era frequente em prod)
+
+PROXIMA ITER:
+- W18: cache /products list (vary by filters amplos)
+- W7: review-svc dashboard LATERAL pattern
+- W13: notification-svc retry backoff edge cases
+- 🚨 VPS SSH unblock URGENTE (17 ciclos - ~5.5h sem deploy!)
