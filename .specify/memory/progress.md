@@ -23691,3 +23691,88 @@ PROXIMA ITER:
 - W18: cache /api/orders/admin/disputes/:id detalhe
 - W13: notification-svc template_code consistency cross-svc audit
 - 🚨 VPS SSH unblock URGENTE (58 ciclos - >19.3h sem deploy!)
+
+PASS 226 (W13 migration 068 - 13 templates finais cleanup 100%) - 2026-05-28:
+- W13 completa debt cleanup notification_templates - audit exhaustive cross-svc
+
+TEMPLATES SEEDED NESTA MIGRATION (13):
+
+REVIEW-SVC (5):
+- review_received: seller notif nova review com rating
+- review_replied: buyer notif seller respondeu
+- qna_question: seller notif nova pergunta
+- qna_answered: asker notif resposta seller
+- report_resolved: reporter notif moderacao
+
+SELLER-SVC LIFECYCLE (4):
+- seller_suspended: admin suspend + {{reason}}
+- seller_reactivated: admin reactivate
+- kyc_approved: KYC pass + payouts CTA
+- kyc_rejected: KYC fail + {{reason}} + re-submit
+
+SLA-CHECKER CRON (4):
+- sla_revoked: Classe B revogada
+- sla_warning_7d/3d/1d: countdown warnings
+
+CATEGORIA AUTO-DERIVED:
+- review_* / qna_* / report_resolved -> 'reviews_qna'
+- sla_* -> 'sla_alerts'
+- seller_* / kyc_* -> 'seller_lifecycle'
+- DEFAULT -> 'general'
+
+CONSOLIDADO TOTAL TEMPLATES (29 - cobertura 100%):
+
+Historicas (2): product_new_version, vault_rotation_due
+Pass 223 (1): asaas_refund_failed
+Pass 224 (8): welcome, password_reset, loyalty_tier_up,
+  order_paid, order_refunded, seller_new_sale, seller_sale_refunded,
+  security_refresh_reuse
+Pass 225 (5): qa_dispatch_failed, qa_run_timeout, product_approved,
+  product_rejected, 2fa_disabled
+Pass 226 (13 NEW): review_received, review_replied, qna_question,
+  qna_answered, report_resolved, sla_revoked, sla_warning_7d/3d/1d,
+  seller_suspended, seller_reactivated, kyc_approved, kyc_rejected
+
+CATEGORIAS FINAL (12):
+- product_updates (1), vault_alerts (1), asaas_alerts (1)
+- general (1), security (3), loyalty (1)
+- orders (2), seller_alerts (2), qa_pipeline (4)
+- reviews_qna (5), sla_alerts (4), seller_lifecycle (4)
+
+Total: 29 templates cobrindo 100% INSERT notifications cross-svc!
+
+Commit 3c42ea6 pushed origin/main (+87)
+VPS SSH ainda bloqueado (59 ciclos consecutivos)
+
+MIGRATIONS PROD-PENDING (11 acumuladas):
+- 058 audit_log actor_created composto
+- 059 wishlist + notif compound idx
+- 060 users email LOWER UNIQUE + backfill
+- 061 loyalty idempotency partial UNIQUE
+- 062 drop idx_loyalty_user_recent duplicate
+- 063 fn_refresh_all_seller_reputations bulk
+- 064 notif unread invalidate hint (doc-only)
+- 065 asaas_refund_failed template
+- 066 batch seed 8 templates
+- 067 batch seed 5 templates
+- 068 batch seed 13 templates finais NEW
+
+CODIGO ACUMULADO ORIGIN/MAIN (59 ciclos):
+- 168-225: documentados
+- 226: migration 068 final templates cleanup
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply: psql -f /opt/cas/db/migrations/068_*.sql
+- Verificar 29 templates totais:
+  SELECT COUNT(*), category FROM notification_templates GROUP BY category ORDER BY category;
+- Test end-to-end:
+  - Buyer publica review -> seller recebe 'Nova avaliacao recebida'
+  - Seller responde review -> buyer recebe 'Vendedor respondeu sua avaliacao'
+  - Admin aprova KYC -> seller recebe 'KYC aprovado'
+  - Cron SLA 7d -> seller recebe 'SLA: 7 dias restantes'
+
+PROXIMA ITER:
+- W4 admin: vault-svc filter seller_id UI
+- W18: cache /api/orders/admin/disputes/:id detalhe
+- W13: validate notification preferences user_notification_prefs
+- 🚨 VPS SSH unblock URGENTE (59 ciclos - 19.7h sem deploy!)
