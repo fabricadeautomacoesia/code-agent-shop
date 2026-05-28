@@ -32383,3 +32383,42 @@ PROXIMA = MARCO 400 PASSES
 PROXIMA ITER:
 - MARCO 400 PASSES
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 400 *** MARCO ***: password_reset token DLP em notifications.payload
+commit d832eeb
+🎉 MARCO 400 PASSES ACUMULADOS DESDE PASS 268 (~73h sem deploy VPS)
+
+BUG CRITICAL: token plaintext em payload JSONB
+PRE-FIX: payload = { url: resetUrl, name: fullName }
+  - resetUrl com token 32-char hex query string
+  - notifications.payload JSONB queryable cross-admin
+  - Account takeover via internal log access:
+    * Admin compromised
+    * Audit dashboard XSS leak
+    * DB dump
+  - body_html OK (per-recipient) MAS payload broader exposure
+
+POST-FIX:
+- payload SO { name, token_hash_prefix }
+- 16-char SHA prefix audit-only
+- Body/body_html renderizam URL direto (sem regressao)
+- LGPD Art 6° I minimização dados
+
+Pattern V8 W6: tokens NUNCA em payload/audit/json
+
+W6 AUTH security series acumulada:
+  pass 282 ua_prefix mask audit_log
+  pass 322 register DLP
+  pass 363 logout audit per session UNNEST
+  pass 372 2fa_activated notification
+  pass 385 cpf_cnpj regex Zod
+  pass 397 welcome email seller URL env
+  pass 400 password_reset token DLP <- ESTE
+
+133 passes acumulados (268->400) sem deploy VPS
+5 CRITICAL + 22 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (5 CRITICAL + 22 migrations + 133 passes!)
+- W4 admin remaining audits
+- W18 perf optimization
