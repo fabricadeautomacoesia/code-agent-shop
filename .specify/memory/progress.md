@@ -17369,7 +17369,31 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Admin PromptDialog substitui window.prompt (pass 149)
 - ✅ Admin confirmDialog substitui 7 window.confirm (pass 150)
 - ✅ Seller PromptDialog/confirmDialog 2 callsites (pass 151)
-- ✅ qna-upvote alert -> inline error + aria-pressed (pass 152 esta iter)
+- ✅ qna-upvote alert -> inline error + aria-pressed (pass 152)
+- ✅ alertDialog + /disputes 4 nativos eliminados (pass 153 esta iter)
+
+W7 PASS 153 RESUMO - W4 ALERT DIALOG /disputes:
+- AUDIT /disputes resolve flow: 4 callsites window.prompt/alert nativos
+  * prompt() Notas admin
+  * alert() Notas obrigatorias (validation)
+  * prompt() Valor reembolso parcial
+  * alert() Valor invalido (validation)
+- Adicionado alertDialog(title, body) ao prompt-dialog module:
+  * Info-only modal (so botao OK, sem Cancelar)
+  * Nova flag hideCancel no PromptState
+  * Cancel() trata hideCancel: Esc/click-outside resolve true
+    (semantica window.alert sempre resolve, mesmo sem click OK)
+- INTEGRATED em /disputes resolve():
+  * 4 nativos -> 2 promptDialog + 2 alertDialog
+  * Placeholders ricos:
+    - 'Ex: vendedor entregou produto incorreto...'
+    - 'Ex: 5000 = R\$ 50,00'
+  * Body explicativo em alerts:
+    - 'Minimo 10 caracteres para auditoria.'
+    - 'Use apenas digitos. Ex: 5000 para R\$ 50,00'
+- 100% nativos eliminados em admin dashboard (prompt + alert + confirm)
+- BUILD dashboard-admin OK + service converged
+- COMMIT e153786 pushed GitHub main + deployed prod
 
 W7 PASS 152 RESUMO - W3 QNA-UPVOTE A11Y INLINE ERROR:
 - AUDIT qna-upvote.tsx (MLB-2 upvote botao): 4 violacoes a11y
