@@ -30593,3 +30593,43 @@ PROXIMA ITER:
 - W7 audit storefront forms (qna-form.tsx + review-form.tsx ja OK)
 - W4 admin /admin/orders quick UI fix
 - VPS SSH unblock URGENTISSIMO (172 ciclos - 57.3h)
+
+
+============================================================
+PASS 340 - 2026-05-28 - W2 order-svc dispatch DLP mask
+============================================================
+Files: 1 modificado
+  - services/order-svc/src/routes/orders.js (import mask + 2 log paths)
+Lines: ~10 changed
+
+W2 (order-svc payment dispatch DLP):
+- PRE-FIX:
+  - log.error detail = raw (await r.text()).slice(0,200) - payment-svc 4xx body echoes Asaas/CPF/cardNumber
+  - log.error err = e.message raw - fetch network errors com Authorization/PG_PASS
+- POST-FIX paridade pass 303/306:
+  - import mask
+  - mask.text() em detail (response body) + err.message
+- Pino + datadog log aggregator capturam objeto inteiro
+
+DLP Mask Error Tracking cross-svc cumulative (passes recentes):
+- pass 277 qa-worker download_failed
+- pass 285 notif outbox failed_reason
+- pass 289 payment-svc processing_error
+- pass 295 vault-svc reason audits
+- pass 298 vault-svc error_message /usage
+- pass 303 qa-svc dispatch error
+- pass 306 payment-svc asaas error log
+- pass 340 order-svc payment dispatch error/detail
+
+VPS SSH BLOQUEADO (173 ciclos - 57.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_order-svc --force
+- W2 verify: simular payment-svc 503 -> tail logs order-svc
+  Esperado: detail + err masked (sem CPF/Bearer visiveis)
+
+PROXIMA ITER:
+- W11 audit additional payment dispatch flows
+- W13 notif outbox audit similar
+- VPS SSH unblock URGENTISSIMO (173 ciclos - 57.7h)

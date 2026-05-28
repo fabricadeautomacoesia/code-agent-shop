@@ -4,7 +4,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, maskPII, rateLimiter, cache } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, maskPII, rateLimiter, cache, mask } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 71: rate-limiter anti-spam dispute.
 // PRE-FIX: POST /:id/dispute SEM rate-limit. Atacante com conta legitima:
@@ -271,8 +271,14 @@ router.post('/checkout',
           body: JSON.stringify(body),
         });
         if (!r.ok) {
+          /* FIX-WORKER-2 pass 340: DLP mask detail body em log
+             payment-svc 4xx/5xx response pode echoar:
+             - Asaas API key em error stack (raro)
+             - Bearer headers em proxy error message
+             - User CPF/cardNumber em payload validation echo
+             Paridade pass 306 asaas error log mask. */
           let detail = '';
-          try { detail = (await r.text()).slice(0, 200); } catch {}
+          try { detail = mask.text((await r.text()).slice(0, 200)); } catch {}
           log.error({
             order_id: result.id,
             status: r.status,
@@ -283,7 +289,8 @@ router.post('/checkout',
           log.info({ order_id: result.id, status: r.status }, '[payment.dispatch_ok]');
         }
       } catch (e) {
-        log.error({ err: e.message, order_id: result.id }, '[payment.dispatch_failed]');
+        /* FIX-WORKER-2 pass 340: err.message mask paridade pass 303 qa-svc */
+        log.error({ err: mask.text(String(e.message || '').slice(0, 500)), order_id: result.id }, '[payment.dispatch_failed]');
       }
     });
   })
