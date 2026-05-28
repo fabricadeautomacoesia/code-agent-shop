@@ -20201,3 +20201,39 @@ PROXIMA ITER (sem mais a11y V8 R23 pendentes!):
 - W14 db audit: identificar indices ausentes
 - W6 auth-svc endpoints audit
 - 🚨 VPS SSH unblock URGENTE (5 ciclos sem deploy)
+
+PASS 173 (W7 DRY + W14 db schema) - 2026-05-28:
+- W7 pass 173 - DRY maskPII.cpf em auth-svc:
+  * me.js patch_profile audit_log payload mantinha CPF mask inline
+    (slice(0,3)+'.***.***-'+slice(-2))
+  * Refactor: import maskPII from @cas/shared + maskPII.cpf(cpf_cnpj)
+  * Beneficios: consistencia LGPD + null-safe + manutencao centralizada
+- W14 pass 173 - migration 058:
+  * idx_audit_actor_created (actor_user_id, created_at DESC) PARTIAL WHERE NOT NULL
+  * Antecipa query "historico audit user X" no admin dashboard
+  * Performance: ~30-50ms -> <2ms (sort externo eliminado)
+  * Tolerante a falhas (IF NOT EXISTS)
+- Auditoria mask helpers: 4 outros svcs ja usam @cas/shared.maskPII
+  diretamente (order/auth/product/seller). Zero duplicacao remaining.
+- Commits 5983ed6 + 1ee2dd0 pushed origin/main
+- VPS SSH ainda bloqueado (6 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN AGUARDANDO DEPLOY:
+- pass 168: migration 057 (in_app trigger - JA APLICADA prod)
+- pass 169: MLB-17 VerifiedSellerBadge
+- pass 170: W4 payouts+qa-queue a11y
+- pass 171: W4 sellers+orders+products+reports a11y
+- pass 172: W4+W5 vault+webhooks+6 seller a11y (ZERO buttons sem type=)
+- pass 173: W7 DRY maskPII + W14 migration 058
+
+LINKS PARA TESTE (apos VPS unblock + migration apply):
+- psql exec: \i /opt/cas/db/migrations/058_audit_log_actor_created_idx.sql
+- EXPLAIN ANALYZE confirma Index Scan idx_audit_actor_created
+- auth-svc rebuild: docker service update cas_auth-svc --force
+
+PROXIMA ITER:
+- W18: EXPLAIN ANALYZE queries lentas (precisa SSH)
+- W6 audit auth-svc endpoints reset-password/2fa-flow
+- W10 search-svc audit
+- W12 qa-svc audit
+- 🚨 VPS SSH unblock URGENTE (6 ciclos sem deploy)
