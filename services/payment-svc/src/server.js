@@ -297,7 +297,23 @@ app.post('/payments/asaas/create',
     }));
 
     // 3. mapear billing type
+    // FIX-WORKER-11 pass 362 (defense em profundidade billingType validate):
+    //   PRE-FIX: billingMap[order.payment_method] retornava undefined se DB
+    //   tivesse valor invalido (legacy migration, manual UPDATE, ou bypass Zod
+    //   no order-svc). Resultado: billingType: undefined enviado a Asaas ->
+    //   400 obscuro sem context (atribuido a "Asaas error" generico).
+    //   Cenario real: order anciao pre-mig pode ter payment_method='card' (legacy)
+    //   ou admin manual UPDATE typo (raro mas defensive matter).
+    //   POST-FIX: validate explicit + 400 friendly error com value real DB.
+    //   Pattern V8: NEVER trust input em adapter externo critico (real money).
     const billingMap = { pix: 'PIX', credit_card: 'CREDIT_CARD', boleto: 'BOLETO' };
+    const billingType = billingMap[order.payment_method];
+    if (!billingType) {
+      log.error({ order_id: order.id, payment_method: order.payment_method },
+        '[payment.create.invalid_method] order.payment_method nao mapeavel');
+      return next(errorHandler.badRequest('invalid_payment_method',
+        `Metodo de pagamento '${order.payment_method}' nao suportado. Use pix, credit_card ou boleto.`));
+    }
     // FIX-WORKER-11 pass 221: dueDate por billingType (era 24h fixo p/ todos).
     // PRE-FIX: dueDate = NOW() + 24h uniformemente
     //   - PIX: ok (pagamento instantaneo, due 24h flexivel)
@@ -332,7 +348,7 @@ app.post('/payments/asaas/create',
 
     const payment = await asaas.createPayment({
       customer: customerId,
-      billingType: billingMap[order.payment_method],
+      billingType, // FIX pass 362: validado upfront (era billingMap[...] inline)
       value: order.total_cents / 100,
       dueDate,
       description: `Pedido ${order.order_number} - Code & Agent Shop`,
