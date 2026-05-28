@@ -977,11 +977,46 @@ router.get('/:slug/reviews',
   const maxPage = total > 0 ? Math.ceil(total / lim) : 1;
   const effectivePage = Math.min(requestedPage, maxPage);
 
+  // FIX-WORKER-7 pass 398 (stars_breakdown agg - MLB feature):
+  //   PRE-FIX: response retornava SO reviews paginated + total
+  //   - Frontend PDP precisa renderizar: 'X reviews ⭐4.8 - 70% 5⭐ | 20% 4⭐...'
+  //   - Sem breakdown, frontend faria N+1 query OR client-side reduce
+  //   - Client reduce so cobre rows da pagina (subset = % errado)
+  //   - Pattern V8 paridade pass 373 seller review KPI
+  //   POST-FIX: aggregate query secondary (5-bucket COUNT FILTER)
+  //   - Filter is_hidden=FALSE igual lista
+  //   - Filter ratingFilter NAO aplica (breakdown sempre todos)
+  //   - 1 query extra ~5ms (idx_reviews_product cobre)
+  const aggResult = await query(
+    `SELECT
+       COUNT(*) FILTER (WHERE r.rating = 5)::INT AS stars_5,
+       COUNT(*) FILTER (WHERE r.rating = 4)::INT AS stars_4,
+       COUNT(*) FILTER (WHERE r.rating = 3)::INT AS stars_3,
+       COUNT(*) FILTER (WHERE r.rating = 2)::INT AS stars_2,
+       COUNT(*) FILTER (WHERE r.rating = 1)::INT AS stars_1,
+       ROUND(AVG(r.rating)::numeric, 1) AS avg_rating
+     FROM product_reviews r
+     JOIN products p ON p.id = r.product_id
+     WHERE p.slug = $1 AND r.is_hidden = FALSE`,
+    [req.params.slug]
+  );
+  const agg = aggResult.rows[0] || {};
+  const breakdown = {
+    5: Number(agg.stars_5 || 0),
+    4: Number(agg.stars_4 || 0),
+    3: Number(agg.stars_3 || 0),
+    2: Number(agg.stars_2 || 0),
+    1: Number(agg.stars_1 || 0),
+  };
+
   res.json({
     reviews,
     total, limit: lim, page: effectivePage,
     has_more: (off + reviews.length) < total,
     sort, rating: ratingFilter,
+    // FIX pass 398: MLB-style breakdown p/ stars histogram UI
+    stars_breakdown: breakdown,
+    avg_rating: agg.avg_rating !== null && agg.avg_rating !== undefined ? Number(agg.avg_rating) : null,
   });
 }));
 
