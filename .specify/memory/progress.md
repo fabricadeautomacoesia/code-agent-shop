@@ -32263,3 +32263,27 @@ W10 autocomplete quality series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W18 perf optimization
+
+## PASS 396 W11 PAYMENT: payout_paid dual channel (in_app + email)
+commit 04f89d3
+BUG payout_paid so channel='email' (pass 263 lagged)
+- Email latencia outbox 30s + SMTP (peak 5-10min outage)
+- Seller refresh /financeiro nao ve realtime
+- In_app sininho instantaneo
+- Cash flow event CRITICAL UX
+
+POST-FIX dual channel:
+- INSERT in_app primeiro (instantaneo)
+- INSERT email (paper trail - paridade pass 263)
+- Try/catch independent per channel
+- Same title/body/payload (consistent)
+
+W11 dual channel pattern:
+  pass 258 seller_new_sale
+  pass 396 payout_paid <- ESTE
+
+129 passes acumulados (268->396) sem deploy VPS
+5 CRITICAL + 22 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
