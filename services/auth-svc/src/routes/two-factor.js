@@ -176,6 +176,21 @@ router.post('/activate',
     const secret = cryp.decrypt({ encrypted: r.rows[0].secret_encrypted, iv: r.rows[0].secret_iv, tag: r.rows[0].secret_tag });
     // FIX bug 1: window=1 (consistencia pass 49 /login)
     if (!authenticator.check(req.body.token, secret, { window: 1 })) {
+      // FIX-WORKER-6 pass 429 (audit + fail2ban gap PARIDADE /recovery pass 239 + /disable pass 429):
+      //   /activate brute-force = atacante com session ativa tenta forjar token TOTP
+      //   p/ ativar 2FA com app proprio (account takeover signal).
+      //   Token 6 dig = 1M combinacoes - fail2ban limit IPs com >5 tentativas inviabiliza.
+      //   Severity warn (not critical) - /activate menos perigoso que /disable mas
+      //   ainda merece forensic trail.
+      req.fail2ban?.reportFailure();
+      query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'user', '2fa.activate.invalid_token', 'user', $1, 'warn', $2::JSONB)`,
+        [req.user.sub, JSON.stringify({
+          ip: req.ip,
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+        })]
+      ).catch(() => {});
       return next(errorHandler.badRequest('invalid_token'));
     }
 
@@ -346,6 +361,23 @@ router.post('/disable',
     const secret = cryp.decrypt({ encrypted: r.rows[0].secret_encrypted, iv: r.rows[0].secret_iv, tag: r.rows[0].secret_tag });
     // FIX bug 3: window=1 (consistencia /login + /activate)
     if (!authenticator.check(req.body.token, secret, { window: 1 })) {
+      // FIX-WORKER-6 pass 429 (audit + fail2ban gap PARIDADE pass 239 /recovery):
+      //   /disable e endpoint security-critical: account takeover potential.
+      //   Atacante com password phishada pode brute-force TOTP /disable.
+      //   /recovery (pass 239) ja tinha fail2ban + audit critical em invalid_token.
+      //   /disable lagged ate agora - mesmo vetor SEM forensic trail.
+      //   POST-FIX: paridade pass 239 - fail2ban.reportFailure() + audit critical.
+      //   Pattern V8 W6: TODO 2FA endpoint security-critical em invalid_token =
+      //   fail2ban (escalate bruteforce) + audit_log critical (forensics) + DLP.
+      req.fail2ban?.reportFailure();
+      query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'user', '2fa.disable.invalid_token', 'user', $1, 'critical', $2::JSONB)`,
+        [req.user.sub, JSON.stringify({
+          ip: req.ip,
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+        })]
+      ).catch(() => {});
       return next(errorHandler.unauthorized('invalid_token'));
     }
 

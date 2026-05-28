@@ -33290,3 +33290,52 @@ Pattern V8 W2: API failures em listing pages MUST distinguish empty vs error
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 429 W6 AUTH-SVC: fail2ban+audit critical em invalid_token /disable + /activate
+commit pendente
+BUG /disable e /activate em invalid_token sem fail2ban+audit (paridade pass 239 /recovery)
+PRE-FIX:
+- /recovery (pass 239) ja tinha fail2ban.reportFailure() + audit critical em invalid_token
+- /disable lagged - mesmo vetor SEM forensic trail
+- /activate lagged - bruteforce 2FA activate via forjado token
+
+SCOPE CRITICAL /disable:
+- Atacante com password phishada + sessao XSS
+- POST /2fa/disable com password+token forjado
+- Sem rate-limit (limit ja era 10/5min/user pass 11) -> bruteforce lento mas viavel
+- Sem fail2ban -> IPs com >5 invalid_token NAO sao bloqueados globalmente
+- Sem audit_log critical -> nenhum forensic trail
+- Successful bruteforce -> 2FA disabled -> account takeover completo
+
+SCOPE warn /activate:
+- Atacante com session ativa tenta forjar token p/ ativar 2FA com app proprio
+- Account takeover signal (sec violation menor que /disable)
+
+POST-FIX (ambos endpoints):
+- req.fail2ban?.reportFailure() (paridade /recovery + /login)
+- INSERT audit_log severity:
+  - /disable: critical (account takeover risk maximo)
+  - /activate: warn (vetor menor)
+- Action codes especificos:
+  - 2fa.disable.invalid_token
+  - 2fa.activate.invalid_token
+- DLP ua_prefix mask.text() (paridade pass 296 cross-svc)
+- .catch(()=>{}) fire-and-forget audit (nao bloqueia 401 response)
+
+W6 2FA security parity series:
+  pass 11 rate-limit 2FA endpoints (totpVerifyLimiter 10/5min)
+  pass 239 /recovery fail2ban+audit
+  pass 372 /activate notification anti-takeover
+  pass 429 /disable + /activate fail2ban+audit <- ESTE
+
+Pattern V8 W6: TODO 2FA endpoint security-critical em invalid_token:
+  - req.fail2ban?.reportFailure()
+  - audit_log severity critical|warn por impacto
+  - DLP ua_prefix mask
+  - fire-and-forget (.catch ignora p/ nao bloquear response auth)
+
+162 passes acumulados (268->429) sem deploy VPS
+5 CRITICAL + 25 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
