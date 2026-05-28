@@ -19,9 +19,12 @@ interface Props {
   product: any;
   reviews: any[];
   qna: any[];
+  // FIX-WORKER-3 pass 399 (MLB histogram - backend pass 398)
+  starsBreakdown?: Record<string, number> | null;
+  avgRatingAgg?: number | null;
 }
 
-export function ProductTabs({ product, reviews, qna }: Props) {
+export function ProductTabs({ product, reviews, qna, starsBreakdown, avgRatingAgg }: Props) {
   const [active, setActive] = useState<Tab>('overview');
   // FIX-WORKER-3 pass 5: refs para keyboard navigation roving tabindex (WAI-ARIA tabs)
   const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({} as any);
@@ -176,6 +179,52 @@ export function ProductTabs({ product, reviews, qna }: Props) {
       {active === 'reviews' && (
         <div role="tabpanel" id="panel-reviews" aria-labelledby="tab-reviews">
           <h3 className="font-display font-bold text-2xl mb-4">Avaliacoes {reviewCount > 0 && `(${reviewCount})`}</h3>
+          {/* FIX-WORKER-3 pass 399 (stars_breakdown histogram MLB):
+              Backend pass 398 retorna stars_breakdown + avg_rating cross-page.
+              UI MLB-style: avg + bar chart 5/4/3/2/1 stars com percentage.
+              total = sum buckets (vs subset reviews.length).
+              Render so se starsBreakdown presente E total > 0. */}
+          {starsBreakdown && (() => {
+            const totalAgg = ([5,4,3,2,1] as const).reduce((s, k) => s + (Number(starsBreakdown[k]) || 0), 0);
+            if (totalAgg === 0) return null;
+            return (
+              <div className="glass-strong p-4 mb-6 rounded-lg">
+                <div className="flex items-center gap-4 mb-3">
+                  <div className="text-center">
+                    <div className="font-display font-bold text-4xl text-magenta-glow">
+                      {avgRatingAgg !== null && avgRatingAgg !== undefined ? avgRatingAgg.toFixed(1) : '-'}
+                    </div>
+                    <div className="flex items-center gap-0.5 justify-center mt-1" aria-hidden="true">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <Star key={i} className={`w-3 h-3 ${
+                          i < Math.round(avgRatingAgg || 0) ? 'fill-yellow-400 text-yellow-400' : 'fill-white/10 text-white/20'
+                        }`} />
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-white/50 mt-1">{totalAgg} avaliac{totalAgg === 1 ? 'ao' : 'oes'}</div>
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    {([5,4,3,2,1] as const).map((s) => {
+                      const cnt = Number(starsBreakdown[s] || 0);
+                      const pct = totalAgg > 0 ? Math.round((cnt / totalAgg) * 100) : 0;
+                      return (
+                        <div key={s} className="flex items-center gap-2 text-xs">
+                          <span className="w-6 text-white/60">{s}★</span>
+                          <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden"
+                            role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}
+                            aria-label={`${s} estrelas: ${cnt} avaliacoes (${pct}%)`}>
+                            <div className="h-full bg-gradient-to-r from-yellow-400 to-magenta transition-all"
+                              style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className="w-12 text-white/50 text-right tabular-nums">{cnt} ({pct}%)</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
           {reviewCount === 0 ? (
             <p className="text-sm text-white/60">Ainda sem avaliacoes. Compre e seja o primeiro a avaliar.</p>
           ) : (

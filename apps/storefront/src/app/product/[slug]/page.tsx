@@ -85,6 +85,11 @@ async function fetchRelated(slug: string): Promise<any[]> {
 export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   let product: any, reviews: any[] = [], qna: any[] = [], related: any[] = [];
+  // FIX-WORKER-3 pass 399 (stars_breakdown propagation - paridade backend pass 398):
+  //   Backend pass 398 retorna stars_breakdown + avg_rating em /:slug/reviews.
+  //   Frontend precisa propagar AOS tabs p/ renderizar histogram MLB-style.
+  let reviewsStarsBreakdown: Record<string, number> | null = null;
+  let reviewsAvgRating: number | null = null;
   try {
     const p = await Api.product(slug);
     product = p.product;
@@ -103,6 +108,10 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
     reviews = Array.isArray(r.reviews) ? r.reviews : [];
     qna = Array.isArray(q.qna) ? q.qna : [];
     related = Array.isArray(rel) ? rel : [];
+    // FIX pass 399: capture stars_breakdown + avg_rating from backend response
+    reviewsStarsBreakdown = (r as any).stars_breakdown && typeof (r as any).stars_breakdown === 'object'
+      ? (r as any).stars_breakdown : null;
+    reviewsAvgRating = typeof (r as any).avg_rating === 'number' ? (r as any).avg_rating : null;
   } catch {
     // notFound() so chamado se Api.product(slug) lancar (produto inexistente).
     // Reviews/qna/related TODOS tem fallback proprio -> nunca disparam aqui.
@@ -147,7 +156,9 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
           </div>
 
           {/* FIX-WORKER-3: tabs funcionais (antes eram botoes decorativos sem onClick) */}
-          <ProductTabs product={product} reviews={reviews.slice(0, 10)} qna={qna.slice(0, 8)} />
+          <ProductTabs product={product} reviews={reviews.slice(0, 10)} qna={qna.slice(0, 8)}
+            starsBreakdown={reviewsStarsBreakdown}
+            avgRatingAgg={reviewsAvgRating} />
         </div>
 
         <aside className="space-y-6">
