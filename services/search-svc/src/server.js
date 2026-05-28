@@ -199,10 +199,13 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
            COUNT(*) OVER()::INT AS _total
       FROM products p
       LEFT JOIN sellers s ON s.id = p.seller_id
-      LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN categories c ON c.id = p.category_id AND c.is_active = TRUE
      WHERE ${where.join(' AND ')}
      ORDER BY ${order}
      LIMIT $${i++} OFFSET $${i++}`;
+  // FIX-WORKER-7 pass 411 (cat is_active filter - paridade pass 406):
+  //   /search retornava category_slug de cats inativas -> frontend 404
+  //   Same bug fixed cross-svc cobre search hot path
 
   const r = await query(sql, params);
   const totalCount = r.rows[0]?._total ?? 0;
@@ -719,7 +722,7 @@ app.get('/facets',
     `WITH base AS (
        SELECT p.id, p.kind, p.price_cents, p.seller_id, p.category_id
          FROM products p
-         LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN categories c ON c.id = p.category_id AND c.is_active = TRUE
         WHERE p.status IN ('approved','platform_owned')
           AND p.deleted_at IS NULL
           AND ($1::TEXT IS NULL OR c.slug = $1)

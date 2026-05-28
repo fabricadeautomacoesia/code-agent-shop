@@ -85,6 +85,13 @@ router.get('/',
     // BUG 4: LEFT JOIN explicit (substitui 4 subqueries)
     // FIX-WORKER-18 pass 178: COUNT(*) OVER() window elimina segunda query
     // pelo COUNT total. PG executa scan unico - latencia ~30ms -> ~15ms.
+    // FIX-WORKER-7 pass 411 (LEFT JOIN categories is_active - paridade pass 406):
+    //   PRE-FIX: LEFT JOIN categories c ON c.id = p.category_id (sem filter)
+    //   - Wishlist retorna category_slug de cat inativa
+    //   - Frontend chip clicavel -> /categoria/inactive-slug -> 404
+    //   - Same bug pass 406 fixou em 3 endpoints public.js
+    //   - Wishlist endpoint ficou lagged (mesmo issue UX broken silent)
+    //   POST-FIX: + AND c.is_active = TRUE (graceful: cat inativa -> NULL chip)
     const r = await query(
       `SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
               p.cover_image_url, p.price_cents, p.currency, p.is_free,
@@ -96,7 +103,7 @@ router.get('/',
          FROM product_wishlist w
          JOIN products p ON p.id = w.product_id
          LEFT JOIN sellers s ON s.id = p.seller_id
-         LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN categories c ON c.id = p.category_id AND c.is_active = TRUE
         WHERE ${whereParts.join(' AND ')}
         ORDER BY w.created_at DESC, w.product_id DESC
         LIMIT $${limIdx} OFFSET $${offIdx}`,
