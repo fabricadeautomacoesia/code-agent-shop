@@ -216,6 +216,7 @@ router.post('/checkout',
     try {
       const tasks = [
         cache.del(`orders:user:${req.user.sub}:*`),  // pass 206: orders list cache
+        cache.del('order:admin:recent:*'),  // pass 215: admin dashboard /admin/orders
       ];
       if (loyaltyDebited) {
         tasks.push(cache.del(`loyalty:me:${req.user.sub}:*`));  // pass 176: cross-svc
@@ -376,30 +377,45 @@ router.get('/',
 //   Pattern pass 57 estabelecido em review-svc -> aqui replicado cross-svc.
 //   FIX: isAdmin path full visibility; staff path maskPII.email/name.
 // + Regra E pagination ?limit/?offset
+// FIX-WORKER-4 pass 215 (cache + window + coherency):
+// PRE-FIX:
+// - 2 queries por hit (rows + stats aggregations)
+// - NO cache (admin dashboard /admin/orders polling sem proteção)
+// - Response shape sem 'total' absolute (UI 'X de Y' impossivel)
+// POST-FIX:
+// + cache.cacheMiddleware 30s vary by limit+offset (refresh-friendly)
+// + COUNT(*) OVER() window aggregate -> total absolute
+// + has_more boolean
+// Stats query mantida (FILTER aggregates 90d) - small payload + ja em mesma cache hit
+const adminRecentOrdersCacheKey = (req) => {
+  const q = req.query;
+  return `order:admin:recent:lim=${q.limit||100}:off=${q.offset||0}`;
+};
+
 router.get('/admin/recent',
   jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware(adminRecentOrdersCacheKey, 30),
   asyncHandler(async (req, res) => {
     // FIX-WORKER-7 pass 18: tiebreaker (Regra D) + window temporal stats
     // FIX-WORKER-7 pass 59: ?limit (1-200, default 100) + ?offset paginacao
     const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 100));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    // FIX-WORKER-4 pass 215: COUNT(*) OVER() window aggregate
     const r = await query(
       `SELECT o.id, o.order_number, o.status, o.payment_status, o.total_cents, o.currency,
               o.payment_method, o.buyer_user_id, o.created_at, o.paid_at,
-              u.email AS buyer_email, u.full_name AS buyer_name
+              u.email AS buyer_email, u.full_name AS buyer_name,
+              COUNT(*) OVER()::INT AS _total
          FROM orders o
          JOIN users u ON u.id = o.buyer_user_id
         ORDER BY o.created_at DESC, o.id LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
-    // FIX-WORKER-7 pass 18: stats window temporal 90 days.
-    // PRE-FIX: COUNT(*) FROM orders SEM filtro temporal -> full table scan
-    // toda vez admin abre dashboard. Em escala MLB (1M orders) = ~2-5s PG CPU
-    // por hit. Admin abre /admin/recent muitas vezes/dia.
-    // POS-FIX: WHERE created_at > NOW() - 90 days -> scan idx_orders_created
-    // -> ~10-50ms em 1M orders (~50x).
-    // 90d eh padrao "recent" - admin querendo all-time usa /admin/financials.
-    // Stats reflete contexto "ultimo trimestre" - mais util que all-time.
+
+    const total = r.rows[0]?._total ?? 0;
+
+    // Stats window temporal 90 days (mantido - FILTER aggregates pequeno payload)
     const stats = await query(
       `SELECT
          COUNT(*) FILTER (WHERE status IN ('paid','fulfilled')) AS count_paid,
@@ -409,15 +425,26 @@ router.get('/admin/recent',
          FROM orders WHERE created_at > NOW() - INTERVAL '90 days'`
     );
 
-    // FIX-WORKER-7 pass 59: LGPD role-tier masking
+    // FIX-WORKER-7 pass 59: LGPD role-tier masking + strip _total
     const isAdmin = req.user && req.user.role === 'admin';
-    const orders = r.rows.map((row) => isAdmin ? row : ({
-      ...row,
-      buyer_email: maskPII.email(row.buyer_email),
-      buyer_name: maskPII.name(row.buyer_name),
-    }));
+    const orders = r.rows.map((row) => {
+      const { _total, ...rest } = row;
+      if (isAdmin) return rest;
+      return {
+        ...rest,
+        buyer_email: maskPII.email(rest.buyer_email),
+        buyer_name: maskPII.name(rest.buyer_name),
+      };
+    });
 
-    res.json({ orders, stats: stats.rows[0], limit, offset });
+    res.json({
+      orders,
+      stats: stats.rows[0],
+      total,
+      limit,
+      offset,
+      has_more: (offset + orders.length) < total,
+    });
   })
 );
 
