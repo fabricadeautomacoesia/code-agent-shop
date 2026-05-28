@@ -90,12 +90,21 @@ app.use(cors({
 app.use(compression());
 
 // --- Rate limit global (V8 23.6) ---
+/* FIX-WORKER-6 pass 304 (CRITICAL rate-limit key): gateway sit atras de
+   Traefik/proxy. Sem keyGenerator + sem 'trust proxy', express-rate-limit
+   usa req.ip = socket peer (TRAEFIK proxy IP) - TODOS requests compartilham
+   o MESMO rate-limit bucket. 200 req/min global compartilhado, atacante
+   facilmente esgota e bloqueia trafego legitimo (DoS via shared bucket).
+   Mesmo bug que pass 33 fail2ban resolveu para fail2ban-svc - aplicar paridade
+   aqui. realIp middleware (linha 46) ja extrai x-forwarded-for real client IP.
+   POST-FIX: keyGenerator: (req) => req.realIp - rate-limit per-client real. */
 app.use(rateLimit({
   windowMs: parseInt(process.env.GATEWAY_RATE_LIMIT_WINDOW_MS || '60000', 10),
   max: parseInt(process.env.GATEWAY_RATE_LIMIT_MAX || '200', 10),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'rate_limit_exceeded' },
+  keyGenerator: (req) => req.realIp || req.ip,
 }));
 
 // --- Health/Status (V8 5.3 - Status Page) ---

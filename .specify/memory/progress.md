@@ -29218,3 +29218,42 @@ PROXIMA ITER:
 - W4 admin /admin/qa-queue UI consume mask error display
 - W17 /api/vault list error_stats_7d DLP audit
 - VPS SSH unblock URGENTISSIMO (136 ciclos - 45.3h)
+
+
+============================================================
+PASS 304 - 2026-05-28 - W6 gateway rate-limit keyGenerator CRITICAL
+============================================================
+Files: 1 modificado
+  - services/gateway/src/server.js (rate-limit keyGenerator realIp)
+Lines: ~10 added
+
+W6 (CRITICAL gateway rate-limit shared bucket):
+- PRE-FIX: rateLimit() sem keyGenerator + sem 'trust proxy'
+- Gateway atras de Traefik proxy -> req.ip = TRAEFIK IP (shared)
+- 200 req/min global compartilhado entre TODOS clients
+- Atacante facilmente esgota o bucket -> DoS trafego legitimo
+- Mesmo bug class pass 33 fail2ban-svc resolveu para fail2ban
+- POST-FIX: keyGenerator: (req) => req.realIp || req.ip
+- realIp middleware (linha 46) ja extrai x-forwarded-for real client
+- Rate-limit per-client real efetivo
+
+W14 (audit indexes):
+- carts.user_id: UNIQUE constraint cria btree idx auto ✓
+- loyalty_transactions(user_id, created_at): idx_loyalty_user mig 010 ✓
+- audit_log.target_id: idx_audit_target(target_type, target_id) mig 002 ✓
+- Cobertura adequada
+
+VPS SSH BLOQUEADO (137 ciclos - 45.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_gateway --force
+- W6 CRITICAL verify:
+  - Stress test 250 req/min de IP A -> esperado: 50 rejected (200/min cap por IP)
+  - IP B simultaneo 100 req/min -> esperado: TODAS aceitas (bucket isolado)
+  - Pre-fix: IP B teria ~0 capacidade (bucket compartilhado esgotado por IP A)
+
+PROXIMA ITER:
+- W6 audit fail2ban-middleware keyGenerator paridade
+- W4 admin status dashboard mostrar rate-limit drops
+- VPS SSH unblock URGENTISSIMO (137 ciclos - 45.7h)
