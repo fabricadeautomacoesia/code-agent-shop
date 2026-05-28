@@ -21677,3 +21677,73 @@ PROXIMA ITER:
 - W17: vault-svc seller endpoints BYOK self-management
 - W11: payment-svc payout dispute resolution flow
 - 🚨 VPS SSH unblock URGENTE (31 ciclos - >10h sem deploy!)
+
+PASS 199 (W18 seller-svc admin /pending-kyc 4 fixes) - 2026-05-28:
+- W18 audit /sellers/admin/pending-kyc descobriu 4 bugs:
+
+1. Hardcoded LIMIT 100 sem ?limit/?offset
+   Backlog KYC 200+ invisivel pos LIMIT 100
+2. NO COUNT total - UI 'X de Y' impossivel
+3. NO cache - admin polling sem proteção
+4. Response shape inconsistente (so {sellers})
+
+POST-FIX (4 melhorias):
+
+1. ?limit (1-200, default 50) + ?offset (>=0) Regra E
+2. COUNT(*) OVER()::INT window + has_more (pattern W18 178-198)
+3. cache.cacheMiddleware 30s vary by limit+offset
+   30s OK: KYC submission rate baixo (vs payouts 20s)
+4. Response shape: { sellers, total, limit, offset, has_more }
+
+LGPD MASK preserved (admin full / staff masked):
+- legal_name (cadastro KYC = CPF/CNPJ context)
+- email, full_name (PII identificacao)
+- address fields (LGPD location data)
+
+INVALIDATION COHERENCY estendida:
+- invalidateSellerCache helper agora invalida:
+  + seller:admin:pending-kyc:* (pass 199 NEW)
+  + seller:admin:all:* (pass 197)
+  + sellers:list/detail/stats/products (base)
+- Dispara em: KYC approve/reject, suspend, activate
+
+Commit bfc3fd9 pushed origin/main (+77/-38)
+VPS SSH ainda bloqueado (32 ciclos consecutivos)
+
+CACHE COVERAGE seller-svc COMPLETA:
+- /sellers (public): 60s
+- /sellers/:slug (+ stats + products): 60-180s
+- /sellers/admin/all: 30s (pass 197)
+- /sellers/admin/payouts/pending: 20s (pass 198)
+- /sellers/admin/pending-kyc: 30s (pass 199 NEW)
+- /sellers/me/kpi: 300s
+- /sellers/me/sla-status: 60s (pass 174)
+- /sellers/me/payouts: 30s (pass 175)
+- /loyalty/me: 30s (pass 176)
+
+PADRAO V8 PAGINATION + WINDOW COUNT consolidado em 9 endpoints:
+- product-svc (3): wishlist, products list, reviews, qna (4 actually)
+- notification-svc (1): /me
+- vault-svc (2): keys admin, rotation cron
+- search-svc (1): categories
+- review-svc (2): admin/reports, qna/seller/pending
+- seller-svc (3): admin/all, admin/payouts/pending, admin/pending-kyc
+
+CODIGO ACUMULADO ORIGIN/MAIN (32 ciclos):
+- 168-198: documentados
+- 199: seller-svc /admin/pending-kyc cache + window
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc --force
+- Cache hit benchmark:
+  time curl -H "Bearer \$ADMIN" "/api/sellers/admin/pending-kyc?limit=20"
+  1a: ~10ms (PG window query)
+  2a: <5ms (Redis hit)
+- Pagination test:
+  curl "?limit=10&offset=10" -> proximos 10 + total absoluto
+
+PROXIMA ITER:
+- W17: vault-svc seller endpoints (BYOK self-management)
+- W18: cache /aiops/audit-log query (admin polling)
+- W11: payment-svc Asaas refund flow
+- 🚨 VPS SSH unblock URGENTE (32 ciclos - >10.7h sem deploy!)
