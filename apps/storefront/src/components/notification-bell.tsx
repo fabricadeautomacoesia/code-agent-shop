@@ -243,7 +243,10 @@ export function NotificationBell() {
                     return <Link key={n.id} href={url} onClick={onClickItem} className={cls}>{inner}</Link>;
                   }
                   if (url && isExternal) {
-                    return <a key={n.id} href={url} onClick={onClickItem} target="_blank" rel="noopener" className={cls}>{inner}</a>;
+                    // FIX-WORKER-1 pass 230 (tabnabbing defense): rel="noopener" sozinho
+                    // protege window.opener mas browsers legados/Safari < 13 vazam referrer.
+                    // Pattern checkout pass 6: sempre "noopener noreferrer" em external links.
+                    return <a key={n.id} href={url} onClick={onClickItem} target="_blank" rel="noopener noreferrer" className={cls}>{inner}</a>;
                   }
                   // FIX-WORKER-3 pass 7 (a11y): div onClick sem url -> role=button +
                   // tabIndex + onKeyDown Enter/Space. Antes: inacessivel keyboard.

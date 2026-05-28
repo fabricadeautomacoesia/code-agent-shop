@@ -583,15 +583,16 @@ app.post('/use',
       log.error({ err: e.message, key_id: k.id, fp: k.key_fingerprint }, '[vault.decrypt_fail]');
       return next(errorHandler.serverError('decrypt_failed'));
     }
-    res.json({
-      key_id: k.id, provider: k.provider, fingerprint: k.key_fingerprint, plain_key: plain,
-      is_platform_pool: k.is_platform_pool, alias: k.key_alias,
-    });
-
-    // FIX-WORKER-7 pass 102 BUG 6+7: audit log compliance forense (best-effort)
-    // NUNCA inclui plain_key. Apenas metadata (provider/key_id/fingerprint/operation).
-    // Forense: incident response key leak -> SELECT audit_log WHERE target_id=key_id.
-    query(
+    // FIX-WORKER-17 pass 230 (audit log ordering): res.json acontecia ANTES do
+    // INSERT audit_log (sem await). Race conditions:
+    //   1. Cliente derruba conexao -> Express cancela promise -> audit perdido
+    //   2. DB transient fail -> log silencioso (catch swallow)
+    //   3. Forense LGPD/SOC2: incident response key leak precisa trail garantido
+    // POST-FIX: await + INSERT ANTES do res.json. Cliente recebe resposta apenas
+    // apos trail gravado (+5-10ms p/ vault.use - operacao critica AES boundary).
+    // .catch() preservado para nao quebrar response em case DB fail (audit gap
+    // sera detectado por aiops monitoring de gap de audit_log entries).
+    await query(
       `INSERT INTO audit_log
         (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
        VALUES ($1, $2, 'vault.use', 'vault_key', $3, 'info', $4::JSONB)`,
@@ -609,6 +610,12 @@ app.post('/use',
         }),
       ]
     ).catch((e) => log.warn({ err: e.message, key_id: k.id }, '[vault.use.audit_fail]'));
+
+    // POST-fix audit-first ordering: response apenas APOS trail gravado
+    res.json({
+      key_id: k.id, provider: k.provider, fingerprint: k.key_fingerprint, plain_key: plain,
+      is_platform_pool: k.is_platform_pool, alias: k.key_alias,
+    });
 
     // FIX-WORKER-17 pass 9: INSERT vault_key_usage REMOVIDO daqui.
     // Bug original: criava registro "fantasma" com cost_usd_cents=0 + success=TRUE

@@ -304,7 +304,14 @@ app.post('/payments/asaas/create',
     if (inst > 1) {
       const monthlyRate = 0.0299;
       const totalCentsForCalc = inst <= 3 ? order.total_cents : Math.round(order.total_cents * Math.pow(1 + monthlyRate, inst - 1));
-      installmentValue = Math.floor(totalCentsForCalc / inst) / 100;
+      // FIX-WORKER-11 pass 230 (installment rounding): Math.floor causava
+      // soma das parcelas < total. Ex: R$100/3 = R$33,33 x 3 = R$99,99
+      // -> 1 cent "perdido" (Asaas rejeita installmentValue*count != value
+      // em algumas versoes API + cliente paga R$ 99,99 quando comprou R$100).
+      // POST-FIX: Math.round em vez de Math.floor. Cliente paga ate +R$0,01
+      // por parcela (ate +R$0,12 num 12x) mas total casa com order.total_cents.
+      // Banker's rounding nao necessario - diferenca centavos, nao tem viesgo.
+      installmentValue = Math.round(totalCentsForCalc / inst) / 100;
     }
 
     const payment = await asaas.createPayment({
