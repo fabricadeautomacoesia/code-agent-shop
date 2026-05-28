@@ -60,15 +60,23 @@ export function QnaForm({ productId, onSubmitted }: { productId: string; onSubmi
 
   return (
     <form onSubmit={submit} className="space-y-3">
-      <label className="text-sm font-semibold flex items-center gap-2">
-        <MessageCircle className="w-4 h-4 text-magenta" /> Fazer uma pergunta
+      {/* FIX-WORKER-3 pass 137 (a11y): label htmlFor + textarea id (WCAG 1.3.1).
+          Antes: <label> SEM htmlFor + <textarea> SEM id -> screen readers
+          desassociavam label e campo. NVDA/JAWS anunciavam apenas 'campo edicao'. */}
+      <label htmlFor="qna-question" className="text-sm font-semibold flex items-center gap-2">
+        <MessageCircle className="w-4 h-4 text-magenta" aria-hidden="true" /> Fazer uma pergunta
       </label>
       <div className="relative">
-        <textarea value={q} onChange={(e) => setQ(e.target.value)} required minLength={MIN_LEN} maxLength={MAX_LEN} rows={3}
+        {/* FIX-WORKER-3 pass 137: id + aria-describedby p/ counter SR-friendly */}
+        <textarea id="qna-question" value={q} onChange={(e) => setQ(e.target.value)}
+          required minLength={MIN_LEN} maxLength={MAX_LEN} rows={3}
+          aria-describedby="qna-counter"
           placeholder="Ex: Quais APIs externas precisam? E compativel com Node 18+?"
           className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none text-sm" />
-        {/* FIX-WORKER-3 pass 3: contador de chars visivel (era erro so ao submit) */}
-        <div className={`absolute bottom-2 right-3 text-[10px] ${
+        {/* FIX-WORKER-3 pass 3: contador de chars visivel (era erro so ao submit)
+            FIX-WORKER-3 pass 137 (a11y): id + aria-live polite p/ SR anunciar mudancas */}
+        <div id="qna-counter" aria-live="polite"
+          className={`absolute bottom-2 right-3 text-[10px] ${
           trimmed.length > MAX_LEN ? 'text-red-400' :
           tooShort ? 'text-yellow-400' :
           trimmed.length > 0 ? 'text-green-400' : 'text-white/30'
@@ -81,9 +89,12 @@ export function QnaForm({ productId, onSubmitted }: { productId: string; onSubmi
         className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
         <Send className="w-4 h-4" /> {loading ? 'Enviando...' : (token ? 'Enviar pergunta' : 'Login para perguntar')}
       </button>
-      {/* FIX-WORKER-3 pass 3: ambos banners com botao fechar (UX consistente com cart/checkout) */}
+      {/* FIX-WORKER-3 pass 3: ambos banners com botao fechar (UX consistente com cart/checkout)
+          FIX-WORKER-3 pass 137 (a11y): role=status + aria-live polite no msg success
+          (era apenas visual - SR nao anunciava sucesso de submissao). */}
       {msg && (
-        <div className="text-sm text-green-400 bg-green-500/10 border border-green-500/30 rounded-lg p-2 flex items-start justify-between gap-2">
+        <div role="status" aria-live="polite"
+          className="text-sm text-green-400 bg-green-500/10 border border-green-500/30 rounded-lg p-2 flex items-start justify-between gap-2">
           <span>{msg}</span>
           <button type="button" onClick={() => setMsg('')} className="text-[10px] hover:underline">fechar</button>
         </div>
