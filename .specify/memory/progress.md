@@ -33384,3 +33384,40 @@ Pattern V8 W14: forensic queries de admin precisam idx composite com sort embedd
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Apply mig 094 prod p/ medir EXPLAIN ANALYZE real
+
+## PASS 431 W9 SEO/META: conta/favoritos + conta/notificacoes enriched metadata
+commit pendente
+GAP 2 layouts /conta/* com metadata bare-minimum (title+desc+robots apenas)
+PRE-FIX:
+- /conta/favoritos pass 1 baseline: title + description + robots
+- /conta/notificacoes: title + description + robots
+- /conta/pontos pass 7 + perfil pass 7 + seguranca pass 7 = FULL metadata
+- Inconsistencia: 3 layouts enriched + 2 baseline
+
+CENARIO:
+- User compartilha "olha minha wishlist" link /conta/favoritos no WhatsApp/Discord
+- Preview mostra "Code & Agent Shop" generico (heranca root)
+- twitter card NULL -> caixa preview sem media
+- canonical missing -> Google se acidentalmente indexa, varios paths conflitam
+
+POST-FIX (2 arquivos):
+- + alternates.canonical (canonical explicit)
+- + openGraph completo: title, description, type=website, url, locale pt_BR, siteName
+- + twitter.card summary
+- robots: { index: false, follow: false } preservado (PII path)
+
+Paridade /conta/pontos + perfil + seguranca - consolidacao FINAL conta/*.
+
+W9 conta/* metadata series:
+  pass 1 favoritos baseline
+  pass 7 pontos + perfil + seguranca enriched
+  pass 142 pedidos/[id] + downloads/[token] dynamic
+  pass 431 favoritos + notificacoes enriched <- ESTE (consolidacao final)
+
+Pattern V8 W9: TODAS pages PII (noindex) precisam openGraph rico para share private
+
+164 passes acumulados (268->431) sem deploy VPS
+5 CRITICAL + 26 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
