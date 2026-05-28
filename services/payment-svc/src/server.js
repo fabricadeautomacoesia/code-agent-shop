@@ -111,7 +111,18 @@ app.get('/payments/installments/preview',
     return res.status(400).json({ error: 'amount_too_large', message: 'amount_cents excede R$ 1.000.000,00' });
   }
   const max = Math.min(12, Math.max(1, parseInt(req.query.max || '12', 10)));
-  if (amount < 100) return res.json({ amount_cents: amount, installments: [] });
+  // FIX-WORKER-11 pass 134: amount < 100 (R$1.00) -> 400 explicit error em vez
+  // de silent 200 + installments:[]. UI mostrava grid de parcelas vazio sem
+  // explicacao quando user passava amount=0 (carrinho vazio, edge case). MP/ML
+  // retornam validation_error neste caso. Comprehensible error -> better UX.
+  if (amount < 100) {
+    return res.status(400).json({
+      error: 'amount_too_small',
+      message: 'amount_cents deve ser >= 100 (R$ 1,00 minimo para parcelamento)',
+      amount_cents: amount,
+      min_cents: 100,
+    });
+  }
   const monthlyRate = 0.0299;
   const minNoFee = 500;   // R$5 - minimo por parcela sem juros
   const minWithFee = 1000; // R$10 - minimo por parcela com juros
