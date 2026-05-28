@@ -33465,3 +33465,45 @@ W10 alerts/audit-log filter series:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 433 W17 VAULT/SECURITY: DLP write-side reason em revoked_reason DB column
+commit pendente
+GAP DLP partial coverage - pass 295 mascarava AUDIT mas DB column raw
+PRE-FIX:
+- /keys/:id/revoke (admin): revoked_reason coluna recebia req.body.reason RAW
+- /keys/:id/rotate: revoked_reason concatenado RAW + audit_log payload RAW
+- /keys/me/:id/revoke (seller): coluna RAW, apenas audit (pass 295) tinha mask
+- Pass 295 partial fix - apenas READ-side audit_log payload mascarado
+
+VECTORS:
+- Admin/seller paste accidental secret no reason:
+  - "rotated due to leak of Bearer abc...xyz"
+  - "vazou CPF 12345678901 em logs"
+  - "sk-ant-XYZ leaked, rotate now"
+- Sem mask.text() em WRITE -> secret persiste em:
+  1. vault_api_keys.revoked_reason DB column (psql direto = vis)
+  2. pg_dump backup files (LGPD compliance violation)
+  3. Forensic SELECT raw bypassa mask layer
+  4. /admin/vault listing mask (pass 495 line) so cobre READ
+
+POST-FIX (3 endpoints):
+1. /keys/:id/revoke admin: reasonMaskedAdmin var compartilhada UPDATE + audit
+2. /keys/:id/rotate: maskedReason var compartilhada UPDATE concatenated + audit
+3. /keys/me/:id/revoke seller: reasonMasked var compartilhada UPDATE + audit
+
+Pattern V8 W17 DLP:
+- DLP MUST occur em WRITE (DB-at-rest)
+- READ-side mask e defesa secundaria, NAO primaria
+- Compartilhar var masked em UPDATE+audit garante consistencia
+
+W17 vault DLP series:
+  pass 282 ua_prefix mask audit
+  pass 295 reason audit mask (partial - so audit)
+  pass 412 old_fingerprint forensic
+  pass 433 reason WRITE-side mask cross-endpoints <- ESTE
+
+166 passes acumulados (268->433) sem deploy VPS
+5 CRITICAL + 26 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO

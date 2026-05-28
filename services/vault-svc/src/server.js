@@ -800,14 +800,19 @@ app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
         };
         return;
       }
+      // FIX-WORKER-17 pass 433 (DLP write-side em revoked_reason DB column):
+      //   Mesma gap dos pass 295 - audit mascarava mas DB column raw.
+      //   Mask antes UPDATE para defesa em backup pg_dump + psql direto.
+      const reasonMaskedAdmin = mask.text(String(req.body.reason || '').slice(0, 200));
       // Idempotent UPDATE (defense-in-depth - mesmo com FOR UPDATE acima)
       await c.query(
         `UPDATE vault_api_keys
             SET is_active = FALSE, revoked_at = NOW(), revoked_reason = $1
           WHERE id = $2::UUID AND is_active = TRUE`,
-        [req.body.reason, req.params.id]
+        [reasonMaskedAdmin, req.params.id]
       );
-      /* FIX-WORKER-17 pass 295: DLP mask reason em audit (paridade seller revoke) */
+      /* FIX-WORKER-17 pass 295: DLP mask reason em audit (paridade seller revoke)
+         FIX pass 433: reuse reasonMaskedAdmin (mesma value que UPDATE - consistencia) */
       await c.query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, $2, 'vault.revoke', 'vault_api_key', $3, 'warn', $4::JSONB)`,
@@ -816,7 +821,7 @@ app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
            provider: k.provider,
            key_alias: k.key_alias,
            fingerprint: k.key_fingerprint,
-           reason: mask.text(String(req.body.reason || '').slice(0, 500)),
+           reason: reasonMaskedAdmin,
            ip: req.ip,
          })]
       );
@@ -925,17 +930,35 @@ app.post('/keys/:id/rotate',
       );
       const newKey = inserted.rows[0];
 
-      // Revoga antiga
+      // FIX-WORKER-17 pass 433 (DLP gap rotate reason - paridade /revoke pass 295):
+      //   PRE-FIX: /revoke linha 819 ja mask.text(reason) em audit_log
+      //   /rotate audit log linha 951 escrevia reason RAW
+      //   /rotate revoked_reason linha 935 concatenava reason RAW na coluna
+      //   Atacante admin (pwned ou interno malicioso) pode escrever:
+      //     reason: "rotated due to leak of Bearer abc...xyz" (Bearer raw)
+      //     reason: "vazou CPF 12345678901 em logs"
+      //     reason: "sk-ant-XYZ leaked, rotate now"
+      //   Sem mask.text() -> secret/PII entra em:
+      //     1. revoked_reason VARCHAR(200) (DB column persisted)
+      //     2. audit_log.payload_after JSONB (forensic queries)
+      //   Ambos lidos via /admin/audit-log + /admin/vault listing.
+      //   Pattern V8 W17 DLP: TODO reason field operacional precisa mask.text antes.
+      //   POST-FIX: mask.text(reason) em ambos UPDATE + audit_log.
+      //   Note: o "Reason mascarado" e cosmetico - mascara secret/PII mas
+      //   preserva intent (admin contexto operacional).
+      const maskedReason = mask.text(String(reason || '').slice(0, 140));
+
+      // Revoga antiga (FIX pass 433: reason masked p/ DLP em column persisted)
       await c.query(
         `UPDATE vault_api_keys
             SET is_active = FALSE,
                 revoked_at = NOW(),
                 revoked_reason = $1
           WHERE id = $2`,
-        [`rotated: ${reason} (-> ${newKey.id})`, o.id]
+        [`rotated: ${maskedReason} (-> ${newKey.id})`, o.id]
       );
 
-      // Audit log
+      // Audit log (FIX pass 433: reason masked p/ DLP audit_log payload)
       // FIX-WORKER-17 pass 412: old_fingerprint real (era placeholder string)
       await c.query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
@@ -948,7 +971,7 @@ app.post('/keys/:id/rotate',
            new_fingerprint: newKey.key_fingerprint,
            provider: o.provider,
            key_alias: o.key_alias,
-           reason,
+           reason: maskedReason,
            rotation_days: rotDays,
            ip: req.ip,
          })]
@@ -1274,6 +1297,17 @@ app.post('/keys/me/:id/revoke',
     // Admin bypass: pode revogar qualquer key (via /keys/:id/revoke endpoint admin)
     const isAdmin = req.user && ['admin','staff'].includes(req.user.role);
 
+    // FIX-WORKER-17 pass 433 (DLP gap em revoked_reason DB column - completa pass 295):
+    //   PRE-FIX (pass 295 partial): audit_log payload_after recebia mask.text(reason)
+    //   MAS a coluna DB vault_api_keys.revoked_reason continuava recebendo RAW.
+    //   /admin/vault listing (linha 495) ja aplicava mask na LEITURA mas:
+    //   - Leitura via psql direto: secret visivel
+    //   - Backup pg_dump: secret persiste em backup files (LGPD violation)
+    //   - Forensic query SELECT raw: secret bypass mask layer
+    //   POST-FIX: mask.text() ANTES UPDATE - DLP em write path (DB-at-rest).
+    //   Paridade /keys/:id/rotate pass 433 (mask antes revoked_reason concatenado).
+    //   Pattern V8 W17: DLP DEVE ocorrer em WRITE, nao apenas READ.
+    const reasonMasked = mask.text(String(req.body.reason || '').slice(0, 500));
     const r = await query(
       isAdmin
         ? `UPDATE vault_api_keys
@@ -1285,8 +1319,8 @@ app.post('/keys/me/:id/revoke',
             WHERE id = $2 AND is_active = TRUE
               AND seller_id IN (SELECT id FROM sellers WHERE user_id = $3)
             RETURNING id`,
-      isAdmin ? [req.body.reason, req.params.id]
-              : [req.body.reason, req.params.id, req.user.sub]
+      isAdmin ? [reasonMasked, req.params.id]
+              : [reasonMasked, req.params.id, req.user.sub]
     );
     if (!r.rows.length) {
       return next(errorHandler.notFound('key_not_found_or_already_revoked'));
