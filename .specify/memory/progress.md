@@ -17380,7 +17380,28 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ notification-bell 3 buttons + role=menu (pass 160)
 - ✅ /cart + /checkout 9 buttons a11y rico (pass 161)
 - ✅ /conta/seguranca 2FA flow a11y MASSIVE (pass 162)
-- ✅ conta pages 3 buttons + PII protection (pass 163 esta iter)
+- ✅ conta pages 3 buttons + PII protection (pass 163)
+- ✅ Admin audit-log + db-audit a11y rico + WAI-ARIA tabs (pass 164 esta iter)
+
+W7 PASS 164 RESUMO - W4 ADMIN AUDIT PAGES A11Y RICO:
+- AUDIT 2 admin pages restantes c/ buttons sem type=button + tabs sem semantica:
+  * /audit-log: 3 buttons (retry + 2 paginacao)
+  * /db-audit: 4 buttons (refresh + 3 tabs)
+- FIXES /audit-log:
+  * retry button: type=button + aria-label 'Tentar carregar audit log novamente'
+  * Paginacao Anterior: type=button + aria-label DINAMICO 'atual: X de Y'
+  * Paginacao Proximo: type=button + aria-label dinamico
+  * Page text span: aria-live='polite' (anuncia mudanca pagina)
+- FIXES /db-audit:
+  * Refresh button: type=button + aria-label dinamico (Atualizando/Atualizar)
+    + RefreshCw icon aria-hidden=true
+  * 3 tabs (Dead/Bloated/Top usage) -> WAI-ARIA tabs pattern completo:
+    - div role='tablist' + aria-label='Visualizacao DB audit'
+    - Buttons role='tab' + aria-selected (anuncia ativo)
+    - tabIndex roving (0 active, -1 outros) - keyboard arrows funcionam
+    - focus-visible:outline-magenta consistente
+- BUILD dashboard-admin OK + service converged
+- COMMIT 60400f8 pushed GitHub main + deployed prod
 
 W7 PASS 163 RESUMO - W1+W2 CONTA PAGES BUTTONS + PII A11Y:
 - AUDIT 3 conta pages restantes c/ buttons sem type=button:
