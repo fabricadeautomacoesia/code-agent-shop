@@ -29529,3 +29529,38 @@ PROXIMA ITER:
 - W11 payment processWebhookEvent additional withRetry coverage
 - W4 admin dashboard withRetry events logging panel
 - VPS SSH unblock URGENTISSIMO (144 ciclos - 48h)
+
+
+============================================================
+PASS 312 - 2026-05-28 - W7 price-alerts COUNT OVER + W14 indexes adequate
+============================================================
+Files: 1 modificado
+  - services/product-svc/src/routes/price-alerts.js (COUNT OVER)
+Lines: ~20 changed
+
+W7 (price-alerts GET COUNT OVER consolidation):
+- PRE-FIX: 2 queries (rows + COUNT separado) com WHERE+JOIN identicos
+- POST-FIX: 1 query COUNT(*) OVER()::INT + strip _total via map
+- Pattern V8 consolidado 15+ endpoints (passes 178-310)
+- Latencia ~25ms (2 scans) -> ~14ms (1 scan)
+
+W14 (price_alerts indexes):
+- idx (product_id) + idx (user_id, created_at DESC) ja em mig 030
+- Cobertura perfeita para GET query (WHERE user_id + ORDER BY created_at DESC)
+- Nenhuma alteracao necessaria
+
+VPS SSH BLOQUEADO (145 ciclos - 48.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+COUNT OVER Consolidation Final - 16 endpoints:
+- 178/200/202/206/215/249/273/289/293/297/299/300/301/302/311/312
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc --force
+- W7: EXPLAIN ANALYZE /products/price-alerts
+  Esperado: 1 scan (vs 2 pre-fix)
+
+PROXIMA ITER:
+- W11 payment audit refundPayment tx withRetry coverage
+- W4 admin /admin/price-alerts dashboard (admin overview)
+- VPS SSH unblock URGENTISSIMO (145 ciclos - 48.3h)

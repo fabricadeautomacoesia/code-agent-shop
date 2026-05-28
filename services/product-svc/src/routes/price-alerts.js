@@ -52,12 +52,17 @@ router.get('/', asyncHandler(async (req, res) => {
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
+  /* FIX-WORKER-7 pass 312: COUNT(*) OVER() window consolidation.
+     PRE-FIX: 2 queries (rows + COUNT separado) com WHERE+JOIN identicos.
+     Pattern V8 cross-svc consolidado 15+ endpoints (passes 178-310).
+     POST-FIX: 1 query window aggregate + strip _total via map. */
   const r = await query(
     `SELECT a.id, a.product_id, a.threshold_cents, a.created_at, a.last_notified_at,
             p.slug, p.title, p.price_cents AS current_price_cents,
             p.currency, p.cover_image_url,
             (a.threshold_cents IS NOT NULL
-              AND p.price_cents <= a.threshold_cents) AS is_triggered_now
+              AND p.price_cents <= a.threshold_cents) AS is_triggered_now,
+            COUNT(*) OVER()::INT AS _total
        FROM product_price_alerts a
        JOIN products p ON p.id = a.product_id
       WHERE a.user_id = $1
@@ -68,22 +73,14 @@ router.get('/', asyncHandler(async (req, res) => {
     [req.user.sub, limit, offset]
   );
 
-  // Total count UX paginacao
-  const totalRes = await query(
-    `SELECT COUNT(*)::INT AS total FROM product_price_alerts a
-       JOIN products p ON p.id = a.product_id
-      WHERE a.user_id = $1
-        AND p.status IN ('approved','platform_owned')
-        AND p.deleted_at IS NULL`,
-    [req.user.sub]
-  );
-  const total = totalRes.rows[0].total;
+  const total = r.rows[0]?._total ?? 0;
+  const alerts = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
 
   res.json({
-    alerts: r.rows,
-    count: r.rows.length,
+    alerts,
+    count: alerts.length,
     total, limit, offset,
-    has_more: (offset + r.rows.length) < total,
+    has_more: (offset + alerts.length) < total,
   });
 }));
 
