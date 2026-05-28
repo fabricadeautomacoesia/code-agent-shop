@@ -869,7 +869,7 @@ router.post('/mv-kpi/refresh',
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, severity, payload_after)
          VALUES ($1, $2, 'mv_seller_kpi.refresh.manual.fail', 'materialized_view', 'error', $3::JSONB)`,
         [req.user.sub, req.user.role,
-         JSON.stringify({ error: String(e.message).slice(0, 500), ip: req.ip })]
+         JSON.stringify({ error: /* FIX pass 345 DLP */ require('@cas/shared').mask.text(String(e.message || '').slice(0, 500)), ip: req.ip })]
       ).catch(() => {});
       return res.status(500).json({ error: 'refresh_failed', message: e.message });
     }

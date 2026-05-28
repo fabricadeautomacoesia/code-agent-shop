@@ -86,7 +86,7 @@ async function checkSellerQuota(userId, incomingSize) {
 function cleanupFile(filePath) {
   if (!filePath) return;
   fs.unlink(filePath, (err) => {
-    if (err) log.warn({ err: err.message, path: filePath }, '[upload.cleanup_failed]');
+    if (err) log.warn({ /* FIX pass 345 DLP */ err: mask.text(String(err.message || '').slice(0, 300)), path: filePath }, '[upload.cleanup_failed]');
   });
 }
 
@@ -205,7 +205,7 @@ router.post('/media', upload.single('file'), asyncHandler(async (req, res, next)
 // erro do multer
 router.use((err, _req, res, _next) => {
   if (err) {
-    log.warn({ err: err.message }, '[upload.err]');
+    log.warn({ /* FIX pass 345 DLP */ err: mask.text(String(err.message || '').slice(0, 300)) }, '[upload.err]');
     return res.status(400).json({ error: 'upload_error', message: err.message });
   }
 });

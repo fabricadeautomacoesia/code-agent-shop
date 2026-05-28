@@ -1458,7 +1458,7 @@ async function refreshAllReputations() {
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, severity, payload_after)
        VALUES (NULL, 'service', 'mv_seller_kpi.refresh.fail', 'materialized_view', 'critical', $1::JSONB)`,
       [JSON.stringify({
-        error: String(e.message).slice(0, 500),
+        error: /* FIX pass 345 DLP */ mask.text(String(e.message || '').slice(0, 500)),
         sellers_total: sellers.rows.length,
         cron_duration_ms: Date.now() - startedAt,
       })]

@@ -541,7 +541,7 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
             SET processing_error = $1,
                 retry_count = retry_count + 1
           WHERE id = $2`,
-        [String(e.message).slice(0, 500), eventRowId]
+        [/* FIX pass 345 DLP */ mask.text(String(e.message || '').slice(0, 500)), eventRowId]
       ).catch(() => {});
     }
   });
@@ -1146,7 +1146,7 @@ app.post('/payments/payouts/:id/process',
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, $2, 'payout.process_fail', 'seller_payout', $3, 'critical', $4::JSONB)`,
         [req.user.sub, req.user.role, req.params.id,
-         JSON.stringify({ error: String(e.message).slice(0, 500) })]
+         JSON.stringify({ error: /* FIX pass 345 DLP */ mask.text(String(e.message || '').slice(0, 500)) })]
       ).catch(() => {});
       return next(errorHandler.badRequest('asaas_transfer_failed', String(e.message)));
     }
@@ -1274,7 +1274,7 @@ async function reconcileWebhooks() {
               SET processing_error = $1,
                   retry_count = retry_count + 1
             WHERE id = $2`,
-          [String(e.message).slice(0, 500), row.id]
+          [/* FIX pass 345 DLP */ mask.text(String(e.message || '').slice(0, 500)), row.id]
         ).catch(() => {});
         log.warn({ webhook_id: row.id, /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[reconcile.fail]');
       }
@@ -1385,7 +1385,7 @@ app.get('/payments/webhooks/dead',
 //   FIX: webhookResetLimiter 10/hr/admin (real ops resets ~1-3/dia).
 //
 // BUG 2 *** DLP processing_error update *** linha 1105 (era pass 61 read-side only)
-//   PRE-FIX: UPDATE SET processing_error = $1 com String(e.message).slice(0, 500)
+//   PRE-FIX: UPDATE SET processing_error = $1 com /* FIX pass 345 DLP */ mask.text(String(e.message || '').slice(0, 500))
 //   sem mask.text(). Stack traces podem ter PG_PASS/Bearer/JWT em error msg.
 //   Pass 61 mascarou na LEITURA mas escrita ainda puxa raw.
 //   FIX: mask.text() antes do INSERT (DLP em both read+write paths).
