@@ -5,6 +5,9 @@ import { Api } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';
 
+/* FIX-WORKER-9 pass 294: openGraph + twitter card paridade pass 232/284/287
+   /comparar tem noindex mas link compartilhado em WhatsApp/Slack/X precisa
+   preview legit (nao herda root generic). */
 export const metadata = {
   title: 'Comparar produtos - Code & Agent Shop',
   description: 'Compare ate 4 produtos lado a lado: preco, recursos, rating, tech stack.',
@@ -12,6 +15,19 @@ export const metadata = {
   // sem isso: ?ids=uuid1,uuid2 e ?ids=uuid2,uuid1 viram URLs duplicadas no Google (explosao combinatorial)
   robots: { index: false, follow: true },
   alternates: { canonical: '/comparar' },
+  openGraph: {
+    type: 'website',
+    title: 'Comparar produtos - Code & Agent Shop',
+    description: 'Compare ate 4 produtos lado a lado: preco, recursos, rating, tech stack.',
+    url: '/comparar',
+    siteName: 'Code & Agent Shop',
+    locale: 'pt_BR',
+  },
+  twitter: {
+    card: 'summary',
+    title: 'Comparar produtos - Code & Agent Shop',
+    description: 'Compare ate 4 produtos lado a lado: preco, recursos, rating, tech stack.',
+  },
 };
 
 // FIX-WORKER-3 pass 8: fetchCompare retorna detalhe do error (consume W7 pass 6).

@@ -48,9 +48,18 @@ function RegisterInner() {
       setError('Telefone: use formato internacional +5511999999999 (com codigo do pais).');
       return;
     }
-    if (form.cpf_cnpj && !/^\d{11,14}$/.test(form.cpf_cnpj.replace(/\D/g, ''))) {
-      setError('CPF/CNPJ: digite apenas numeros, 11 ou 14 digitos.');
-      return;
+    /* FIX-WORKER-1 pass 294: CPF/CNPJ length strict (11 OR 14, nao range 11-14).
+       PRE-FIX: regex /^\d{11,14}$/ aceita 12 e 13 digitos invalidos.
+       - 12 digitos: nem CPF nem CNPJ -> backend 400 com 'invalid_cpf_cnpj'
+       - 13 digitos: idem (UX confuso "digitei 13 numeros, foi recusado")
+       POST-FIX: regex precisa /^(\d{11}|\d{14})$/ - apenas comprimentos validos.
+       Mensagem UX: explicita "CPF (11)" ou "CNPJ (14)" para reduzir confusao. */
+    if (form.cpf_cnpj) {
+      const digits = form.cpf_cnpj.replace(/\D/g, '');
+      if (!/^(\d{11}|\d{14})$/.test(digits)) {
+        setError(`CPF/CNPJ invalido: use 11 digitos para CPF ou 14 para CNPJ (voce digitou ${digits.length}).`);
+        return;
+      }
     }
     setLoading(true);
     try {

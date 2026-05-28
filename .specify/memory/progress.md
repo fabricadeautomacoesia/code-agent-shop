@@ -28805,3 +28805,45 @@ PROXIMA ITER:
 - W7 admin /flash-promo/list endpoint (gestao admin promos)
 - W3 PDP timer countdown render perf optimization
 - VPS SSH unblock URGENTISSIMO (126 ciclos - 42h)
+
+
+============================================================
+PASS 294 - 2026-05-28 - W1 register CPF/CNPJ strict + W9 comparar meta
+============================================================
+Files: 2 modificados
+  - apps/storefront/src/app/register/page.tsx (regex /^(\d{11}|\d{14})$/ + UX msg)
+  - apps/storefront/src/app/comparar/page.tsx (openGraph + twitter card)
+Lines: ~25 added
+
+W1 (register CPF/CNPJ strict length validation):
+- PRE-FIX: regex /^\d{11,14}$/ aceita 12 e 13 digitos invalidos
+  - 12 digitos: nem CPF (11) nem CNPJ (14) -> backend 400 'invalid_cpf_cnpj'
+  - UX confuso "digitei 13 numeros, foi recusado pelo servidor"
+- POST-FIX: regex /^(\d{11}|\d{14})$/ - apenas comprimentos validos
+- Mensagem UX: "CPF (11) ou CNPJ (14) - voce digitou X" - acionavel
+- Roundtrip economizado + UX clara
+
+W9 (/comparar SEO openGraph + twitter card):
+- PRE-FIX: tinha title/description/canonical mas SEM openGraph nem twitter
+- Compartilhamento WhatsApp/Slack/X mostrava preview generico do site
+  (mesmo bug pass 287 home page)
+- POST-FIX: openGraph (type, title, description, url, siteName, locale) +
+  twitter (card='summary', title, description)
+- Mesmo /comparar com noindex (correct - combinacoes user-generated),
+  share link DEVE renderizar preview legit
+- Paridade pass 232 seller, pass 284 categoria, pass 287 home
+
+VPS SSH BLOQUEADO (127 ciclos - 42.3h sem deploy).
+Migs 069-083 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront --force
+- W1: /register form com cpf_cnpj=000000000000 (12 digitos) - cliente bloqueia
+  msg: "CPF/CNPJ invalido: use 11 digitos para CPF ou 14 para CNPJ (voce digitou 12)"
+- W9: curl -s https://cas.../comparar | grep -oP '(og:title|twitter:card|og:url)' | head
+  Esperado: og:title, og:url, twitter:card presentes (vs antes apenas title meta)
+
+PROXIMA ITER:
+- W1 register form check button hover state UX
+- W7 admin /admin/flash-promo endpoint creation
+- VPS SSH unblock URGENTISSIMO (127 ciclos - 42.3h)
