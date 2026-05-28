@@ -68,10 +68,13 @@ export default function AdminOrdersPage() {
         )}
       </div>
 
+      {/* FIX-WORKER-4 pass 171 (a11y V8 R23): role=alert + type=button + aria-label */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>Erro carregando pedidos: {error}</span>
-          <button onClick={() => { setError(''); load(); }} className="text-xs hover:underline">retry</button>
+          <button type="button" onClick={() => { setError(''); load(); }}
+            aria-label="Tentar carregar pedidos novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">retry</button>
         </div>
       )}
 

@@ -85,24 +85,29 @@ export default function AdminProductsPage() {
         ))}
       </div>
 
+      {/* FIX-WORKER-4 pass 171 (a11y V8 R23): role=alert/status + type=button + aria-label */}
       {loadError && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>Erro carregando lista: {loadError}</span>
-          <button onClick={() => { setLoadError(''); load(); }} className="text-xs hover:underline">retry</button>
+          <button type="button" onClick={() => { setLoadError(''); load(); }}
+            aria-label="Tentar carregar lista novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">retry</button>
         </div>
       )}
 
       {/* FIX-WORKER-4 pass 3: banners action via useAdminAction */}
       {action.error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.error}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de erro"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
         </div>
       )}
       {action.success && (
-        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="status" aria-live="polite" className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.success}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de sucesso"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-green-400 rounded">fechar</button>
         </div>
       )}
 
@@ -171,19 +176,19 @@ export default function AdminProductsPage() {
                     <ExternalLink className="w-3 h-3" aria-hidden="true" /> Ver
                   </a>
                   {!p.is_platform_owned && statusReal !== 'archived' && (
-                    <button onClick={() => platformTake(p.id)}
+                    <button type="button" onClick={() => platformTake(p.id)}
                       disabled={busyTake || busyArchive}
                       aria-label={`Platform-take produto ${p.title}`}
-                      className="text-yellow-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                      className="text-yellow-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-yellow-400 rounded">
                       <Award className="w-3 h-3" aria-hidden="true" /> {busyTake ? '...' : 'Take'}
                     </button>
                   )}
                   {/* FIX-WORKER-4 pass 13: Arquivar so se nao ja arquivado */}
                   {statusReal !== 'archived' && (
-                    <button onClick={() => archive(p.id)}
+                    <button type="button" onClick={() => archive(p.id)}
                       disabled={busyArchive || busyTake}
                       aria-label={`Arquivar produto ${p.title}`}
-                      className="text-red-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                      className="text-red-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-red-400 rounded">
                       <Archive className="w-3 h-3" aria-hidden="true" /> {busyArchive ? '...' : 'Arquivar'}
                     </button>
                   )}
