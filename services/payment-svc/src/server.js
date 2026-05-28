@@ -416,6 +416,25 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
     log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[webhook.invalid_payload]');
     return res.status(400).json({ error: 'invalid_payload', message: 'event field required' });
   }
+  // FIX-WORKER-11 pass 241 (string length defensive):
+  //   Schema asaas_webhook_events.asaas_event_id VARCHAR(60) +
+  //   event_type VARCHAR(80) + asaas_payment_id VARCHAR(60).
+  //   Atacante enviando data.id=<long_string> ou data.event=<>80chars
+  //   disparava PG 22001 string_too_long -> errorHandler 500 -> DB internals
+  //   leak via error message variance. Pattern Asaas: event_id sempre <40 chars
+  //   (UUID-like ou prefixed integer). Defensive validation client-side.
+  if (data.id !== undefined && (typeof data.id !== 'string' || data.id.length > 60)) {
+    log.warn({ ip: req.ip, id_len: data.id?.length }, '[webhook.invalid_id]');
+    return res.status(400).json({ error: 'invalid_event_id' });
+  }
+  if (data.event.length > 80) {
+    log.warn({ ip: req.ip, event_len: data.event.length }, '[webhook.event_too_long]');
+    return res.status(400).json({ error: 'invalid_event_type' });
+  }
+  if (data.payment?.id !== undefined && (typeof data.payment.id !== 'string' || data.payment.id.length > 60)) {
+    log.warn({ ip: req.ip, pay_id_len: data.payment.id?.length }, '[webhook.invalid_payment_id]');
+    return res.status(400).json({ error: 'invalid_payment_id' });
+  }
 
   // FIX-WORKER-11 pass 184 (CRITICAL race fix): idempotency atomica via ON CONFLICT.
   //

@@ -137,11 +137,20 @@ router.post('/register', registerLimiter, validate({ body: registerSchema }), as
 
   // BUG 2: CPF dedup check (paralelo a sellers UNIQUE pass 41)
   // SO se cpf_cnpj fornecido (eh optional)
+  // FIX-WORKER-6 pass 241 (normalize comparison): legacy users podem ter
+  // CPF salvo com mascara "111.222.333-44" enquanto registros novos salvam
+  // digits only "11122233344". Comparison IN ($1, $2) so achava match SE
+  // input chegava em formato identico ao DB. Atacante CPF dup escapava
+  // dedup mudando formato (ponto vs sem ponto).
+  // POST-FIX: regexp_replace strip non-digits SQL-side para comparison
+  // normalizada. Permite detectar duplicates independente de formato.
   if (cpf_cnpj) {
     const digitsOnly = cpf_cnpj.replace(/\D/g, '');
     const dupCpf = await query(
-      `SELECT id FROM users WHERE cpf_cnpj IN ($1, $2) AND deleted_at IS NULL LIMIT 1`,
-      [cpf_cnpj, digitsOnly]
+      `SELECT id FROM users
+        WHERE regexp_replace(cpf_cnpj, '[^0-9]', '', 'g') = $1
+          AND deleted_at IS NULL LIMIT 1`,
+      [digitsOnly]
     );
     if (dupCpf.rows.length) {
       return res.status(409).json({

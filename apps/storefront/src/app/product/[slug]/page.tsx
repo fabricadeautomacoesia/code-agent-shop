@@ -94,7 +94,15 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
       // FIX bug 3: .catch defense-in-depth (fetchRelated ja eh safe mas defensivo)
       fetchRelated(slug).catch(() => []),
     ]);
-    reviews = r.reviews; qna = q.qna; related = rel;
+    // FIX-WORKER-3 pass 241 (defensive null guard):
+    //   Api.reviews().catch returns {reviews: []} mas backend respondendo
+    //   200 com body {reviews: null} (malformed JSON ou bug serializer)
+    //   passa o catch e atribui null direto. Linha 142 reviews.slice(0,10)
+    //   -> TypeError "Cannot read properties of null". Same para qna.
+    //   POST-FIX: defensive Array.isArray fallback.
+    reviews = Array.isArray(r.reviews) ? r.reviews : [];
+    qna = Array.isArray(q.qna) ? q.qna : [];
+    related = Array.isArray(rel) ? rel : [];
   } catch {
     // notFound() so chamado se Api.product(slug) lancar (produto inexistente).
     // Reviews/qna/related TODOS tem fallback proprio -> nunca disparam aqui.

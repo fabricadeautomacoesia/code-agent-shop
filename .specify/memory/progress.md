@@ -25032,3 +25032,97 @@ PROXIMA ITER:
 - W4 admin: bulk actions QA queue
 - W13 notification: schedule digest weekly
 - VPS SSH unblock URGENTE (73 ciclos - 24.3h)
+
+============================================================
+PASS 241 (2026-05-28) - W11 + W6 + W3 webhook/cpf/defensive
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W11 payment-svc: webhook validate string lengths (DLP via PG errors)
+- W6 auth-svc: register CPF dedup normalize comparison
+- W3 storefront: PDP defensive null guard reviews/qna/related
+
+============================================================
+1. W11 - webhook string length validation
+============================================================
+FILE: services/payment-svc/src/server.js:420-430
+
+PROBLEMA (DLP + DoS):
+- Schema asaas_webhook_events:
+  asaas_event_id VARCHAR(60), event_type VARCHAR(80), asaas_payment_id VARCHAR(60)
+- Atacante envia data.id ou data.event > limit -> PG 22001 string_too_long
+- errorHandler 500 -> Asaas retry loop + DB internals leak via error variance
+- Asaas real: event_id sempre <40 chars (UUID-like ou prefixed integer)
+
+POST-FIX: validate length client-side ANTES do INSERT
+- data.id > 60 chars -> 400 invalid_event_id
+- data.event > 80 chars -> 400 invalid_event_type
+- data.payment.id > 60 chars -> 400 invalid_payment_id
+- log.warn com IP + lengths para forensics
+
+============================================================
+2. W6 - register CPF dedup normalize comparison
+============================================================
+FILE: services/auth-svc/src/routes/auth.js:140-160
+
+PROBLEMA (bypass dedup):
+- PRE-FIX query: WHERE cpf_cnpj IN ($1, $2) [raw, digitsOnly]
+- Atacante cria conta com CPF "11122233344" (digits only)
+- Tenta criar segunda com "111.222.333-44" (mascara)
+- Comparison falha: $1='111.222.333-44', $2='11122233344'
+- DB tem '11122233344' -> IN check passes... espera o oposto: DB pode
+  ter '111.222.333-44' (legacy format) e novo input digits only
+- Resultado: dedup falha em 50% dos casos com format mismatch
+- Anti-fraud multi-account bypass
+
+POST-FIX: regexp_replace SQL-side strip non-digits
+- WHERE regexp_replace(cpf_cnpj, '[^0-9]', '', 'g') = $1
+- Param: digitsOnly (sempre digitos)
+- Comparison normalizada em ambos os lados
+- Detecta dups independente de formato salvo
+
+============================================================
+3. W3 - PDP defensive null guard reviews/qna/related
+============================================================
+FILE: apps/storefront/src/app/product/[slug]/page.tsx:97
+
+PROBLEMA:
+- Api.reviews().catch(() => ({reviews:[]})) cobre network/HTTP error
+- MAS: backend respondendo 200 com body {reviews: null} (malformed JSON
+  ou bug serializer) passa o catch e atribui reviews=null
+- Linha 142: <ProductTabs reviews={reviews.slice(0,10)} ... />
+  -> TypeError "Cannot read properties of null (reading 'slice')"
+- Page crash white-screen sem fallback
+
+POST-FIX: Array.isArray() fallback em 3 atribuicoes:
+- reviews = Array.isArray(r.reviews) ? r.reviews : []
+- qna = Array.isArray(q.qna) ? q.qna : []
+- related = Array.isArray(rel) ? rel : []
+- ProductTabs sempre recebe array iteravel
+
+============================================================
+SUMARIO PASS 241
+============================================================
+Files: 3 modificados
+  - services/payment-svc/src/server.js (length validation)
+  - services/auth-svc/src/routes/auth.js (CPF normalize)
+  - apps/storefront/src/app/product/[slug]/page.tsx (defensive null)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (74 ciclos - 24.7h sem deploy).
+Migs 069+070+071 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_payment-svc cas_auth-svc cas_storefront --force
+- W11 test: curl webhook -d '{"event":"<200 chars string>"}' -> 400 invalid_event_type
+  curl -d '{"event":"PAYMENT_RECEIVED","id":"<100 chars>"}' -> 400 invalid_event_id
+- W6 test: criar user com CPF "111.222.333-44" -> tentar segundo com "11122233344"
+  -> 409 cpf_already_registered (era 201 OK = duplicate criado)
+- W3 test: forcar Api.reviews retornar {reviews: null} (mock) -> page renderiza
+  sem crash (ProductTabs recebe [])
+
+PROXIMA ITER:
+- W4 admin: bulk select QA queue actions
+- W13 notification: weekly digest cron
+- W8 visual: consistencia gradient buttons
+- VPS SSH unblock CRITICAL (74 ciclos - 24.7h)
