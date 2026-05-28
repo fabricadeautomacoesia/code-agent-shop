@@ -21330,3 +21330,72 @@ PROXIMA ITER:
 - W17: vault auto-rotation swap atomico
 - W14: drop duplicate idx_loyalty_user_recent (apos pg_stat zero scans 2w)
 - 🚨 VPS SSH unblock URGENTE (26 ciclos - ~8.7h sem deploy!)
+
+PASS 194 (W4 frontend LLM Cost dashboard) - 2026-05-28:
+- W4 frontend page /admin/llm-cost consumindo endpoint pass 193
+
+ARQUIVOS CRIADOS:
+- apps/dashboard-admin/src/app/llm-cost/layout.tsx (Metadata + noindex)
+- apps/dashboard-admin/src/app/llm-cost/page.tsx (231 lines)
+- apps/dashboard-admin/src/app/layout.tsx (+ Cpu icon + NAV entry)
+
+UI FEATURES:
+
+1. 4 stat cards top (grid md:grid-cols-4):
+   - Total gasto (30d) - USD + calls count
+   - Aprovado + success rate % (green-400)
+   - Rejeitado (yellow-400)
+   - Failed + forecast 30d projected (red-400)
+
+2. Provider/Model table (sortable backend):
+   - Provider badge (uppercase)
+   - Model name (font-mono)
+   - calls / total / avg / max cents
+   - input/output tokens (formatted 1.2K, 3.4M)
+   - avg duration ms (latencia comparativa)
+
+3. Daily sparkline textual:
+   - 30 dias ASC com bar visual
+   - bg-gradient magenta->violet-deep proporcional ao max diario
+   - Cada bar: date + value + calls count
+   - aria-label dinamico por bar (a11y)
+
+a11y patterns:
+- role='alert' no error banner + close button
+- aria-hidden='true' em icones decorativos (Cpu/TrendingUp/etc)
+- aria-label semantico em bars sparkline
+- focus-visible:outline-2 em close button
+
+USE CASES dashboard admin:
+- Identificar provider mais caro
+- Detectar spike anomalo (visual diario)
+- Forecasting mensal projetado
+- Tradeoff custo vs latencia
+
+NAV admin agora tem 13 entries (+ LLM Cost icon Cpu):
+Visao Geral / Sellers / Produtos / QA Queue / Pedidos / Saques /
+Denuncias / Alertas / Vault / Webhooks / Audit Log / Disputas /
+DB Audit / LLM Cost (NEW)
+
+3 files changed, 231 insertions, 1 deletion
+Commit 2647ffd pushed origin/main
+VPS SSH ainda bloqueado (27 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (27 ciclos):
+- 168-193: documentados
+- 194: admin /llm-cost dashboard frontend
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-admin --force
+- Acessar: https://admin.inovareinteligenciaartificial.com/llm-cost
+  (login: fabricadeautomacoes0@gmail.com / AdminTeste123)
+- Esperado:
+  - 4 cards top com total spend + success rate
+  - Table provider/model com OpenAI tipicamente top spender
+  - Sparkline 30 dias historico
+
+PROXIMA ITER:
+- W17: vault auto-rotation swap atomico
+- W14: drop duplicate idx_loyalty_user_recent (apos pg_stat zero scans 2w)
+- W16: implementar 1 MLB feature ainda pendente (analisar lista do prompt)
+- 🚨 VPS SSH unblock URGENTE (27 ciclos - ~9h sem deploy!)
