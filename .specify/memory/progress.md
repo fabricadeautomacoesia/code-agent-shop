@@ -17381,7 +17381,28 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ /cart + /checkout 9 buttons a11y rico (pass 161)
 - ✅ /conta/seguranca 2FA flow a11y MASSIVE (pass 162)
 - ✅ conta pages 3 buttons + PII protection (pass 163)
-- ✅ Admin audit-log + db-audit a11y rico + WAI-ARIA tabs (pass 164 esta iter)
+- ✅ Admin audit-log + db-audit a11y rico + WAI-ARIA tabs (pass 164)
+- ✅ Admin /disputes 7 buttons + radiogroup (pass 165 esta iter)
+
+W7 PASS 165 RESUMO - W4 ADMIN /disputes A11Y MASSIVE:
+- AUDIT /disputes admin: 7 buttons sem type=button + 6 filter buttons sem radiogroup
+- FIXES filters status (6 buttons):
+  * h2 sr-only + role='radiogroup' + aria-labelledby
+  * 6 buttons type=button + role=radio + aria-checked
+  * focus-visible:outline-magenta
+- FIXES alert/status banners (3 fechar/retry buttons):
+  * loadError div: role='alert' + retry button type=button + aria-label rico
+  * action.error: role='alert' + fechar type=button + aria-label
+  * action.success: role='status' + aria-live='polite' + fechar
+- FIXES resolve dispute actions (3 buttons per dispute, dinamicos):
+  * Container: role='group' + aria-label DINAMICO 'Acoes disputa #{order_number}'
+  * Favor buyer: type=button + aria-label dinamico 'Resolver disputa #X a favor do comprador'
+    + CheckCircle aria-hidden
+  * Favor seller: type=button + aria-label dinamico + XCircle aria-hidden
+  * Cancelar: type=button + aria-label dinamico c/ #
+- Pattern consistente com /payouts (pass 155 radiogroup)
+- BUILD dashboard-admin OK + service converged
+- COMMIT 558e6eb pushed GitHub main + deployed prod
 
 W7 PASS 164 RESUMO - W4 ADMIN AUDIT PAGES A11Y RICO:
 - AUDIT 2 admin pages restantes c/ buttons sem type=button + tabs sem semantica:
