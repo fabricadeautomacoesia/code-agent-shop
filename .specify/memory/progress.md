@@ -31211,3 +31211,39 @@ W10 cache consolidation completa:
 PROXIMA ITER:
 - W17 vault security audit
 - VPS SSH unblock URGENTISSIMO (3 CRITICAL acumulados)
+
+## PASS 359 W17 *** CRITICAL ***: keyGenerator missing - vault + auth limiters
+commit 0c4246f
+BUG SHARED BUCKET DoS via Traefik (paridade pass 304 gateway)
+PRE-FIX 4 rate-limiters SEM keyGenerator:
+  - vault-svc provisionRateLimit (admin key provision 5/min)
+  - auth-svc registerLimiter (5/15min)
+  - auth-svc forgotPasswordLimiter (3/hora)
+  - auth-svc resetPasswordLimiter (10/15min)
+  Comments diziam "por IP" mas req.ip = peer Traefik (shared)
+  Pass 304 fixou gateway, estes 4 svc-level ficaram lagged
+
+IMPACTO:
+  - vault.provision: bucket esgotado = OUTROS admins bloqueados
+  - auth.register: bot esgota = NINGUEM registra novo
+  - auth.forgot: atacante esgota = impede victim reset legit
+    (DoS direcionado contra password recovery)
+  - auth.reset: brute-force tokens consome share global
+
+POST-FIX paridade pattern V8:
+  keyGenerator: (req) => req.headers['x-real-ip'] || req.ip
+  Aplicado em 4 limiters
+
+4o CRITICAL fix acumulado:
+  289 asaas.cancelPayment (real money)
+  304 gateway rateLimit keyGenerator (DoS)
+  354 gateway body limit ordering (upload)
+  359 vault+auth limiters keyGenerator (DoS) <- ESTE
+
+92 passes acumulados (268->359) sem deploy VPS
+4 CRITICAL = motivo URGENTISSIMO unblock SSH
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (4 CRITICAL!)
+- W4 admin audit-log viewer
+- W2 checkout E2E
