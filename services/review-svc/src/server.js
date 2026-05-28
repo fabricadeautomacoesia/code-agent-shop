@@ -1347,6 +1347,7 @@ async function refreshAllReputations() {
   log.info('[reputation] start');
   const sellers = await query(`SELECT id FROM sellers WHERE status = 'active' AND deleted_at IS NULL`);
   let ok = 0, err = 0;
+  const startedAt = Date.now();
   for (const s of sellers.rows) {
     try {
       await query('SELECT fn_refresh_seller_reputation($1)', [s.id]);
@@ -1355,8 +1356,43 @@ async function refreshAllReputations() {
       err++; log.warn({ seller: s.id, err: e.message }, '[reputation.err]');
     }
   }
-  await query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_seller_kpi').catch(() => {});
-  log.info({ ok, err, total: sellers.rows.length }, '[reputation] done');
+  // FIX-WORKER-14 pass 208: error tracking + audit log no REFRESH
+  // PRE-FIX: .catch(() => {}) swallow silent
+  //   Admin nunca soube se mv_seller_kpi atualizou ou silenciou erro 24h
+  //   Em prod observamos KPIs antigos sem causa identificavel
+  // POST-FIX: log + audit_log INSERT em sucesso E falha
+  //   Admin pode SELECT FROM audit_log WHERE action='mv_seller_kpi.refresh'
+  //   p/ ver historico de atualizacoes (success/fail/duration)
+  const refreshStartedAt = Date.now();
+  try {
+    await query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_seller_kpi');
+    const refreshDurationMs = Date.now() - refreshStartedAt;
+    log.info({ ok, err, total: sellers.rows.length, refresh_ms: refreshDurationMs },
+      '[reputation] done + mv_seller_kpi refreshed');
+    await query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, severity, payload_after)
+       VALUES (NULL, 'service', 'mv_seller_kpi.refresh', 'materialized_view', 'info', $1::JSONB)`,
+      [JSON.stringify({
+        sellers_total: sellers.rows.length,
+        sellers_ok: ok,
+        sellers_err: err,
+        refresh_duration_ms: refreshDurationMs,
+        cron_duration_ms: Date.now() - startedAt,
+      })]
+    ).catch(() => {});
+  } catch (e) {
+    log.error({ err: e.message, ok, err, total: sellers.rows.length },
+      '[reputation.refresh.fail] mv_seller_kpi NAO atualizado - admin investigar urgente');
+    await query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, severity, payload_after)
+       VALUES (NULL, 'service', 'mv_seller_kpi.refresh.fail', 'materialized_view', 'critical', $1::JSONB)`,
+      [JSON.stringify({
+        error: String(e.message).slice(0, 500),
+        sellers_total: sellers.rows.length,
+        cron_duration_ms: Date.now() - startedAt,
+      })]
+    ).catch(() => {});
+  }
 }
 
 cron.schedule('3 3 * * *', () => refreshAllReputations().catch(() => {}));

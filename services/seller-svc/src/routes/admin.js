@@ -744,4 +744,62 @@ router.post('/payouts/:id/reject',
   })
 );
 
+// FIX-WORKER-14 pass 208: POST /sellers/admin/mv-kpi/refresh
+// Admin manual trigger para REFRESH MATERIALIZED VIEW mv_seller_kpi.
+//
+// PRE-FIX: cron noturno 3:03 AM era o unico path. Admin precisava aguardar
+// 24h apos eventos disruptivos (mass dispute resolve, bulk KYC approve) para
+// ver KPIs atualizados.
+//
+// USE CASES:
+// - Apos mass platform-take (admin movou 50 produtos de seller suspended)
+// - Apos pagamento de payout grande (KPI gross_revenue stale)
+// - Apos seller class promotion bulk (reputation_tier mudou em batch)
+// - Investigacao admin: KPI parece errado, force refresh + compara
+//
+// PROTECTION:
+// - admin/staff only (cache freshness eh non-trivial CPU work)
+// - rate-limit anti-spam (5 refreshes/hora maximo - operacao pesada)
+// - audit_log INSERT (forense: who triggered + when)
+// - cache invalidate seller:admin:all + seller:me:kpi (mv stale -> fresh data)
+const mvKpiRefreshLimiter = require('@cas/shared').rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 5,
+  message: 'REFRESH mv_seller_kpi limitado a 5/h - operacao pesada.',
+});
+
+router.post('/mv-kpi/refresh',
+  mvKpiRefreshLimiter,
+  asyncHandler(async (req, res) => {
+    const startedAt = Date.now();
+    try {
+      await query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_seller_kpi');
+      const durationMs = Date.now() - startedAt;
+      // Invalidate caches que dependem do mv_seller_kpi
+      await Promise.all([
+        cache.del('seller:admin:all:*'),
+        cache.del('sellers:list:*'),
+        // seller:me:kpi:* per-user - skip wildcard (custoso) - 300s TTL natural expira
+      ]);
+      // Audit log success
+      await query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, severity, payload_after)
+         VALUES ($1, $2, 'mv_seller_kpi.refresh.manual', 'materialized_view', 'info', $3::JSONB)`,
+        [req.user.sub, req.user.role,
+         JSON.stringify({ duration_ms: durationMs, ip: req.ip })]
+      ).catch(() => {});
+      res.json({ ok: true, refreshed: true, duration_ms: durationMs });
+    } catch (e) {
+      log.error({ err: e.message, actor: req.user.sub },
+        '[mv_seller_kpi.refresh.manual.fail]');
+      await query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, severity, payload_after)
+         VALUES ($1, $2, 'mv_seller_kpi.refresh.manual.fail', 'materialized_view', 'error', $3::JSONB)`,
+        [req.user.sub, req.user.role,
+         JSON.stringify({ error: String(e.message).slice(0, 500), ip: req.ip })]
+      ).catch(() => {});
+      return res.status(500).json({ error: 'refresh_failed', message: e.message });
+    }
+  })
+);
+
 module.exports = router;
