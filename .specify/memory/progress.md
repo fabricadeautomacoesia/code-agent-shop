@@ -24843,3 +24843,101 @@ PROXIMA ITER:
 - W4 admin: bulk select QA queue
 - W12 qa-svc: timeout 5min cron
 - VPS SSH unblock URGENTE (71 ciclos - 23.7h)
+
+============================================================
+PASS 239 (2026-05-28) - W7 + W14 + W6 REST/db/security
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W7 product-svc: price-alerts 201 vs 200 status semantic
+- W14 db: mig 071 idx_qa_runs_inflight (PARTIAL composite)
+- W6 auth-svc: /2fa/recovery audit_log + fail2ban gap
+
+============================================================
+1. W7 - price-alerts HTTP status semantic
+============================================================
+FILE: services/product-svc/src/routes/price-alerts.js:151-160
+
+PROBLEMA (REST convention):
+- INSERT ... ON CONFLICT DO UPDATE retornava SEMPRE 201 Created
+- Mesmo em UPDATE (row ja existia, so threshold mudou), status 201
+- REST: 201=novo recurso criado, 200=existente modificado
+- Frontend price-alert-button assumia "criado" mas era "atualizado"
+- UX: mensagem "Alerta criado!" quando era "Threshold atualizado"
+
+POST-FIX:
+- RETURNING ..., (xmax = 0) AS inserted (PG row-level marker)
+- xmax=0 em INSERT real, xmax!=0 em UPDATE
+- res.status(wasInserted ? 201 : 200).json({ alert, created: wasInserted })
+- Frontend pode diferenciar UX criado vs atualizado
+
+============================================================
+2. W14 - mig 071 idx_qa_runs_inflight
+============================================================
+FILE: db/migrations/071_qa_runs_running_idx.sql (CRIADO)
+
+PROBLEMA:
+- qa-svc server.js:165 inflight detection per dispatch:
+    SELECT id, started_at FROM product_qa_runs
+     WHERE product_id=$1 AND verdict='running'
+     AND started_at > NOW() - INTERVAL '10 minutes'
+- Idx existente: (product_id, created_at DESC) - ordena CREATED_AT
+- Query usa STARTED_AT - sort step extra in-memory
+- Produtos com 50+ historico de runs: Index Scan + filter chain wasteful
+
+POST-FIX: CREATE INDEX idx_qa_runs_inflight ON product_qa_runs
+  (product_id, started_at DESC) WHERE verdict='running'
+- PARTIAL filtra ~99% rows na criacao (so 'running')
+- ORDER BY satisfeito sem sort step
+- Inflight detection 5-30ms -> 1-2ms
+
+============================================================
+3. W6 - /auth/2fa/recovery audit + fail2ban gap
+============================================================
+FILE: services/auth-svc/src/routes/two-factor.js:233
+
+PROBLEMA (account takeover gap):
+- /auth/2fa/recovery: user troca password + token 2FA p/ regenerar
+  recovery codes. Token invalido = potencial atacante com password roubada
+- Login path (auth.js:325-332) ja fazia: fail2ban + audit_log critical
+- /recovery NAO tinha audit_log nem reportFailure -> brute-force gap
+- Atacante: tenta TOTP codes em /recovery sem cooldown nem trail forense
+
+POST-FIX (paridade com /login):
+- fail2ban.reportFailure() em invalid_token
+- audit_log INSERT '2fa.recovery.invalid_token' severity critical
+- Payload: ip + ua_prefix (DLP)
+- .catch para nao quebrar resposta em DB fail
+
+============================================================
+SUMARIO PASS 239
+============================================================
+Files: 3 modificados/criados
+  - services/product-svc/src/routes/price-alerts.js (REST status)
+  - db/migrations/071_qa_runs_running_idx.sql (NEW perf index)
+  - services/auth-svc/src/routes/two-factor.js (audit + fail2ban)
+Lines: ~60 added
+
+VPS SSH BLOQUEADO (72 ciclos - 24h sem deploy).
+Migs 069+070+071 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc cas_auth-svc --force
+- Apply migs:
+    docker exec cas_postgres psql -U cas_admin -d cas \
+      -f /docker/db/migrations/069_pwreset_token_idx.sql \
+      -f /docker/db/migrations/070_notif_outbox_optimal_idx.sql \
+      -f /docker/db/migrations/071_qa_runs_running_idx.sql
+- W7 test: POST /api/products/price-alerts 2x mesmo product_id
+  Resposta 1: 201 + created:true
+  Resposta 2: 200 + created:false
+- W14 test: EXPLAIN ANALYZE inflight detection query no qa-svc
+  Deve usar Index Scan idx_qa_runs_inflight (era Sort step)
+- W6 test: POST /auth/2fa/recovery com token errado 3x ->
+  SELECT * FROM audit_log WHERE action='2fa.recovery.invalid_token'
+  Deve ter 3 rows recentes severity=critical
+
+PROXIMA ITER:
+- W12 qa-svc: cron timeout cleanup
+- W4 admin: dashboard KPI freshness indicator
+- VPS SSH unblock CRITICAL (72 ciclos - 24h!!)

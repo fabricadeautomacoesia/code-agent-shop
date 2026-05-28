@@ -231,6 +231,21 @@ router.post('/recovery',
     const secret = cryp.decrypt({ encrypted: r.rows[0].secret_encrypted, iv: r.rows[0].secret_iv, tag: r.rows[0].secret_tag });
     // BUG 1 FIX: window=1 (consistencia)
     if (!authenticator.check(req.body.token, secret, { window: 1 })) {
+      // FIX-WORKER-6 pass 239 (audit + fail2ban gap):
+      //   /recovery endpoint regenera recovery codes 2FA. Token invalido aqui
+      //   = potencial account takeover attempt (atacante tem password mas nao
+      //   o segundo factor). Login path ja fail2ban + audit_log critical, mas
+      //   /recovery NAO tinha audit_log nem reportFailure -> brute force gap.
+      //   POST-FIX: paridade com /login auth.js:325 - fail2ban + audit critical.
+      req.fail2ban?.reportFailure();
+      query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'user', '2fa.recovery.invalid_token', 'user', $1, 'critical', $2::JSONB)`,
+        [req.user.sub, JSON.stringify({
+          ip: req.ip,
+          ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+        })]
+      ).catch(() => {});
       return next(errorHandler.unauthorized('invalid_token'));
     }
 

@@ -148,14 +148,24 @@ router.post('/',
       });
     }
 
+    // FIX-WORKER-7 pass 239 (HTTP status semantic + xmax detection):
+    //   PRE-FIX: response sempre 201 Created mesmo quando ON CONFLICT UPDATE
+    //   apenas alterava threshold de row existente. REST convention:
+    //     201 = recurso novo criado
+    //     200 = recurso existente modificado/idempotent
+    //   POST-FIX: usa xmax PG row-level (xmax=0 em INSERT real, !=0 em UPDATE)
+    //   p/ distinguir INSERT vs UPDATE -> retorna 201 ou 200 conforme realidade.
+    //   Frontend (price-alert-button) pode diferenciar UX "criado" vs "atualizado".
     const r = await query(
       `INSERT INTO product_price_alerts (user_id, product_id, threshold_cents)
        VALUES ($1, $2, $3)
        ON CONFLICT (user_id, product_id) DO UPDATE SET threshold_cents = EXCLUDED.threshold_cents
-       RETURNING id, threshold_cents, created_at`,
+       RETURNING id, threshold_cents, created_at, (xmax = 0) AS inserted`,
       [req.user.sub, req.body.product_id, req.body.threshold_cents || null]
     );
-    res.status(201).json({ alert: r.rows[0] });
+    const wasInserted = r.rows[0].inserted;
+    delete r.rows[0].inserted;
+    res.status(wasInserted ? 201 : 200).json({ alert: r.rows[0], created: wasInserted });
   })
 );
 
