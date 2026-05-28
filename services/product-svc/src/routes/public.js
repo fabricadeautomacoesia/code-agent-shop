@@ -60,7 +60,11 @@ const router = express.Router();
 //   top-rated products globais (sales_count >= 1 OR is_platform_owned).
 router.get('/recommendations/for-me',
   require('@cas/shared').jwt.requireAuth(),
-  cache.cacheMiddleware((req) => `products:reco:for-me:${req.user.sub}:lim=${req.query.limit||12}`, 60),
+  /* FIX-WORKER-18 pass 302: cache key normalization paridade */
+  cache.cacheMiddleware((req) => {
+    const lim = Math.min(parseInt(req.query.limit, 10) || 12, 50);
+    return `products:reco:for-me:${req.user.sub}:lim=${lim}`;
+  }, 60),
   asyncHandler(async (req, res) => {
     const limit = Math.max(1, Math.min(50, parseInt(req.query.limit, 10) || 12));
 
@@ -185,7 +189,11 @@ router.get('/recommendations/for-me',
 //   FIX: + limit echo (frontend pode confirmar param aplicado).
 router.get('/recently-viewed',
   require('@cas/shared').jwt.requireAuth(),
-  cache.cacheMiddleware((req) => `products:recently-viewed:${req.user.sub}:lim=${req.query.limit || 12}`, 30),
+  /* FIX-WORKER-18 pass 302: cache key normalization paridade pass 298 */
+  cache.cacheMiddleware((req) => {
+    const lim = Math.min(parseInt(req.query.limit, 10) || 12, 30);
+    return `products:recently-viewed:${req.user.sub}:lim=${lim}`;
+  }, 30),
   asyncHandler(async (req, res) => {
     const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 30));
     const r = await query(
@@ -512,7 +520,12 @@ router.get('/compare',
 //   FIX: LEFT JOIN sellers (mesmo pattern /compare).
 // BUG 5 *** TOTAL COUNT MISSING *** UX flash promo page sem visibility
 router.get('/flash-promo/active',
-  cache.cacheMiddleware((req) => `products:flash-promo:active:lim=${req.query.limit||20}:off=${req.query.offset||0}`, 60),
+  /* FIX-WORKER-18 pass 302: cache key normalization paridade */
+  cache.cacheMiddleware((req) => {
+    const lim = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+    const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    return `products:flash-promo:active:lim=${lim}:off=${off}`;
+  }, 60),
   asyncHandler(async (req, res) => {
   const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 20));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);

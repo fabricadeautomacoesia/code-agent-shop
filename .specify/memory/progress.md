@@ -29152,3 +29152,35 @@ PROXIMA ITER:
 - W7 admin /:id/force-approve audit completo
 - W4 admin /admin/qa-queue UI consume has_more pagination
 - VPS SSH unblock URGENTISSIMO (134 ciclos - 44.7h)
+
+
+============================================================
+PASS 302 - 2026-05-28 - W18 product-svc cache key normalization sweep
+============================================================
+Files: 1 modificado
+  - services/product-svc/src/routes/public.js (3 cache keys normalized)
+Lines: ~25 changed
+
+W18 (cache key normalization 3 endpoints product-svc):
+- /recommendations/for-me: parseInt clamp + Math.min 50
+- /recently-viewed: parseInt clamp + Math.min 30
+- /flash-promo/active: parseInt+clamp lim/off
+- PRE-FIX: req.query.limit||DEFAULT raw - case ?limit=NaN/empty cria entries duplicadas
+- POST-FIX: parseInt(x, 10) || DEFAULT + Math.min(x, MAX) defensive
+- Paridade pass 291 search-svc, pass 298 product-svc /:slug/* endpoints
+- Cache eficiente Redis MEMORY USAGE reducao
+
+VPS SSH BLOQUEADO (135 ciclos - 45h sem deploy).
+Migs 069-084 pendentes apply.
+
+W9 (conta meta): conta/layout.tsx ja tem metadata - skip
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc --force
+- Verify: redis-cli KEYS 'products:reco:*' | wc -l
+  Esperado: menos chaves duplicadas pos-warmup
+
+PROXIMA ITER:
+- W18 search-svc consolidate remaining cache keys + COUNT OVER opportunities
+- W4 admin qa-queue UI consume pass 301 has_more pagination
+- VPS SSH unblock URGENTISSIMO (135 ciclos - 45h)
