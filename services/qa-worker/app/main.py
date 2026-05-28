@@ -131,7 +131,19 @@ async def process_async(req: AnalyzeRequest):
             try:
                 extracted_text = await download_and_extract(req.package_url)
             except Exception as e:
-                payload_callback["reasons"].append(f"download_failed: {e}")
+                # FIX-WORKER-12 pass 277 (DLP download_failed paridade pass 258):
+                #   PRE-FIX: append raw f"download_failed: {e}" expoe paths
+                #   sensitive (/var/lib/docker/...) + URL parts com tokens
+                #   Pass 258 W12 fixou outer exception (linha 178+) mas inner
+                #   download_failed ficou lagged.
+                #   POST-FIX: sanitize com mesma regex pass 258
+                import re as _dlp_re
+                raw_msg = str(e)[:300]
+                safe_msg = _dlp_re.sub(
+                    r'(sk-[A-Za-z0-9_\-]{16,}|Bearer\s+[A-Za-z0-9_\-\.]+|/var/lib/[^\s]+|/etc/[^\s]+)',
+                    '[REDACTED]', raw_msg
+                )
+                payload_callback["reasons"].append(f"download_failed: {safe_msg[:200]}")
                 extracted_text = ""
 
         # 2. Analise estatica baseada em tipo

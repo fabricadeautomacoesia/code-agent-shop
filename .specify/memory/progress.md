@@ -28058,3 +28058,86 @@ PROXIMA ITER:
 - W4 dashboard-admin UI force-liquidate button
 - W11 Asaas wallet validate seller pre-checkout
 - VPS SSH unblock CRITICAL (109 ciclos - 36.3h)
+
+============================================================
+PASS 277 (2026-05-28) - W4 UI button + W12 DLP
+============================================================
+
+OBJETIVO: 3 workers (W10 audit clean)
+- W4 dashboard-admin: UI button force-liquidate consume pass 276 endpoint
+- W12 qa-worker: download_failed DLP paridade pass 258
+
+============================================================
+1. W4 - UI force-liquidate button + handler
+============================================================
+FILE: apps/dashboard-admin/src/app/payouts-pending-wallet/page.tsx
+
+CONTEXTO:
+- Pass 276 criou POST /admin/payouts-pending-wallet/:id/force-liquidate
+- UI page (pass 274) listava payouts mas sem botao consume endpoint
+- Admin precisa flow visual confirmDialog -> promptDialog reason -> trigger
+
+IMPLEMENTACAO:
+- Import useAdminAction hook + Zap icon
+- action.run pattern (paridade qa-queue/orders dashboards)
+- confirmDialog 'danger' variant antes trigger (irreversible audit log)
+- promptDialog para reason (audit-required min(5))
+- Botao SO visivel quando p.status='pending' && p.wallet_configured
+  (logic: forfeited/liquidated nao precisam, no-wallet aguarda config)
+- Banners feedback (action.error/success)
+- Table column nova "Acoes" - Zap icon + label "Liquidar"
+
+============================================================
+2. W12 - qa-worker download_failed DLP paridade pass 258
+============================================================
+FILE: services/qa-worker/app/main.py:131-148
+
+PROBLEMA:
+- Pass 258 W12 ja aplicou DLP sanitize em OUTER exception (linha 178+)
+- INNER exception download_failed (linha 133) ficou lagged
+- raw f"download_failed: {e}" expoe:
+  * paths sensitive (/var/lib/docker/volumes/node_datad/_data/...)
+  * URL parts com tokens (presigned URLs S3/Asaas)
+- reasons[] -> product_qa_runs DB -> seller UI rendering = DLP leak
+
+POST-FIX:
+- regex strip sk-/Bearer/paths (paridade pass 258 outer)
+- safe_msg slice 200 chars max
+- Pattern V8 DLP consolidado cross-codebase
+
+============================================================
+3. W10 - audit clean
+============================================================
+auditLogHandler: VALID_SEV whitelist + DLP mask + cache - well structured
+Sem gap critico esta iter.
+
+============================================================
+SUMARIO PASS 277
+============================================================
+Files: 2 modificados
+  - apps/dashboard-admin/src/app/payouts-pending-wallet/page.tsx (UI button)
+  - services/qa-worker/app/main.py (DLP download_failed)
+Lines: ~70 added
+
+MARCO: Feature payouts_pending_wallet COMPLETA + force-liquidate UI funcional:
+- pass 270: schema + INSERT order-svc
+- pass 272: cron liquidator payment-svc
+- pass 273: admin endpoint + idx
+- pass 274: UI page
+- pass 275: nav link + forfeit cron lifecycle
+- pass 276: POST force-liquidate endpoint
+- pass 277: UI force-liquidate button (este pass) - END-TO-END USER FLOW
+
+VPS SSH BLOQUEADO (110 ciclos - 36.7h sem deploy).
+Migs 069-079 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-admin cas_qa-worker --force
+- W4: admin /admin/payouts-pending-wallet -> click Liquidar em row pending+wallet
+  Dialogo confirma -> prompt reason -> 200 OK + banner success
+- W12: forcar download fail com URL /var/lib/... -> reasons[] mostra [REDACTED]
+
+PROXIMA ITER:
+- W11 wallet validate seller pre-checkout (frontend warn)
+- W3 PDP review write modal
+- VPS SSH unblock CRITICAL (110 ciclos - 36.7h)

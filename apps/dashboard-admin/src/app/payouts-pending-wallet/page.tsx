@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { adminFetch, fmtBRL, fmtDate } from '@/lib/admin-api';
-import { Clock, CheckCircle, XCircle, AlertTriangle, Wallet } from 'lucide-react';
+import { useAdminAction } from '@/lib/use-admin-action';
+import { Clock, CheckCircle, XCircle, AlertTriangle, Wallet, Zap } from 'lucide-react';
 
 /**
  * FIX-WORKER-4 pass 274: dashboard-admin UI page para consumir
@@ -69,6 +70,31 @@ export default function PayoutsPendingWalletPage() {
     return () => { if (i) clearInterval(i); document.removeEventListener('visibilitychange', onVis); };
   }, [status]);
 
+  // FIX-WORKER-4 pass 277: force-liquidate button consume pass 276 endpoint
+  // Admin clica em payout pending+wallet_configured -> trigger imediato cron
+  // (em vez de aguardar 24h interval). useAdminAction hook pattern V8.
+  const action = useAdminAction(load);
+
+  async function forceLiquidate(id: string, storeName: string) {
+    const { confirmDialog, promptDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog(`Forçar liquidação manual para "${storeName}"?`, {
+      body: 'Audit log será gravado. Cron payment-svc processará no próximo ciclo (max 24h, tipicamente <5min).',
+      variant: 'danger', confirmLabel: 'Liquidar agora',
+    })) return;
+    const reason = await promptDialog(
+      'Motivo da liquidação manual:',
+      'Ex: seller acabou de config wallet e solicita payout imediato',
+      'liquidacao manual emergencial'
+    ) || 'liquidacao manual emergencial';
+    action.run(`liq-${id}`, async () => {
+      await adminFetch(`/sellers/admin/payouts-pending-wallet/${id}/force-liquidate`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+      return `Liquidação manual disparada para ${storeName}. Cron processará em <5min.`;
+    });
+  }
+
   // Stats: pending agora podem ser liquidados (wallet configurada)
   const liquidatableNow = payouts.filter((p) => p.status === 'pending' && p.wallet_configured).length;
   const totalAmount = payouts.filter((p) => p.status === 'pending').reduce((a, p) => a + Number(p.amount_cents || 0), 0);
@@ -122,6 +148,22 @@ export default function PayoutsPendingWalletPage() {
         ))}
       </div>
 
+      {/* FIX-WORKER-4 pass 277: action feedback banners */}
+      {action.error && (
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-3 rounded-lg mb-4 flex items-center justify-between">
+          <span className="text-sm">{action.error}</span>
+          <button type="button" onClick={action.clear} aria-label="Fechar erro"
+            className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+      {action.success && (
+        <div role="status" aria-live="polite" className="bg-green-500/10 border border-green-500/30 text-green-400 p-3 rounded-lg mb-4 flex items-center justify-between">
+          <span className="text-sm">{action.success}</span>
+          <button type="button" onClick={action.clear} aria-label="Fechar sucesso"
+            className="text-xs hover:underline">fechar</button>
+        </div>
+      )}
+
       <div className="glass p-6 overflow-x-auto">
         {payouts.length === 0 ? (
           <p className="text-white/60 text-center py-12">
@@ -132,7 +174,7 @@ export default function PayoutsPendingWalletPage() {
             <thead className="text-left text-xs text-white/40 uppercase border-b border-white/10">
               <tr>
                 <th className="py-2">Seller</th><th>Valor</th><th>Wallet</th><th>Status</th>
-                <th>Order</th><th>Criado</th>
+                <th>Order</th><th>Criado</th><th className="text-right">Acoes</th>
               </tr>
             </thead>
             <tbody>
@@ -160,6 +202,19 @@ export default function PayoutsPendingWalletPage() {
                     </td>
                     <td className="font-mono text-xs text-white/40">{p.order_id.slice(0, 8)}...</td>
                     <td className="text-xs text-white/40">{fmtDate(p.created_at)}</td>
+                    <td className="text-right">
+                      {/* Force-liquidate button - so para pending+wallet_configured */}
+                      {p.status === 'pending' && p.wallet_configured && (
+                        <button type="button"
+                          onClick={() => forceLiquidate(p.id, p.store_name)}
+                          disabled={action.busyKey === `liq-${p.id}`}
+                          aria-label={`Forçar liquidação manual para ${p.store_name}`}
+                          className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                          <Zap className="w-3 h-3" aria-hidden="true" />
+                          {action.busyKey === `liq-${p.id}` ? '...' : 'Liquidar'}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
