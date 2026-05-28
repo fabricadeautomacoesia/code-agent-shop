@@ -297,9 +297,27 @@ router.post('/:id/force-approve',
 /* FIX-WORKER-4 pass 336: reason max() paridade pass 332-335 anti-DoS.
    Outras endpoints /admin/:id/force-approve linha 195 + /archive 367 ja tinham
    max(1000). platform-take ficou sem max - admin justificativa abusiva 1MB. */
+// FIX-WORKER-7 pass 378 (rate-limit gap platform-take - paridade pass 242 archive):
+//   PRE-FIX: /platform-take SEM rate-limit (force-approve linha 202 + archive linha 377 JA usam forceApproveLimiter)
+//   - Admin endpoint critico cria duplicate product (revenue impact)
+//   - Token admin comprometido -> mass platform-take spam
+//   - Cada call: 1 INSERT (product clone) + 1 INSERT audit_log + invalidate cache
+//   - 100 calls/min = 100 duplicate products + audit bloat + cache thrash
+//   POST-FIX: aplicar forceApproveLimiter (5/min) paridade /archive e /force-approve.
+// FIX-WORKER-7 pass 378 BUG 2 (UUID validate missing - paridade force-approve pass 201):
+//   PRE-FIX: req.params.id direto na query sem UUID regex check
+//   - PG 22P02 invalid_text_representation -> errorHandler 500 leak
+//   - force-approve (pass 201) JA tem UUID validate (FORCE_APPROVE_UUID_RE)
+//   - platform-take ficou lagged - defesa em camada incompleta
+//   POST-FIX: validate upfront usando mesma regex.
+const PLATFORM_TAKE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 router.post('/:id/platform-take',
+  forceApproveLimiter, // FIX pass 378: rate-limit paridade force-approve + archive
   validate({ body: z.object({ reason: z.string().min(5).max(1000) }) }),
   asyncHandler(async (req, res, next) => {
+    if (!PLATFORM_TAKE_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.notFound('product_not_found'));
+    }
     const r = await query('SELECT platform_resale_enabled, seller_id, slug FROM products WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
     if (!r.rows.length) return next(errorHandler.notFound());
     if (!r.rows[0].platform_resale_enabled) return next(errorHandler.forbidden('resale_not_allowed'));
