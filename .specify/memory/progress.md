@@ -33171,3 +33171,43 @@ Pattern V8 W5: links contextuais dashboard vs storefront separados
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 426 W3 PDP: hash anchor deep-link qna/review (consume pass 425)
+commit pendente
+BUG pass 425 dashboard-seller "Ver no site" link 100% quebrado
+PRE-FIX:
+- pass 425 adicionou link /product/{slug}#qna-{id} no dashboard-seller QNA
+- MAS product-tabs.tsx NAO tinha id="qna-{id}" nos divs (so key={q.id})
+- Tab QNA fica hidden ate user clicar manualmente
+- Sem useEffect hash handler -> browser nao scrolla mesmo se id existisse
+
+SCOPE BUG:
+- dashboard-seller "Ver no site" 100% quebrado (pass 425 incomplete)
+- Tambem afeta shared links (email/Telegram) de pergunta/review especifica
+
+POST-FIX 3-step:
+1. useEffect mount: read window.location.hash
+   - #qna-* -> setActive('qna')
+   - #review-* -> setActive('reviews')
+2. Apos 150ms (tabpanel render + paint) -> scrollIntoView smooth+center
+3. + id="qna-{id}" / id="review-{id}" nos <div> + scroll-mt-24 Tailwind
+   (margin-top scroll p/ header sticky nao tapar anchor)
+
+UX flow completo:
+- Seller dashboard-seller /qna click "Ver no site"
+- New tab abre /product/automacao-x#qna-uuid123
+- Browser carrega PDP -> useEffect detecta #qna- -> seta tab QNA
+- 150ms apos -> scrollIntoView smooth ate o id="qna-uuid123"
+- User ve pergunta especifica destacada no contexto PDP
+
+W3 deep-link series:
+  pass 425 link "Ver no site" (dashboard-seller)
+  pass 426 hash anchor handler + ids <- ESTE (completa pass 425)
+
+Pattern V8 W3: deep-link UX = hash handler + id targets + scroll-margin
+
+159 passes acumulados (268->426) sem deploy VPS
+5 CRITICAL + 25 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO

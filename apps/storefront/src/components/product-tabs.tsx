@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, KeyboardEvent } from 'react';
+import { useState, useRef, useEffect, KeyboardEvent } from 'react';
 import { Star } from 'lucide-react';
 import { QnaForm } from './qna-form';
 import { QnaUpvote } from './qna-upvote';
@@ -31,6 +31,36 @@ export function ProductTabs({ product, reviews, qna, starsBreakdown, avgRatingAg
 
   const reviewCount = reviews?.length || 0;
   const qnaCount    = qna?.length || 0;
+
+  // FIX-WORKER-3 pass 426 (hash anchor deep-link QNA / reviews):
+  //   PRE-FIX: pass 425 dashboard-seller QNA adicionou link "Ver no site"
+  //   apontando para /product/{slug}#qna-{id}. MAS:
+  //   1. <div key={q.id}> nao tinha id HTML -> browser nao acha anchor
+  //   2. Tab QNA fica hidden ate user clicar manualmente -> hash invisivel
+  //   3. Sem scrollIntoView -> mesmo se id existisse, browser nao rolaria
+  //   PRE-FIX scope: dashboard-seller "Ver no site" 100% quebrado. Tambem afeta
+  //   shared links (email, Telegram) de qualquer pergunta especifica.
+  //   POST-FIX 3-step:
+  //   1. Read window.location.hash on mount
+  //   2. Se #qna-* -> setActive('qna') | se #review-* -> setActive('reviews')
+  //   3. Apos render (setTimeout 100ms p/ DOM update), scrollIntoView smooth
+  //   + id="qna-{id}" / id="review-{id}" adicionados nos divs (linhas 316, equiv)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash.replace('#', '');
+    if (!hash) return;
+    let targetTab: Tab | null = null;
+    if (hash.startsWith('qna-')) targetTab = 'qna';
+    else if (hash.startsWith('review-')) targetTab = 'reviews';
+    if (targetTab) {
+      setActive(targetTab);
+      // Delay scroll ate tabpanel renderizar (next tick + paint)
+      setTimeout(() => {
+        const el = document.getElementById(hash);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 150);
+    }
+  }, []);
 
   // FIX-WORKER-3 pass 5: keyboard arrow nav (Left/Right/Home/End) padrao WAI-ARIA tabs
   // Antes: so Tab key passava entre botoes (foco linear). Agora arrow keys movem
@@ -230,7 +260,8 @@ export function ProductTabs({ product, reviews, qna, starsBreakdown, avgRatingAg
           ) : (
             <div className="space-y-4">
               {reviews.map((r: any) => (
-                <div key={r.id} className="border-b border-white/5 pb-4 last:border-0">
+                // FIX pass 426: id="review-{id}" deep-link (consistency com qna anchor)
+                <div key={r.id} id={`review-${r.id}`} className="border-b border-white/5 pb-4 last:border-0 scroll-mt-24">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
                     {/* FIX-WORKER-3: 5 estrelas sempre (preenchidas vs vazias estilo MLB) em vez de N estrelas */}
                     {/* FIX-WORKER-3 pass 5: aria-hidden em estrelas decorativas (so o container aria-label conta) */}
@@ -313,7 +344,8 @@ export function ProductTabs({ product, reviews, qna, starsBreakdown, avgRatingAg
                   ? new Date(q.answered_at).toLocaleDateString('pt-BR')
                   : null;
                 return (
-                  <div key={q.id} className="border-b border-white/5 pb-4 last:border-0">
+                  // FIX pass 426: id="qna-{id}" p/ hash anchor deep-link (pass 425 dashboard-seller)
+                  <div key={q.id} id={`qna-${q.id}`} className="border-b border-white/5 pb-4 last:border-0 scroll-mt-24">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1">
                         <div className="font-semibold text-sm mb-1">Q: {q.question}</div>
