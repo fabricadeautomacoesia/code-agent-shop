@@ -55,9 +55,11 @@ export default function DbAuditPage() {
             <code className="text-magenta">pg_stat_user_indexes</code>.
           </p>
         </div>
-        <button onClick={load} disabled={loading}
-          className="btn-ghost text-sm inline-flex items-center gap-2 disabled:opacity-50">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        {/* FIX-WORKER-4 pass 164 (a11y): type=button + aria-label + aria-hidden icon */}
+        <button type="button" onClick={load} disabled={loading}
+          aria-label={loading ? 'Atualizando audit DB' : 'Atualizar audit DB'}
+          className="btn-ghost text-sm inline-flex items-center gap-2 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
           Atualizar
         </button>
       </div>
@@ -119,15 +121,18 @@ export default function DbAuditPage() {
             </ul>
           </div>
 
-          {/* Tabs */}
-          <div className="flex gap-2 mb-4 border-b border-white/10">
+          {/* Tabs - FIX-WORKER-4 pass 164 (a11y): WAI-ARIA tabs role=tablist + role=tab + aria-selected */}
+          <div role="tablist" aria-label="Visualizacao DB audit" className="flex gap-2 mb-4 border-b border-white/10">
             {[
               { id: 'dead' as const, label: `Dead indices (${data.dead_indices.length})` },
               { id: 'bloated' as const, label: `Bloated (${data.bloated_indices.length})` },
               { id: 'top' as const, label: 'Top usage (sanity)' },
             ].map((t) => (
-              <button key={t.id} onClick={() => setActiveTab(t.id)}
-                className={`px-4 py-2 text-sm border-b-2 transition-colors ${
+              <button key={t.id} type="button" onClick={() => setActiveTab(t.id)}
+                role="tab"
+                aria-selected={activeTab === t.id}
+                tabIndex={activeTab === t.id ? 0 : -1}
+                className={`px-4 py-2 text-sm border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-magenta ${
                   activeTab === t.id ? 'border-magenta text-magenta-glow' : 'border-transparent text-white/50 hover:text-white'
                 }`}>
                 {t.label}

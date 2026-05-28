@@ -113,7 +113,8 @@ export default function AdminAuditLogPage() {
       {loadError && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>Erro: {loadError}</span>
-          <button onClick={load} className="text-xs hover:underline">retry</button>
+          <button type="button" onClick={load} aria-label="Tentar carregar audit log novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">retry</button>
         </div>
       )}
 
@@ -179,17 +180,20 @@ export default function AdminAuditLogPage() {
       {/* Paginacao */}
       {total > PAGE_SIZE && (
         <div className="flex items-center justify-between mt-4 px-2">
-          <button onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+          {/* FIX-WORKER-4 pass 164 (a11y): type=button + aria-label dinamico c/ page numbers */}
+          <button type="button" onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
             disabled={offset === 0 || loading}
-            className="text-xs px-3 py-1.5 rounded glass hover:border-magenta/40 disabled:opacity-30 inline-flex items-center gap-1">
+            aria-label={`Pagina anterior (atual: ${currentPage} de ${totalPages})`}
+            className="text-xs px-3 py-1.5 rounded glass hover:border-magenta/40 disabled:opacity-30 inline-flex items-center gap-1 focus-visible:outline-2 focus-visible:outline-magenta">
             <ChevronLeft className="w-3 h-3" aria-hidden="true" /> Anterior
           </button>
-          <span className="text-xs text-white/60">
+          <span aria-live="polite" className="text-xs text-white/60">
             Pagina {currentPage} de {totalPages}
           </span>
-          <button onClick={() => setOffset(offset + PAGE_SIZE)}
+          <button type="button" onClick={() => setOffset(offset + PAGE_SIZE)}
             disabled={offset + PAGE_SIZE >= total || loading}
-            className="text-xs px-3 py-1.5 rounded glass hover:border-magenta/40 disabled:opacity-30 inline-flex items-center gap-1">
+            aria-label={`Proxima pagina (atual: ${currentPage} de ${totalPages})`}
+            className="text-xs px-3 py-1.5 rounded glass hover:border-magenta/40 disabled:opacity-30 inline-flex items-center gap-1 focus-visible:outline-2 focus-visible:outline-magenta">
             Proximo <ChevronRight className="w-3 h-3" aria-hidden="true" />
           </button>
         </div>
