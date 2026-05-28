@@ -31901,3 +31901,36 @@ GAP REMANESCENTE: disputes/page.tsx prompt()
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - disputes prompt() migration
+
+## PASS 383 W4 ADMIN: disputes + reports prompt() migration (UX 100%)
+commit 0ef2a77
+2 BUGS migrated to promptDialog (final UX consistency):
+
+BUG 1 disputes resolveDispute:
+PRE-FIX: prompt() text livre - typo -> 400 Zod backend
+POST-FIX: promptDialog + client-side enum validation
+  VALID = ['refund_approved','replacement_sent','partial_refund']
+  alertDialog se invalid
+
+BUG 2 reports resolve:
+PRE-FIX: prompt() nativo
+POST-FIX: promptDialog + placeholder por modo (dismiss vs resolve)
+
+W4 admin UX consistency 100% COMPLETO:
+  qa-queue forceApprove (381)
+  qa-queue platformTake (149)
+  vault revoke + rotateKey password (382)
+  disputes resolveDispute (383) <- ESTE
+  reports resolve (383) <- ESTE
+  sellers actions (149+370)
+  payouts (pre-existing)
+0 prompt() nativos remanescentes em dashboard-admin
+
+Pattern V8 W4 final consolidation
+
+116 passes acumulados (268->383) sem deploy VPS
+4 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W18 perf optimization
