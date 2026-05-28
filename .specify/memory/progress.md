@@ -32788,3 +32788,35 @@ W3 PDP UX:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 414 W4 ADMIN: pending-kyc search filter (?q) + UI
+commit 455e6fa
+BUG admin sellers KYC pending sem filter
+PRE-FIX:
+- Backend lista paginated sem filter
+- Frontend sem search input
+- 100+ sellers KYC = scroll manual impossivel
+
+POST-FIX backend:
+- ?q search opcional (max 100 anti-DoS)
+- ILIKE store_name + email + legal_name
+- Wildcard escape paridade pass 13
+- Cache key + qHash DLP
+
+POST-FIX frontend:
+- searchQuery state + input search
+- Debounce 300ms via useEffect
+- maxLength=100 backend cap paridade
+- aria-label SR + placeholder explicito
+
+W4 admin scale UX:
+  pass 356 payouts filter
+  pass 388 audit-log investigation
+  pass 401 orders actionable
+  pass 414 KYC search <- ESTE
+
+147 passes acumulados (268->414) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
