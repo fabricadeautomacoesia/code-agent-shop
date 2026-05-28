@@ -121,7 +121,10 @@ export default function SegurancaPage() {
                 contra acesso nao autorizado.
               </p>
             </div>
-            <button onClick={startSetup} disabled={loading} className="btn-primary disabled:opacity-50">
+            {/* FIX-WORKER-1 pass 162 (a11y): type=button defensive + aria-label dinamico */}
+            <button type="button" onClick={startSetup} disabled={loading}
+              aria-label={loading ? 'Gerando QR code 2FA' : 'Iniciar configuracao 2FA'}
+              className="btn-primary disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta">
               {loading ? 'Gerando...' : 'Ativar 2FA'}
             </button>
           </div>
@@ -140,17 +143,25 @@ export default function SegurancaPage() {
               <div className="text-xs text-white/50 mb-1">Ou cole este codigo manual:</div>
               <div className="flex items-center gap-2">
                 <code className="bg-white/5 px-3 py-2 rounded font-mono text-sm flex-1">{setupData.manual_code}</code>
-                <button onClick={() => navigator.clipboard.writeText(setupData.manual_code)} className="p-2 hover:bg-white/5 rounded">
-                  <Copy className="w-4 h-4" />
+                {/* FIX-WORKER-1 pass 162: type=button + aria-label + aria-hidden Copy icon */}
+                <button type="button" onClick={() => navigator.clipboard.writeText(setupData.manual_code)}
+                  aria-label="Copiar codigo manual de configuracao"
+                  className="p-2 hover:bg-white/5 rounded focus-visible:outline-2 focus-visible:outline-magenta">
+                  <Copy className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
             </div>
             <div>
-              <label className="text-sm text-white/70 mb-1.5 block">3. Digite o codigo de 6 digitos gerado:</label>
-              <input type="text" value={token2fa} onChange={(e) => setToken2fa(e.target.value)} maxLength={6}
+              {/* FIX-WORKER-1 pass 162: htmlFor + id WCAG 1.3.1 + autoComplete one-time-code (iOS autofill) */}
+              <label htmlFor="totp-setup" className="text-sm text-white/70 mb-1.5 block">3. Digite o codigo de 6 digitos gerado:</label>
+              <input id="totp-setup" type="text" value={token2fa} onChange={(e) => setToken2fa(e.target.value)} maxLength={6}
+                autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}"
+                placeholder="000000"
                 className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none text-center text-2xl font-mono tracking-widest" />
             </div>
-            <button onClick={activate} disabled={loading || token2fa.length !== 6} className="btn-primary w-full disabled:opacity-50">
+            <button type="button" onClick={activate} disabled={loading || token2fa.length !== 6}
+              aria-label={loading ? 'Ativando 2FA' : 'Confirmar codigo e ativar 2FA'}
+              className="btn-primary w-full disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta">
               {loading ? 'Ativando...' : 'Confirmar e ativar'}
             </button>
           </div>
@@ -184,12 +195,18 @@ export default function SegurancaPage() {
               <summary className="cursor-pointer text-magenta-glow hover:underline">Gerar novos codigos de recuperacao (invalida os antigos)</summary>
               <div className="mt-3 space-y-2">
                 <p className="text-xs text-white/60">Use se voce perdeu os codigos antigos. Os 10 codigos atuais ficarao invalidos.</p>
+                {/* FIX-WORKER-1 pass 162: aria-label nos inputs sem id (multiplos no DOM, dynamic) */}
                 <input type="password" placeholder="Senha atual" value={password} onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  aria-label="Senha atual para regenerar codigos de recuperacao"
                   className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
                 <input type="text" maxLength={6} placeholder="Codigo 2FA" value={token2fa} onChange={(e) => setToken2fa(e.target.value)}
+                  autoComplete="one-time-code" inputMode="numeric"
+                  aria-label="Codigo 2FA atual para regenerar"
                   className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm text-center font-mono" />
-                <button onClick={regenerateRecovery} disabled={loading || !password || token2fa.length !== 6}
-                  className="btn-primary w-full disabled:opacity-50">
+                <button type="button" onClick={regenerateRecovery} disabled={loading || !password || token2fa.length !== 6}
+                  aria-label="Gerar novos codigos de recuperacao 2FA"
+                  className="btn-primary w-full disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta">
                   Gerar novos codigos
                 </button>
               </div>
@@ -198,10 +215,16 @@ export default function SegurancaPage() {
               <summary className="cursor-pointer text-red-400 hover:underline">Desativar 2FA (requer senha + token)</summary>
               <div className="mt-3 space-y-2">
                 <input type="password" placeholder="Senha atual" value={password} onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  aria-label="Senha atual para desativar 2FA"
                   className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
                 <input type="text" maxLength={6} placeholder="Codigo 2FA" value={token2fa} onChange={(e) => setToken2fa(e.target.value)}
+                  autoComplete="one-time-code" inputMode="numeric"
+                  aria-label="Codigo 2FA atual para desativar"
                   className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm text-center font-mono" />
-                <button onClick={disable} disabled={loading} className="btn-ghost text-red-400 w-full disabled:opacity-50">
+                <button type="button" onClick={disable} disabled={loading}
+                  aria-label="Confirmar desativacao do 2FA"
+                  className="btn-ghost text-red-400 w-full disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-red-400">
                   Confirmar desativacao
                 </button>
               </div>
