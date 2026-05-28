@@ -23345,3 +23345,83 @@ PROXIMA ITER:
 - W4 admin: vault-svc admin filter seller_id UI
 - W18: cache /api/orders/admin/disputes/:id detalhe
 - 🚨 VPS SSH unblock URGENTE (54 ciclos - 18h sem deploy!)
+
+PASS 222 (W11 CRITICAL PAYMENT_REFUND_FAILED semantica) - 2026-05-28:
+- W11 BUG FINANCIAL CRITICO em processWebhookEvent PAYMENT_REFUND_FAILED
+
+CENARIO REAL EM PROD (pre-fix):
+1. Order capturada com sucesso (payment_status='captured')
+2. Admin tenta refund (Asaas refund API)
+3. Refund falha (insufficient funds wallet, regulatory reject)
+4. Asaas dispara webhook PAYMENT_REFUND_FAILED
+5. PRE-FIX codigo: UPDATE orders SET payment_status='failed'
+6. User dashboard: 'Seu pagamento falhou' MESMO TENDO PAGO
+7. Audit log: status transition errada
+
+SEMANTICA CORRETA PAYMENT_REFUND_FAILED:
+- Refund tentou MAS falhou - estado pagamento ORIGINAL preservado
+- Order continua 'captured'/'paid' (sucesso original mantido)
+- Admin precisa investigar refund failed manualmente
+- NAO eh erro de pagamento - eh erro de tentativa admin
+
+POST-FIX (map + logOnly handler):
+
+1. Map action novo type:
+   PRE: PAYMENT_REFUND_FAILED -> { ps: 'failed' }
+   POST: PAYMENT_REFUND_FAILED -> { logOnly: true, severity: 'critical' }
+
+2. logOnly handler dentro tx (skip UPDATE state):
+   - log.warn estruturado
+   - INSERT audit_log com severity action.severity
+     action='asaas.payment_refund_failed'
+   - INSERT notifications p/ TODOS admins ativos (max 10)
+     channel='in_app' priority=3 template='asaas_refund_failed'
+     body inclui order_id_short + payment_id + current status
+   - return early (skip rest of webhook flow)
+
+3. Estado pagamento preserved:
+   - SKIP UPDATE orders (sem cols/vals append)
+   - User dashboard continua corretamente mostrando state real
+
+USE CASES ADMIN pos-fix:
+- Recebe in_app notification 'Refund falhou: order abc12345'
+- Acessa audit_log filtrando action='asaas.payment_refund_failed'
+- Visualiza detalhes payload (payment_id Asaas, current_status, event)
+- Investiga painel Asaas (insufficient funds wallet, regulatory)
+- Toma acao manual: re-attempt OR cancel refund request
+
+PATTERN logOnly EXTENDABLE p/ futuros eventos transitorios:
+- PAYMENT_DUNNING_REQUESTED (cobranca em tentativa)
+- PAYMENT_CHARGEBACK_REQUESTED (chargeback iniciado)
+- PAYMENT_CHARGEBACK_REVERSED (chargeback revertido)
+- Todos: log + audit + admin notify SEM mudar state
+
+Commit c3d1ced pushed origin/main (+67/-1)
+VPS SSH ainda bloqueado (55 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (55 ciclos):
+- 168-221: documentados
+- 222: payment-svc REFUND_FAILED semantica + logOnly handler
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_payment-svc --force
+- Mock PAYMENT_REFUND_FAILED webhook:
+  curl -X POST -H "asaas-access-token: \$SECRET" \
+    /payments/asaas/webhook -d '{
+      "event":"PAYMENT_REFUND_FAILED",
+      "id":"evt_xxx",
+      "payment":{"id":"pay_xxx"}
+    }'
+  PRE: order.payment_status = 'failed'
+  POS: order.payment_status mantido (captured/paid)
+       + audit_log INSERT severity=critical
+       + admins recebem in_app notification
+- Verificar:
+  SELECT payment_status FROM orders WHERE asaas_payment_id='pay_xxx';
+  (deve estar preservado em 'captured'/'paid')
+
+PROXIMA ITER:
+- W4 admin: vault-svc filter seller_id UI
+- W18: cache /api/orders/admin/disputes/:id detalhe (admin investigation)
+- W13: notification-svc test endpoint admin alert delivery
+- 🚨 VPS SSH unblock URGENTE (55 ciclos - >18.3h sem deploy!)
