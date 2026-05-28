@@ -32622,3 +32622,30 @@ W12 hardening series:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 408 W13 NOTIFICATION: bulk UPSERT prefs UNNEST (10x perf)
+commit 613368f
+BUG N+1 em /prefs PATCH
+PRE-FIX:
+- for loop sequencial - 100 prefs = 100 queries
+- Latencia 500ms per request
+- DB pool exhaustion sob load
+
+POST-FIX bulk UPSERT UNNEST:
+- INSERT...SELECT FROM UNNEST 3 arrays
+- ON CONFLICT DO UPDATE
+- Single query N rows ~50ms
+- Atomic visible
+- Paridade pass 363 logout UNNEST
+
+W13 bulk operations:
+  Outbox processor (UPDATE...RETURNING claim)
+  /prefs UPSERT (pass 408) <- ESTE
+
+Pattern V8 W13: bulk via UNNEST quando N rows
+
+141 passes acumulados (268->408) sem deploy VPS
+5 CRITICAL + 23 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
