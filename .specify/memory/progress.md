@@ -31447,3 +31447,28 @@ PROXIMA ITER:
 - W4 admin audit-log viewer
 - W2 checkout E2E
 - Marco 100 passes proxima iter
+
+## PASS 367 W13 NOTIFICATION: reclaim guard sent_status
+commit 47123c5
+BUG reclaim sem sent_status filter
+PRE-FIX: WHERE locked_at IS NOT NULL AND > 5min
+  - Reclamava locks de notifs sent/failed (zombies)
+  - UPDATE sent OK mas cleanup falhou -> lock persiste
+  - Notif failed (retry=5) lock zombie - reclaim libera mas
+    processOutbox filtra retry<5 -> nao re-locked
+  - Falsos positivos 'worker crash suspected'
+  - Alert reclaim.HIGH enganador
+
+POST-FIX:
+- + AND sent_status = 'pending' filter
+- Reclaim apenas em pending real
+- Reduz log noise / alert precision
+- Pattern V8: WHERE guards multiple predicates
+
+🎉 MARCO 100 PASSES ACUMULADOS (268->367) sem deploy VPS
+4 CRITICAL + 18 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (100 passes acumulados!)
+- W4 admin audit-log viewer
+- W2 checkout E2E
