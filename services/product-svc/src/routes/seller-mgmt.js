@@ -40,6 +40,11 @@ async function invalidate(productId) {
       cache.del('products:list:*'),
       cache.del('products:related:*'),
       cache.del('search:facets:*'),
+      // FIX-WORKER-10 pass 358: paridade admin.js cache invalidation
+      //   Seller publica/edita produto -> category product_count muda.
+      //   Mega menu storefront precisa refletir realtime.
+      cache.del('search:categories:v3'),
+      cache.del('search:categories:*'),
     ];
     if (productId) {
       // Lookup slug e invalida caches especificos do produto

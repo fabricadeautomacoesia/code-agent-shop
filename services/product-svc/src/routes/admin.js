@@ -19,6 +19,14 @@ async function invalidateProductCache(productId) {
       cache.del('products:flash-promo:*'),
       cache.del('search:top-sellers:*'),
       cache.del('search:facets:*'),
+      // FIX-WORKER-10 pass 358: invalidate search:categories:v3 apos admin actions.
+      //   PRE-FIX: search:categories cache TTL=900s sem invalidation.
+      //   Admin force-approve / platform-take / archive product -> category
+      //   product_count stale ate 15min. Mega menu storefront mostra count antigo.
+      //   POST-FIX: include search:categories:v3 no batch invalidation.
+      //   Tambem futuro-proof p/ v4+ via wildcard.
+      cache.del('search:categories:v3'),
+      cache.del('search:categories:*'),
     ];
     if (productId) {
       const r = await query('SELECT slug FROM products WHERE id = $1', [productId]);
