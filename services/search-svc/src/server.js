@@ -365,8 +365,18 @@ app.get('/autocomplete',
   // ANTES: ILIKE primeiro - Map.set primeiro win - similarity 0.9 perdida
   //        se ILIKE tambem match no rank 7
   // AGORA: similarity high-confidence primeiro, ILIKE complementa
+  // FIX-WORKER-10 pass 395 (low-similarity leak fix):
+  //   PRE-FIX: merged = [...highSim, ...r.rows, ...sim.rows]
+  //   - sim.rows incluido 2x (highSim filtrado + full duplicado)
+  //   - Items com s < 0.4 vazam para frontend via ...sim.rows tail
+  //   - UX MLB: autocomplete deve mostrar APENAS high-confidence matches
+  //   - Map dedup por slug evita visual dup mas low-sim items entram lista
+  //     se nao apareceram em ILIKE (r.rows)
+  //   POST-FIX: merge so [highSim, ILIKE] - low-sim descartado intencional.
+  //   Trade-off: typo extreme (s=0.2) nao gera sugestao - aceitavel (user
+  //   digite mais 1 char ou usa ILIKE match).
   const highSim = sim.rows.filter((x) => x.s >= 0.4);
-  const merged = [...highSim, ...r.rows, ...sim.rows];
+  const merged = [...highSim, ...r.rows];
   const unique = Array.from(new Map(merged.map((x) => [x.slug, x])).values()).slice(0, limit);
   res.json({ suggestions: unique, limit, count: unique.length });
 }));
