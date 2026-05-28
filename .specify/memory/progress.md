@@ -17374,7 +17374,28 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Vault admin form a11y + autoComplete PII (pass 154)
 - ✅ Admin reports + payouts filter a11y (pass 155)
 - ✅ Storefront nav buttons type=button + focus-visible (pass 156)
-- ✅ Cart-drawer 4 buttons a11y rico (pass 157 esta iter)
+- ✅ Cart-drawer 4 buttons a11y rico (pass 157)
+- ✅ Compare-drawer + add-to-cart 6 buttons (pass 158 esta iter)
+
+W7 PASS 158 RESUMO - W1+W3 COMPARE+ADD-TO-CART A11Y:
+- AUDIT 2 components mais usados storefront:
+  * compare-drawer (sticky bottom): 3 buttons sem type='button'
+  * add-to-cart (PDP main CTA): 3 buttons sem type='button'
+- FIXES (6 buttons + a11y rico):
+  compare-drawer:
+  * Expandir/Recolher: type=button + aria-expanded={!collapsed} + aria-label dinamico
+    + focus-visible:outline-magenta
+  * Limpar comparacao: type=button + aria-label rico c/ count items
+    'Limpar comparacao (N itens)' + focus-visible:outline-red-400
+  * Remover item: type=button + aria-label dinamico 'Remover {titulo} da comparacao'
+  add-to-cart:
+  * 'Baixar gratis' (isFree): type=button + focus-visible
+  * 'Comprar agora' (buyNow): type=button + focus-visible
+  * 'Adicionar ao carrinho': type=button + focus-visible
+- 7+ icones aria-hidden=true (Trash, ChevronUp/Down, X, Loader2, AlertCircle, ShoppingCart, Check)
+- Pattern V8 Regra 23 (type=button defensive) consistente cross-components
+- BUILD storefront OK + service converged
+- COMMIT 12d235a pushed GitHub main + deployed prod
 
 W7 PASS 157 RESUMO - W1+W15 CART-DRAWER A11Y RICO:
 - AUDIT cart-drawer.tsx: 4 botoes UI sem type='button' (V8 Regra 23 defensive)
