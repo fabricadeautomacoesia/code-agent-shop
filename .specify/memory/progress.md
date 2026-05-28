@@ -17345,7 +17345,26 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Sync product-svc SORT_ENUM (+recent_sales) (pass 125)
 - ✅ Migration 051 BRIN idx metrics_history (pass 126)
 - ✅ MLB-13 ShareButton PDP WhatsApp/X/LinkedIn/Copy (pass 127)
-- ✅ generateMetadata dinamico /products c/ filtros (pass 128 esta iter)
+- ✅ generateMetadata dinamico /products c/ filtros (pass 128)
+- ✅ PDP aside sticky so lg+ (mobile UX) (pass 129 esta iter)
+
+W7 PASS 129 RESUMO - W15 PDP MOBILE STICKY FIX:
+- AUDIT PDP em mobile 375px:
+  * Layout grid lg:grid-cols-3 -> mobile single-col OK
+  * <div className='glass p-6 sticky top-28'> em aside detectado
+- BUG IDENTIFIED:
+  * sticky top-28 SEMPRE ativo (mobile + desktop)
+  * Em mobile (single-col), aside aparece DEPOIS da imagem+tabs
+  * Quando user rola pelas tabs longas (Reviews/QnA com varios items),
+    sticky tenta manter aside fixa -> causa JUMPS visuais ao rolar
+  * Mobile UX (ML, Amazon, Shopee) NAO usa sticky em paineis full-width
+- FIX em apps/storefront/src/app/product/[slug]/page.tsx:
+  * 'sticky top-28' -> 'lg:sticky lg:top-28'
+  * Sticky ativo SO em lg+ (layout 2-col, faz sentido na coluna direita)
+  * Mobile: aside flui naturalmente, sem jumps
+- BUILD storefront OK + service converged
+- VALIDATED: novo CSS chunk c4def71737792fb1.css (era 772481bfcfe2cee8.css)
+  -> bundle novo com lg:sticky no prod
 
 W7 PASS 128 RESUMO - W9 SEO DINAMICO /products?filters:
 - AUDIT pages SEM metadata explicita: /products tinha layout.tsx estatico
