@@ -32538,3 +32538,29 @@ W18 hot path cache cross-svc:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 405 W5 SELLER FINANCEIRO: PT-BR comma decimal parse (silent loss)
+commit 7f2039b
+BUG silent precision loss em payout amount
+PRE-FIX: parseFloat(amount)
+  - '100,50' (PT-BR) -> parseFloat=100 (50 cents lost)
+  - type=number HTML5 forca '.' MAS mobile PT-BR keypad aceita ','
+  - Compliance gap: amount log != typed
+  - User: 'recebi R$100 mas solicitei R$100,50?'
+
+POST-FIX (paridade qa-worker pass 387):
+- normalized = amount.replace(',', '.').trim()
+- parseFloat(normalized) + isNaN guard
+- Button disabled predicate paridade
+
+Multi-place fix:
+- requestPayout
+- Disabled button
+
+Pattern V8: PT-BR comma normalization cross-svc
+
+138 passes acumulados (268->405) sem deploy VPS
+5 CRITICAL + 23 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
