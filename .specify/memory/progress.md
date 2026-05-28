@@ -31814,3 +31814,31 @@ W5 maxLength alignment series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
+
+## PASS 380 W18: cache key normalization sellers:detail (paridade pass 350)
+commit deca350
+BUG cache pollution sellers:detail
+PRE-FIX: withCache(`sellers:detail:${req.params.slug}`) raw
+  - /Loja-Tech, /LOJA-TECH, /loja-tech = 3 entries Redis
+  - Memory waste + DoS amp em sellers top
+
+ADJACENTE: invalidateSellerCache JA normalizava DEL key (pass 329)
+  SAVE side ficou lagged 51 passes
+  Cache invalidation effectively broken (key mismatch)
+
+POST-FIX:
+- slugNorm = trim().toLowerCase() upfront
+- Save + query usam slugNorm
+- Paridade pass 350 (products:detail) + pass 329 (DEL)
+
+W18 cache key normalization cross-svc:
+  pass 298 products:also-bought/qna/reviews
+  pass 350 products:detail
+  pass 380 sellers:detail
+
+113 passes acumulados (268->380) sem deploy VPS
+4 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
