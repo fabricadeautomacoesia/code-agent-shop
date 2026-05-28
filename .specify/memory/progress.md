@@ -17365,7 +17365,32 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Seller upload form a11y 14 inputs (pass 145)
 - ✅ Seller /loja KYC + store form a11y 14 inputs (pass 146)
 - ✅ Seller /qna response textarea aria-label (pass 147)
-- ✅ Storefront /conta/perfil edit form a11y (pass 148 esta iter)
+- ✅ Storefront /conta/perfil edit form a11y (pass 148)
+- ✅ Admin PromptDialog substitui window.prompt (pass 149 esta iter)
+
+W7 PASS 149 RESUMO - W4 PROMPT DIALOG A11Y:
+- AUDIT dashboard-admin: 2 acoes usavam window.prompt() nativo:
+  * /sellers suspend: prompt 'Motivo da suspensao:'
+  * /payouts reject: prompt 'Motivo da rejeicao:'
+- PROBLEMAS window.prompt:
+  * a11y: sem focus management nem aria
+  * UX: estilo nativo browser quebra design glassmorphism
+  * mobile: prompt pequeno + mal-formatado iOS/Android
+  * i18n: nao pode estilizar/traduzir OK/Cancel
+- CREATED apps/dashboard-admin/src/components/prompt-dialog.tsx (155 lines):
+  * PromptDialogProvider singleton no layout root
+  * promptDialog() async helper - mesma API que window.prompt
+  * Modal acessivel: role=dialog + aria-modal + aria-labelledby
+  * Focus auto no input on open
+  * Esc fecha (cancela) + click backdrop fecha
+  * Buttons Cancelar + Confirmar c/ focus-visible:outline
+  * sr-only label + placeholder support
+  * Fallback p/ window.prompt se Provider nao montado
+- INTEGRATED em /sellers + /payouts:
+  * Dynamic import via await import (code split + lazy load)
+  * Mesma API: await promptDialog(title, placeholder)
+- BUILD dashboard-admin OK + service converged
+- COMMIT 03581d4 pushed GitHub main + deployed prod
 
 W7 PASS 148 RESUMO - W1 /conta/perfil A11Y + autoComplete:
 - AUDIT /conta/perfil page (edit profile): 4 labels SEM htmlFor + 4 inputs SEM id
