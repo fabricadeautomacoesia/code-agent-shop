@@ -131,12 +131,20 @@ router.post('/package', upload.single('file'), asyncHandler(async (req, res, nex
   const fileUrl = `/uploads/${path.basename(req.file.path)}`;
 
   // BUG 7 Regra P: audit log atomic (compliance forense)
+  // FIX-WORKER-7 pass 250 (target_id UUID type mismatch):
+  //   PRE-FIX: target_id = sha (SHA256 = 64-char hex, NAO formato UUID)
+  //   audit_log.target_id schema = UUID type -> PG 22P02 invalid_text_representation
+  //   -> exception silenciada no catch -> NENHUM audit_log inserido para uploads
+  //   -> compliance gap (LGPD/forense): violacao silenciosa de Regra P + W7 audit policy
+  //   POST-FIX: target_id=NULL (legitimo - sha NAO eh UUID entity reference).
+  //   SHA256 ja esta no payload_after JSONB (estrutura cobre forense lookup).
+  //   audit_log queries por sha podem usar payload_after JSONB GIN idx (mig 002 linha 200).
   try {
     await query(
       `INSERT INTO audit_log
         (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-       VALUES ($1, $2, 'upload.package', 'file', $3, 'info', $4::JSONB)`,
-      [req.user.sub, req.user.role, sha,  // sha como target_id (UUID-like)
+       VALUES ($1, $2, 'upload.package', 'file', NULL, 'info', $3::JSONB)`,
+      [req.user.sub, req.user.role,
        JSON.stringify({
          filename: req.file.filename,
          size_bytes: req.file.size,

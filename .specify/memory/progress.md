@@ -25850,3 +25850,99 @@ PROXIMA ITER:
 - W4 admin: bulk select multiplos payouts
 - W13 notification: digest email aggregation
 - VPS SSH unblock URGENTISSIMO (82 ciclos - 27.3h)
+
+============================================================
+PASS 250 (2026-05-28) - W9 + W14 + W7
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W9 dashboard-admin: /db-audit layout.tsx metadata
+- W14 db: mig 074 product_views.session_id (anonymous tracking)
+- W7 product-svc: /upload/package audit_log target_id UUID mismatch
+
+============================================================
+1. W9 - /db-audit layout.tsx metadata
+============================================================
+FILE: apps/dashboard-admin/src/app/db-audit/layout.tsx (CRIADO)
+
+PROBLEMA:
+- /admin/db-audit page sem layout.tsx -> metadata root generic
+- Compartilhar URL admin/Slack mostrava preview generico "Code & Agent Shop"
+- Pattern admin dashboard: TODOS layouts noindex robots + title especifico
+
+POST-FIX:
+- title: 'DB Audit - Admin | Code & Agent Shop'
+- description: descreve ferramenta (dead indexes, bloat, dead tuples)
+- robots: { index: false, follow: false } (admin tool - nao indexar)
+- Paridade com /llm-cost/layout.tsx pattern
+
+============================================================
+2. W14 - mig 074 product_views.session_id
+============================================================
+FILE: db/migrations/074_product_views_session_id.sql (CRIADO)
+
+PROBLEMA:
+- product_views tem user_id (NULL p/ anonymous) + ip_address INET
+- ip_address INSUFICIENTE p/ correlation anonymous:
+  * NAT/CGNAT: 1000+ users compartilham IP (mobile, corporate)
+  * DHCP rotation: mesmo user muda IP entre sessoes
+  * Bots poluem analytics IP-based
+- Use case: anonymous user navega 10 produtos -> same session -> recommendation
+  "produtos vistos juntos" sem login (paridade Mercado Livre)
+- Backfill anonymous -> user_id pos-login (CTE)
+- Bot detection: session_id que viu 1000 produtos/60s
+
+POST-FIX:
+- ADD COLUMN session_id VARCHAR(64) NULL (defensive DO $$ EXCEPTION)
+- CREATE INDEX PARTIAL (session_id, created_at DESC) WHERE NOT NULL
+- Frontend pode gerar HMAC random + localStorage persist
+- Compatible com user_id (NULL session OR NULL user, NUNCA ambos null
+  exceto rows legadas pre-migration)
+
+============================================================
+3. W7 - upload audit_log target_id UUID mismatch
+============================================================
+FILE: services/product-svc/src/routes/upload.js:133-150
+
+PROBLEMA (silent compliance gap):
+- audit_log.target_id schema = UUID (mig 002 linha 188)
+- Upload INSERT passava sha (SHA256 64-char hex) como target_id
+- Comentario inline dizia "sha como target_id (UUID-like)" - ERRADO
+- PG 22P02 invalid_text_representation - catch silencia exception
+- Resultado: NENHUM audit_log de upload jamais inserido em prod
+- Compliance gap: Regra P + Pattern W7 audit policy violados silenciosamente
+- Forense LGPD impossivel (uploads ilicitos sem trail)
+
+POST-FIX:
+- target_id = NULL no INSERT (legitimo - sha nao referencia UUID entity)
+- SHA256 ja esta em payload_after JSONB (estrutura forense ok)
+- Lookup por sha possivel via idx_audit_payload_gin (mig 002 linha 200)
+- Comment claramente explica decisao
+
+============================================================
+SUMARIO PASS 250
+============================================================
+Files: 3 modificados/criados
+  - apps/dashboard-admin/src/app/db-audit/layout.tsx (NEW SEO)
+  - db/migrations/074_product_views_session_id.sql (NEW schema)
+  - services/product-svc/src/routes/upload.js (audit fix)
+Lines: ~80 added
+
+VPS SSH BLOQUEADO (83 ciclos - 27.7h sem deploy).
+Migs 069+070+071+072+073+074 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-admin cas_product-svc --force
+- Apply mig 074:
+    docker exec cas_postgres psql -U cas_admin -d cas \
+      -f /docker/db/migrations/074_product_views_session_id.sql
+- W9 test: curl admin.cas/db-audit -> HTML title 'DB Audit - Admin'
+- W14 test: \d product_views -> session_id VARCHAR(64) coluna presente
+  \di idx_pviews_session -> indice PARTIAL existe
+- W7 test: POST /api/products/upload/package -> SELECT audit_log
+  WHERE action='upload.package' -> rows INSERIDOS (eram silently dropped)
+
+PROXIMA ITER:
+- W4 admin: bulk select payouts
+- W11 payment: dispute timeline events
+- VPS SSH unblock URGENTISSIMO (83 ciclos - 27.7h!!!)
