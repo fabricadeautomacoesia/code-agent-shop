@@ -17335,7 +17335,32 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Fix /conta link Downloads + audit admin pages (pass 115)
 - ✅ Audit visual/UX + Fix OG layout completo (pass 116)
 - ✅ Audit perf+sec + Fix internal-token bypass (pass 117)
-- ✅ SEO metadata /sellers + /products enriquecida (pass 118 esta iter)
+- ✅ SEO metadata /sellers + /products enriquecida (pass 118)
+- ✅ Migration 048 DROP 2 indices orfaos APLICADA em prod (pass 119 esta iter)
+
+W7 PASS 119 RESUMO - W18 PERFORMANCE DROP INDICES ORFAOS:
+- AUDIT pg_stat_user_indexes em prod (3a iter consecutiva confirmando):
+  * idx_metrics_host_time: 824KB, idx_scan=0 desde deploy (>72h prod ativa)
+    REDUNDANTE com idx_metrics_collected (ja indexa collected_at DESC)
+    Migration 011 criou prematuramente esperando multi-host (single-node deploy)
+  * idx_products_title_trgm: 56KB, idx_scan=0
+    GIN trigram p/ ILIKE - search-svc usa search_tsv (tsvector full-text)
+- CREATED db/migrations/048_drop_orphan_indexes.sql:
+  * DROP INDEX IF EXISTS idx_metrics_host_time;
+  * DROP INDEX IF EXISTS idx_products_title_trgm;
+  * ANALYZE metrics_history + ANALYZE products;
+  * Header com ROLLBACK plan documentado
+- APPLIED via SSH em prod (postegresp2_postgres container):
+  * Pre-state: mht_size=824kB, ptt_size=56kB
+  * DROP INDEX (2x) OK + ANALYZE (2x) OK
+  * Post-state: 0 rows match indexname IN (...) - confirmado dropados
+  * Total indices public: 249 -> 247 (-2 como esperado)
+  * INSERT em schema_migrations 048_drop_orphan_indexes.sql OK
+- VALIDATION prod still UP: HTTP=401 invalid_token (auth funcionando)
+- STORAGE liberado: ~880KB
+- INSERT speedup esperado em metrics_history: ~5% (1 idx menos manter)
+- COMMIT f5fa160 pushed GitHub main + applied prod
+- Pattern W7+W18 em 148+ endpoints + 47+ migrations LIVE
 
 W7 PASS 118 RESUMO - SEO METADATA + FALSO POSITIVO PASS 117:
 - INVESTIGATION pass 117 alerta 'security_events table missing':
