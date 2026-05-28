@@ -22042,3 +22042,65 @@ PROXIMA ITER:
 - W18: cache aiops /db/dead-indexes ja existe (60s) - audit completo
 - W11: payment-svc refund flow validation
 - 🚨 VPS SSH unblock URGENTE (36 ciclos - >12h sem deploy!)
+
+PASS 204 (W11 payment-svc refund flow ON CONFLICT + cache coherency) - 2026-05-28:
+- W11 audit PAYMENT_REFUNDED/PAYMENT_CHARGEBACK webhook descobriu 2 bugs:
+
+BUG 1 (race + UNIQUE violation):
+- Migration 061 (pass 190) criou idx_loyalty_idempotency partial UNIQUE
+- Refund INSERT loyalty_transactions com reference_id=order.id
+  reason='order_refunded' / reason='order_refund_restore'
+- Asaas retry PAYMENT_REFUNDED -> 23505 PG dispara
+- errorHandler 500 -> Asaas retry storm
+- Same race que webhook idempotency bug pre-pass-184
+
+FIX: INSERT ... ON CONFLICT (user_id, reason, reference_id) WHERE NOT NULL DO NOTHING
+- 2 INSERTs cobertos (estorna earn + restaura redeem)
+- Race-safe atomic
+- Mantem semantica reversa loyalty
+
+BUG 2 (cache coherency missing cross-svc):
+- Refund tx UPDATE user_loyalty.points_balance via 2 paths
+  (estorna earn + restaura pontos resgatados)
+- seller-svc /loyalty/me cache (pass 176) NAO invalidado
+- Buyer ve saldo stale 30s em /cart loyalty card
+- Pattern V8 cross-svc coherency (pass 174/175/176/191)
+
+FIX: loyaltyUsersToInvalidate Set capturado dentro tx
+     Post-tx Promise.all cache.del(loyalty:me:{userId}:*)
+
+PATTERN V8 RACE-SAFE IDEMPOTENCY agora em 3 endpoints:
+- pass 184: payment-svc Asaas webhook (event_id UNIQUE)
+- pass 191: seller-svc /loyalty/earn (consume mig 061)
+- pass 204: payment-svc refund webhook (consume mig 061 reverse) - NEW
+
+PATTERN V8 LOYALTY CACHE COHERENCY agora em 3 paths:
+- pass 176: order-svc checkout debit -> loyalty:me invalidate
+- pass 191: seller-svc /earn -> loyalty:me invalidate (same svc)
+- pass 204: payment-svc refund -> loyalty:me invalidate cross-svc - NEW
+
+Commit 2b72603 pushed origin/main (+31/-2)
+VPS SSH ainda bloqueado (37 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (37 ciclos):
+- 168-203: documentados
+- 204: payment-svc refund flow ON CONFLICT + cross-svc cache coherency
+
+LINKS PARA TESTE (apos VPS unblock + migration 061 apply):
+- Apply migration 061 (REQUIRED for ON CONFLICT semantica):
+  psql -f /opt/cas/db/migrations/061_loyalty_idempotency_idx.sql
+- Rebuild: docker service update cas_payment-svc --force
+- Teste race refund:
+  Disparar 2 webhook PAYMENT_REFUNDED concurrent (Asaas-like retry)
+  com mesmo data.id (cobertura pass 184) + 2 ordens com loyalty
+  Esperado: ambos OK, INSERTs ON CONFLICT noop em duplicate
+  Sem 23505 / Sentry flood
+- Teste coherency:
+  Buyer earn 100pts em order -> refund -> GET /loyalty/me
+  Esperado: balance refletido imediato (sem stale 30s cache)
+
+PROXIMA ITER:
+- W17: vault-svc seller endpoints BYOK
+- W11: payment-svc Asaas /process payout endpoint review
+- W18: gateway cache /aiops/status (admin polls)
+- 🚨 VPS SSH unblock URGENTE (37 ciclos - >12.3h sem deploy!)
