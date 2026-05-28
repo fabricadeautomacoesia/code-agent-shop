@@ -70,17 +70,19 @@ export default function SellerProductsPage() {
 
       {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
 
-      {/* FIX-WORKER-5 pass 1: banners action via useSellerAction */}
+      {/* FIX-WORKER-5 pass 1 + 172 (a11y V8 R23) */}
       {action.error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.error}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de erro"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
         </div>
       )}
       {action.success && (
-        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="status" aria-live="polite" className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.success}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de sucesso"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-green-400 rounded">fechar</button>
         </div>
       )}
 
@@ -120,9 +122,11 @@ export default function SellerProductsPage() {
                         <Link href={`/products/${p.id}`} className="text-magenta hover:underline text-xs inline-flex items-center gap-1">
                           <FileEdit className="w-3 h-3" /> Editar
                         </Link>
-                        <button onClick={() => submitQA(p.id)} disabled={action.busyKey === `submit-${p.id}`}
-                          className="text-green-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
-                          <Send className="w-3 h-3" /> {action.busyKey === `submit-${p.id}` ? 'Enviando...' : 'Enviar QA'}
+                        {/* FIX-WORKER-5 pass 172 (a11y V8 R23): type=button + aria-label */}
+                        <button type="button" onClick={() => submitQA(p.id)} disabled={action.busyKey === `submit-${p.id}`}
+                          aria-label={`Enviar ${p.title} para fila de QA`}
+                          className="text-green-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-green-400 rounded">
+                          <Send className="w-3 h-3" aria-hidden="true" /> {action.busyKey === `submit-${p.id}` ? 'Enviando...' : 'Enviar QA'}
                         </button>
                       </>
                     )}

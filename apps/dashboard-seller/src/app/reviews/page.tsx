@@ -68,22 +68,27 @@ export default function SellerReviewsPage() {
       </div>
 
       {/* FIX-WORKER-5 pass 7: banners centralizados via useSellerAction (era err ad-hoc) */}
+      {/* FIX-WORKER-5 pass 7 + 172 (a11y V8 R23): role=alert/status + type=button + aria-label */}
       {loadError && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>Erro carregando avaliacoes: {loadError}</span>
-          <button onClick={() => { setLoadError(''); load(); }} className="text-xs hover:underline">retry</button>
+          <button type="button" onClick={() => { setLoadError(''); load(); }}
+            aria-label="Tentar carregar avaliacoes novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">retry</button>
         </div>
       )}
       {action.error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.error}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de erro"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
         </div>
       )}
       {action.success && (
-        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="status" aria-live="polite" className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.success}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de sucesso"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-green-400 rounded">fechar</button>
         </div>
       )}
 
@@ -156,8 +161,10 @@ export default function SellerReviewsPage() {
                     disabled={busy}
                     aria-label={`Resposta para avaliacao de ${r.buyer_name || 'cliente'}`}
                     className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm focus:border-magenta focus:outline-none disabled:opacity-50" />
-                  <button onClick={() => reply(r.id)} disabled={busy || !replies[r.id]?.trim()}
-                    className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                  {/* FIX-WORKER-5 pass 172 (a11y V8 R23): type=button + aria-label */}
+                  <button type="button" onClick={() => reply(r.id)} disabled={busy || !replies[r.id]?.trim()}
+                    aria-label={`Enviar resposta para avaliacao de ${r.buyer_name || 'cliente'}`}
+                    className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-magenta">
                     <Send className="w-3 h-3" aria-hidden="true" /> {busy ? 'Enviando...' : 'Responder'}
                   </button>
                 </div>

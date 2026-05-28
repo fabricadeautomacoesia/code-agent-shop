@@ -92,14 +92,21 @@ export default function VaultPage() {
           <h1 className="font-display font-bold text-4xl mb-2">Vault de API keys</h1>
           <p className="text-white/60">Cofre AES-256-GCM (V8 22.1) - chaves da plataforma e BYOK de sellers</p>
         </div>
-        <button onClick={() => setShow(true)} className="btn-primary flex items-center gap-2"><Plus className="w-4 h-4" /> Provisionar chave</button>
+        {/* FIX-WORKER-4 pass 172 (a11y V8 R23): type=button + aria-label */}
+        <button type="button" onClick={() => setShow(true)}
+          aria-label="Abrir formulario para provisionar nova chave de API"
+          className="btn-primary flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-magenta">
+          <Plus className="w-4 h-4" aria-hidden="true" /> Provisionar chave
+        </button>
       </div>
 
-      {/* FIX-WORKER-4 pass 9: loadError com retry (pattern W4 pass 6, 7, 8) */}
+      {/* FIX-WORKER-4 pass 9 + 172 (a11y V8 R23): role=alert + type=button + aria-label */}
       {loadError && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>Erro carregando lista: {loadError}</span>
-          <button onClick={() => { setLoadError(''); load(); }} className="text-xs hover:underline">retry</button>
+          <button type="button" onClick={() => { setLoadError(''); load(); }}
+            aria-label="Tentar carregar lista novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">retry</button>
         </div>
       )}
 
@@ -122,17 +129,19 @@ export default function VaultPage() {
         </div>
       )}
 
-      {/* FIX-WORKER-4 pass 4: banners via useAdminAction (DRY com payouts/qa-queue/sellers/products) */}
+      {/* FIX-WORKER-4 pass 4 + 172 (a11y V8 R23): role=alert/status + type=button + aria-label */}
       {action.error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.error}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de erro"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
         </div>
       )}
       {action.success && (
-        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="status" aria-live="polite" className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.success}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de sucesso"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-green-400 rounded">fechar</button>
         </div>
       )}
 
@@ -296,18 +305,18 @@ export default function VaultPage() {
                   <td className="text-right space-x-2">
                     {k.is_active && (
                       <>
-                        {/* FIX-WORKER-17 pass 13: botao Rotacionar (swap atomico) */}
-                        <button onClick={() => rotateKey(k.id, k.key_alias)}
+                        {/* FIX-WORKER-17 pass 13 + 172: type=button (V8 R23) */}
+                        <button type="button" onClick={() => rotateKey(k.id, k.key_alias)}
                           disabled={busy || action.busyKey === `rotate-${k.id}`}
                           aria-label={`Rotacionar chave ${k.key_alias}`}
-                          className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                          className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-magenta rounded">
                           <RefreshCw className={`w-3 h-3 ${action.busyKey === `rotate-${k.id}` ? 'animate-spin' : ''}`} aria-hidden="true" />
                           {action.busyKey === `rotate-${k.id}` ? '...' : 'Rotacionar'}
                         </button>
-                        <button onClick={() => revoke(k.id)}
+                        <button type="button" onClick={() => revoke(k.id)}
                           disabled={busy || action.busyKey === `rotate-${k.id}`}
                           aria-label={`Revogar chave ${k.key_alias}`}
-                          className="text-red-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                          className="text-red-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-red-400 rounded">
                           <Trash2 className="w-3 h-3" aria-hidden="true" /> {busy ? '...' : 'Revogar'}
                         </button>
                       </>

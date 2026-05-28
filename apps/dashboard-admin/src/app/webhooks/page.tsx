@@ -64,8 +64,10 @@ export default function AdminWebhooksPage() {
               Atualizado: {lastUpdate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </p>
           )}
-          <button onClick={load} disabled={loading}
-            className="text-xs px-3 py-1.5 rounded-lg glass hover:border-magenta/40 transition-colors disabled:opacity-50">
+          {/* FIX-WORKER-4 pass 172 (a11y V8 R23): type=button + aria-label */}
+          <button type="button" onClick={load} disabled={loading}
+            aria-label="Recarregar lista de webhooks dead letter"
+            className="text-xs px-3 py-1.5 rounded-lg glass hover:border-magenta/40 transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta">
             {loading ? 'Atualizando...' : 'Atualizar'}
           </button>
         </div>
@@ -91,24 +93,29 @@ export default function AdminWebhooksPage() {
         </div>
       </div>
 
+      {/* FIX-WORKER-4 pass 172 (a11y V8 R23): role=alert/status + type=button + aria-label */}
       {loadError && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>Erro carregando dead letter: {loadError}</span>
-          <button onClick={() => { setLoadError(''); load(); }} className="text-xs hover:underline">retry</button>
+          <button type="button" onClick={() => { setLoadError(''); load(); }}
+            aria-label="Tentar carregar dead letter novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">retry</button>
         </div>
       )}
 
-      {/* FIX-WORKER-11 pass 8: banners reset action */}
+      {/* FIX-WORKER-11 pass 8 + 172: banners reset action a11y */}
       {action.error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.error}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de erro"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
         </div>
       )}
       {action.success && (
-        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="status" aria-live="polite" className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.success}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de sucesso"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-green-400 rounded">fechar</button>
         </div>
       )}
 
@@ -172,10 +179,11 @@ export default function AdminWebhooksPage() {
                     </td>
                     {/* FIX-WORKER-11 pass 8: botao Reset (substitui workflow psql) */}
                     <td className="text-right">
-                      <button onClick={() => resetWebhook(w.id)}
+                      {/* FIX-WORKER-4 pass 172 (a11y V8 R23): type=button */}
+                      <button type="button" onClick={() => resetWebhook(w.id)}
                         disabled={action.busyKey === `reset-${w.id}`}
                         aria-label={`Resetar e reprocessar webhook ${w.event_type}`}
-                        className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
+                        className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-magenta rounded">
                         <RefreshCw className={`w-3 h-3 ${action.busyKey === `reset-${w.id}` ? 'animate-spin' : ''}`} aria-hidden="true" />
                         {action.busyKey === `reset-${w.id}` ? '...' : 'Reset'}
                       </button>

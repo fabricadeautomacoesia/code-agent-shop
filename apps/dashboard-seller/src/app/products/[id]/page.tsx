@@ -94,9 +94,11 @@ export default function EditProductPage() {
           <p className="text-white/60 text-sm">Status: <span className="px-2 py-0.5 rounded bg-white/10 text-xs">{product?.status}</span></p>
         </div>
         {isEditable && (
-          <button onClick={submit} disabled={action.busyKey === 'submit' || action.busyKey === 'save'}
-            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait">
-            <Send className="w-4 h-4" /> {action.busyKey === 'submit' ? 'Enviando QA...' : 'Enviar para QA'}
+          /* FIX-WORKER-5 pass 172 (a11y V8 R23): type=button + aria-label */
+          <button type="button" onClick={submit} disabled={action.busyKey === 'submit' || action.busyKey === 'save'}
+            aria-label="Enviar produto para fila de QA"
+            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-magenta">
+            <Send className="w-4 h-4" aria-hidden="true" /> {action.busyKey === 'submit' ? 'Enviando QA...' : 'Enviar para QA'}
           </button>
         )}
       </div>
@@ -109,16 +111,19 @@ export default function EditProductPage() {
 
       {/* FIX-WORKER-5 pass 4: banners via useSellerAction (substituem err+msg ad-hoc) */}
       {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro: {loadError}</div>}
+      {/* FIX-WORKER-5 pass 4 + 172 (a11y V8 R23) */}
       {action.error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.error}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de erro"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
         </div>
       )}
       {action.success && (
-        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="status" aria-live="polite" className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.success}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear} aria-label="Fechar mensagem de sucesso"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-green-400 rounded">fechar</button>
         </div>
       )}
 
