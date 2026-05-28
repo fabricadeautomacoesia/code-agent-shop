@@ -16,7 +16,25 @@ export const useAuth = create<AuthState>()(
       token: null,
       user: null,
       setAuth: (token, user) => set({ token, user }),
-      clear: () => set({ token: null, user: null }),
+      // FIX-WORKER-3 pass 392 (state leak entre users logout/login no mesmo browser):
+      //   PRE-FIX: clear() apenas resetava token/user
+      //   - useWishlist.ids continuava com items do user anterior
+      //   - useCompare.items persisted localStorage (mig persist OK)
+      //   - User B abre tab apos logout User A -> ve heart icon marked em cards
+      //     wishlist do User A (state leak entre identities)
+      //   - Severo em ambientes compartilhados (cafe, kiosks, work shared PC)
+      //   POST-FIX: chain clear cross-store via dynamic import (evita circular dep)
+      //   - useWishlist.clear() limpa ids + loaded flag
+      //   - useCompare nao limpa (intencional - comparator nao depende de auth)
+      clear: () => {
+        set({ token: null, user: null });
+        // Async clear wishlist (dynamic import - circular dep prevention)
+        Promise.resolve().then(() => {
+          try {
+            useWishlist.getState().clear();
+          } catch { /* defensive - hot reload edge */ }
+        });
+      },
     }),
     { name: 'cas_auth' }
   )
