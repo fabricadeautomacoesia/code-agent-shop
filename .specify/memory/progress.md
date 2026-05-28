@@ -17349,7 +17349,24 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ PDP aside sticky so lg+ (mobile UX) (pass 129)
 - ✅ Migration 052 idx_products_last_sale +platform_owned (pass 130)
 - ✅ MLB-14 RecentlyViewedGuest localStorage (pass 131)
-- ✅ Migration 053 idx sellers.asaas_wallet/customer (pass 132 esta iter)
+- ✅ Migration 053 idx sellers.asaas_wallet/customer (pass 132)
+- ✅ W9 enrich /promocoes metadata OG+twitter+keywords (pass 133 esta iter)
+
+W7 PASS 133 RESUMO - W9 SEO /promocoes ENRICHMENT:
+- AUDIT pages com metadata parcial:
+  * /promocoes tinha title+desc+canonical mas SEM openGraph + twitter
+  * Compartilhamento WA/X/Slack mostrava preview generico do root /
+- FIX em apps/storefront/src/app/promocoes/page.tsx:
+  * +openGraph (type/url/title/desc/images)
+  * +twitter card summary_large_image
+  * +keywords array (promocoes/descontos/relampago/flash sale/etc)
+- BUILD storefront OK + service converged
+- VALIDATED via curl prod:
+  * <title>Promocoes Relampago - Code & Agent Shop</title>
+  * 14 meta tags SEO especificas (era ~4 herdadas root)
+  * canonical, og:title/desc/url/image/type, twitter:card/title/desc/image, keywords
+- Aumenta CTR em shares + retencao audience inbound from social
+- COMMIT 696992d pushed GitHub main + deployed prod
 
 W7 PASS 132 RESUMO - W14 IDX SELLERS ASAAS WALLET + CUSTOMER:
 - AUDIT W4 admin endpoints: caminhos /api/admin/* nao existem (design correto)
