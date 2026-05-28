@@ -120,11 +120,18 @@ router.post('/:id/suspend',
          JSON.stringify({ reason: req.body.reason, previous_status: s.status, ip: req.ip })]
       );
       // Notification ao seller (UX - sabe motivo)
+      // FIX-WORKER-4 pass 258 (priority p/ seller_suspended):
+      //   PRE-FIX: INSERT sem priority -> default=0 -> notif fica end of outbox
+      //   queue (processOutbox ORDER BY priority DESC, created_at ASC). Seller
+      //   demora para ver "conta suspensa" em produto outage.
+      //   Suspend = critical (impacta cash flow seller, login bloqueado).
+      //   POST-FIX: priority=3 (criticos pattern V8: payment-fail, security,
+      //   account-state changes). Outbox prioriza imediatamente.
       await c.query(
-        `INSERT INTO notifications (user_id, channel, template_code, title, body)
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
          VALUES ($1::UUID, 'email', 'seller_suspended',
                  'Sua conta foi suspensa',
-                 $2)`,
+                 $2, 3)`,
         [s.user_id, `Motivo: ${req.body.reason}. Entre em contato com o suporte para mais informacoes.`]
       );
     });
@@ -209,11 +216,14 @@ router.post('/:id/reactivate',
       );
 
       // BUG 4: notification ao seller (UX engagement)
+      // FIX-WORKER-4 pass 258 (priority paridade suspend):
+      //   reactivate eh "good news" critico (cash flow unblock + UX engagement)
+      //   priority=2 (medium-high) - menor que suspend(3) mas alto p/ engagement
       await c.query(
-        `INSERT INTO notifications (user_id, channel, template_code, title, body)
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
          VALUES ($1::UUID, 'email', 'seller_reactivated',
                  'Sua conta foi reativada',
-                 'Sua conta seller foi reativada. Voce pode voltar a publicar produtos e solicitar saques.')`,
+                 'Sua conta seller foi reativada. Voce pode voltar a publicar produtos e solicitar saques.', 2)`,
         [s.user_id]
       );
     });

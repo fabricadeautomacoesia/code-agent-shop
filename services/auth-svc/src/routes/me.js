@@ -179,7 +179,17 @@ router.patch('/',
         );
 
         // BUG 3+8 Regra P: audit log atomic + DLP mask cpf
-        const cpfChanged = req.body.cpf_cnpj !== undefined && req.body.cpf_cnpj !== cur.rows[0].old_cpf;
+        // FIX-WORKER-6 pass 258 (cpfChanged false-positive):
+        //   PRE-FIX: req.body.cpf_cnpj (digits normalizado linha 151) !=
+        //   cur.rows[0].old_cpf (possivel formato legacy "111.222.333-44")
+        //   User submetia mesmo CPF em formato diferente -> cpfChanged=true
+        //   incorreto -> audit_log false-positive 'cpf_changed' + severity warn
+        //   (era info)
+        //   POST-FIX: normalize both sides via regex digits-only antes compare
+        //   (mesmo pattern register pass 241).
+        const oldDigits = cur.rows[0].old_cpf ? String(cur.rows[0].old_cpf).replace(/\D/g, '') : '';
+        const newDigits = req.body.cpf_cnpj || '';
+        const cpfChanged = req.body.cpf_cnpj !== undefined && oldDigits !== newDigits;
         await c.query(
           `INSERT INTO audit_log
             (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)

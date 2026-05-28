@@ -176,7 +176,22 @@ async def process_async(req: AnalyzeRequest):
         payload_callback["cost_usd_cents"] = cost
 
     except Exception as e:
-        payload_callback["reasons"].append(f"worker_error: {str(e)[:200]}")
+        # FIX-WORKER-12 pass 258 (DLP outer exception message):
+        #   PRE-FIX: str(e)[:200] - exception msg pode conter:
+        #   - sk-... / Bearer tokens (LLM API errors raw URL/headers)
+        #   - paths sensitive ("/var/lib/docker/volumes/node_datad/_data/...")
+        #   - User CPFs/emails (parse fail no payload)
+        #   reasons[] vai p/ DB product_qa_runs + seller pode ver via UI
+        #   /seller/products/{id} -> seller pode ver secrets/PII.
+        #   POST-FIX: regex strip secrets antes de gravar.
+        #   Pattern V8 DLP - mesmo principio _sanitize_llm_error (pass 248)
+        import re as _dlp_re
+        raw_msg = str(e)[:300]
+        # Mask common secret patterns
+        safe_msg = _dlp_re.sub(r'(sk-[A-Za-z0-9_\-]{16,}|Bearer\s+[A-Za-z0-9_\-\.]+|/var/lib/[^\s]+|/etc/[^\s]+)', '[REDACTED]', raw_msg)
+        # Mask emails (PII LGPD)
+        safe_msg = _dlp_re.sub(r'\b[\w\.\-]+@[\w\.\-]+\.\w+\b', '[email]', safe_msg)
+        payload_callback["reasons"].append(f"worker_error: {safe_msg[:200]}")
         payload_callback["confidence_score"] = 0.0
 
     payload_callback["duration_ms"] = int((time.time() - t0) * 1000)

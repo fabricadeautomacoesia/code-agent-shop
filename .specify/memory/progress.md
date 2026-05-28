@@ -26527,3 +26527,93 @@ PROXIMA ITER:
 - W4 admin: bulk select payouts UI
 - W17 vault: rotate transactional consistency
 - VPS SSH unblock CRITICAL (90 ciclos - 30h MARCO)
+
+============================================================
+PASS 258 (2026-05-28) - W6 + W4 + W12 audit/notif/DLP
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W6 auth-svc: me.patch cpfChanged normalize comparison
+- W4 seller-svc admin: seller_suspended notif priority
+- W12 qa-worker: DLP outer exception message
+
+============================================================
+1. W6 - me.patch cpfChanged false-positive
+============================================================
+FILE: services/auth-svc/src/routes/me.js:181-194
+
+PROBLEMA:
+- cpfChanged = req.body.cpf_cnpj !== cur.rows[0].old_cpf
+- req.body.cpf_cnpj normalizado digits-only (linha 151)
+- cur.rows[0].old_cpf pode estar formatado "111.222.333-44" (legacy)
+- Comparison TEXT differente -> cpfChanged=true incorreto
+- Audit_log severity warn (forensics noise) + cpf_masked false log
+- Same bug pass 241 register, agora em PATCH
+
+POST-FIX:
+- Normalize both sides digits-only via regex
+- oldDigits = old_cpf.replace(/\D/g, '')
+- newDigits = req.body.cpf_cnpj (ja normalizado)
+- Compare strings limpas
+
+============================================================
+2. W4 - seller_suspended/reactivated notif priority
+============================================================
+FILE: services/seller-svc/src/routes/admin.js:123-130, 219-225
+
+PROBLEMA:
+- INSERT INTO notifications SEM coluna priority -> default 0 (baixa)
+- processOutbox ORDER BY priority DESC, created_at ASC
+- Seller suspendido vai end of queue, demora ver alerta critico
+- Suspend impacta cash flow + login - urgencia mas notif lenta
+
+POST-FIX:
+- seller_suspended priority=3 (critical - paridade security alerts)
+- seller_reactivated priority=2 (medium-high engagement)
+- Outbox prioriza imediato
+
+============================================================
+3. W12 - qa-worker DLP outer exception
+============================================================
+FILE: services/qa-worker/app/main.py:178-194
+
+PROBLEMA:
+- catch Exception as e: payload_callback["reasons"].append(str(e)[:200])
+- Exception pode conter:
+  * sk-... / Bearer tokens (LLM API errors)
+  * paths sensitive (/var/lib/docker/...)
+  * User PII (emails em parse errors)
+- reasons[] vai p/ product_qa_runs DB + seller UI /products/{id}
+- Seller pode ver secrets/PII de outros sellers ou system internals
+
+POST-FIX:
+- regex strip secrets patterns (sk-/Bearer/paths)
+- regex mask emails (PII LGPD)
+- Pattern V8 DLP - mesmo _sanitize_llm_error (pass 248)
+
+============================================================
+SUMARIO PASS 258
+============================================================
+Files: 3 modificados
+  - services/auth-svc/src/routes/me.js (cpf normalize)
+  - services/seller-svc/src/routes/admin.js (notif priority)
+  - services/qa-worker/app/main.py (DLP outer)
+Lines: ~60 added
+
+VPS SSH BLOQUEADO (91 ciclos - 30.3h sem deploy).
+Migs 069-075 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_auth-svc cas_seller-svc cas_qa-worker --force
+- W6 test: PATCH /me.cpf_cnpj mesmo CPF formato diferente ->
+  SELECT severity FROM audit_log WHERE action='user.patch_profile' DESC LIMIT 1
+  Deve ser 'info' (era 'warn' incorreto)
+- W4 test: suspend seller -> SELECT priority FROM notifications
+  WHERE template_code='seller_suspended' DESC LIMIT 1 = 3
+- W12 test: forcar exception com path /var/lib/... no qa-worker
+  reasons[] response sem path leaked
+
+PROXIMA ITER:
+- W2 checkout: PIX QR refresh button
+- W3 PDP: review helpful click feedback
+- VPS SSH unblock CRITICAL (91 ciclos - 30.3h)
