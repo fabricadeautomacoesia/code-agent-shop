@@ -33701,3 +33701,48 @@ incluir expression embed (functional index) p/ planner reconhecer match.
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Apply mig 095 prod p/ medir EXPLAIN ANALYZE com prefs >10k rows
+
+## PASS 438 W17 VAULT/SECURITY: ua_prefix forensic em ALL audit_log payloads (paridade pass 282)
+commit pendente
+GAP vault-svc audit_log SEMPRE sem ua_prefix - unica svc sec-critical lagged
+PRE-FIX:
+- Pass 282 (auth-svc) estabeleceu pattern ua_prefix mask.text() em audit_log
+- Pass 296 review-svc, 408 seller-svc, 429 two-factor (mais 4 svcs) propagaram
+- Vault era unico svc security-critical SEM ua_prefix
+- 5 audit_log INSERTs em vault-svc capturavam IP mas NAO user-agent:
+  - /use (linha 711) - hot-path most-hit
+  - /keys admin provision (linha 199)
+  - /keys/:id/revoke admin (linha 825)
+  - /keys/:id/rotate (linha 989)
+  - /keys/me seller provision (linha 1267)
+  - /keys/me/:id/revoke seller (linha 1361)
+
+SCENARIO COMPROMISSE:
+- Admin token XSS-stolen -> attacker provisiona vault keys novas
+- Atacante usa keys p/ LLM calls custos high
+- Investigation post-incident:
+  - audit_log mostra IP X (correlaciona com login forense)
+  - audit_log SEM browser/device fingerprint (UA)
+  - Nao consegue confirmar: "foi do navegador admin ou device attacker?"
+  - Forensic gap p/ SOC2 compliance + LGPD direito-acesso
+
+POST-FIX (6 endpoints):
+- Mask.text() em ua_prefix (60 chars slice) cross-endpoints
+- Paridade pass 282 cross-svc consolidada cross-svc:
+  - auth-svc + review-svc + seller-svc + vault-svc + two-factor + asaas-webhook
+- ua_prefix mask defesa-em-profundidade (browser UA pode ter version leak)
+
+W17 ua_prefix forensic series:
+  pass 282 auth-svc base pattern
+  pass 296 review-svc
+  pass 408 seller-svc
+  pass 429 two-factor (auth-svc)
+  pass 438 vault-svc cross-endpoints <- ESTE (consolidacao final security svcs)
+
+Pattern V8 W17: TODA audit_log security-critical em ALL svcs DEVE ter ua_prefix masked
+
+171 passes acumulados (268->438) sem deploy VPS
+5 CRITICAL + 27 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO

@@ -197,6 +197,8 @@ app.post('/keys', provisionRateLimit, adminOnly, validate({ body: provisionSchem
          provider, key_alias, fingerprint: fp,
          seller_id: seller_id || null,
          is_platform_pool, ip: req.ip,
+         // FIX-WORKER-17 pass 438 (ua_prefix forensic - paridade /use linha 720)
+         ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
        })]
     );
   });
@@ -709,6 +711,16 @@ app.post('/use',
           seller_id: seller_id || null,
           operation: operation || null,
           ip: req.ip,
+          // FIX-WORKER-17 pass 438 (ua_prefix forensic - paridade pass 282 auth-svc):
+          //   PRE-FIX: vault audit_log SEMPRE sem ua_prefix.
+          //   Pass 282 (auth-svc), 296 (review-svc), 408 (seller-svc) ja capturavam.
+          //   Vault era unico svc security-critical lagged - forensic gap:
+          //   - Admin token XSS-stolen -> attacker provisiona/rotate keys
+          //   - audit_log mostra IP mas NAO browser/device fingerprint
+          //   - Investigation post-incident: correlacionar IP+UA p/ device match impossivel
+          //   POST-FIX: mask.text() ua_prefix (60 chars) - paridade cross-svc.
+          //   Mask antes write (defense-in-depth - browser UA pode ter version leak).
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
         }),
       ]
     ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), key_id: k.id }, '[vault.use.audit_fail]'));
@@ -823,6 +835,8 @@ app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
            fingerprint: k.key_fingerprint,
            reason: reasonMaskedAdmin,
            ip: req.ip,
+           // FIX-WORKER-17 pass 438 (ua_prefix forensic - paridade /use + /keys)
+           ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
          })]
       );
       outcome = { ok: true };
@@ -974,6 +988,8 @@ app.post('/keys/:id/rotate',
            reason: maskedReason,
            rotation_days: rotDays,
            ip: req.ip,
+           // FIX-WORKER-17 pass 438 (ua_prefix forensic - paridade cross-endpoints vault)
+           ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
          })]
       );
 
@@ -1264,7 +1280,11 @@ app.post('/keys/me',
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, $2, 'vault.seller_provision', 'vault_api_key', $3, 'info', $4::JSONB)`,
         [req.user.sub, req.user.role, r.rows[0].id,
-         JSON.stringify({ provider, key_alias, fingerprint: fp, seller_id: sellerId, ip: req.ip })]
+         JSON.stringify({
+           provider, key_alias, fingerprint: fp, seller_id: sellerId, ip: req.ip,
+           // FIX-WORKER-17 pass 438 (ua_prefix forensic - paridade admin provision)
+           ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+         })]
       );
     });
 
@@ -1338,7 +1358,12 @@ app.post('/keys/me/:id/revoke',
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
        VALUES ($1, $2, 'vault.seller_revoke', 'vault_api_key', $3, 'warn', $4::JSONB)`,
       [req.user.sub, req.user.role, req.params.id,
-       JSON.stringify({ reason: mask.text(req.body.reason.slice(0, 200)), ip: req.ip })]
+       JSON.stringify({
+         reason: mask.text(req.body.reason.slice(0, 200)),
+         ip: req.ip,
+         // FIX-WORKER-17 pass 438 (ua_prefix forensic - paridade cross-endpoints vault)
+         ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+       })]
     ).catch(() => {});
 
     res.json({ ok: true, revoked: r.rows[0].id });
