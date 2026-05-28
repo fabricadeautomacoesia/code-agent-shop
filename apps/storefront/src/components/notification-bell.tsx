@@ -110,6 +110,18 @@ export function NotificationBell() {
   //        ficava errada ate fechar/abrir. Dessincronizacao confusa.
   // AGORA: flip imediato + rollback se falhar.
   async function markRead(id: string) {
+    // FIX-WORKER-1 pass 267 (defensive UUID + observable failure):
+    //   PRE-FIX: id direto na URL sem validate, catch {} silent
+    //   - id malformed (backend shape drift) -> GET /notifications/undefined/read 404
+    //   - catch swallow -> user nunca via erro mas optimistic flip ja aconteceu
+    //   - Resultado: badge unread diz "0" mas DB tem unread - dessync silencioso
+    //   POST-FIX: UUID v4 regex client-side + log.error em failures
+    //   (browser console - admin debug forensics)
+    const UUID_RE_CLIENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!id || !UUID_RE_CLIENT.test(id)) {
+      console.error('[notification-bell] markRead invalid id', { id });
+      return;
+    }
     // snapshot pre-mutate (para rollback)
     const target = notifs.find((n) => n.id === id);
     if (!target || target.is_read) return; // ja lido = no-op
@@ -118,8 +130,9 @@ export function NotificationBell() {
     setUnreadCount((c) => Math.max(0, c - 1));
     try {
       await Api.api(`/notifications/${id}/read`, { method: 'POST', auth: token! });
-    } catch {
+    } catch (e: any) {
       // rollback - restaura is_read=false e incrementa unread
+      console.error('[notification-bell] markRead failed - rolling back', { id, err: e?.message });
       setNotifs((p) => p.map((n) => n.id === id ? { ...n, is_read: false } : n));
       setUnreadCount((c) => c + 1);
     }

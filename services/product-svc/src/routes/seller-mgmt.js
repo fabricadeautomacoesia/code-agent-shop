@@ -411,8 +411,23 @@ router.patch('/:id', validate({ body: patchSchema }), asyncHandler(async (req, r
     const prevState = owns.rows[0];
 
     // Build SET dinamico
+    // FIX-WORKER-7 pass 267 (SQL injection defense-in-depth):
+    //   PRE-FIX: cols.push(`${k} = $...`) interpolava k direto sem re-validate.
+    //   `allowed` whitelist (linha 392-394) protege HOJE, mas frágil:
+    //   - Se algum dia developer mudar fieldsProvided pra Object.keys() ou
+    //     z.passthrough() em patchSchema -> SQL injection real
+    //   - Defense-in-depth: re-validate column name inline contra Set whitelist
+    //   - Pattern V8 W7 (registro auth pass 51 BUG 1) consolidado
+    //   POST-FIX: inline ALLOWED_COLS Set + throw se key suspeita
+    const ALLOWED_COLS = new Set(allowed);
     const cols = []; const vals = []; let i = 1;
     for (const k of fieldsProvided) {
+      // Defense-in-depth: re-check k against whitelist (paranoid)
+      if (!ALLOWED_COLS.has(k)) {
+        log.error({ key: k, user: req.user.sub }, '[product.patch.suspicious_key] field bypass whitelist');
+        outcome = { error: 'invalid_field' };
+        return;
+      }
       cols.push(`${k} = $${i++}`);
       vals.push(k === 'attributes' ? JSON.stringify(req.body[k]) : req.body[k]);
     }
@@ -447,6 +462,7 @@ router.patch('/:id', validate({ body: patchSchema }), asyncHandler(async (req, r
     outcome = { ok: true };
   });
 
+  if (outcome?.error === 'invalid_field') return next(errorHandler.badRequest('invalid_field', 'Campo nao permitido detected'));
   if (outcome?.error === 'not_editable') return next(errorHandler.notFound('product_not_editable'));
   if (outcome?.error === 'status_changed_during_update') {
     return res.status(409).json({

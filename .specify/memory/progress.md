@@ -27247,3 +27247,71 @@ PROXIMA ITER:
 - W5 dashboard reviews edit modal
 - W3 PDP gallery zoom
 - VPS SSH unblock CRITICAL (99 ciclos - 33h MARCO!!!)
+
+============================================================
+PASS 267 (2026-05-28) - W7 + W1
+============================================================
+
+OBJETIVO: 2 workers (W18 audit clean)
+- W7 product-svc: PATCH /:id SQL whitelist defense-in-depth
+- W1 storefront: NotificationBell markRead UUID + observable
+
+============================================================
+1. W7 - product PATCH SQL whitelist re-validate inline
+============================================================
+FILE: services/product-svc/src/routes/seller-mgmt.js:413-434
+
+PROBLEMA (defense-in-depth):
+- cols.push(`${k} = $${i++}`) interpolava column name k direto
+- allowed whitelist (linha 392) protege HOJE mas fragil:
+  * Developer pode mudar fieldsProvided p/ Object.keys() bypass
+  * z.passthrough() em patchSchema future tambem bypass
+- Pattern V8 W7 (register pass 51 BUG 1): NUNCA confiar em Zod isolado
+  para SQL safety - defense-in-depth com Set inline check
+
+POST-FIX:
+- ALLOWED_COLS = new Set(allowed) inline
+- if (!ALLOWED_COLS.has(k)) outcome = invalid_field + log.error
+- 400 invalid_field handler novo
+- Mesma fail-safe paranoid de auth-svc users PATCH
+
+============================================================
+2. W1 - NotificationBell markRead UUID validate + observability
+============================================================
+FILE: apps/storefront/src/components/notification-bell.tsx:112-145
+
+PROBLEMA:
+- markRead(id) -> fetch POST /notifications/${id}/read sem UUID validate
+- Se id malformed (backend shape drift): URL /undefined/read -> 404
+- catch {} silent swallow:
+  * Optimistic flip ja aconteceu (badge unread -1)
+  * Backend nao processou (DB ainda unread)
+  * Dessync silencioso entre UI e DB
+- Admin debugging impossivel - sem console error
+
+POST-FIX:
+- UUID_RE_CLIENT regex validate antes do fetch
+- console.error log em validate fail + catch (forensics)
+- Mesma rollback logic mantida + defensive id check
+
+============================================================
+SUMARIO PASS 267
+============================================================
+Files: 2 modificados
+  - services/product-svc/src/routes/seller-mgmt.js (SQL whitelist)
+  - apps/storefront/src/components/notification-bell.tsx (UUID + log)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (100 ciclos - 33.3h sem deploy MARCO!).
+Migs 069-077 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc cas_storefront --force
+- W7: PATCH /products/me/:id com body monkey-patched p/ keys fora whitelist
+  -> 400 invalid_field + log.error (era passava silent)
+- W1: markRead com id null/undefined -> console.error (era silent fail)
+
+PROXIMA ITER:
+- W2 cupom apply UX feedback
+- W17 vault rotate transactional
+- VPS SSH unblock CRITICAL (100 CICLOS MARCO - 33.3h!!!)
