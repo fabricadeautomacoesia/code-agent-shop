@@ -17340,7 +17340,28 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Migration 049 ADD 16 FK indices faltando APLICADA em prod (pass 120)
 - ✅ generateMetadata dinamico /categoria/[slug] (pass 121)
 - ✅ MLB-12 Buscas Recentes localStorage (pass 122)
-- ✅ Fix /facets HTTP 500 enum cast (pass 123 esta iter)
+- ✅ Fix /facets HTTP 500 enum cast (pass 123)
+- ✅ Migration 050 trigger updated_at user_loyalty (pass 124 esta iter)
+
+W7 PASS 124 RESUMO - W14 TRIGGER updated_at user_loyalty:
+- AUDIT 13 tabelas c/ coluna updated_at vs triggers existentes:
+  * 12 com fn_set_updated_at trigger ativo
+  * 1 SEM trigger: user_loyalty
+- IMPACTO: updated_at user_loyalty era SEMPRE igual created_at
+  -> impossivel auditar 'ultima vez que user ganhou/perdeu pontos'
+- CREATED db/migrations/050_user_loyalty_updated_at_trigger.sql:
+  * DROP TRIGGER IF EXISTS (defensive idempotente)
+  * CREATE TRIGGER trg_loyalty_updated_at BEFORE UPDATE
+  * EXECUTE FUNCTION fn_set_updated_at()
+- APPLIED via SSH em prod:
+  * DROP NOTICE (nao existia) + CREATE TRIGGER OK
+  * Registrada em schema_migrations
+- VALIDATED via test direto:
+  * BEFORE: 2026-05-26 23:35:18
+  * UPDATE user_loyalty SET points_balance=points_balance
+  * AFTER: 2026-05-28 05:56:00 (trigger atualizou updated_at)
+- COMMIT 3945bb7 pushed GitHub main + applied prod
+- 50 migrations totais no schema (era 49)
 
 W7 PASS 123 RESUMO - W10 SEARCH-SVC /facets HTTP 500 FIX:
 - AUDIT W10 search/aiops endpoints publicos:
