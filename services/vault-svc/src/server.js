@@ -1064,20 +1064,41 @@ app.get('/keys/me', readRateLimit, sellerOrAdmin, asyncHandler(async (req, res) 
     ownerSellerId = s.rows[0].id;
   }
 
+  /* FIX-WORKER-17 pass 300: pagination + COUNT OVER() consolidation.
+     PRE-FIX:
+     - LIMIT 50 hardcoded - seller >50 keys (multi-provider BYOK accum) nao
+       conseguia ver todas
+     - No total count - UI nao sabia se ha mais
+     POST-FIX:
+     - ?limit (1-200, default 50) + ?offset paginacao V8 Regra E
+     - COUNT(*) OVER()::INT consolidacao (pattern pass 178/200/202/289/293)
+     - has_more boolean UX */
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
   // Explicit fields (NUNCA encrypted_key/iv/auth_tag - security):
   const r = await query(
     `SELECT id, provider, key_alias, key_fingerprint,
             is_active, monthly_quota_usd_cents, usage_this_month_cents,
             expires_at, rotation_due_at, last_used_at,
-            created_at, revoked_at
+            created_at, revoked_at,
+            COUNT(*) OVER()::INT AS _total
        FROM vault_api_keys
       WHERE seller_id = $1
         AND is_platform_pool = FALSE
       ORDER BY created_at DESC, id ASC
-      LIMIT 50`,
-    [ownerSellerId]
+      LIMIT $2 OFFSET $3`,
+    [ownerSellerId, lim, off]
   );
-  res.json({ keys: r.rows, count: r.rows.length });
+  const total = r.rows[0]?._total ?? 0;
+  const keys = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
+  res.json({
+    keys,
+    count: keys.length,
+    total,
+    limit: lim,
+    offset: off,
+    has_more: (off + keys.length) < total,
+  });
 }));
 
 // POST /api/vault/keys/me - seller provisiona SUA chave

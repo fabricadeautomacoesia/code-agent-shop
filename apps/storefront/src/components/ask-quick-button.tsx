@@ -45,16 +45,22 @@ export function AskQuickButton({ productId }: { productId: string }) {
       {/* Dialog SEM title prop: header rico (icon + h3 visivel + subtitle)
           renderizado dentro do children como JSX custom. ariaLabel cobre
           screen reader (evita double-announce com h2 sr-only do Dialog). */}
+      {/* FIX-WORKER-3 pass 300 (a11y duplicate label disambiguation):
+          PRE-FIX: backdrop button (Dialog wrapper) e X custom (linha abaixo)
+          ambos com aria-label='Fechar modal'. Screen reader anuncia 2x botoes
+          identicos - confuso para NVDA/JAWS user navegando por tab/landmark.
+          POST-FIX: closeLabel='Fechar clicando fora' p/ backdrop (semantica
+          area maior) + X custom mantem 'Fechar modal' (acao explicita). */}
       <Dialog
         open={open}
         onClose={() => setOpen(false)}
         ariaLabel="Pergunta ao vendedor"
         variant="centered"
         zIndex={80}
-        closeLabel="Fechar modal"
+        closeLabel="Fechar clicando fora"
         className="relative glass-strong rounded-2xl p-6 max-w-md w-full shadow-2xl"
       >
-        <button type="button" onClick={() => setOpen(false)} aria-label="Fechar modal"
+        <button type="button" onClick={() => setOpen(false)} aria-label="Fechar modal de pergunta"
           className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-2 focus-visible:outline-magenta">
           <X className="w-5 h-5" aria-hidden="true" />
         </button>

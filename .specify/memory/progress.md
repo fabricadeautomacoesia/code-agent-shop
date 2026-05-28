@@ -29073,3 +29073,45 @@ PROXIMA ITER:
 - W18 search /facets ILIKE escape similar
 - W4 admin sellers list UI consume enum allowed
 - VPS SSH unblock URGENTISSIMO (132 ciclos - 44h)
+
+
+============================================================
+PASS 300 - 2026-05-28 - W3 dialog a11y + W17 vault /keys/me pagination
+============================================================
+Files: 2 modificados
+  - apps/storefront/src/components/ask-quick-button.tsx (label disambiguation)
+  - services/vault-svc/src/server.js (pagination + COUNT OVER)
+Lines: ~35 added
+
+W3 (AskQuickButton a11y label disambiguation):
+- PRE-FIX: backdrop button + X custom ambos com aria-label='Fechar modal'
+- Screen reader anuncia 2 botoes identicos - confuso navegacao tab/landmark
+- POST-FIX:
+  - Dialog closeLabel='Fechar clicando fora' (semantica area = backdrop)
+  - X custom aria-label='Fechar modal de pergunta' (acao explicita)
+- WCAG 4.1.2 (Name, Role, Value) - botoes devem ter labels distintos
+
+W17 (vault /keys/me pagination + COUNT OVER):
+- PRE-FIX: LIMIT 50 hardcoded, no total count, no has_more
+- Seller >50 keys (multi-provider BYOK) nao via todas
+- POST-FIX:
+  - ?limit (1-200, default 50) + ?offset paginacao V8 Regra E
+  - COUNT(*) OVER()::INT consolidacao (pattern pass 178/200/202/289/293)
+  - has_more boolean + strip _total
+- 13+ endpoints com pattern COUNT OVER consolidado
+
+VPS SSH BLOQUEADO (133 ciclos - 44.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_vault-svc --force
+- W3 test: PDP -> botao 'Tem alguma duvida' -> modal abre
+  Tab nav: cada botao close anuncia label distinta (backdrop vs X)
+- W17 test:
+  curl -H "Authorization: Bearer $T" /api/vault/keys/me?limit=10&offset=0
+  Esperado: { keys[], total, has_more, limit:10, offset:0 }
+
+PROXIMA ITER:
+- W17 vault /usage GET endpoint (consume CSV admin export)
+- W4 admin /vault dashboard pagination UI
+- VPS SSH unblock URGENTISSIMO (133 ciclos - 44.3h)
