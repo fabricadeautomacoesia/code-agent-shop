@@ -133,40 +133,53 @@ export default function PerfilPage() {
         <h1 className="font-display font-bold text-3xl">Editar perfil</h1>
       </div>
 
+      {/* FIX-WORKER-1 pass 148 (a11y): 4 labels htmlFor + 4 inputs id (WCAG 1.3.1)
+          + autoComplete (browser autofill) + inputMode mobile correto */}
       <form onSubmit={submit} className="glass p-6 md:p-8 space-y-5">
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">Email</label>
-          <input type="email" value={me.email} disabled
+          <label htmlFor="perfil-email" className="text-sm text-white/70 mb-1.5 block">Email</label>
+          <input id="perfil-email" type="email" value={me.email} disabled
+            autoComplete="email"
+            aria-describedby="perfil-email-hint"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-white/50 cursor-not-allowed" />
-          <p className="text-xs text-white/40 mt-1">Email nao pode ser alterado por seguranca.</p>
+          <p id="perfil-email-hint" className="text-xs text-white/40 mt-1">Email nao pode ser alterado por seguranca.</p>
         </div>
 
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">Nome completo</label>
-          <input value={full_name} onChange={(e) => setFullName(e.target.value)} required
+          <label htmlFor="perfil-fullname" className="text-sm text-white/70 mb-1.5 block">Nome completo</label>
+          <input id="perfil-fullname" value={full_name} onChange={(e) => setFullName(e.target.value)} required
+            autoComplete="name" type="text"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
         </div>
 
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">
+          <label htmlFor="perfil-cpfcnpj" className="text-sm text-white/70 mb-1.5 block">
             CPF ou CNPJ {!me.cpf_cnpj && <span className="text-yellow-400 text-xs">- obrigatorio para pagamentos</span>}
           </label>
-          <input value={cpf_cnpj} onChange={(e) => setCpf(maskCpfCnpj(e.target.value))}
+          <input id="perfil-cpfcnpj" value={cpf_cnpj} onChange={(e) => setCpf(maskCpfCnpj(e.target.value))}
+            autoComplete="off" inputMode="numeric"
             placeholder="000.000.000-00 ou 00.000.000/0000-00" maxLength={18}
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none font-mono" />
         </div>
 
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">Telefone E.164 (opcional)</label>
-          <input value={phone_e164} onChange={(e) => setPhone(e.target.value)}
+          <label htmlFor="perfil-phone" className="text-sm text-white/70 mb-1.5 block">Telefone E.164 (opcional)</label>
+          <input id="perfil-phone" type="tel" value={phone_e164} onChange={(e) => setPhone(e.target.value)}
+            autoComplete="tel" inputMode="tel"
             placeholder="+5511999999999"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
         </div>
 
-        {err && <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-3">{err}</div>}
+        {/* FIX-WORKER-1 pass 148 (a11y): role=alert no err + role=status no ok
+            (era visual-only - SR nao anunciava success/error de submissao) */}
+        {err && (
+          <div role="alert"
+            className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-3">{err}</div>
+        )}
         {ok && (
-          <div className="text-sm text-green-400 bg-green-500/10 border border-green-500/30 rounded-lg p-3 flex items-center gap-2">
-            <CheckCircle className="w-4 h-4" /> {ok}
+          <div role="status" aria-live="polite"
+            className="text-sm text-green-400 bg-green-500/10 border border-green-500/30 rounded-lg p-3 flex items-center gap-2">
+            <CheckCircle className="w-4 h-4" aria-hidden="true" /> {ok}
           </div>
         )}
 
