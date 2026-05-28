@@ -32820,3 +32820,29 @@ W4 admin scale UX:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 415 W18 AIOPS: cleanupTimeSeriesData DLP mask error
+commit 5d3da1c
+BUG aiops cleanup error log raw
+PRE-FIX:
+  log.error({ table, err: r.reason?.message })
+
+DLP risks:
+- PG errors podem conter PG_PASS em URI
+- FK violation inclui table data PII
+- audit/notif JA mask cross-svc (277-400 series)
+- aiops cleanup lagged
+
+POST-FIX:
+- mask.text + slice(0,300) cap
+- Paridade DLP cross-svc
+
+W18 aiops DLP consolidation cross-svc:
+  pass 277-407 cleanup error masking
+  pass 415 aiops cleanupTimeSeriesData <- ESTE
+
+148 passes acumulados (268->415) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
