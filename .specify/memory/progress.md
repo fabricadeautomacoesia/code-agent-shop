@@ -22876,3 +22876,73 @@ PROXIMA ITER:
 - W11: payment-svc PAYMENT_REFUND_FAILED retry edge cases
 - W18: cache /orders/:id detalhe (buyer detail page)
 - 🚨 VPS SSH unblock URGENTE (48 ciclos - 16h sem deploy!)
+
+PASS 216 (W18 /orders/:id cache + 3-path coherency + payment-svc bug fix) - 2026-05-28:
+- W18 audit GET /orders/:id (buyer /conta/pedidos/[id] page consumer)
+
+PRE-FIX:
+- SELECT orders + json_agg subquery order_items per request (~15ms PG)
+- NO cache - buyer polling apos checkout (paid status transition)
+- /conta/pedidos/[id] page chama em CADA navegacao/refresh
+
+BONUS BUG (payment-svc):
+- log.info ref order.id estava FORA scope tx (const dentro tx)
+- Em runtime: order.id seria undefined no log
+- Bug latente desde pass 22 webhook tx introducao
+
+POST-FIX (cache + 3 coherency paths + bug fix):
+
+1. order-svc /orders/:id cache 30s:
+   - Key: order:detail:{id}:u={user.sub}
+   - vary by user.sub - admin vs buyer isolation
+   - Latencia: ~15ms PG -> ~1ms Redis hit
+
+2. order-svc /orders/:id/dispute POST invalidation:
+   - + order:detail:{id}:* (cache stale apos dispute open)
+   - + order:admin:disputes:* (admin ve dispute imediato)
+
+3. payment-svc webhook PAYMENT_RECEIVED/REFUNDED/etc:
+   - Capture orderIdToInvalidate dentro tx (atomic capture)
+   - Post-tx invalidate 3 caches:
+     * order:detail:{id}:* (paid_at/status mudou)
+     * order:admin:recent:* (status transition visible admin)
+     * order:admin:disputes:* (refund pode afetar disputes)
+   - Fixed log.info bug (order.id -> orderIdToInvalidate)
+
+PATTERN V8 CACHE COHERENCY cross-svc agora 5 paths consolidados:
+- pass 174: qa-svc -> seller:sla-status + seller:kpi
+- pass 175/205: seller-svc + payment-svc -> seller:payouts
+- pass 176/204/191: order-svc + payment-svc + seller-svc -> loyalty:me
+- pass 206/215: order-svc -> orders:user + order:admin:recent
+- pass 216: order-svc dispute + payment-svc webhook -> order:detail
+
+Commit 0a092e6 pushed origin/main (+45/-3)
+VPS SSH ainda bloqueado (49 ciclos consecutivos)
+
+CACHE COVERAGE order-svc FINAL COMPLETA:
+- /orders user: 30s (pass 206)
+- /admin/disputes: 30s (pass 214)
+- /admin/recent: 30s (pass 215)
+- /orders/:id: 30s vary user (pass 216 NEW)
+- /cart: 5s (existing)
+- /coupon/:code/preview: 60s (existing)
+
+CODIGO ACUMULADO ORIGIN/MAIN (49 ciclos):
+- 168-215: documentados
+- 216: /orders/:id cache + 3-path coherency + payment-svc log bug fix
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_order-svc cas_payment-svc --force
+- Cache hit benchmark:
+  time curl -H "Bearer \$TOKEN" "/api/orders/{id}"
+  1a: ~15ms (PG window + json_agg)
+  2a: <2ms (Redis hit)
+- Coherency:
+  Asaas webhook PAYMENT_RECEIVED -> order paid
+  GET /orders/{id} -> esperado: status='paid' imediato (sem 30s stale)
+
+PROXIMA ITER:
+- W17: vault-svc seller BYOK endpoints
+- W11: payment-svc PAYMENT_REFUND_FAILED retry edge cases
+- W13: notification-svc Telegram retry edge cases
+- 🚨 VPS SSH unblock URGENTE (49 ciclos - >16.3h sem deploy!)
