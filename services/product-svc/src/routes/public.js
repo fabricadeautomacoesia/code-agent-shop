@@ -1086,7 +1086,32 @@ router.get('/:slug/qna',
     [req.params.slug, lim, off]
   );
 
-  const total = r.rows[0]?._total ?? 0;
+  /* FIX-WORKER-7 pass 441 (window total = 0 quando OFFSET passa todas rows):
+     PRE-FIX (pass 187 + 245): COUNT(*) OVER() retorna count APENAS quando
+     >=1 row no resultado. Quando OFFSET > total real -> 0 rows -> _total=0.
+     - User clica "next page" beyond last -> requestedPage=99 - real maxPage=2
+     - off = 98 * 50 = 4900, LIMIT retorna []
+     - total = r.rows[0]?._total ?? 0 = 0 (no rows -> no window data)
+     - maxPage = Math.ceil(0/50) = 0 -> 1 (fallback)
+     - effectivePage = min(99, 1) = 1
+     - has_more = (4900 + 0) < 0 = false
+     - Frontend UX: "Pagina 1 de 1" + "0 perguntas" mesmo havendo 100 perguntas
+     - User confuso: "minhas perguntas sumiram?"
+     POST-FIX: separate COUNT query quando window vazio (r.rows.length === 0)
+     Pattern V8 W7 page cap defensive (paridade pass 245 mas robusto p/ overflow).
+     Custo extra: 1 query so quando offset overflow (raro - usuario navegando far). */
+  let total = r.rows[0]?._total ?? 0;
+  if (r.rows.length === 0 && off > 0) {
+    // OFFSET overflow path - count separate
+    const c = await query(
+      `SELECT COUNT(*)::INT AS total
+         FROM product_qna q
+         JOIN products p ON p.id = q.product_id
+        WHERE ${whereParts.join(' AND ')}`,
+      [req.params.slug]
+    );
+    total = c.rows[0]?.total ?? 0;
+  }
   const qna = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
   // FIX-WORKER-7 pass 245 (page cap response): se user solicita page=99999
   // mas total=10, response retornava qna=[] + page:99999 + has_more:false.
@@ -1100,6 +1125,9 @@ router.get('/:slug/qna',
     qna,
     total, limit: lim, page: effectivePage,
     has_more: (off + qna.length) < total,
+    // FIX pass 441: + overflow flag - frontend pode mostrar "Voltar para inicio"
+    // se user navegou alem do total real
+    overflow: requestedPage > maxPage,
     answered_only: answeredOnly,
   });
 }));

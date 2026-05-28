@@ -33842,3 +33842,45 @@ W18 N+1 refactor series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Apply mig 094+095 prod p/ medir EXPLAIN ANALYZE real
+
+## PASS 441 W7 PRODUCT-SVC: /qna OFFSET overflow window total=0 bug fix
+commit pendente
+BUG /qna listing OFFSET > total -> total=0 mesmo havendo perguntas
+PRE-FIX:
+- COUNT(*) OVER() window aggregate retorna count APENAS com >=1 row no resultado
+- Quando OFFSET > total real -> 0 rows retornadas -> _total=0 (no data attached)
+- Pass 187 (window) + 245 (page cap) lagged este edge case
+- Cenario:
+  - Produto tem 100 perguntas real
+  - User navega /product/X?page=99 (overflow)
+  - off = 98 * 50 = 4900
+  - LIMIT retorna []
+  - total = r.rows[0]?._total ?? 0 = 0 (fallback)
+  - maxPage = Math.ceil(0/50) = 0 -> 1
+  - effectivePage = min(99, 1) = 1
+  - has_more = (4900 + 0) < 0 = false
+  - Response: total=0 mesmo havendo 100 perguntas
+- Frontend UX: "Pagina 1 de 1" + lista vazia
+- User: "minhas perguntas sumiram?"
+
+POST-FIX:
+- Defensive separate COUNT query quando r.rows.length === 0 AND off > 0
+- Pattern V8 W7 page cap robusto para overflow real
+- + response field 'overflow: requestedPage > maxPage' (frontend pode redirect inicio)
+- Custo extra: 1 query SO quando user navega beyond last (raro)
+
+Pattern V8 W7: window aggregate eh efficient mas tem edge case OFFSET overflow
+- COUNT(*) OVER() so vale com data; quando vazio precisa fallback count separate
+- Mesma pattern aplicavel cross-listing endpoints (qna, reviews, orders, etc)
+
+W7 listing edge case series:
+  pass 187 COUNT window consolidation
+  pass 245 page cap response
+  pass 290 wishlist response distinguishability
+  pass 441 OFFSET overflow window=0 defensive <- ESTE
+
+174 passes acumulados (268->441) sem deploy VPS
+6 CRITICAL + 27 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
