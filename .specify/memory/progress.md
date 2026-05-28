@@ -27627,3 +27627,84 @@ PROXIMA ITER:
 - W11 cron liquidator payouts_pending_wallet (mig 078 setup)
 - W4 admin /payouts_pending_wallet UI view
 - VPS SSH unblock CRITICAL (104 ciclos - 34.7h)
+
+============================================================
+PASS 272 (2026-05-28) - W11 liquidator + W12 DLP callback
+============================================================
+
+OBJETIVO: 3 workers (W9 audit clean pass 264)
+- W11 payment-svc: cron liquidatePendingWalletPayouts (deferred pass 270)
+- W12 qa-worker: send_callback exception DLP
+
+============================================================
+1. W11 - cron liquidatePendingWalletPayouts (mig 078 setup)
+============================================================
+FILE: services/payment-svc/src/server.js:1471-1545
+
+CONTEXTO:
+- Pass 270 W11 criou mig 078 + INSERT fallback em order-svc
+- payouts_pending_wallet table aguarda cron para liquidar
+- Cron diario detecta seller now-has-wallet -> Asaas createTransfer
+
+IMPLEMENTATION:
+- SELECT pending rows + JOIN sellers WHERE asaas_wallet_id IS NOT NULL
+- FOR UPDATE SKIP LOCKED (multi-replica safe pass 240 pattern)
+- LIMIT 50 per cycle (rate-limit Asaas API)
+- asaas.createTransfer + UPDATE 'liquidated' + asaas_transfer_id
+- INSERT notification 'payout_pending_liquidated' priority=2
+- Try/catch per row (1 fail nao impede outras)
+- Error log + skip retry (admin investiga manual)
+
+CRON SCHEDULE:
+- setInterval 24h (sem node-cron - payment-svc package.json sem dep)
+- 60s warm-up apos boot (offset reconcileWebhooks 30s)
+- Pattern paridade reconcileWebhooks setInterval
+
+============================================================
+2. W12 - qa-worker send_callback exception DLP
+============================================================
+FILE: services/qa-worker/app/main.py:645-660
+
+PROBLEMA (DLP):
+- except Exception as e: print(f"callback FAIL: {e}")
+- Exception pode conter:
+  * Authorization headers em httpx connection errors
+  * URL parts revealing internal mesh (tasks.cas_qa-svc:port)
+  * Stack traces config paths
+- Print direct vai p/ docker logs - DLP leak operational
+
+POST-FIX:
+- type(e).__name__ apenas (sem raw message)
+- url masked first 60 chars + "..."
+- Pattern pass 258 W12 _sanitize_llm_error consolidated cross-codebase
+
+============================================================
+3. W9 - SEO audit (pass 264 ja clean)
+============================================================
+7 pages com layout missing tem metadata inline em page.tsx.
+Nenhuma gap real - skip esta iter.
+
+============================================================
+SUMARIO PASS 272
+============================================================
+Files: 2 modificados
+  - services/payment-svc/src/server.js (cron liquidator)
+  - services/qa-worker/app/main.py (callback DLP)
+Lines: ~80 added
+
+VPS SSH BLOQUEADO (105 ciclos - 35h sem deploy).
+Migs 069-078 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_payment-svc cas_qa-worker --force
+- Apply mig 078 ja deve estar applied (pass 270)
+- W11: criar order com seller sem wallet -> seller config wallet ->
+  aguardar 24h (ou trigger manual setTimeout em /test endpoint) ->
+  SELECT FROM payouts_pending_wallet WHERE status='liquidated' -> 1+ rows
+- W12: forcar callback fail -> docker logs cas_qa-worker
+  Output: "callback FAIL type=XYZ url_prefix=..." (sem raw exception)
+
+PROXIMA ITER:
+- W4 admin /payouts_pending_wallet UI view
+- W11 reconcile cron multi-svc dashboard
+- VPS SSH unblock CRITICAL (105 ciclos - 35h MARCO!!!)

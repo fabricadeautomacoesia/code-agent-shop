@@ -1468,6 +1468,77 @@ setTimeout(() => reconcileWebhooks().catch(() => {}), 30000);
 setInterval(() => reconcileWebhooks().catch((e) => log.error({ err: e.message }, '[reconcile.cron.fail]')), 5 * 60 * 1000);
 log.info('[reconcile.cron] webhook reconciliation cron started (5min interval)');
 
+// ============================================================
+// FIX-WORKER-11 pass 272 (cron liquidator payouts_pending_wallet):
+//   Pass 270 W11 criou mig 078 + INSERT fallback em order-svc.
+//   Este cron diario detecta seller now-has-wallet -> Asaas createTransfer
+//   + UPDATE 'liquidated' + notification ao seller.
+//   Pattern V8 cross-svc: order-svc declarativa (insere debt), payment-svc
+//   imperative (cria transfer Asaas + atualiza state machine).
+// ============================================================
+async function liquidatePendingWalletPayouts() {
+  try {
+    // Lookup: rows pending + seller agora tem asaas_wallet_id (mig 078)
+    const pending = await query(
+      `SELECT pw.id, pw.order_id, pw.seller_id, pw.amount_cents,
+              s.asaas_wallet_id, s.user_id
+         FROM payouts_pending_wallet pw
+         JOIN sellers s ON s.id = pw.seller_id
+        WHERE pw.status = 'pending'
+          AND s.asaas_wallet_id IS NOT NULL
+          AND s.status = 'active'
+        ORDER BY pw.created_at ASC, pw.id ASC
+        LIMIT 50
+        FOR UPDATE OF pw SKIP LOCKED`
+    );
+    if (!pending.rows.length) return;
+    log.info({ count: pending.rows.length }, '[payouts_pending.liquidate.start]');
+
+    for (const row of pending.rows) {
+      try {
+        // Asaas transfer (createTransfer ja existe em asaas.js)
+        const transfer = await asaas.createTransfer({
+          wallet: row.asaas_wallet_id,
+          value: Math.round(Number(row.amount_cents)) / 100,
+          description: `Liquidacao payout pendente (order ${row.order_id})`,
+        });
+        // UPDATE atomic - status + transfer_id + liquidated_at
+        await query(
+          `UPDATE payouts_pending_wallet
+              SET status = 'liquidated',
+                  liquidated_at = NOW(),
+                  asaas_transfer_id = $1
+            WHERE id = $2 AND status = 'pending'`,
+          [transfer.id, row.id]
+        );
+        // Notify seller
+        await query(
+          `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+           VALUES ($1, 'email', 'payout_pending_liquidated',
+                   $2, $3, 2, $4::JSONB)`,
+          [row.user_id,
+           `Payout pendente liquidado: R$ ${(Number(row.amount_cents)/100).toFixed(2)}`,
+           `Voce configurou sua wallet Asaas e seu payout pendente foi liquidado. Valor: R$ ${(Number(row.amount_cents)/100).toFixed(2)}. Transfer ID: ${transfer.id}.`,
+           JSON.stringify({ pending_id: row.id, order_id: row.order_id, asaas_transfer_id: transfer.id })]
+        ).catch((e) => log.warn({ err: e.message }, '[payouts_pending.notif.fail]'));
+        log.info({ pending_id: row.id, transfer_id: transfer.id }, '[payouts_pending.liquidated.ok]');
+      } catch (e) {
+        log.error({ pending_id: row.id, err: e.message }, '[payouts_pending.liquidate.fail]');
+        // Nao incrementa retry - admin investiga manualmente (Asaas/network issues)
+      }
+    }
+  } catch (e) {
+    log.error({ err: e.message }, '[payouts_pending.cron.fail]');
+  }
+}
+// FIX-WORKER-11 pass 272: setInterval pattern (paridade reconcileWebhooks acima)
+// payment-svc package.json sem node-cron - usar setInterval 24h
+// Primeiro run apos 60s (warm-up + reconcileWebhooks ja rodou)
+setTimeout(() => liquidatePendingWalletPayouts().catch(() => {}), 60000);
+setInterval(() => liquidatePendingWalletPayouts().catch((e) =>
+  log.error({ err: e.message }, '[payouts_pending.cron.fail]')), 24 * 60 * 60 * 1000);
+log.info('[payouts_pending.cron] liquidate cron started (24h interval)');
+
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
 

@@ -646,7 +646,18 @@ async def send_callback(url: str, payload: dict):
         try:
             await cli.post(url, content=body_bytes, headers=headers)
         except Exception as e:
-            print(f"[qa-worker] callback FAIL: {e}", flush=True)
+            # FIX-WORKER-12 pass 272 (DLP callback failure log):
+            #   PRE-FIX: print(f"callback FAIL: {e}") - exception pode conter:
+            #   - Authorization headers em httpx connection errors
+            #   - URL parts revealing internal mesh (tasks.cas_qa-svc:port)
+            #   - Stack traces with config paths
+            #   POST-FIX: sanitize via type+code-only (no raw msg),
+            #   url masked to first 60 chars (defesa DLP cross-svc).
+            #   Pattern pass 258 W12 _sanitize_llm_error consolidated.
+            err_type = type(e).__name__
+            # Mascarar URL (so primeiros 60 chars - basta p/ debug, sem leak completo)
+            masked_url = url[:60] + ("..." if len(url) > 60 else "")
+            print(f"[qa-worker] callback FAIL type={err_type} url_prefix={masked_url}", flush=True)
 
 
 if __name__ == "__main__":
