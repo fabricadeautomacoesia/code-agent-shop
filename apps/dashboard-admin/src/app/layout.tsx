@@ -1,7 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { LayoutDashboard, Users, Package, ShoppingCart, AlertTriangle, DollarSign, Activity, KeyRound, Shield, Webhook, FileText, Scale, Database } from 'lucide-react';
+import { LayoutDashboard, Users, Package, ShoppingCart, AlertTriangle, DollarSign, Activity, KeyRound, Shield, Webhook, FileText, Scale, Database, Cpu } from 'lucide-react';
 import { PromptDialogProvider } from '@/components/prompt-dialog';
 
 // FIX-WORKER-9 pass 177 (CRITICAL SEO/PRIVACY): adicionar robots noindex+nofollow
@@ -34,6 +34,8 @@ const NAV = [
   { href: '/disputes',    Icon: Scale,           label: 'Disputas' },
   // FIX-WORKER-4 W18 pass 8: DB indices audit (consume /aiops/db/dead-indexes)
   { href: '/db-audit',    Icon: Database,        label: 'DB Audit' },
+  // FIX-WORKER-4 pass 194: LLM Cost observability (consume /aiops/llm-cost - W4 pass 193)
+  { href: '/llm-cost',    Icon: Cpu,             label: 'LLM Cost' },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
