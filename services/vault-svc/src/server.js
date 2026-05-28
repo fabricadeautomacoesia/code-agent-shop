@@ -773,7 +773,7 @@ app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
           WHERE id = $2::UUID AND is_active = TRUE`,
         [req.body.reason, req.params.id]
       );
-      // Audit log no MESMO tx (atomic with UPDATE)
+      /* FIX-WORKER-17 pass 295: DLP mask reason em audit (paridade seller revoke) */
       await c.query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, $2, 'vault.revoke', 'vault_api_key', $3, 'warn', $4::JSONB)`,
@@ -782,7 +782,7 @@ app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
            provider: k.provider,
            key_alias: k.key_alias,
            fingerprint: k.key_fingerprint,
-           reason: req.body.reason,
+           reason: mask.text(String(req.body.reason || '').slice(0, 500)),
            ip: req.ip,
          })]
       );
@@ -1168,12 +1168,20 @@ app.post('/keys/me/:id/revoke',
     if (!r.rows.length) {
       return next(errorHandler.notFound('key_not_found_or_already_revoked'));
     }
-    // Audit log
+    /* FIX-WORKER-17 pass 295 (DLP mask em reason audit):
+       PRE-FIX: req.body.reason armazenado raw no audit_log payload_after.
+       Reason eh user-input livre (z.string().min(3).max(500)) - pode conter:
+       - Acidental: copia/pasta de API key, JWT token, Bearer header
+       - PII: numero CPF mencionado em justificativa
+       - Outros secrets: PG_PASS em error message colado
+       Pass 282 estabeleceu mask.text() pattern para ua_prefix em audit_log.
+       POST-FIX: mask.text() em reason antes do JSONB store.
+       Paridade query list /keys revoked_reason (linha 495 ja aplicava). */
     await query(
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
        VALUES ($1, $2, 'vault.seller_revoke', 'vault_api_key', $3, 'warn', $4::JSONB)`,
       [req.user.sub, req.user.role, req.params.id,
-       JSON.stringify({ reason: req.body.reason.slice(0, 200), ip: req.ip })]
+       JSON.stringify({ reason: mask.text(req.body.reason.slice(0, 200)), ip: req.ip })]
     ).catch(() => {});
 
     res.json({ ok: true, revoked: r.rows[0].id });

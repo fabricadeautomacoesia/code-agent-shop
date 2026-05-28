@@ -28847,3 +28847,49 @@ PROXIMA ITER:
 - W1 register form check button hover state UX
 - W7 admin /admin/flash-promo endpoint creation
 - VPS SSH unblock URGENTISSIMO (127 ciclos - 42.3h)
+
+
+============================================================
+PASS 295 - 2026-05-28 - W12 qa internal-token bypass + W17 vault reason DLP
+============================================================
+Files: 2 modificados
+  - services/qa-svc/src/server.js (_internalAuth flag + triggered_by bypass)
+  - services/vault-svc/src/server.js (mask.text reason em 2 audit logs)
+Lines: ~25 added
+
+W12 (qa-svc internal-token mesh flow regression):
+- BUG ENCONTRADO: linha 129 triggered_by check sem bypass internal-token
+- Cenario: product-svc submit -> POST /qa/run com x-internal-token
+- req.user undefined (jwt nao rodou) -> isAdmin=false
+- !isAdmin && triggered_by !== undefined -> 403 forbidden
+- FLOW INTERNO QUEBRADO em todos submits desde pass 28
+- POST-FIX: req._internalAuth=true flag em qaRunGuard
+- Handler bypass check quando _internalAuth=true (service-to-service trust)
+
+W17 (vault audit_log reason DLP mask):
+- 2 paths revoke (seller /keys/me/:id/revoke + admin /keys/:id/revoke)
+- reason: req.body.reason raw em audit_log payload_after JSONB
+- Reason eh user-input livre (z.string min 3 max 500) - pode conter:
+  - API key colada acidental ('sk-abc123...')
+  - JWT/Bearer token em error message colado
+  - PII (CPF mencionado em justificativa)
+- POST-FIX: mask.text() ambos paths antes JSONB store
+- Paridade pass 282 (ua_prefix mask) + paridade query list pass anterior linha 495
+
+VPS SSH BLOQUEADO (128 ciclos - 42.7h sem deploy).
+Migs 069-083 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-svc cas_vault-svc --force
+- W12 CRITICAL: product-svc submit -> qa-svc POST /qa/run via x-internal-token
+  Esperado: 200 OK (vs antes 403 forbidden bloqueando flow)
+  Logs qa-svc: nao deve ter '[qa.run.invalid_internal_token]' patterns
+- W17: revogar key -> verificar audit_log
+  SELECT payload_after->>'reason' FROM audit_log
+  WHERE action IN ('vault.revoke','vault.seller_revoke') ORDER BY created_at DESC LIMIT 3;
+  Esperado: reason masked ('****' nas zonas sensiveis)
+
+PROXIMA ITER:
+- W12 audit qa-worker.py para fallback chain LLM (OpenAI -> Gemini -> Groq)
+- W17 audit /api/vault/usage endpoint para mask
+- VPS SSH unblock URGENTISSIMO (128 ciclos - 42.7h)

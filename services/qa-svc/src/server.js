@@ -74,7 +74,17 @@ function qaRunGuard(req, res, next) {
       const b = Buffer.from(QA_RUN_INTERNAL_TOKEN);
       valid = a.length === b.length && crypto.timingSafeEqual(a, b);
     } catch { valid = false; }
-    if (valid) return next();
+    if (valid) {
+      /* FIX-WORKER-12 pass 295: flag internal-token authenticated.
+         Sem este flag, handler /qa/run linha 128 falha:
+         - req.user eh undefined (jwt nao rodou)
+         - isAdmin = false (req.user?.role undef)
+         - triggered_by check 403 (undefined !== triggered_by)
+         Resultado: product-svc submit -> qa-svc 403 (internal flow broken)
+         Defesa: marca req._internalAuth=true para bypass ownership check. */
+      req._internalAuth = true;
+      return next();
+    }
     log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[qa.run.invalid_internal_token]');
   }
   return jwt.requireAuth({ roles: ['admin', 'staff', 'service'] })(req, res, next);
@@ -124,7 +134,10 @@ app.post('/qa/run',
     const { product_id, product_version_id, triggered_by } = req.body;
 
     // FIX bug 3 (Regra M): ownership/role check no triggered_by
-    if (triggered_by) {
+    // FIX-WORKER-12 pass 295: bypass quando autenticado via internal-token
+    // (product-svc -> qa-svc mesh flow). Internal token e service-to-service
+    // confianca total - triggered_by eh seller_user_id passado pelo dispatcher.
+    if (triggered_by && !req._internalAuth) {
       const isAdmin = ['admin', 'staff'].includes(req.user?.role);
       if (!isAdmin && triggered_by !== req.user?.sub) {
         return next(errorHandler.forbidden('triggered_by_mismatch',
