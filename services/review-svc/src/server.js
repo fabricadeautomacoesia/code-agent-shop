@@ -476,9 +476,16 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
       return res.status(409).json({ error: 'too_soon', message: outcome.message });
     }
 
-    // Cache invalidate FORA tx (acceptable - falha cache nao breaka DB)
+    /* FIX-WORKER-7 pass 327: cache invalidate wildcard pattern.
+       PRE-FIX: cache.del('products:qna:${slug}') tentava deletar key sem
+       suffix params, mas keys reais sao 'products:qna:<slug>:lim=X:p=Y:ans=Z'
+       (paridade pass 298 product-svc public.js). del() era no-op.
+       UX bug: nova qna nao invalidava cache -> PDP Q&A tab mostrava stale ate TTL.
+       POST-FIX: wildcard pattern + slug normalize.
+       cache.del internamente usa c.keys(pattern) (Redis KEYS) - aceita wildcard. */
     if (outcome?.slug) {
-      await cache.del(`products:qna:${outcome.slug}`).catch(() => {});
+      const slugNorm = String(outcome.slug).toLowerCase().trim();
+      await cache.del(`products:qna:${slugNorm}:*`).catch(() => {});
     }
     res.status(201).json({ qna });
   })
@@ -881,9 +888,10 @@ app.post('/qna/:id/answer',
       });
     }
 
-    // Cache invalidate FORA tx (tolera fail)
+    /* FIX-WORKER-7 pass 327: cache invalidate wildcard paridade linha 488 */
     if (result?.slug) {
-      await cache.del(`products:qna:${result.slug}`).catch(() => {});
+      const slugNorm = String(result.slug).toLowerCase().trim();
+      await cache.del(`products:qna:${slugNorm}:*`).catch(() => {});
     }
     res.json({ ok: true, answered_by_admin: result.answered_by_admin });
   })

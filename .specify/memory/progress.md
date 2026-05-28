@@ -30076,3 +30076,37 @@ PROXIMA ITER:
 - W12 qa-svc parallel idempotency check
 - W18 final perf consolidation review
 - VPS SSH unblock URGENTISSIMO (159 ciclos - 53h)
+
+
+============================================================
+PASS 327 - 2026-05-28 - W7 review-svc qna cache invalidate wildcard
+============================================================
+Files: 1 modificado
+  - services/review-svc/src/server.js (2 cache.del fixados)
+Lines: ~15 changed
+
+W7 (review-svc qna cache invalidate broken):
+- PRE-FIX: cache.del('products:qna:${slug}') sem wildcard
+- Pattern V8 product-svc pass 298 ja normalizou keys com:
+  'products:qna:<slug>:lim=X:p=Y:ans=Z'
+- del() do review-svc tentava key sem suffix params -> no-op silencioso
+- Bug UX: nova qna OU answer nao invalidava cache PDP Q&A tab
+- Stale ate TTL natural (60s)
+- POST-FIX: 2 locais (POST /qna + POST /qna/:id/answer)
+  - slug.toLowerCase().trim() normalize
+  - wildcard pattern :* (cache.del internamente usa c.keys() suporta)
+
+VPS SSH BLOQUEADO (160 ciclos - 53.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_review-svc --force
+- W7 verify:
+  redis-cli KEYS 'cas:products:qna:*' | head -5
+  POST /api/qna {product_id, question} -> verify cache keys deleted
+  GET /products/<slug>/qna -> nova qna aparece imediato (sem TTL wait)
+
+PROXIMA ITER:
+- W7 audit /reviews POST cache invalidate similar
+- W4 admin QnA moderation panel
+- VPS SSH unblock URGENTISSIMO (160 ciclos - 53.3h)
