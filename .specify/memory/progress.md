@@ -17366,7 +17366,28 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Seller /loja KYC + store form a11y 14 inputs (pass 146)
 - ✅ Seller /qna response textarea aria-label (pass 147)
 - ✅ Storefront /conta/perfil edit form a11y (pass 148)
-- ✅ Admin PromptDialog substitui window.prompt (pass 149 esta iter)
+- ✅ Admin PromptDialog substitui window.prompt (pass 149)
+- ✅ Admin confirmDialog substitui 7 window.confirm (pass 150 esta iter)
+
+W7 PASS 150 RESUMO - W4 CONFIRM DIALOG A11Y:
+- AUDIT cross-app: 9 callsites window.confirm() (7 admin + 2 seller)
+- Estendido apps/dashboard-admin/src/components/prompt-dialog.tsx:
+  * Adicionado mode='confirm' ao PromptState
+  * Adicionado confirmDialog(title, {body, confirmLabel, variant}): Promise<boolean>
+  * Variant='danger' renderiza botao vermelho (acoes destrutivas)
+  * Body description suporta multi-line (whitespace-pre-line)
+  * Focus auto no confirm button (Enter direto)
+- INTEGRATED em 7 admin callsites:
+  * /payouts processTransfer
+  * /sellers promoteB
+  * /products archive (variant=danger) + platformTake (variant=danger + sequencia)
+  * /qa-queue platformTake (variant=danger + body explicativo)
+  * /vault rotate (variant=danger + 2 dialogs sequencia: motivo + confirma)
+  * /webhooks resetWebhook
+- Bonus: codigo split via dynamic import (await import) - lazy load modal
+- Modal singleton compartilha mesmo Provider (zero overhead extra)
+- BUILD dashboard-admin OK + service converged
+- COMMIT 66e7ca2 pushed GitHub main + deployed prod
 
 W7 PASS 149 RESUMO - W4 PROMPT DIALOG A11Y:
 - AUDIT dashboard-admin: 2 acoes usavam window.prompt() nativo:
