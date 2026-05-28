@@ -32210,3 +32210,30 @@ W14 idx evolution series acumulada (10 migs):
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W18 perf optimization
+
+## PASS 394 W12 QA-SVC: worker fallback se N8N falha (SPoF resilience)
+commit 0e5e700
+BUG single point of failure N8N
+PRE-FIX:
+- if (N8N_URL) try fetch N8N (pode throw)
+- else fetch WORKER
+- N8N down -> catch global dispatch_failed
+- Worker NUNCA tentado em outage N8N
+- TODOS QA runs failing durante outage
+
+POST-FIX:
+- try N8N primeiro (se URL set)
+- catch -> mark n8nErr + continue (sem throw global)
+- if (!dispatched) -> fallback worker
+- log.warn + log.info fallback_succeeded
+- mask.text n8nErr DLP
+
+Pattern V8 W12: multi-provider resilience
+Similar LLM fallback OpenAI->Gemini->Groq
+
+127 passes acumulados (268->394) sem deploy VPS
+5 CRITICAL + 22 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W18 perf optimization
