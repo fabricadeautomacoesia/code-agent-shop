@@ -24,14 +24,14 @@ const router = express.Router();
 const log = logger.child({ svc: 'seller-svc', mod: 'admin' });
 router.use(jwt.requireAuth({ roles: ['admin','staff'] }));
 
-// FIX-WORKER-18 pass 6 + 197: helper invalidate cache apos admin mutations
-// Pass 197 estendeu para incluir seller:admin:all:* (W18 pass 197 cache)
+// FIX-WORKER-18 pass 6 + 197 + 199: helper invalidate cache apos admin mutations
 async function invalidateSellerCache(sellerId) {
   try {
     const r = await query('SELECT store_slug FROM sellers WHERE id = $1', [sellerId]);
     const tasks = [
-      cache.del('sellers:list:*'),          // public list cache
-      cache.del('seller:admin:all:*'),      // W18 pass 197: admin /all dashboard cache
+      cache.del('sellers:list:*'),                  // public list cache
+      cache.del('seller:admin:all:*'),              // W18 pass 197: admin /all dashboard
+      cache.del('seller:admin:pending-kyc:*'),      // W18 pass 199: admin /pending-kyc
     ];
     if (r.rows.length) {
       const slug = r.rows[0].store_slug;
@@ -332,40 +332,79 @@ router.get('/all',
 //    pos-deploy mig 045.
 // 2. Regra I SELECT s.* vaza campos internos (document_number_hash, kyc_*).
 // 3. ORDER BY created_at ASC sem tiebreaker.
-router.get('/pending-kyc', asyncHandler(async (req, res) => {
-  const r = await query(
-    `SELECT s.id, s.store_slug, s.store_name, s.status, s.seller_class,
-            s.document_type, s.legal_name,
-            s.address_city, s.address_state, s.address_zip,
-            s.kyc_submitted_at, s.kyc_reviewed_at, s.kyc_rejection_reason,
-            s.created_at,
-            u.email, u.full_name
-       FROM sellers s
-       JOIN users u ON u.id = s.user_id
-      WHERE s.status IN ('pending_kyc','kyc_submitted')
-      ORDER BY
-        CASE s.status
-          WHEN 'kyc_submitted' THEN 1   -- priorizar review (FIFO submit time)
-          WHEN 'pending_kyc' THEN 2
-          ELSE 3
-        END,
-        s.kyc_submitted_at ASC NULLS LAST,
-        s.created_at ASC,
-        s.id
-      LIMIT 100`
-  );
-  // FIX-WORKER-7 pass 60: LGPD role-tier masking
-  // CRITICAL: /pending-kyc retorna legal_name + address_city/state/zip (cadastro KYC)
-  // Staff só precisa display contexto - admin vê full p/ aprovacao
-  const isAdmin = req.user && req.user.role === 'admin';
-  const sellers = isAdmin ? r.rows : r.rows.map((row) => ({
-    ...row,
-    email: maskPII.email(row.email),
-    full_name: maskPII.name(row.full_name),
-    legal_name: maskPII.name(row.legal_name),
-  }));
-  res.json({ sellers });
-}));
+// FIX-WORKER-18 pass 199 (4 melhorias compostas):
+// PRE-FIX:
+// - Hardcoded LIMIT 100 sem pagination -> backlog KYC 200+ invisiveis
+// - NO COUNT total - UI 'X de Y' impossivel
+// - NO cache - admin polling dashboard
+// - Response shape inconsistente com outros endpoints (so {sellers})
+// POST-FIX:
+// + ?limit (1-200) + ?offset paginacao V8 Regra E
+// + COUNT(*) OVER() window total + has_more
+// + cache.cacheMiddleware 30s (KYC submissions rates baixos vs payouts)
+// + Strip _total interno
+// LGPD mask preserved (admin full, staff masked - critico p/ KYC data)
+const pendingKycCacheKey = (req) => {
+  const q = req.query;
+  return `seller:admin:pending-kyc:lim=${q.limit||50}:off=${q.offset||0}`;
+};
+
+router.get('/pending-kyc',
+  cache.cacheMiddleware(pendingKycCacheKey, 30),
+  asyncHandler(async (req, res) => {
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    const r = await query(
+      `SELECT s.id, s.store_slug, s.store_name, s.status, s.seller_class,
+              s.document_type, s.legal_name,
+              s.address_city, s.address_state, s.address_zip,
+              s.kyc_submitted_at, s.kyc_reviewed_at, s.kyc_rejection_reason,
+              s.created_at,
+              u.email, u.full_name,
+              COUNT(*) OVER()::INT AS _total
+         FROM sellers s
+         JOIN users u ON u.id = s.user_id
+        WHERE s.status IN ('pending_kyc','kyc_submitted')
+        ORDER BY
+          CASE s.status
+            WHEN 'kyc_submitted' THEN 1   -- priorizar review (FIFO submit time)
+            WHEN 'pending_kyc' THEN 2
+            ELSE 3
+          END,
+          s.kyc_submitted_at ASC NULLS LAST,
+          s.created_at ASC,
+          s.id
+        LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    const total = r.rows[0]?._total ?? 0;
+
+    // FIX-WORKER-7 pass 60: LGPD role-tier masking
+    // CRITICAL: /pending-kyc retorna legal_name + address_city/state/zip (cadastro KYC)
+    // Staff só precisa display contexto - admin vê full p/ aprovacao
+    const isAdmin = req.user && req.user.role === 'admin';
+    const sellers = r.rows.map((row) => {
+      const { _total, ...rest } = row;
+      if (isAdmin) return rest;
+      return {
+        ...rest,
+        email: maskPII.email(rest.email),
+        full_name: maskPII.name(rest.full_name),
+        legal_name: maskPII.name(rest.legal_name),
+      };
+    });
+
+    res.json({
+      sellers,
+      total,
+      limit,
+      offset,
+      has_more: (offset + sellers.length) < total,
+    });
+  })
+);
 
 // FIX-WORKER-7 pass 42: NOVO endpoint POST /sellers/admin/:id/kyc/approve
 // Aplicando pattern admin-terminal consolidado (pass 25/31/36/37/39).
