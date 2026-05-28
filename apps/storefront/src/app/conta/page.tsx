@@ -93,7 +93,8 @@ export default function ContaPage() {
               <Link key={o.id} href={`/conta/pedidos/${o.id}`} className="flex items-center justify-between p-3 rounded-lg hover:bg-white/5">
                 <div>
                   <div className="font-mono text-sm">{o.order_number}</div>
-                  <div className="text-xs text-white/50">{new Date(o.created_at).toLocaleDateString('pt-BR')}</div>
+                  {/* FIX-WORKER-2 pass 317: Api.formatDate defensive guard */}
+                  <div className="text-xs text-white/50">{Api.formatDate(o.created_at, { dateStyle: 'short' })}</div>
                 </div>
                 <div className="text-right">
                   <div className="font-display font-bold">{Api.formatBRL(o.total_cents)}</div>

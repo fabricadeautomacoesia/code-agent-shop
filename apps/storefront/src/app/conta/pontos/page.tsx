@@ -144,8 +144,9 @@ export default function PontosPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold truncate">{info.label}</div>
+                      {/* FIX-WORKER-2 pass 317: Api.formatDate defensive */}
                       <div className="text-[11px] text-white/40">
-                        {new Date(t.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                        {Api.formatDate(t.created_at, { dateStyle: 'short', timeStyle: 'short' })}
                         {t.reference_type && t.reference_id && (
                           <span className="ml-2 font-mono text-white/30">ref: {t.reference_id.slice(0,8)}</span>
                         )}

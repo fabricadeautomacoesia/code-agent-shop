@@ -69,9 +69,12 @@ export default function PedidosPage() {
                 </div>
                 <div className="flex-1">
                   <div className="font-mono text-sm text-magenta">{o.order_number}</div>
+                  {/* FIX-WORKER-2 pass 317: Api.formatDate defensive guard paridade pass 316
+                      created_at null/invalid -> '-' (vs 'Invalid Date'). paid_at sempre tem
+                      guard interno (truthy check + isNaN). */}
                   <div className="text-xs text-white/50">
-                    {new Date(o.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })}
-                    {o.paid_at && ` - pago em ${new Date(o.paid_at).toLocaleDateString('pt-BR')}`}
+                    {Api.formatDate(o.created_at, { day: '2-digit', month: 'short', year: 'numeric' })}
+                    {o.paid_at && ` - pago em ${Api.formatDate(o.paid_at, { dateStyle: 'short' })}`}
                   </div>
                   <div className="text-sm text-white/70 mt-1 line-clamp-1">
                     {o.items_preview?.map((it: any) => it.title).filter(Boolean).join(', ')}

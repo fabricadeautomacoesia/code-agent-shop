@@ -29712,3 +29712,54 @@ PROXIMA ITER:
 - W2 migrate restantes consumers (pontos/page, comparar, etc) para Api.formatDate
 - W14 audit notification.template_code coverage check
 - VPS SSH unblock URGENTISSIMO (149 ciclos - 49.7h)
+
+
+============================================================
+PASS 317 - 2026-05-28 - W2 migrate /conta pages para Api.formatDate
+============================================================
+Files: 3 modificados
+  - apps/storefront/src/app/conta/page.tsx (order list dates)
+  - apps/storefront/src/app/conta/pedidos/page.tsx (order list + paid_at)
+  - apps/storefront/src/app/conta/pontos/page.tsx (loyalty transactions)
+Lines: ~10 changed
+
+W2 (storefront defensive date adoption):
+- 3 conta pages migrated para Api.formatDate (pass 316 helper)
+- /conta/page.tsx: order created_at em widget orders summary
+- /conta/pedidos/page.tsx: created_at + paid_at em order list
+- /conta/pontos/page.tsx: transaction created_at em loyalty history
+- Pattern V8: gradual adoption helper centralizado
+- Cobertura defensive date storefront agora abrange:
+  - notification-bell (pass 306)
+  - product-tabs (pass 254/283)
+  - pedidos/[id] (pass 316)
+  - conta/page + conta/pedidos + conta/pontos (pass 317)
+
+VPS SSH BLOQUEADO (150 ciclos - 50h sem deploy).
+Migs 069-084 pendentes apply.
+
+MARCO 150 ciclos = 50h sem deploy:
+- 49 passes seguintes (pass 268-316) acumulados
+- Toda categoria de hardening cobrindo:
+  * Wallet UX cross-stack (passes 270-287)
+  * DLP mask sweep (passes 277/282/285/289/292/295/296/298/303/306/315)
+  * COUNT OVER consolidation (17 endpoints, passes 178-313)
+  * Cache key normalization (10 endpoints, passes 232/291/298/302)
+  * withRetry deadlock retry (5 hot paths, passes 309-311)
+  * trust proxy (6 svcs, pass 305)
+  * Rate-limit shared bucket fix (pass 304 CRITICAL)
+  * asaas.cancelPayment (pass 289 CRITICAL real money loss)
+  * Defensive date helpers cross-app (passes 254/283/306/315/316/317)
+  * Mig 080-084 PARTIAL idx (5 migrations)
+- TODO acumulado em origin/main aguardando rebuild VPS
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront --force
+- W2: navegar /conta -> ver order list (created_at null fixture -> '-')
+- /conta/pedidos -> mesma validacao
+- /conta/pontos -> transaction list (legacy null safe)
+
+PROXIMA ITER:
+- W2 migrate restantes (downloads/[token], seller/[slug])
+- W14 audit other tables coverage
+- VPS SSH unblock URGENTISSIMO (150 ciclos - 50h)
