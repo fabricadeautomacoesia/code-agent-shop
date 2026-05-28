@@ -30234,3 +30234,38 @@ PROXIMA ITER:
 - W5 audit QnA reply textarea (paridade qna page)
 - W4 admin reviews moderation textarea
 - VPS SSH unblock URGENTISSIMO (163 ciclos - 54.3h)
+
+
+============================================================
+PASS 331 - 2026-05-28 - W5 seller qna textarea maxLength + counter
+============================================================
+Files: 1 modificado
+  - apps/dashboard-seller/src/app/qna/page.tsx (textarea maxLength + counter)
+Lines: ~12 added
+
+W5 (qna answer textarea UX - paridade pass 330 reviews):
+- PRE-FIX: textarea sem maxLength - backend Zod max(5000) reject generic
+- POST-FIX:
+  - maxLength=5000 HTML5 (paridade backend Zod review-svc linha 806)
+  - Counter visual current/5000
+  - aria-describedby + aria-live polite SR
+  - Color yellow > 4750 (95% threshold)
+
+Coverage textarea maxLength dashboard-seller:
+- pass 330: /reviews reply (max 2000)
+- pass 331: /qna answer (max 5000)
+Storefront QnaForm ja tinha (MAX_LEN = 2000).
+
+VPS SSH BLOQUEADO (164 ciclos - 54.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-seller --force
+- W5: /seller/qna - textarea de answer
+  Typing 4750+ chars -> counter yellow
+  Trying 5001 chars -> blocked HTML5
+
+PROXIMA ITER:
+- W4 admin moderation textareas (admin can hide qna with reason)
+- W5 audit other textareas dashboard-seller (description edit, etc)
+- VPS SSH unblock URGENTISSIMO (164 ciclos - 54.7h)

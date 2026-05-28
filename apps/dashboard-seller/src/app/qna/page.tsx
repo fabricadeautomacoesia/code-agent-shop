@@ -115,14 +115,24 @@ export default function SellerQnaPage() {
                   {/* FIX-WORKER-5 pass 147 (a11y): aria-label dinamico identifica
                       qual pergunta cada textarea responde (multiplos forms no DOM).
                       htmlFor/id seria impraticavel - 1 textarea por question dinamica. */}
+                  {/* FIX-WORKER-5 pass 331: maxLength + counter UX paridade pass 330 reviews.
+                      Backend Zod max 5000 (review-svc linha 806). HTML5 blocks typing > limit. */}
                   <textarea
                     value={answers[q.id] || ''}
                     onChange={(e) => setAnswers((p) => ({ ...p, [q.id]: e.target.value }))}
                     placeholder="Sua resposta..."
                     rows={3}
+                    maxLength={5000}
                     disabled={busy}
                     aria-label={`Resposta para pergunta: ${q.question.slice(0, 60)}${q.question.length > 60 ? '...' : ''}`}
+                    aria-describedby={`answer-counter-${q.id}`}
                     className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none text-sm disabled:opacity-50" />
+                  <div id={`answer-counter-${q.id}`} aria-live="polite"
+                    className={`text-[10px] text-right ${
+                      (answers[q.id]?.length || 0) > 4750 ? 'text-yellow-400' : 'text-white/30'
+                    }`}>
+                    {answers[q.id]?.length || 0}/5000
+                  </div>
                   <button
                     type="button"
                     onClick={() => reply(q.id)}
