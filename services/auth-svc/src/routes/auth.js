@@ -788,8 +788,25 @@ router.post('/forgot-password',
             `Ola ${fullName},\n\nClique no link para redefinir sua senha:\n${resetUrl}\n\nLink expira em 15 minutos.\nSe nao foi voce, ignore este email.`,
             // body_html: USA fullNameSafe (escapado)
             `<p>Ola <b>${fullNameSafe}</b>,</p><p>Clique no link abaixo para redefinir sua senha:</p><p><a href="${resetUrl}" style="display:inline-block;padding:10px 20px;background:linear-gradient(135deg,#EC4899,#7C3AED);color:#fff;text-decoration:none;border-radius:8px;">Redefinir senha</a></p><p>Link expira em 15 minutos. Se nao foi voce, ignore.</p>`,
-            // payload: name NAO escapado (consumido como JSON - cliente eh responsavel pelo escape no render)
-            JSON.stringify({ url: resetUrl, name: fullName }),
+            // FIX-WORKER-6 pass 400 (token DLP - account takeover via internal logs):
+            //   PRE-FIX: JSON.stringify({ url: resetUrl, name: fullName })
+            //   - resetUrl contem token plaintext na query string (?token=ABC...)
+            //   - notifications.payload JSONB persisted DB
+            //   - Admin viewing /admin/notifications -> ve TOKEN COMPLETO no payload
+            //   - Account takeover via internal log access (admin compromised
+            //     OR audit dashboard XSS leak)
+            //   - body/body_html tem link MAS body eh enviado a 1 user (email)
+            //     payload eh queryable cross-admin (broader exposure)
+            //   POST-FIX: payload SEM url completa (so token_hash_prefix + name)
+            //   - Token reconstruction impossivel sem token raw (so 16-char hash prefix)
+            //   - Outbox processor renderiza body/body_html que JA tem URL
+            //     no template (linha 788/790) - sem regressao funcional
+            //   - LGPD Art 6° I (minimização dados): payload nao precisa URL completa
+            //   Pattern V8 W6: tokens NUNCA em payload/audit_log/json (so body recipient)
+            JSON.stringify({
+              name: fullName,
+              token_hash_prefix: crypto.createHash('sha256').update(tok).digest('hex').slice(0, 8),
+            }),
           ]
         );
         // FIX bug 2: audit_log atomic (security event critical - account takeover signal)
