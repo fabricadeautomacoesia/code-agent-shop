@@ -266,7 +266,10 @@ app.use('/api/sellers',       fail2ban.middleware(), proxy(UPSTREAMS.seller,    
 // Layer 2 defense: gateway BLOQUEIA /api/loyalty/earn upfront (403).
 // Calls internal-only via DOCKER NETWORK direct (tasks.cas_seller-svc:3011)
 // nao passam pelo gateway publico - este block reforca segregacao.
-app.use('/api/loyalty', (req, res, next) => {
+// FIX-WORKER-6 pass 207: fail2ban em /api/loyalty (alem de /earn block existente)
+// /loyalty/redeem + /loyalty/me sao buyer-facing. Sem fail2ban gateway:
+// Atacante brute-force redeem com diferentes points amounts -> tenta abuse.
+app.use('/api/loyalty', fail2ban.middleware(), (req, res, next) => {
   // Match: /api/loyalty/earn (POST) OU /earn (rota direta apos strip prefix)
   // PRE-PROXY check - rejeita antes do encaminhamento.
   if (req.method === 'POST' && (req.path === '/earn' || req.path === '/loyalty/earn')) {
@@ -278,21 +281,39 @@ app.use('/api/loyalty', (req, res, next) => {
   }
   next();
 }, proxy(UPSTREAMS.seller, { pathRewrite: (p) => '/loyalty' + p })); // MLB-4
-app.use('/api/products',      proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/products' + p }));
+// FIX-WORKER-6 pass 207: fail2ban em /api/products (CRUD mutations + wishlist)
+// PRE-FIX: produtos publicos endpoints (POST /wishlist, PATCH /me CRUD, etc)
+// sem fail2ban gateway. Atacante pode brute-force wishlist add/remove,
+// review submit, product CRUD. Layer 2 defense ja existe nos svcs mas
+// gateway block antes economiza DB pool / network ate svc.
+app.use('/api/products',      fail2ban.middleware(), proxy(UPSTREAMS.product,      { pathRewrite: (p) => '/products' + p }));
 // FIX-WORKER-7 pass 48: qa-svc dispara LLM workflow async (5min worker timeout)
 // MAS rota gateway expoe endpoints sincronos (run/callback/runs/etc) que sao DB-only
 // Default 30s OK pois LLM eh setImmediate background.
-app.use('/api/qa',            proxy(UPSTREAMS.qa,           { pathRewrite: (p) => '/qa' + p }));
+// FIX-WORKER-6 pass 207: + fail2ban (qa.callback eh service-token endpoint,
+// mas /qa/runs e /qa/run sao admin/seller - protege contra spam)
+app.use('/api/qa',            fail2ban.middleware(), proxy(UPSTREAMS.qa,           { pathRewrite: (p) => '/qa' + p }));
 app.use('/api/orders',        fail2ban.middleware(), proxy(UPSTREAMS.order,        { pathRewrite: (p) => '/orders' + p }));
 app.use('/api/payments',      fail2ban.middleware(), proxy(UPSTREAMS.payment,      { pathRewrite: (p) => '/payments' + p })); // inclui MLB-5 /payments/installments/preview
-app.use('/api/reviews',       proxy(UPSTREAMS.review,       { pathRewrite: (p) => p })); // review-svc usa / direto
-app.use('/api/qna',           proxy(UPSTREAMS.review,       { pathRewrite: (p) => '/qna' + p }));
+// FIX-WORKER-6 pass 207: fail2ban em /api/reviews + /api/qna (mutations spam vector)
+// reviews POST + qna POST sao buyer-facing - sem fail2ban gateway:
+// 1. Buyer compromised conta -> mass spam reviews/perguntas
+// 2. Bot brute-force review_id existence ou qna_id voting
+// Pattern V8 consolidado: review-svc + product-svc ja tem rateLimiter
+// per-user. fail2ban gateway = IP-level brute force protection.
+app.use('/api/reviews',       fail2ban.middleware(), proxy(UPSTREAMS.review,       { pathRewrite: (p) => p })); // review-svc usa / direto
+app.use('/api/qna',           fail2ban.middleware(), proxy(UPSTREAMS.review,       { pathRewrite: (p) => '/qna' + p }));
 // FIX-WORKER-7 pass 68: fail2ban em /api/notifications.
 // /test endpoint envia email (spam relay vector). Mesmo com rate-limit no svc,
 // gateway brute-force protection eh defesa em profundidade (fail2ban tracking
 // IP/user agressors atravessa multi-services em uma camada unica).
 app.use('/api/notifications', fail2ban.middleware(), proxy(UPSTREAMS.notification, { pathRewrite: (p) => p })); // notif root
-app.use('/api/search',        proxy(UPSTREAMS.search,       { pathRewrite: (p) => p })); // search root
+// FIX-WORKER-6 pass 207: fail2ban em /api/search.
+// PRE-FIX: search endpoint publico sem fail2ban.
+// Scraping massivo de catalog (1000+ req/s) sem brute-force IP protection.
+// search-svc tem searchLimiter rate-limit por user mas anonymous searches
+// sem auth nao tem user_id - fail2ban IP eh defesa critica.
+app.use('/api/search',        fail2ban.middleware(), proxy(UPSTREAMS.search,       { pathRewrite: (p) => p })); // search root
 // FIX-WORKER-7 pass 47: vault endpoint CRITICAL crypto - fail2ban obrigatorio
 app.use('/api/vault',         fail2ban.middleware(), proxy(UPSTREAMS.vault,        { pathRewrite: (p) => p })); // vault root
 // FIX-WORKER-7 pass 68: fail2ban em /api/aiops.
