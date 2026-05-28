@@ -28467,3 +28467,47 @@ PROXIMA ITER:
 - W4 admin notifications panel filter failed_reason new buckets
 - W2 checkout race condition test (duplicate POST /checkout)
 - VPS SSH unblock URGENTISSIMO (118 ciclos - 39.3h)
+
+
+============================================================
+PASS 286 - 2026-05-28 - W5 payout wallet pre-check + W14 mig 082 idx
+============================================================
+Files: 2 modificados/criados
+  - services/seller-svc/src/routes/me.js (POST /payout wallet check)
+  - db/migrations/082_seller_payouts_non_final_idx.sql (NEW PARTIAL idx)
+Lines: ~40 added
+
+W5 (seller payout request wallet pre-check):
+- PRE-FIX: seller active sem asaas_wallet_id solicita payout -> INSERT OK
+  Admin aprova -> cron tenta createTransfer -> falha 'walletId required'
+  Seller ve payout 'failed' sem entender porque
+- POST-FIX: bloqueio inline 403 'wallet_not_configured'
+  - Mensagem UX clara aponta /seller/loja para setup
+  - action_url field para frontend redirect button
+- Paridade pass 278/279/280 wallet UX cross-stack
+- IS NOT NULL AND <> '' (paridade pass 278/280 empty string exclusion)
+
+W14 (mig 082 PARTIAL idx hot-path payout non_final SUM):
+- Query: SELECT SUM(amount_cents) FROM seller_payouts
+  WHERE seller_id=X AND status IN ('pending','approved','processing','paid')
+- Idx existentes nao cobrem: (seller_id, requested_at DESC) inclui rejected/canceled
+- POST-FIX: idx_seller_payouts_non_final_sum
+  - ON (seller_id, amount_cents) WHERE status IN active set
+  - PARTIAL filtra rejected/canceled (finalized never in non_final)
+  - amount_cents covering p/ index-only scan
+- Seller com 500 payouts (60% rejected): scan reduzido 60% rows
+
+VPS SSH BLOQUEADO (119 ciclos - 39.7h sem deploy).
+Migs 069-082 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply: psql -f /opt/cas/db/migrations/082_seller_payouts_non_final_idx.sql
+- Rebuild: docker service update cas_seller-svc --force
+- W5: login vendedor1@cas.io (asaas_wallet_id=NULL) -> /financeiro -> solicitar saque
+  Esperado: 403 { error:'wallet_not_configured', action_url:'/seller/loja' }
+- W14: EXPLAIN ANALYZE SUM query - Index Only Scan idx_seller_payouts_non_final_sum
+
+PROXIMA ITER:
+- W5 dashboard-seller /financeiro consume wallet_not_configured UI
+- W4 admin payouts list filter wallet_configured flag
+- VPS SSH unblock URGENTISSIMO (119 ciclos - 39.7h)

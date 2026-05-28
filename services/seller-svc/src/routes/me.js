@@ -486,7 +486,8 @@ router.post('/payout',
              AND status IN ('pending','approved','processing','paid')
         )
         SELECT s.id, s.payout_min_amount_cents, s.total_revenue_cents,
-               s.status, (SELECT pending_sum FROM non_final) AS reserved_cents
+               s.status, s.asaas_wallet_id,
+               (SELECT pending_sum FROM non_final) AS reserved_cents
           FROM sellers s
          WHERE s.user_id = $1::UUID
          FOR UPDATE OF s
@@ -498,6 +499,18 @@ router.post('/payout',
       // BUG 3+4: status='active' (compliance + KYC)
       if (s.status !== 'active') {
         outcome = { error: 'seller_not_active', current_status: s.status };
+        return;
+      }
+
+      /* FIX-WORKER-5 pass 286 (wallet pre-check antes payout request):
+         PRE-FIX: seller status=active mas sem asaas_wallet_id pode solicitar
+         payout. Admin aprova -> cron payment-svc tenta createTransfer -> falha
+         "walletId required". UX ruim: seller ve payout 'failed' sem entender porque.
+         POST-FIX: bloqueio inline antes INSERT. Mensagem UX clara aponta /loja
+         setup. Paridade pass 278/279/280 wallet UX cross-stack. */
+      const walletOk = s.asaas_wallet_id && s.asaas_wallet_id.trim() !== '';
+      if (!walletOk) {
+        outcome = { error: 'wallet_not_configured' };
         return;
       }
 
@@ -549,6 +562,13 @@ router.post('/payout',
         error: 'seller_not_active',
         message: `Sua conta esta em status '${outcome.current_status}'. Saques disponiveis apenas para sellers ativos com KYC aprovado.`,
         current_status: outcome.current_status,
+      });
+    }
+    if (outcome?.error === 'wallet_not_configured') {
+      return res.status(403).json({
+        error: 'wallet_not_configured',
+        message: 'Sua carteira Asaas nao esta configurada. Acesse /seller/loja, configure a carteira e tente novamente.',
+        action_url: '/seller/loja',
       });
     }
     if (outcome?.error === 'amount_below_min') {
