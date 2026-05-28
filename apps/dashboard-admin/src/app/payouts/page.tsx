@@ -34,7 +34,9 @@ export default function PayoutsPage() {
     });
   }
   async function reject(id: string) {
-    const reason = prompt('Motivo da rejeicao:');
+    // FIX-WORKER-4 pass 149: PromptDialog acessivel + estilizado
+    const { promptDialog } = await import('@/components/prompt-dialog');
+    const reason = await promptDialog('Motivo da rejeicao:', 'Ex: dados bancarios invalidos');
     if (!reason) return;
     action.run(`reject-${id}`, async () => {
       await adminFetch(`/sellers/admin/payouts/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });

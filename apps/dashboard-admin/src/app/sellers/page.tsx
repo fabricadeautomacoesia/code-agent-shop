@@ -19,7 +19,9 @@ export default function SellersPage() {
   const action = useAdminAction(load);
 
   async function suspend(id: string) {
-    const reason = prompt('Motivo da suspensao:');
+    // FIX-WORKER-4 pass 149: PromptDialog acessivel + estilizado
+    const { promptDialog } = await import('@/components/prompt-dialog');
+    const reason = await promptDialog('Motivo da suspensao:', 'Ex: violacao termos de uso');
     if (!reason) return;
     action.run(`suspend-${id}`, async () => {
       await adminFetch(`/sellers/admin/${id}/suspend`, { method: 'POST', body: JSON.stringify({ reason }) });
