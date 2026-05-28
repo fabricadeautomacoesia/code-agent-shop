@@ -1132,6 +1132,15 @@ app.post('/payments/payouts/:id/process',
 // hammer o DB com SELECT muito frequente).
 async function reconcileWebhooks() {
   try {
+    // FIX-WORKER-11 pass 244 (multi-replica race):
+    //   PRE-FIX: SELECT sem FOR UPDATE SKIP LOCKED. Em Swarm 2+ replicas
+    //   payment-svc, ambas rodavam setInterval(5min) simultaneo e selecionavam
+    //   mesmos 20 rows. processWebhookEvent eh idempotent (ON CONFLICT no
+    //   downstream) MAS UPDATE retry_count = retry_count + 1 nao - sem WHERE
+    //   guard, ambas replicas incrementavam +1 -> total +2 per failure cycle
+    //   -> retry_count atinge 5 (terminal) 2x mais rapido que esperado.
+    //   Pattern qa-svc/timeoutStuckRuns (pass 240) consolidado: claim atomico
+    //   via SELECT FOR UPDATE SKIP LOCKED -> cada replica pega lote distinto.
     const r = await query(
       `SELECT id, payload, retry_count
          FROM asaas_webhook_events
@@ -1140,7 +1149,8 @@ async function reconcileWebhooks() {
           AND retry_count BETWEEN 1 AND 5
           AND received_at > NOW() - INTERVAL '24 hours'
         ORDER BY retry_count ASC, received_at ASC
-        LIMIT 20`
+        LIMIT 20
+        FOR UPDATE SKIP LOCKED`
     );
     if (!r.rows.length) return;
     log.info({ count: r.rows.length }, '[reconcile.start]');
