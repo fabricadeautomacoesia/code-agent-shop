@@ -121,19 +121,41 @@ export default function CartPage() {
     setErr('');
     const code = coupon.trim().toUpperCase();
     if (!code) { setErr('Digite um codigo de cupom.'); return; }
-    if (cart?.coupon_code === code) { setErr(`Cupom ${code} ja esta aplicado.`); return; }
+    // FIX-WORKER-2 pass 353 (case-insensitive duplicate check):
+    //   PRE-FIX: cart.coupon_code === code comparacao case-sensitive.
+    //   Backend armazena req.body.code raw em carts.coupon_code (sem UPPER).
+    //   User aplicou 'Win10' antes, agora digita 'WIN10' -> condicao FALHA
+    //   (Win10 !== WIN10) -> backend POST re-aplica desnecessario consumindo
+    //   rate-limit token 30/hr/user.
+    //   POST-FIX: normalize ambos antes do compare.
+    const cartCodeNorm = (cart?.coupon_code || '').trim().toUpperCase();
+    if (cartCodeNorm === code) { setErr(`Cupom ${code} ja esta aplicado.`); return; }
+    // FIX-WORKER-2 pass 353 (error code-based mapping):
+    //   PRE-FIX: regex em msg.body. Frageis - se backend muda phrasing, UX quebra
+    //   silenciosamente. Tambem nao cobre coupon_max_uses_per_user_reached (pass 352).
+    //   POST-FIX: match em e.data.error code (estrutural) + fallback regex msg.
     setCouponBusy(true);
     try {
       await Api.cartCoupon(token!, code);
       setCoupon(''); // limpa input apos aplicar OK
       load();
     } catch (e: any) {
+      const errCode = e.data?.error || '';
       const msg = e.data?.message || e.message || '';
-      // Friendly mapping para erros comuns do backend
-      if (/not_found|inexistente|invalid/i.test(msg)) setErr(`Cupom ${code} nao encontrado ou expirado.`);
-      else if (/min_tier|tier/i.test(msg)) setErr(`Cupom ${code} exclusivo para tier superior.`);
-      else if (/expired/i.test(msg)) setErr(`Cupom ${code} expirou.`);
-      else setErr(msg || `Erro ao aplicar cupom ${code}.`);
+      // Pattern V8 W2 friendly mapping: error code first, regex fallback
+      if (errCode === 'coupon_max_uses_per_user_reached') {
+        const uses = e.data?.user_uses;
+        const max = e.data?.max_uses_per_user;
+        setErr(`Voce ja utilizou o cupom ${code} ${uses}x (limite: ${max}x por usuario).`);
+      } else if (errCode === 'coupon_tier_insufficient' || /min_tier|tier/i.test(msg)) {
+        setErr(`Cupom ${code} exclusivo para tier ${e.data?.required_tier || 'superior'}.`);
+      } else if (errCode === 'coupon_invalid' || /not_found|inexistente|invalid/i.test(msg)) {
+        setErr(`Cupom ${code} nao encontrado ou expirado.`);
+      } else if (/expired/i.test(msg)) {
+        setErr(`Cupom ${code} expirou.`);
+      } else {
+        setErr(msg || `Erro ao aplicar cupom ${code}.`);
+      }
     } finally {
       setCouponBusy(false);
     }
