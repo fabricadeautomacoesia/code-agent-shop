@@ -28939,3 +28939,51 @@ PROXIMA ITER:
 - W17 audit completo vault.activate paths (similar 2fa pattern)
 - W4 admin notification cleanup KPI panel
 - VPS SSH unblock URGENTISSIMO (129 ciclos - 43h)
+
+
+============================================================
+PASS 297 - 2026-05-28 - W5 KYC client validation + W14 mig 084 pending_kyc idx
+============================================================
+Files: 2 modificados/criados
+  - apps/dashboard-seller/src/app/loja/page.tsx (KYC validation strict)
+  - db/migrations/084_sellers_pending_kyc_idx.sql (NEW PARTIAL idx)
+Lines: ~45 added
+
+W5 (loja KYC form client-side validation):
+- PRE-FIX: form valida apenas required HTML5 - backend 400 em CPF/UF/CEP invalid
+- POST-FIX paridade register pass 294:
+  - document_number: 11 (CPF) OU 14 (CNPJ) strict
+  - address_state: regex /^[A-Z]{2}$/ (UF brasileiro)
+  - address_zip: 8 digitos numericos (CEP)
+- Mensagem UX especifica (vs erro generico "campo invalido")
+- Normalize digits-only no submit (document_number, address_zip)
+- Roundtrip eliminado em invalid input
+
+W14 (mig 084 sellers pending_kyc PARTIAL idx):
+- Admin GET /sellers/admin/pending-kyc query agregada
+- WHERE status IN ('pending_kyc','kyc_submitted') ORDER BY case + kyc_submitted_at
+- idx_sellers_status existente cobre WHERE mas nao PARTIAL
+- Em maturidade (>10k sellers, 95% 'active') scan ineficiente
+- POST-FIX: idx_sellers_pending_kyc_queue PARTIAL
+  ON (kyc_submitted_at ASC NULLS LAST, created_at ASC, id)
+  WHERE status IN ('pending_kyc','kyc_submitted')
+- PARTIAL filtra 95% sellers ativos + Index Scan FIFO (sem Sort step)
+
+VPS SSH BLOQUEADO (130 ciclos - 43.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply: psql -f /opt/cas/db/migrations/084_sellers_pending_kyc_idx.sql
+- Rebuild: docker service update cas_dashboard-seller --force
+- W5: login vendedor sem KYC -> /seller/loja -> KYC form
+  Testar: CPF '12345' -> erro client "use 11 digitos"
+  UF '12' -> erro "use 2 letras maiusculas"
+- W14: EXPLAIN ANALYZE SELECT * FROM sellers
+       WHERE status IN ('pending_kyc','kyc_submitted')
+       ORDER BY kyc_submitted_at ASC NULLS LAST LIMIT 50;
+  Esperado: Index Scan idx_sellers_pending_kyc_queue (sem Sort step)
+
+PROXIMA ITER:
+- W4 admin /admin/sellers pending_kyc UI consume idx pass 297
+- W17 audit notifications retention KPI dashboard
+- VPS SSH unblock URGENTISSIMO (130 ciclos - 43.3h)

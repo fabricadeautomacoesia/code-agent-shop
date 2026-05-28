@@ -49,8 +49,43 @@ export default function LojaPage() {
 
   async function submitKyc(e: React.FormEvent) {
     e.preventDefault();
+    /* FIX-WORKER-5 pass 297: validacao client-side KYC pre-roundtrip.
+       PRE-FIX: form valida apenas required HTML5. document_number/UF/CEP
+       enviavam strings invalidas -> backend 400 -> UX confuso.
+       POST-FIX paridade register pass 294:
+       - document_number: 11 digitos (CPF) OU 14 digitos (CNPJ) strict
+       - address_state: 2 letras [A-Z] (UF brasileiro)
+       - address_zip: 8 digitos numericos (CEP) */
+    const docDigits = kyc.document_number.replace(/\D/g, '');
+    const expectedDocLen = kyc.document_type === 'cpf' ? 11 : 14;
+    if (docDigits.length !== expectedDocLen) {
+      action.run('submit-kyc', async () => {
+        throw new Error(`${kyc.document_type === 'cpf' ? 'CPF' : 'CNPJ'} invalido: use ${expectedDocLen} digitos (voce digitou ${docDigits.length}).`);
+      });
+      return;
+    }
+    if (!/^[A-Z]{2}$/.test(kyc.address_state)) {
+      action.run('submit-kyc', async () => {
+        throw new Error('UF invalido: use 2 letras maiusculas (ex: SP, RJ, MG).');
+      });
+      return;
+    }
+    const zipDigits = kyc.address_zip.replace(/\D/g, '');
+    if (zipDigits.length !== 8) {
+      action.run('submit-kyc', async () => {
+        throw new Error(`CEP invalido: use 8 digitos (voce digitou ${zipDigits.length}).`);
+      });
+      return;
+    }
     action.run('submit-kyc', async () => {
-      await sellerFetch('/sellers/me/kyc', { method: 'POST', body: JSON.stringify(kyc) });
+      await sellerFetch('/sellers/me/kyc', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...kyc,
+          document_number: docDigits,
+          address_zip: zipDigits,
+        }),
+      });
       return 'KYC enviado com sucesso. Sua loja sera ativada apos validacao admin.';
     });
   }
