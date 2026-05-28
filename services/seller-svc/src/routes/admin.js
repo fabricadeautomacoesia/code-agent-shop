@@ -775,13 +775,16 @@ router.post('/payouts/:id/reject',
     // FIX-WORKER-18 pass 175: invalida cache seller (pos-UPDATE)
     await invalidateSellerPayoutsCache(req.params.id);
     // FIX-WORKER-4 pass 235: audit log (paridade com /approve - financial trail)
+    // FIX-WORKER-11 pass 296: DLP mask reason - paridade pass 295 vault
+    //   Admin escreve free-text reason - pode conter Bearer/JWT/CPF
+    //   pass 295 estabeleceu pattern em vault revoke endpoints
     query(
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
        VALUES ($1, $2, 'payout.reject', 'seller_payout', $3, 'warn', $4::JSONB)`,
       [req.user.sub, req.user.role, r.rows[0].id, JSON.stringify({
         seller_id: r.rows[0].seller_id,
         amount_cents: r.rows[0].amount_cents,
-        reason: req.body.reason.slice(0, 500),
+        reason: require('@cas/shared').mask.text(req.body.reason.slice(0, 500)),
         ip: req.ip,
       })]
     ).catch((e) => log.warn({ err: e.message }, '[payout.reject.audit_fail]'));

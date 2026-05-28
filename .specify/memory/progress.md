@@ -28893,3 +28893,49 @@ PROXIMA ITER:
 - W12 audit qa-worker.py para fallback chain LLM (OpenAI -> Gemini -> Groq)
 - W17 audit /api/vault/usage endpoint para mask
 - VPS SSH unblock URGENTISSIMO (128 ciclos - 42.7h)
+
+
+============================================================
+PASS 296 - 2026-05-28 - W6 2FA DLP mask consolidation + W11 payout reject DLP
+============================================================
+Files: 2 modificados
+  - services/auth-svc/src/routes/two-factor.js (mask em 5 ua_prefix + import)
+  - services/seller-svc/src/routes/admin.js (mask reason em payout.reject)
+Lines: ~20 changed
+
+W6 (2FA routes DLP mask consolidation final):
+- 5 ua_prefix raw em audit_log payload_after detectados:
+  - 2fa.setup_init (linha 149)
+  - 2fa.recovery (linha 192)
+  - 2fa.activate success path (linha 246)
+  - 2fa.activate fail path (linha 265)
+  - 2fa.disable (linha 348)
+- mask nao importava em two-factor.js (gap)
+- POST-FIX:
+  - import mask added
+  - mask.text() em todas 5 ocorrencias via replace_all
+- Pattern V8 cross-svc DLP mask consolidado COMPLETO em auth-svc
+
+W11 (admin /payouts/:id/reject reason DLP):
+- BUG: reason audit_log raw (paridade vault revoke pass 295)
+- Admin escreve free-text - pode colar Bearer/JWT/CPF acidental
+- POST-FIX: require('@cas/shared').mask.text(reason.slice(0,500))
+- Paridade pass 295 vault.revoke + vault.seller_revoke
+
+VPS SSH BLOQUEADO (129 ciclos - 43h sem deploy).
+Migs 069-083 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_auth-svc cas_seller-svc --force
+- W6: SELECT action, payload_after->>'ua_prefix'
+  FROM audit_log WHERE action LIKE '2fa.%'
+  ORDER BY created_at DESC LIMIT 10;
+  Esperado: ua_prefix masked patterns (****)
+- W11: rejeitar payout com reason='Test Bearer abc123 e CPF 123.456.789-00'
+  SELECT payload_after->>'reason' FROM audit_log WHERE action='payout.reject' LIMIT 1;
+  Esperado: 'Test **** e CPF ****' (Bearer + CPF masked)
+
+PROXIMA ITER:
+- W17 audit completo vault.activate paths (similar 2fa pattern)
+- W4 admin notification cleanup KPI panel
+- VPS SSH unblock URGENTISSIMO (129 ciclos - 43h)

@@ -8,7 +8,7 @@ const { z } = require('zod');
 const bcrypt = require('bcrypt');
 const crypto = require('node:crypto');
 const { query, tx } = require('@cas/db-client');
-const { jwt, validate, asyncHandler, errorHandler, crypto: cryp, cache } = require('@cas/shared');
+const { jwt, validate, asyncHandler, errorHandler, crypto: cryp, cache, mask } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 54: REFRESH_COOKIE constante p/ clearCookie em /disable.
 // Mesmo valor de auth.js linha 65 - duplicado por design (modulo standalone).
@@ -146,7 +146,8 @@ router.post('/setup', totpSetupLimiter, asyncHandler(async (req, res, next) => {
        VALUES ($1, 'user', '2fa.setup', 'user', $1, 'info', $2::JSONB)`,
       [req.user.sub, JSON.stringify({
         ip: req.ip,
-        ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+        /* FIX-WORKER-6 pass 296: ua_prefix mask.text() paridade pass 282/292 cross-svc DLP */
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
         re_setup: cur.rows.length > 0,  // primeira vez OR re-config pos-disable
       })]
     );
@@ -189,7 +190,8 @@ router.post('/activate',
       await c.query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, 'user', '2fa.activate', 'user', $1, 'warn', $2::JSONB)`,
-        [req.user.sub, JSON.stringify({ ip: req.ip, ua_prefix: (req.headers['user-agent'] || '').slice(0, 60), recovery_codes_count: 10 })]
+        [req.user.sub, JSON.stringify({ ip: req.ip, /* FIX-WORKER-6 pass 296: ua_prefix mask.text() paridade pass 282/292 cross-svc DLP */
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)), recovery_codes_count: 10 })]
       );
     });
     // FIX-WORKER-18 pass 211: invalida cache auth:me (twofa_enabled mudou)
@@ -243,7 +245,8 @@ router.post('/recovery',
          VALUES ($1, 'user', '2fa.recovery.invalid_token', 'user', $1, 'critical', $2::JSONB)`,
         [req.user.sub, JSON.stringify({
           ip: req.ip,
-          ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+          /* FIX-WORKER-6 pass 296: ua_prefix mask.text() paridade pass 282/292 cross-svc DLP */
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
         })]
       ).catch(() => {});
       return next(errorHandler.unauthorized('invalid_token'));
@@ -262,7 +265,8 @@ router.post('/recovery',
          VALUES ($1, 'user', '2fa.recovery_regenerated', 'user', $1, 'warn', $2::JSONB)`,
         [req.user.sub, JSON.stringify({
           ip: req.ip,
-          ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+          /* FIX-WORKER-6 pass 296: ua_prefix mask.text() paridade pass 282/292 cross-svc DLP */
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
           codes_count: 10,
         })]
       );
@@ -345,7 +349,8 @@ router.post('/disable',
          VALUES ($1, 'user', '2fa.disable', 'user', $1, 'critical', $2::JSONB)`,
         [req.user.sub, JSON.stringify({
           ip: req.ip,
-          ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+          /* FIX-WORKER-6 pass 296: ua_prefix mask.text() paridade pass 282/292 cross-svc DLP */
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
           sessions_revoked: revokedCount,
         })]
       );
