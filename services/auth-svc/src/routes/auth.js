@@ -215,14 +215,26 @@ router.post('/register', registerLimiter, validate({ body: registerSchema }), as
       // FIX-WORKER-7 pass 52: usa @cas/shared.htmlEscape (DRY cross-svc)
       // (htmlEscape ja desestruturado no top do arquivo - linha modificada pass 52)
       const fullNameSafe = htmlEscape(full_name);
+      // FIX-WORKER-6 pass 397 (welcome email link broken para sellers):
+      //   PRE-FIX: link p/ KYC usava ${appUrl}/dashboard/seller/loja
+      //   - appUrl = storefront URL (cas.inovareinteligenciaartificial.com)
+      //   - /dashboard/seller/loja NAO existe no storefront -> 404
+      //   - Rota real seller dashboard: seller.cas.../loja (subdomain dedicado)
+      //   - Pass 355 estabeleceu pattern env-driven SELLER_URL (storefront/notif-bell)
+      //   - Auth-svc welcome email ficou lagged 42 passes (355 -> 397)
+      //   POST-FIX: env SELLER_APP_URL p/ link KYC seller welcome
+      //   - Fallback host Traefik ativo
+      //   - Buyer welcome continua usando appUrl (correct)
       const appUrl = process.env.APP_URL || 'https://cas.inovareinteligenciaartificial.com';
+      const sellerAppUrl = process.env.SELLER_APP_URL || 'https://seller.cas.inovareinteligenciaartificial.com';
+      const kycUrl = `${sellerAppUrl}/loja`;
       await c.query(
         `INSERT INTO notifications (user_id, channel, template_code, title, body, body_html, priority)
          VALUES ($1, 'email', 'welcome', $2, $3, $4, 2)`,
         [user.id,
          'Bem-vindo ao Code & Agent Shop!',
-         `Ola ${full_name},\n\nBem-vindo ao Code & Agent Shop! Sua conta foi criada com sucesso como ${role === 'seller' ? 'vendedor' : 'comprador'}.\n\nAcesse: ${appUrl}/conta\n\n${role === 'seller' ? 'IMPORTANTE: Para vender produtos, voce precisa completar o KYC. Acesse /dashboard/seller/loja para enviar seus documentos.' : 'Comece a explorar produtos em /products.'}`,
-         `<p>Ola <b>${fullNameSafe}</b>,</p><p>Bem-vindo ao Code & Agent Shop! Sua conta foi criada com sucesso como <b>${role === 'seller' ? 'vendedor' : 'comprador'}</b>.</p><p><a href="${appUrl}/conta" style="display:inline-block;padding:10px 20px;background:linear-gradient(135deg,#EC4899,#7C3AED);color:#fff;text-decoration:none;border-radius:8px;">Acessar minha conta</a></p>${role === 'seller' ? '<p><b>IMPORTANTE:</b> Para vender produtos, complete o KYC em <a href="' + appUrl + '/dashboard/seller/loja">/dashboard/seller/loja</a>.</p>' : '<p>Comece a explorar produtos em <a href="' + appUrl + '/products">/products</a>.</p>'}`,
+         `Ola ${full_name},\n\nBem-vindo ao Code & Agent Shop! Sua conta foi criada com sucesso como ${role === 'seller' ? 'vendedor' : 'comprador'}.\n\nAcesse: ${appUrl}/conta\n\n${role === 'seller' ? `IMPORTANTE: Para vender produtos, voce precisa completar o KYC. Acesse ${kycUrl} para enviar seus documentos.` : 'Comece a explorar produtos em /products.'}`,
+         `<p>Ola <b>${fullNameSafe}</b>,</p><p>Bem-vindo ao Code & Agent Shop! Sua conta foi criada com sucesso como <b>${role === 'seller' ? 'vendedor' : 'comprador'}</b>.</p><p><a href="${appUrl}/conta" style="display:inline-block;padding:10px 20px;background:linear-gradient(135deg,#EC4899,#7C3AED);color:#fff;text-decoration:none;border-radius:8px;">Acessar minha conta</a></p>${role === 'seller' ? `<p><b>IMPORTANTE:</b> Para vender produtos, complete o KYC em <a href="${kycUrl}">${kycUrl}</a>.</p>` : '<p>Comece a explorar produtos em <a href="' + appUrl + '/products">/products</a>.</p>'}`,
         ]
       );
     });
