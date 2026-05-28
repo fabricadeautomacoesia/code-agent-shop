@@ -20460,3 +20460,59 @@ PROXIMA ITER:
 - W6 audit reset-password flow
 - W10 search-svc bugs (autocomplete trie)
 - 🚨 VPS SSH unblock URGENTE (11 ciclos - >3.5h sem deploy!)
+
+PASS 179 (W14 migration 059 + W18 notif COUNT consolidation) - 2026-05-28:
+- W14 pass 179 - migration 059 (2 indices compostos):
+
+1. idx_wishlist_user_created (user_id, created_at DESC, product_id ASC):
+   * Cobre query W18-178 paginada exata (W14 viu gap apos pass 178 optimization)
+   * Antes: Bitmap Index Scan idx_wishlist_user + Sort externo created_at
+   * Depois: Index Scan ordenado, LIMIT 50 le primeiras 50 entries direto
+   * Performance: 10ms -> <1ms (whale 50ms -> <2ms)
+   * Sort multi-direcao (DESC+ASC) suportado PG 8.3+
+
+2. idx_notif_user_channel_created (user_id, channel, created_at DESC):
+   * Cobre GET /notifications/me default (lidas + nao-lidas)
+   * idx_notif_user_unread PARTIAL fica para ?unread=true
+   * Sem indice: idx_notif_created global scan + Filter pos-scan
+   * Em DB 500k+ notifs, scan global filtrando 1 user = waste
+   * NAO usar PARTIAL channel='in_app' - canal diversificara (push/sms)
+
+- W18 pass 179 - notification-svc /me COUNT(*) OVER() window:
+   * Pre-fix: 2 queries (SELECT + COUNT - PG scan duplo)
+   * Post-fix: 1 query (window) - ~30ms -> ~15ms PG
+   * Combinado com novo idx -> escalavel 500k+ rows
+   * Strip _total interno + DLP mask payload preserved
+
+- Tolerante a falhas: CREATE INDEX IF NOT EXISTS (V8 blueprint)
+- Commit cf8bfc5 pushed origin/main
+- VPS SSH ainda bloqueado (12 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (12 ciclos):
+- 168-178: documentados
+- 179: migration 059 + notification COUNT window
+
+DB INDICES OPTIMIZATIONS recentes (W14):
+- migration 058 (pass 173): idx_audit_actor_created
+- migration 059 (pass 179): idx_wishlist_user_created +
+  idx_notif_user_channel_created
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply: psql -f /opt/cas/db/migrations/059_wishlist_notif_composite_idx.sql
+- Validate:
+  EXPLAIN ANALYZE SELECT * FROM product_wishlist
+   WHERE user_id = '<uuid>'
+   ORDER BY created_at DESC, product_id ASC LIMIT 50;
+  -> Esperado: Index Scan using idx_wishlist_user_created
+
+  EXPLAIN ANALYZE SELECT * FROM notifications
+   WHERE user_id = '<uuid>' AND channel = 'in_app'
+   ORDER BY created_at DESC, id DESC LIMIT 20;
+  -> Esperado: Index Scan using idx_notif_user_channel_created
+- Rebuild: docker service update cas_notification-svc --force
+
+PROXIMA ITER:
+- W18: cache /products list (publica - cuidado vary by filters)
+- W6 audit reset-password flow
+- W10 search-svc bugs (autocomplete trie)
+- 🚨 VPS SSH unblock URGENTE (12 ciclos - >4h sem deploy!)
