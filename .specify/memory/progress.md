@@ -17339,7 +17339,33 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Migration 048 DROP 2 indices orfaos APLICADA em prod (pass 119)
 - ✅ Migration 049 ADD 16 FK indices faltando APLICADA em prod (pass 120)
 - ✅ generateMetadata dinamico /categoria/[slug] (pass 121)
-- ✅ MLB-12 Buscas Recentes localStorage (pass 122 esta iter)
+- ✅ MLB-12 Buscas Recentes localStorage (pass 122)
+- ✅ Fix /facets HTTP 500 enum cast (pass 123 esta iter)
+
+W7 PASS 123 RESUMO - W10 SEARCH-SVC /facets HTTP 500 FIX:
+- AUDIT W10 search/aiops endpoints publicos:
+  * /trending OK 200 (4 trending entries)
+  * /autocomplete?q=auto OK 200
+  * /categories OK 200
+  * /top-sellers OK 200
+  * /search?q=automacao OK 200
+  * /aiops/status OK 200
+  * /FACETS HTTP 500 'database_error' - BUG ENCONTRADO
+- ROOT CAUSE via search-svc logs:
+  * err.code 42883 'operator does not exist: product_kind = text'
+  * Linha server.js:623 ($2::TEXT IS NULL OR p.kind = $2)
+  * PG parser nao infere tipo de \$2 (TEXT) ao comparar c/ p.kind (enum product_kind)
+  * Mesmo c/ short-circuit ($2::TEXT IS NULL), expressao p.kind = $2
+    e validada no plan time -> erro 42883
+- FIX em services/search-svc/src/server.js:
+  * p.kind = \$2  ->  p.kind::TEXT = \$2
+  * Cast enum -> text resolve ambiguidade
+  * c.slug = \$1 nao precisa fix (slug e TEXT direto)
+- REBUILD search-svc + service converged + validation PUBLIC:
+  * /facets HTTP 200 (era 500): retorna kinds[7] + price_range + total=10
+  * /facets?kind=ai_agent HTTP 200: filtra count=3 correto
+- ENDPOINT CRITICO: facets alimenta filtros laterais /products page (UI sidebar)
+- COMMIT 740f1dd pushed GitHub main + deployed prod
 
 W7 PASS 122 RESUMO - W16 MLB FEATURE 12: BUSCAS RECENTES:
 - AUDIT search-autocomplete.tsx confirma SO trending fetch + autocomplete debounce
