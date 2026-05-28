@@ -324,6 +324,30 @@ router.post('/',
         outcome = { error: 'slug_collision_exhausted' };
         return;
       }
+
+      // FIX-WORKER-7 pass 364 (audit_log gap em product.draft create):
+      //   PRE-FIX: POST / criava products sem INSERT audit_log atomic.
+      //   - PATCH /:id (pass 83), /:id/submit (pass 547), /:id/versions (pass 735)
+      //     todos JA tinham audit_log
+      //   - POST / (create) lagged - compliance Pattern V8 W7 Regra P incompleto
+      //   - Cenario: seller cria 100 products spam (bot/script) -> nada rastreado
+      //     ate moderacao manual notar. Detection forense gap.
+      //   - LGPD direito-acesso: user solicita historico criacoes (draft inclusive)
+      //   POST-FIX: INSERT audit_log atomic dentro tx() (paridade pattern submit/patch)
+      await c.query(
+        `INSERT INTO audit_log
+          (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'product.draft.create', 'product', $3, 'info', $4::JSONB)`,
+        [req.user.sub, req.user.role, product.id,
+         JSON.stringify({
+           title: b.title,
+           kind: b.kind,
+           price_cents: b.price_cents,
+           currency: b.currency,
+           slug: product.slug,
+           ip: req.ip,
+         })]
+      );
     });
 
     if (outcome?.error === 'seller_not_active') return next(errorHandler.forbidden('seller_not_active'));
