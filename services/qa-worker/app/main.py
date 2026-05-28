@@ -654,22 +654,40 @@ async def send_callback(url: str, payload: dict):
         headers["X-Signature"] = sig
     else:
         print("[qa-worker] WARN callback sem assinatura - QA_CALLBACK_SECRET ausente", flush=True)
-    async with httpx.AsyncClient(timeout=30) as cli:
+    # FIX-WORKER-12 pass 309 (callback retry on non-2xx + exception):
+    #   PRE-FIX: cli.post sem raise_for_status() + sem retry. Cenarios fail:
+    #   - qa-svc retorna 401 (HMAC mismatch transient) -> payload perdido
+    #   - 500 internal (deadlock PG) -> payload perdido + product stuck qa_running
+    #   - network blip (5xx Traefik) -> payload perdido
+    #   Worker descobre via cron qa-svc timeoutStuckRuns (10 min) - delay UX seller.
+    #   POST-FIX: 3 retries com backoff exponencial (1s, 3s, 9s) + raise_for_status.
+    #   Falha final NAO cria entry DB - confiamos cron timeout (defesa em camada).
+    masked_url = url[:60] + ("..." if len(url) > 60 else "")
+    last_err_type = None
+    for attempt in range(3):
         try:
-            await cli.post(url, content=body_bytes, headers=headers)
+            async with httpx.AsyncClient(timeout=30) as cli:
+                r = await cli.post(url, content=body_bytes, headers=headers)
+            if 200 <= r.status_code < 300:
+                if attempt > 0:
+                    print(f"[qa-worker] callback OK apos retry attempt={attempt} url_prefix={masked_url}", flush=True)
+                return
+            # 4xx/5xx - retry com backoff
+            last_err_type = f"http_{r.status_code}"
+            print(f"[qa-worker] callback non-2xx attempt={attempt} status={r.status_code} url_prefix={masked_url}", flush=True)
         except Exception as e:
             # FIX-WORKER-12 pass 272 (DLP callback failure log):
             #   PRE-FIX: print(f"callback FAIL: {e}") - exception pode conter:
             #   - Authorization headers em httpx connection errors
             #   - URL parts revealing internal mesh (tasks.cas_qa-svc:port)
             #   - Stack traces with config paths
-            #   POST-FIX: sanitize via type+code-only (no raw msg),
-            #   url masked to first 60 chars (defesa DLP cross-svc).
-            #   Pattern pass 258 W12 _sanitize_llm_error consolidated.
-            err_type = type(e).__name__
-            # Mascarar URL (so primeiros 60 chars - basta p/ debug, sem leak completo)
-            masked_url = url[:60] + ("..." if len(url) > 60 else "")
-            print(f"[qa-worker] callback FAIL type={err_type} url_prefix={masked_url}", flush=True)
+            #   POST-FIX: sanitize via type+code-only (no raw msg)
+            last_err_type = type(e).__name__
+            print(f"[qa-worker] callback EXCEPTION attempt={attempt} type={last_err_type} url_prefix={masked_url}", flush=True)
+        # Backoff exponencial (1s, 3s) - skip ultimo attempt
+        if attempt < 2:
+            await asyncio.sleep([1, 3][attempt])
+    print(f"[qa-worker] callback FAIL exhausted retries last_err={last_err_type} url_prefix={masked_url}", flush=True)
 
 
 if __name__ == "__main__":

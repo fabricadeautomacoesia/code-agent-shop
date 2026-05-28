@@ -29406,3 +29406,41 @@ PROXIMA ITER:
 - W4 admin /admin/audit-log consume novos events 2fa.disable/payout.reject
 - W17 audit other admin recipient queries cross-svc deleted_at
 - VPS SSH unblock URGENTISSIMO (141 ciclos - 47h)
+
+
+============================================================
+PASS 309 - 2026-05-28 - W12 qa-worker callback retry + status check
+============================================================
+Files: 1 modificado
+  - services/qa-worker/app/main.py (callback 3-retry + status check)
+Lines: ~35 added/changed
+
+W12 (qa-worker callback resilience):
+- PRE-FIX bugs:
+  - cli.post() sem raise_for_status() ou status check
+  - Sem retry em falha (network blip/HMAC mismatch transient/5xx)
+  - Falha silenciosa: payload perdido, product stuck qa_running
+  - Worker descobria via cron qa-svc timeoutStuckRuns (10 min delay UX seller)
+- POST-FIX:
+  - 3 attempts com backoff exponencial (1s, 3s)
+  - status_code check 200-299 -> success early-return
+  - Falha non-2xx + exception -> retry
+  - Falha final apos 3 tentativas: log exhausted (cron timeout defesa em camada)
+  - DLP mantido: url masked + type-only (sem raw msg)
+- UX: seller QA result entrega em <30s vs 10min+ pre-fix
+
+VPS SSH BLOQUEADO (142 ciclos - 47.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-worker --force
+- W12: simular qa-svc 503 (kill --signal=STOP qa-svc temporarily)
+  Trigger QA -> worker tenta 3x com backoff
+  Logs esperados: 'callback non-2xx attempt=0', '=1', '=2' + 'exhausted retries'
+  Apos qa-svc up -> proximo QA submit funciona
+- Validar timeout cron (10min) cobre case excepcional
+
+PROXIMA ITER:
+- W12 qa-svc audit deadlock retry handling
+- W3 PDP add cleanup useEffect timers
+- VPS SSH unblock URGENTISSIMO (142 ciclos - 47.3h)
