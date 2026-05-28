@@ -486,6 +486,15 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
       if (p.rows[0].seller_id) {
         const productTitle = String(p.rows[0].title || 'produto').slice(0, 60);
         const questionExcerpt = String(req.body.question).slice(0, 200);
+        // FIX-WORKER-1 pass 434 (qna_id captured from RETURNING - completa deep-link):
+        //   PRE-FIX: payload.qna_id: null hardcoded
+        //   - inferCtaUrl notification-bell pass 355 retornava /product/{slug}#qna
+        //   - product-tabs.tsx pass 426 useEffect checa hash.startsWith('qna-') (com dash)
+        //   - '#qna' (sem dash) NUNCA matches '#qna-{uuid}' -> tab nao switchava
+        //   - Seller clicava notif -> abria PDP em overview tab (perdia contexto)
+        //   POST-FIX: qna_id = r.rows[0].id (RETURNING ja capturava linha 470)
+        //   Combined com inferCtaUrl pass 434 que usa payload.qna_id para criar
+        //   #qna-{uuid} hash anchor functional - PDP abre tab QNA + scroll smooth.
         await c.query(
           `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
            SELECT user_id, 'in_app', 'product_qna_new',
@@ -494,7 +503,7 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
           [
             `Nova pergunta: ${productTitle}`,
             `"${questionExcerpt}${req.body.question.length > 200 ? '...' : ''}"`,
-            JSON.stringify({ slug: p.rows[0].slug, product_id: req.body.product_id, qna_id: null }),
+            JSON.stringify({ slug: p.rows[0].slug, product_id: req.body.product_id, qna_id: r.rows[0].id }),
             p.rows[0].seller_id,
           ]
         );

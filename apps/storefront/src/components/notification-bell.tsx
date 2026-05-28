@@ -30,11 +30,22 @@ function inferCtaUrl(n: any): string | null {
     case 'order_paid':
     case 'order_fulfilled':
       return p.order_id ? `/conta/pedidos/${p.order_id}` : '/conta/pedidos';
+    // FIX-WORKER-1 pass 434 (deep-link hash consume pass 426 product-tabs handler):
+    //   PRE-FIX: '#qna' / '#reviews' (sem dash + id)
+    //   - product-tabs.tsx pass 426 useEffect checa hash.startsWith('qna-')
+    //   - '#qna' NUNCA matches '#qna-{uuid}' regex -> tab nao switchava
+    //   - User clicava notif -> abria PDP em 'overview' tab (perdia contexto)
+    //   POST-FIX: payload.qna_id (backend pass 434) -> #qna-{uuid}
+    //   Combined com product-tabs hash handler -> auto-switch tab + scroll.
+    //   Fallback gracioso: se qna_id null (notifs legacy pre-pass-434), usa
+    //   '#qna-' (matches startsWith mas sem scroll target - tab switch only).
     case 'product_qna_new':
     case 'product_qna_answered':
-      return p.slug ? `/product/${p.slug}#qna` : null;
+      if (!p.slug) return null;
+      return p.qna_id ? `/product/${p.slug}#qna-${p.qna_id}` : `/product/${p.slug}#qna-`;
     case 'product_review_new':
-      return p.slug ? `/product/${p.slug}#reviews` : null;
+      if (!p.slug) return null;
+      return p.review_id ? `/product/${p.slug}#review-${p.review_id}` : `/product/${p.slug}#review-`;
     case 'payout_approved':
     case 'payout_paid':
     case 'payout_rejected':

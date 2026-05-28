@@ -33507,3 +33507,56 @@ W17 vault DLP series:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 434 W1 AUTH: NotificationBell + review-svc qna_id deep-link consume pass 426
+commit pendente
+BUG cadeia 3-pass quebrada: 425+426+355 producem '#qna' incompativel com 426 handler
+PRE-FIX:
+- review-svc INSERT notification payload: { slug, product_id, qna_id: null } (hardcoded)
+- notification-bell inferCtaUrl pass 355: '/product/{slug}#qna' (sem dash)
+- product-tabs.tsx pass 426 useEffect: hash.startsWith('qna-') (com dash + id)
+- '#qna' (sem dash) NEVER matches '#qna-{uuid}' -> tab NAO switchava
+- Seller clicava notif "Nova pergunta" -> abria PDP em overview tab
+- User perdia contexto da pergunta (mesmo bug pass 425/426 dashboard-seller)
+
+ROOT CAUSE:
+- Backend tinha qna_id disponivel (RETURNING linha 470)
+- Frontend pass 355 nao conhecia formato pass 426 (nao existia)
+- Pass 426 introduziu hash handler MAS:
+  - Esqueceu compat com pass 355 inferCtaUrl
+  - Esqueceu backend payload precisar incluir qna_id real
+
+POST-FIX 2 partes:
+1. Backend review-svc /qna POST notification:
+   - payload.qna_id = r.rows[0].id (era null)
+   - r.rows[0] vem do INSERT RETURNING ja existente (zero overhead)
+2. Frontend notification-bell inferCtaUrl:
+   - product_qna_*: /product/{slug}#qna-{qna_id} OR fallback '#qna-' (legacy)
+   - product_review_new: /product/{slug}#review-{review_id} OR '#review-'
+   - Mantém compat com notifs legacy pre-pass-434 (qna_id null)
+
+UX flow agora end-to-end:
+- Buyer faz pergunta /product/X
+- review-svc INSERT notif seller com qna_id real
+- Seller ve sino badge
+- Click notif -> /product/X#qna-{uuid}
+- product-tabs detecta hash -> setActive('qna') + scrollIntoView smooth
+- Seller ve pergunta especifica destacada no contexto PDP
+
+W1+W3 deep-link series consolidada:
+  pass 355 inferCtaUrl base (mas hash inconsistente)
+  pass 425 dashboard-seller "Ver no site" link
+  pass 426 product-tabs hash handler + ids
+  pass 434 review-svc qna_id + inferCtaUrl format compat <- ESTE (cadeia completa)
+
+Pattern V8 W1: deep-link hash format MUST be consistent cross-svc:
+- Backend payload includes specific id (qna_id, review_id)
+- Frontend builder uses id with dash separator
+- Handler detects prefix-with-dash startsWith
+- Falha de qualquer camada quebra UX silenciosamente
+
+167 passes acumulados (268->434) sem deploy VPS
+5 CRITICAL + 26 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
