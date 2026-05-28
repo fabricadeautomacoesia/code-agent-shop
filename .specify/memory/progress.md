@@ -17362,7 +17362,29 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ /conta/downloads/[token] generateMetadata dinamico + DLP (pass 142)
 - ✅ Migration 055 idx user_sessions active composite (pass 143)
 - ✅ Migration 056 drop hardcoded rolling indices (pass 144)
-- ✅ Seller upload form a11y 14 inputs (pass 145 esta iter)
+- ✅ Seller upload form a11y 14 inputs (pass 145)
+- ✅ Seller /loja KYC + store form a11y 14 inputs (pass 146 esta iter)
+
+W7 PASS 146 RESUMO - W5 /loja KYC+STORE FORM A11Y:
+- AUDIT /loja page (seller KYC + store edit): 14 inputs SEM htmlFor/id
+- 2 forms separados na mesma page:
+  * KYC form (9 inputs): submeter docs CPF/CNPJ + endereco
+  * Store form (5 inputs): nome/desc/banner/logo/PIX
+- FIXES (14 ids especificos + autoComplete + inputMode):
+  KYC (9):
+  * kyc-doctype (select), kyc-docnum (inputMode=numeric)
+  * kyc-legal (autoComplete='name')
+  * kyc-addr1 (autoComplete='street-address', sr-only label + aria-label)
+  * kyc-city, kyc-state, kyc-zip (autoComplete address-level/postal-code)
+  * 3 inputs grid c/ aria-label porque label sr-only (UX preserva placeholder visible)
+  Store (5):
+  * loja-name (autoComplete='organization')
+  * loja-desc (textarea), loja-banner (type=url), loja-logo (type=url)
+  * loja-pix (autoComplete=off, PII protect)
+- Browser autofill bonus: KYC reaproveita CPF + endereco do /register
+- BUILD dashboard-seller OK + service converged
+- 6 forms a11y compliant: 4 storefront + 2 seller (/upload pass 145 + /loja pass 146)
+- COMMIT a57f35f pushed GitHub main + deployed prod
 
 W7 PASS 145 RESUMO - W5 SELLER UPLOAD FORM A11Y MASSIVE:
 - AUDIT /upload page (seller dashboard): 14 inputs SEM htmlFor/id (WCAG 1.3.1)
