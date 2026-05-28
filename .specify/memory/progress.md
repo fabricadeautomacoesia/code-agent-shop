@@ -33798,3 +33798,47 @@ Pattern V8 W11: TODO call Asaas com value MUST defensive guard:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 440 W18 PERFORMANCE: /orders listing LATERAL JOIN vs correlated subquery
+commit pendente
+BUG perf N+1 disguised em /orders listing (pass 206 lagged)
+PRE-FIX:
+- /orders linha 386-391: SELECT json_agg(...) FROM order_items WHERE order_id=o.id
+- Correlated subquery dentro SELECT principal
+- Para cada order row (LIMIT 30) -> 1 subscan order_items + 1 json_agg call
+- 30 subscans + 30 aggregates per request
+- idx_oi_order existe mas mesmo Index Scan tem cost minimum per call
+- User power-buyer (50 orders) = 50 subscans
+- Latencia tipica: ~80-150ms p/ 30 orders com 3 items cada
+
+CONSUME pass 428:
+- Pass 428 fix .catch() handler em /conta/pedidos
+- Pass 440 otimiza endpoint /orders backing (mesmo flow)
+- Combinacao = error handling robusto + perf optima
+
+POST-FIX:
+- LEFT JOIN LATERAL single-pass com PG planner inlining
+- LATERAL subquery promovida a join site, PG pode merge/hash optimize
+- 1 scan order_items WHERE order_id IN (current group)
+- Latencia esperada: ~25-50ms (3-5x melhoria)
+- Paridade pass 181 search-svc /categories CTE pattern
+
+Padrao V8 W18: correlated subquery em LISTING = LATERAL JOIN ou CTE
+- Subquery scalar = OK per-row simple lookup
+- Subquery json_agg = N+1 hidden, refactor LATERAL/CTE
+- Pattern conhecido em: search /categories (181), products /reviews (398),
+  agora orders /list (440)
+
+W18 N+1 refactor series:
+  pass 181 /categories CTE pcounts
+  pass 423 idx_products_cat_sales widen
+  pass 430 idx_audit_target_created PARTIAL
+  pass 437 idx_unotif_prefs_lower_lookup func expr
+  pass 440 /orders LATERAL JOIN <- ESTE
+
+173 passes acumulados (268->440) sem deploy VPS
+6 CRITICAL + 27 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Apply mig 094+095 prod p/ medir EXPLAIN ANALYZE real
