@@ -31560,3 +31560,44 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - TRANSFER webhook handler
 - W4 admin audit-log viewer
+
+## PASS 371 W11 PAYMENT: TRANSFER webhook handler (gap pass 368 implementado)
+commit 26cca03
+GAP CRITICAL identificado pass 368, agora resolvido:
+PRE-FIX: processWebhookEvent retornava early se !payment.id
+  - TRANSFER_* tem evt.transfer.id NAO evt.payment.id
+  - TODOS transfers silenciosamente descartados
+  - Payout 'paid' nunca volta a 'rejected' se Asaas falhar transfer
+
+POST-FIX processTransferEvent(evt) novo handler:
+- TRANSFER_DONE -> 'paid' + paid_at NOW()
+- TRANSFER_FAILED -> 'rejected' + failed_reason
+- TRANSFER_CANCELLED -> 'rejected' + failed_reason
+- TRANSFER_CREATED -> log only
+
+Features:
+- Dual table lookup (seller_payouts OR payouts_pending_wallet)
+- FOR UPDATE lock anti-race
+- Idempotency check (mesmo state = noop)
+- UPDATE adaptativo per tabela
+- Audit log atomic critical/info
+- withRetry wrap anti-deadlock (paridade pass 311)
+- Dispatch upfront TRANSFER_ prefix detect
+
+W11 PAYMENT webhook coverage completo:
+  4 PAYMENT_* events (pre-existing)
+  PAYMENT_REFUND_FAILED log only (pass 222)
+  4 TRANSFER_* events (pass 371) <- ESTE
+
+Compliance:
+- idx_payouts_transfer_id (pass 368) finalmente exercido
+- LGPD/SOC2 transfer lifecycle documented
+- Forense per-transfer rastreio completo
+
+104 passes acumulados (268->371) sem deploy VPS
+4 CRITICAL + 19 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W2 checkout E2E
