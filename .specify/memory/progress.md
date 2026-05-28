@@ -30269,3 +30269,47 @@ PROXIMA ITER:
 - W4 admin moderation textareas (admin can hide qna with reason)
 - W5 audit other textareas dashboard-seller (description edit, etc)
 - VPS SSH unblock URGENTISSIMO (164 ciclos - 54.7h)
+
+
+============================================================
+PASS 332 - 2026-05-28 - W7 product-svc Zod schema anti-DoS max() hardening
+============================================================
+Files: 1 modificado
+  - services/product-svc/src/routes/seller-mgmt.js (draft+patch schemas)
+Lines: ~30 changed
+
+W7 (Zod schema anti-DoS max() hardening):
+- PRE-FIX bugs:
+  - description: z.string().min(50) sem .max() - 200kb description possivel
+  - requirements: z.string().optional() sem max
+  - install_instructions: z.string().optional() sem max
+  - tech_stack: z.array(z.string()).optional() sem item.max() ou array.max()
+  - api_keys_required/meta_keywords: idem
+  - cover_image_url: z.string().url() sem max (URL pode ser 10kb)
+- Atacante poderia enviar:
+  - description 100kb (dentro do 256kb express.json) - render slow + storage waste
+  - tech_stack array 10000 items - DoS UI render + DB insert overhead
+  - api_keys_required malicious longa string
+- POST-FIX paridade Pattern V8 cross-svc defensive:
+  - description: max(30000) - rich text legitimate range
+  - requirements/install_instructions: max(10000) cada
+  - tech_stack/api_keys_required: array.max(30) + item.max(80)
+  - cover_image_url: max(2048) - URL Asaas/CDN limit
+  - meta_keywords: array.max(30) + item.max(50)
+- Aplicado em ambos schemas (POST draft + PATCH)
+- Backend Zod blocks early - sem hit DB
+
+VPS SSH BLOQUEADO (165 ciclos - 55h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc --force
+- W7 verify:
+  curl -X POST -H 'Auth' -d '{"description":"'$(python -c "print('a'*40000)")'", ...}' \
+    /api/products/me
+  Esperado: 400 Zod validation error 'description max 30000'
+
+PROXIMA ITER:
+- W7 audit other schemas (review POST, qna, etc)
+- W4 admin force-approve schema audit
+- VPS SSH unblock URGENTISSIMO (165 ciclos - 55h)

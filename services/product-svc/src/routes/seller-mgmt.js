@@ -58,24 +58,36 @@ async function invalidate(productId) {
   } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
 }
 
+/* FIX-WORKER-7 pass 332 (anti-DoS schema hardening):
+   PRE-FIX: description/requirements/install_instructions sem .max() - user
+   poderia enviar 10MB description -> express.json limit catches (256kb default)
+   mas dentro do limit ainda da pra abusar (200kb description, storage waste,
+   render slow PDP, DLP scan custo). Tech_stack array sem item.max() = items
+   gigantes em CSV. Pattern V8 hardening defensive:
+   - description: max 30000 (suficiente p/ produto rich text legitimate)
+   - short_description ja max(500) OK
+   - requirements/install_instructions: max 10000 cada
+   - tech_stack/api_keys_required: array max 30 items, item max 80 chars
+   - meta_keywords: array max 30 items, item max 50 chars
+   - attributes: record passthrough (admin-controlled keys) */
 const draftSchema = z.object({
   category_id: z.string().uuid(),
   kind: z.enum(['automation','ai_agent','n8n_workflow','node_script','python_script','php_script','prompt_pack','template','dataset','other']),
   title: z.string().min(5).max(200),
   subtitle: z.string().max(300).optional(),
-  description: z.string().min(50),
+  description: z.string().min(50).max(30000),
   short_description: z.string().max(500).optional(),
   price_cents: z.number().int().min(0),
   currency: z.string().length(3).default('BRL'),
   license_kind: z.enum(['single_use','unlimited','subscription_monthly','subscription_yearly']).default('single_use'),
-  tech_stack: z.array(z.string()).optional(),
-  requirements: z.string().optional(),
-  install_instructions: z.string().optional(),
-  api_keys_required: z.array(z.string()).optional(),
+  tech_stack: z.array(z.string().max(80)).max(30).optional(),
+  requirements: z.string().max(10000).optional(),
+  install_instructions: z.string().max(10000).optional(),
+  api_keys_required: z.array(z.string().max(80)).max(30).optional(),
   estimated_install_min: z.number().int().nonnegative().optional(),
-  cover_image_url: z.string().url().optional(),
+  cover_image_url: z.string().url().max(2048).optional(),
   attributes: z.record(z.any()).optional(),
-  meta_keywords: z.array(z.string()).optional(),
+  meta_keywords: z.array(z.string().max(50)).max(30).optional(),
 });
 
 function slugify(text) {
@@ -367,21 +379,22 @@ router.post('/',
 //   response 200 ok (UX confuso).
 //   FIX: WHERE incluindo status IN ('draft','rejected') + check rowcount.
 const PATCH_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/* FIX-WORKER-7 pass 332: patchSchema paridade draftSchema anti-DoS max(). */
 const patchSchema = z.object({
   title: z.string().min(5).max(200).optional(),
   subtitle: z.string().max(300).optional(),
-  description: z.string().min(50).optional(),
+  description: z.string().min(50).max(30000).optional(),
   short_description: z.string().max(500).optional(),
   price_cents: z.number().int().min(0).max(100000000).optional(),  // max R$ 1M
-  tech_stack: z.array(z.string()).optional(),
-  requirements: z.string().optional(),
-  install_instructions: z.string().optional(),
-  api_keys_required: z.array(z.string()).optional(),
+  tech_stack: z.array(z.string().max(80)).max(30).optional(),
+  requirements: z.string().max(10000).optional(),
+  install_instructions: z.string().max(10000).optional(),
+  api_keys_required: z.array(z.string().max(80)).max(30).optional(),
   estimated_install_min: z.number().int().nonnegative().max(10080).optional(),  // max 1 week
-  cover_image_url: z.string().url().optional(),
+  cover_image_url: z.string().url().max(2048).optional(),
   category_id: z.string().uuid().optional(),
   attributes: z.record(z.any()).optional(),
-  meta_keywords: z.array(z.string()).optional(),
+  meta_keywords: z.array(z.string().max(50)).max(30).optional(),
 });
 
 router.patch('/:id', validate({ body: patchSchema }), asyncHandler(async (req, res, next) => {
