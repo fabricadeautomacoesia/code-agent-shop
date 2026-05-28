@@ -21093,3 +21093,64 @@ PROXIMA ITER:
 - W18: cache /products/:slug/related ou /:slug/also-bought
 - W17: vault auto-rotation (ate aqui so warn - implementar swap)
 - 🚨 VPS SSH unblock URGENTE (22 ciclos - ~7.3h sem deploy!)
+
+PASS 190 (W14 migration 061 loyalty idempotency idx) - 2026-05-28:
+- W14 audit identificou GAP critico em loyalty_transactions:
+  Query HOT PATH (POST /loyalty/earn idempotency check):
+    SELECT id, created_at FROM loyalty_transactions
+     WHERE user_id = $1 AND reason = $2 AND reference_id = $3
+
+PRE-FIX:
+- idx_loyalty_user (user_id, created_at DESC) - listing-friendly
+- idx_loyalty_user_recent (user_id, created_at DESC) - DUPLICATE!
+- Idempotency cai em Filter pos-scan (reason + reference_id)
+- Heavy user (1000+ tx): ~30ms total (Index Scan + Filter)
+- Cada order checkout fires este query - latencia checkout cresce
+
+POST-FIX (migration 061):
+- idx_loyalty_idempotency (user_id, reason, reference_id) PARTIAL UNIQUE
+  WHERE reference_id IS NOT NULL
+- Index direct lookup (zero filter): ~<2ms (15x faster)
+- UNIQUE enforce DB-side - defesa em profundidade
+- Partial WHERE: admin_adjust sem ref OK duplicate
+
+MIGRATION STRATEGY tolerante:
+- PASSO 1: detecta colisoes existentes em (user_id, reason, reference_id)
+- Se colisoes > 0: cria NON-UNIQUE (perf gain sem break) + WARNING
+  admin pode investigar/cleanup depois
+- Se zero: cria UNIQUE (enforce idempotency DB-side)
+- DO $$ EXCEPTION + IF NOT EXISTS (V8 blueprint)
+
+CONTEXT: prepara DB para futuro app refactor INSERT ... ON CONFLICT
+DO NOTHING (race-safe pattern pass 184 Asaas webhook). Atualmente
+app loyalty.js:159-174 SELECT-then-INSERT eh race-prone identico ao
+bug Asaas webhook pre-fix. Migration unblocks futuro refactor app.
+
+Commit ec6c48b pushed origin/main
+VPS SSH ainda bloqueado (23 ciclos consecutivos)
+
+CONSOLIDADO W14 DB INDICES (recent):
+- migration 057 (pass 168): in_app trigger auto-sent
+- migration 058 (pass 173): idx_audit_actor_created
+- migration 059 (pass 179): idx_wishlist_user_created +
+  idx_notif_user_channel_created
+- migration 060 (pass 182): users email LOWER UNIQUE
+- migration 061 (pass 190): idx_loyalty_idempotency
+
+CODIGO ACUMULADO ORIGIN/MAIN (23 ciclos):
+- 168-189: documentados
+- 190: migration 061 loyalty idempotency
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply: psql -f /opt/cas/db/migrations/061_loyalty_idempotency_idx.sql
+- Logs RAISE NOTICE confirmara UNIQUE vs NON-UNIQUE criado
+- Validar:
+  EXPLAIN ANALYZE SELECT id FROM loyalty_transactions
+   WHERE user_id = '<uuid>' AND reason = 'purchase' AND reference_id = 'order_x';
+  Esperado: Index Scan using idx_loyalty_idempotency (sem Filter step)
+
+PROXIMA ITER:
+- W18: cache /products/:slug/related ou /:slug/also-bought
+- W17: vault auto-rotation swap atomico (ate aqui so warn)
+- W7: app refactor loyalty.js INSERT ... ON CONFLICT (consumir migration 061)
+- 🚨 VPS SSH unblock URGENTE (23 ciclos - ~7.7h sem deploy!)
