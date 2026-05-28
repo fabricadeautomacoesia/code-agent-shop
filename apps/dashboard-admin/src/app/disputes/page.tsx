@@ -64,15 +64,38 @@ export default function DisputesPage() {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
 
   async function resolveDispute(id: string, action_type: 'buyer' | 'seller' | 'cancel') {
-    const resolution_action = action_type === 'buyer'
-      ? prompt('Tipo de resolucao buyer:\nrefund_approved | replacement_sent | partial_refund')
-      : action_type === 'seller'
-        ? 'dismissed'
-        : 'dismissed';
+    // FIX-WORKER-4 pass 383 (UX consistency + enum validation - paridade 381+382):
+    //   PRE-FIX: prompt() nativo aceita texto livre p/ resolution_action.
+    //   - User digita typo (refund_approved -> refund_aproved sem D) -> backend
+    //     400 Zod enum reject -> errorHandler UI generico
+    //   - prompt nativo browser-blocking (inconsistente W4 admin UX)
+    //   - last legacy prompt() em dashboard-admin (W4 consistency 100% completion)
+    //   POST-FIX: promptDialog + client-side enum validation
+    //   - Valores permitidos no body do prompt (UX hint)
+    //   - Validation antes do submit (early UX feedback)
+    //   - Paridade pattern V8 W4 (passes 381 forceApprove, 382 vault revoke)
+    const { promptDialog, alertDialog } = await import('@/components/prompt-dialog');
+    let resolution_action: string | null;
+    if (action_type === 'buyer') {
+      resolution_action = await promptDialog(
+        'Tipo de resolucao em favor do buyer:',
+        'refund_approved | replacement_sent | partial_refund',
+        'refund_approved'
+      );
+      // Client-side enum validation (paridade backend Zod)
+      const VALID = ['refund_approved', 'replacement_sent', 'partial_refund'];
+      if (resolution_action && !VALID.includes(resolution_action.trim())) {
+        await alertDialog('Tipo invalido', `Use exatamente: ${VALID.join(' | ')}`);
+        return;
+      }
+      resolution_action = resolution_action ? resolution_action.trim() : null;
+    } else if (action_type === 'seller') {
+      resolution_action = 'dismissed';
+    } else {
+      resolution_action = 'dismissed';
+    }
     if (!resolution_action) return;
 
-    // FIX-WORKER-4 pass 153: substitui prompt() + alert() nativos por PromptDialog
-    const { promptDialog, alertDialog } = await import('@/components/prompt-dialog');
     const admin_notes = await promptDialog(
       'Notas administrativas (min 10 chars):',
       'Ex: vendedor entregou produto incorreto, comprador comprovou via anexos'

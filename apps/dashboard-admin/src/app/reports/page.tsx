@@ -36,7 +36,14 @@ export default function AdminReportsPage() {
   const action = useAdminAction(load);
 
   async function resolve(id: string, dismissed = false) {
-    const notes = prompt(dismissed ? 'Justificativa para descartar:' : 'Notas da resolucao:');
+    // FIX-WORKER-4 pass 383 (UX consistency - paridade 381+382):
+    //   PRE-FIX: prompt() nativo (last prompt() em dashboard-admin)
+    //   POST-FIX: promptDialog moderno (paridade vault/qa-queue/disputes/sellers)
+    const { promptDialog } = await import('@/components/prompt-dialog');
+    const notes = await promptDialog(
+      dismissed ? 'Justificativa para descartar:' : 'Notas da resolucao:',
+      dismissed ? 'Ex: denuncia improcedente, evidencias insuficientes' : 'Ex: review removido, seller notificado'
+    );
     if (!notes) return;
     const op = dismissed ? 'dismiss' : 'resolve';
     action.run(`${op}-${id}`, async () => {
