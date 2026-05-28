@@ -31,6 +31,13 @@ OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_KEY = os.getenv("GROQ_API_KEY")
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_MS", "60000")) / 1000
+# FIX-WORKER-12 pass 192: per-provider budget para fallback chain.
+# Pre-fix: LLM_TIMEOUT 60s era POR PROVIDER -> chain de 3 providers podia
+# tomar 180s. Caller qa-svc (cron timeout 5min) consumido demais por chain
+# antes de retornar verdict.
+# Post-fix: LLM_PROVIDER_TIMEOUT (default 20s) por provider individual.
+# Budget total chain: 60s. Mesmo orcamento que pre-fix mas predictable.
+LLM_PROVIDER_TIMEOUT = int(os.getenv("LLM_PROVIDER_TIMEOUT_MS", "20000")) / 1000
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
@@ -315,29 +322,70 @@ Responda APENAS o JSON, nada mais."""
 # ============================================================
 # LLM fallback
 # ============================================================
+def _is_transient_error(e: Exception) -> bool:
+    """FIX-WORKER-12 pass 192: classifica erro p/ decidir fallback.
+
+    Transient (deve fallback): timeout, 429 (rate-limit), 5xx (provider down).
+    Permanent (NAO deve fallback): 400/401/403/404 (request invalido ou
+    auth bad - mesmo erro reproduz nos outros providers se for nosso prompt).
+
+    Sem essa classificacao, prompt malformado dispara 3 chamadas LLM falhas
+    consumindo 60s budget total + 3x cost reporting + 3x retry storm.
+    """
+    if isinstance(e, httpx.TimeoutException):
+        return True
+    if isinstance(e, httpx.HTTPStatusError):
+        status = e.response.status_code
+        # 429 rate-limit, 5xx upstream -> retry com outro provider
+        return status == 429 or status >= 500
+    # Network errors, parsing -> transient (rede instavel)
+    return True
+
+
+def _sanitize_llm_error(e: Exception) -> str:
+    """FIX-WORKER-12 pass 192: DLP em error message. Upstream pode retornar
+    'Bearer <key>...' em body de 401, ou 'sk-xxx' em payload validation.
+    Mantem so type + status (sem body)."""
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"{type(e).__name__} status={e.response.status_code}"
+    if isinstance(e, httpx.TimeoutException):
+        return f"{type(e).__name__} timeout={LLM_PROVIDER_TIMEOUT}s"
+    return type(e).__name__
+
+
 async def call_llm_fallback(prompt: str) -> tuple[str, str, str, dict]:
-    """OpenAI -> Gemini -> Groq."""
+    """OpenAI -> Gemini -> Groq.
+
+    FIX-WORKER-12 pass 192:
+    - Per-provider timeout LLM_PROVIDER_TIMEOUT (default 20s)
+    - Permanent errors (400/401/403) NAO disparam fallback (fail fast)
+    - Sanitized error messages (DLP - secrets em upstream body)
+    """
     errors = []
     if OPENAI_KEY:
         try:
             return await _call_openai(prompt)
         except Exception as e:
-            errors.append(f"openai: {e}")
+            errors.append(f"openai: {_sanitize_llm_error(e)}")
+            if not _is_transient_error(e):
+                raise RuntimeError(f"OpenAI permanent error - fallback skipped. {errors[-1]}")
     if GEMINI_KEY:
         try:
             return await _call_gemini(prompt)
         except Exception as e:
-            errors.append(f"gemini: {e}")
+            errors.append(f"gemini: {_sanitize_llm_error(e)}")
+            if not _is_transient_error(e):
+                raise RuntimeError(f"Gemini permanent error - fallback skipped. {'; '.join(errors)}")
     if GROQ_KEY:
         try:
             return await _call_groq(prompt)
         except Exception as e:
-            errors.append(f"groq: {e}")
+            errors.append(f"groq: {_sanitize_llm_error(e)}")
     raise RuntimeError("Nenhum provider LLM disponivel. " + "; ".join(errors))
 
 
 async def _call_openai(prompt: str) -> tuple[str, str, str, dict]:
-    async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as cli:
+    async with httpx.AsyncClient(timeout=LLM_PROVIDER_TIMEOUT) as cli:
         r = await cli.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_KEY}"},
@@ -355,7 +403,7 @@ async def _call_openai(prompt: str) -> tuple[str, str, str, dict]:
 
 async def _call_gemini(prompt: str) -> tuple[str, str, str, dict]:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_KEY}"
-    async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as cli:
+    async with httpx.AsyncClient(timeout=LLM_PROVIDER_TIMEOUT) as cli:
         r = await cli.post(url, json={
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.1, "response_mime_type": "application/json"},
@@ -371,7 +419,7 @@ async def _call_gemini(prompt: str) -> tuple[str, str, str, dict]:
 
 
 async def _call_groq(prompt: str) -> tuple[str, str, str, dict]:
-    async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as cli:
+    async with httpx.AsyncClient(timeout=LLM_PROVIDER_TIMEOUT) as cli:
         r = await cli.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROQ_KEY}"},
