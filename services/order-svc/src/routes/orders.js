@@ -626,19 +626,34 @@ router.post('/:id/dispute',
 
 // GET /orders/admin/disputes - lista disputes paginadas com filtros
 // (Regra I SELECT explicit, Regra D tiebreaker, Regra E response shape limit)
+// FIX-WORKER-4 pass 214 (4 melhorias compostas):
+// PRE-FIX:
+// - LIMIT $2 sem ?offset (pagination quebrada com 200+ disputes)
+// - 2 queries (rows + stats GROUP BY) - admin polling = 4 round-trips PG
+// - NO cache - admin /admin/disputes dashboard sem proteção
+// - 'limit: lim' sem total absolute (UI 'X de Y' impossivel)
+// POST-FIX:
+// + ?limit (1-200) + ?offset (>=0) Regra E pagination
+// + COUNT(*) OVER() window total + has_more
+// + cache.cacheMiddleware 30s vary by filtros
+// + stats query separada (counts agregados 90d) - mantida + cache hit cobre ambas
+const disputesCacheKey = (req) => {
+  const q = req.query;
+  return `order:admin:disputes:s=${q.status||''}:lim=${q.limit||50}:off=${q.offset||0}`;
+};
+
 router.get('/admin/disputes',
   jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware(disputesCacheKey, 30),
   asyncHandler(async (req, res) => {
     // Status enum mig 007: opened|under_review|resolved_buyer|resolved_seller|cancelled
     const status = (req.query.status || '').toString();
     const VALID_STATUSES = ['opened', 'under_review', 'resolved_buyer', 'resolved_seller', 'cancelled'];
     const statusFilter = VALID_STATUSES.includes(status) ? status : null;
-    const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
-    // FIX-WORKER-7 pass 110 deploy: schema real disputes (psql \\d):
-    //   created_at (não opened_at), resolved_in_favor_of (não resolution_*),
-    //   evidence_urls, seller_response, seller_responded_at, mediator_user_id,
-    //   mediator_notes, resolution_action. Sem 'opened_at' separado.
+    // FIX-WORKER-7 pass 110 + 214: schema real disputes + window COUNT
     const r = await query(
       `SELECT d.id, d.order_id, d.order_item_id, d.opened_by_user_id,
               d.against_seller_id, d.reason_code, d.description,
@@ -647,7 +662,8 @@ router.get('/admin/disputes',
               d.resolution_action, d.refund_amount_cents,
               u.email AS buyer_email, u.full_name AS buyer_name,
               s.store_name AS seller_store_name, s.store_slug AS seller_store_slug,
-              o.order_number, o.total_cents
+              o.order_number, o.total_cents,
+              COUNT(*) OVER()::INT AS _total
          FROM disputes d
          LEFT JOIN users u ON u.id = d.opened_by_user_id
          LEFT JOIN sellers s ON s.id = d.against_seller_id
@@ -663,9 +679,12 @@ router.get('/admin/disputes',
           END,
           d.created_at DESC,
           d.id
-        LIMIT $2`,
-      [statusFilter, lim]
+        LIMIT $2 OFFSET $3`,
+      [statusFilter, limit, offset]
     );
+
+    const total = r.rows[0]?._total ?? 0;
+
     // Counts agregados (para badges UI). Window 90d cobre admin queue.
     // FIX pass 110: opened_at -> created_at (schema real)
     const stats = await query(
@@ -676,16 +695,26 @@ router.get('/admin/disputes',
     const counts = stats.rows.reduce((acc, r) => ({ ...acc, [r.status]: r.n }), {});
 
     // FIX-WORKER-7 pass 59: LGPD role-tier masking
-    // PRE-FIX: buyer_email/buyer_name plain text para STAFF
-    // Pattern pass 57/59 cross-svc - staff vê masked, admin vê full
     const isAdmin = req.user && req.user.role === 'admin';
-    const disputes = r.rows.map((row) => isAdmin ? row : ({
-      ...row,
-      buyer_email: maskPII.email(row.buyer_email),
-      buyer_name: maskPII.name(row.buyer_name),
-    }));
+    const disputes = r.rows.map((row) => {
+      const { _total, ...rest } = row;
+      if (isAdmin) return rest;
+      return {
+        ...rest,
+        buyer_email: maskPII.email(rest.buyer_email),
+        buyer_name: maskPII.name(rest.buyer_name),
+      };
+    });
 
-    res.json({ disputes, counts, limit: lim, filter: statusFilter });
+    res.json({
+      disputes,
+      counts,
+      total,
+      limit,
+      offset,
+      filter: statusFilter,
+      has_more: (offset + disputes.length) < total,
+    });
   })
 );
 
@@ -784,6 +813,11 @@ router.post('/admin/disputes/:id/resolve',
         current_status: outcome.current_status,
       });
     }
+    // FIX-WORKER-4 pass 214: invalida cache admin/disputes (pass 214 cache)
+    // Resolve muda status -> dashboard /admin/disputes mostra stale 30s
+    try {
+      await cache.del('order:admin:disputes:*');
+    } catch (_) { /* best-effort */ }
     res.json(outcome);
   })
 );
