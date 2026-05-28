@@ -31281,3 +31281,31 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
 - W2 checkout E2E
+
+## PASS 361 W18 PERFORMANCE: cache /qna/seller/pending (dashboard polling)
+commit f87b062
+BUG hot path dashboard-seller sem cache
+PRE-FIX: /qna/seller/pending SEM cacheMiddleware
+  - Dashboard polls 30-60s -> 100 sellers = 100+ q/min DB
+  - JOIN products + sellers + users + WHERE + COUNT OVER
+  - Cada query 30-100ms
+
+POST-FIX:
+- cacheMiddleware 30s + qnaSellerPendingCacheKey:
+  * per-user.sub (seller A nao ve B)
+  * vary by isAdmin (?seller_id filter)
+  * vary by limit + offset
+- Invalidation cross-mutation:
+  * POST /qna (nova pergunta) -> cache.del
+  * POST /qna/:id/answer -> cache.del
+- 100x reducao DB queries em peak
+
+W18 hot path consolidation completa em review-svc
+
+94 passes acumulados (268->361) sem deploy VPS
+4 CRITICAL + 18 migrations pendentes apply (069-086)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W2 checkout E2E
