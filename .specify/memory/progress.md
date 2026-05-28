@@ -17357,7 +17357,27 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ QnaForm a11y WCAG 1.3.1 + aria-live (pass 137)
 - ✅ ReviewForm a11y radiogroup + WCAG 1.3.1 (pass 138)
 - ✅ Register form a11y + autoComplete (pass 139)
-- ✅ Checkout payment + installments radiogroup (pass 140 esta iter)
+- ✅ Checkout payment + installments radiogroup (pass 140)
+- ✅ Seller dashboard 6 titles especificos (pass 141 esta iter)
+
+W7 PASS 141 RESUMO - W5+W9 SELLER PAGES TITLES ESPECIFICOS:
+- AUDIT seller pages serving via curl: TODAS retornavam 'Painel do Vendedor - ...'
+  Mesmo bug pass 136 (admin): root layout title generico herdado
+- Use case: vendedor com /products + /upload + /financeiro em tabs paralelas
+  -> tab UX confuso, nao distinguia contexto
+- CREATED 6 layout.tsx (server components) com metadata especifica:
+  * /products -> 'Meus Produtos - Painel Vendedor'
+  * /upload -> 'Novo Produto - Painel Vendedor'
+  * /qna -> 'Perguntas & Respostas - Painel Vendedor'
+  * /reviews -> 'Avaliacoes - Painel Vendedor'
+  * /financeiro -> 'Financeiro - Painel Vendedor'
+  * /loja -> 'Minha Loja & KYC - Painel Vendedor'
+- robots: { index: false, follow: false } (auth-required)
+- description rica p/ contexto interno
+- BUILD dashboard-seller OK + service converged
+- VALIDATED prod: 6 titles testados via curl, todos OK distintos
+- 15 dashboard pages titles especificos total (9 admin + 6 seller)
+- COMMIT 7e77402 pushed GitHub main + deployed prod
 
 W7 PASS 140 RESUMO - W2 /checkout a11y RADIOGROUP DUPLO:
 - AUDIT /checkout (continuacao a11y suite pass 137-139): 2 grupos radio missing
