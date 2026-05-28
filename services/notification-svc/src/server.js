@@ -669,10 +669,32 @@ const WORKER_ID = `${process.env.HOSTNAME || 'notif'}-${process.pid}`;
 
 // Recupera locks orfaos (worker crashou): a cada minuto, libera linhas locked > 5min.
 async function reclaimOrphanLocks() {
-  await query(
+  // FIX-WORKER-13 pass 246 (reclaim observability + retry inflation guard):
+  //   PRE-FIX: libera lock silentemente, sem audit/log. Cenario indistinguivel:
+  //   - Worker crash apos enviar email mas ANTES de UPDATE sent_status='sent'
+  //   - Lock fica > 5min orfao -> reclaim libera -> proximo worker reenviaria
+  //   - User recebe email DUPLICADO sem rastro de que reclaim aconteceu
+  //   POST-FIX: log audit + RETURNING para metrics + WARN log se reclaim taxa
+  //   anormal indica worker instability (crashes frequentes).
+  //   Tambem nao incrementa retry_count: pre-fix considera 0 tentativa
+  //   pois pode ser worker rebootado normalmente; pos-fix manda warn p/ aiops
+  //   se reclaim > 10 em 1 ciclo (deteccao incidente infra).
+  const r = await query(
     `UPDATE notifications SET locked_by = NULL, locked_at = NULL
-      WHERE locked_at IS NOT NULL AND locked_at < NOW() - INTERVAL '5 minutes'`
+      WHERE locked_at IS NOT NULL AND locked_at < NOW() - INTERVAL '5 minutes'
+      RETURNING id, locked_by, channel, template_code`
   );
+  if (r.rows.length) {
+    log.warn({
+      reclaimed: r.rows.length,
+      worker_ids: [...new Set(r.rows.map((x) => x.locked_by))],
+      channels: [...new Set(r.rows.map((x) => x.channel))],
+    }, '[outbox.reclaim] orphan locks released - possible worker crash');
+    // Alerta se >= 10 reclaim em 1 ciclo (worker instability)
+    if (r.rows.length >= 10) {
+      log.error({ count: r.rows.length }, '[outbox.reclaim.HIGH] worker crash burst suspected - investigate');
+    }
+  }
 }
 
 async function processOutbox() {

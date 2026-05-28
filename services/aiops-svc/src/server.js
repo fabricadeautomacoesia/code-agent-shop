@@ -785,6 +785,16 @@ async function cleanupTimeSeriesData() {
     { name: 'vault_key_usage', days: 90, sql: `DELETE FROM vault_key_usage WHERE created_at < NOW() - INTERVAL '90 days'` },
     { name: 'product_views',   days: 30, sql: `DELETE FROM product_views WHERE created_at < NOW() - INTERVAL '30 days'` },
     { name: 'token_blacklist', days: 0,  sql: `DELETE FROM token_blacklist WHERE expires_at < NOW()` },
+    // FIX-WORKER-18 pass 246 (table growth unbounded):
+    //   asaas_webhook_events NAO estava em cleanups. Em prod ~1k webhooks/dia,
+    //   pos-1-ano = 365k rows. Pos-2-anos = 730k. Sem retention -> unbounded growth.
+    //   Webhooks ja processed (processed_at NOT NULL) sao apenas audit forense.
+    //   90 dias e equivalente a audit_log (LGPD/compliance retention janela).
+    //   IMPORTANT: NAO deletar processed_at IS NULL (rows pending p/ retry cron).
+    { name: 'asaas_webhook_events', days: 90,
+      sql: `DELETE FROM asaas_webhook_events
+             WHERE received_at < NOW() - INTERVAL '90 days'
+               AND processed_at IS NOT NULL` },
   ];
   const results = await Promise.allSettled(cleanups.map(async (c) => {
     const r = await query(c.sql);

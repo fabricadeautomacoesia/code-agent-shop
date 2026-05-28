@@ -136,7 +136,15 @@ export default function QAQueuePage() {
                 //   (approved -> noop / qa_running -> race condition)
                 // - platform-take: NAO em produtos ja platform-owned (loop)
                 //   nem em qa_running (estado transitorio)
-                const canApprove = ['qa_pending','rejected'].includes(p.status);
+                // FIX-WORKER-4 pass 246 (frontend/backend sync):
+                //   Backend product-svc admin.js:211 APPROVABLE_STATES aceita
+                //   ['qa_pending','qa_running','rejected']. Frontend nao incluia
+                //   'qa_running' -> botao Aprovar SUMIA para produtos stuck em
+                //   qa_running (workers travados). Admin precisava esperar cron
+                //   timeout 10min para depois aprovar manualmente. Bug bloqueia
+                //   intervencao admin em incidente real (worker down).
+                //   POST-FIX: paridade total com backend APPROVABLE_STATES.
+                const canApprove = ['qa_pending','qa_running','rejected'].includes(p.status);
                 const canTake = ['qa_pending','rejected','approved'].includes(p.status) && !p.is_platform_owned;
                 return (
                 <tr key={p.id} className="border-b border-white/5 hover:bg-white/5">

@@ -25498,3 +25498,99 @@ PROXIMA ITER:
 - W2 checkout: empty state CTAs (ja feito pass 229)
 - W4 admin: bulk QA action selector
 - VPS SSH unblock URGENTISSIMO (78 ciclos - 26h)
+
+============================================================
+PASS 246 (2026-05-28) - W13 + W4 + W18
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W13 notification-svc: reclaim orphan locks observability
+- W4 dashboard-admin: qa-queue canApprove frontend/backend sync
+- W18 aiops-svc: asaas_webhook_events retention cleanup
+
+============================================================
+1. W13 - reclaim orphan locks silently
+============================================================
+FILE: services/notification-svc/src/server.js:671-676
+
+PROBLEMA:
+- reclaimOrphanLocks UPDATE locked_by=NULL silently
+- Sem RETURNING / sem log / sem audit
+- Cenario: worker crash apos SMTP send mas ANTES UPDATE sent_status='sent'
+- Lock orfao > 5min -> reclaim libera -> proximo worker reenviaria email
+- User DUPLICATE email + sem rastro forense (DEBUG impossivel)
+- Tambem: reclaim burst (10+ rows) = sinal incidente infra mas invisivel
+
+POST-FIX:
+- RETURNING id, locked_by, channel, template_code
+- log.warn count + worker_ids + channels p/ metrics aiops
+- log.error se reclaim >= 10 em 1 ciclo (burst alert)
+- Pattern observability cross-svc (qa-svc/timeoutStuckRuns pass 240)
+
+============================================================
+2. W4 - canApprove sync frontend/backend
+============================================================
+FILE: apps/dashboard-admin/src/app/qa-queue/page.tsx:139
+
+PROBLEMA:
+- Frontend canApprove = ['qa_pending','rejected'] (linha 139)
+- Backend product-svc admin.js:211 APPROVABLE_STATES =
+  ['qa_pending','qa_running','rejected']
+- 'qa_running' bloqueado SO no frontend
+- Cenario real: worker n8n/qa-worker travado em LLM call (30+min)
+  Produto stuck em qa_running aguardando cron timeout 10min
+  Admin queria aprovar manualmente p/ unstuck operacional
+  Botao "Aprovar" SUMIA no UI -> admin perplexo + esperava cron
+- Backend aceitava POST direto via curl, mas dashboard UX bloqueava
+
+POST-FIX:
+- canApprove = ['qa_pending','qa_running','rejected'] paridade backend
+- Admin pode forcar aprovacao mesmo durante run stuck
+- Cron timeout continua catching automaticos se admin nao acionar
+
+============================================================
+3. W18 - asaas_webhook_events retention cleanup
+============================================================
+FILE: services/aiops-svc/src/server.js:781-800
+
+PROBLEMA (table growth unbounded):
+- aiops cleanupTimeSeriesData cron diario 03:30
+- 5 tabelas cobertas: search_log, audit_log, vault_key_usage,
+  product_views, token_blacklist
+- asaas_webhook_events NAO COBERTA -> unbounded growth
+- ~1k webhooks/dia prod modesta -> 365k rows/ano, 730k/2-anos
+- Indexes ficam bloated, query plans degradam
+- /admin/payments/webhooks/dead seek bloat com tempo
+
+POST-FIX:
+- Adicionado entry asaas_webhook_events 90d (paridade audit_log)
+- WHERE received_at < NOW()-90 days AND processed_at IS NOT NULL
+- Defensive: NAO deleta pending (processed_at IS NULL = retry queue)
+- 90 dias = LGPD compliance window + cobre Asaas dispute window 60d
+
+============================================================
+SUMARIO PASS 246
+============================================================
+Files: 3 modificados
+  - services/notification-svc/src/server.js (reclaim observability)
+  - apps/dashboard-admin/src/app/qa-queue/page.tsx (canApprove sync)
+  - services/aiops-svc/src/server.js (webhook retention)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (79 ciclos - 26.3h sem deploy).
+Migs 069+070+071+072+073 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_notification-svc cas_aiops-svc cas_dashboard-admin --force
+- W13: simular worker crash + grep logs depois 5min ->
+  '[outbox.reclaim] orphan locks released' aparece com count
+- W4: produto stuck qa_running -> /admin/qa-queue -> botao Aprovar visivel
+- W18: verificar diario apos 03:30 cron:
+  SELECT count(*) FROM asaas_webhook_events
+  WHERE received_at < NOW()-INTERVAL '90 days' AND processed_at IS NOT NULL
+  Deve ser 0 (deletados)
+
+PROXIMA ITER:
+- W2 checkout: bulk select notifications
+- W17 vault: encrypted secret zeroize on shutdown
+- VPS SSH unblock URGENTISSIMO (79 ciclos - 26.3h)
