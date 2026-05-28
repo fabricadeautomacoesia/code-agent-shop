@@ -86,7 +86,21 @@ export default function PayoutsPage() {
         ))}
       </div>
 
-      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+      {/* FIX-WORKER-4 pass 427 (a11y parity cross-admin):
+          PRE-FIX: loadError banner SEM role=alert (SR nao anunciava falha)
+          - qa-queue pass 5 ja tinha role=alert + retry
+          - orders pass 171 tambem
+          - financeiro seller pass 240 + qna pass 248 + loja pass 263 (paridade)
+          - admin/payouts ficou para tras (SR nao escutava falhas de pipeline payouts)
+          POST-FIX: role=alert + retry button (paridade qa-queue + orders) */}
+      {loadError && (
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>Erro carregando lista: {loadError}</span>
+          <button type="button" onClick={() => { setLoadError(''); load(); }}
+            aria-label="Tentar carregar payouts novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">retry</button>
+        </div>
+      )}
 
       {/* FIX-WORKER-4 pass 3: banners via useAdminAction (DRY com qa-queue + sellers) */}
       {action.error && (

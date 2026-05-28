@@ -73,7 +73,15 @@ export default function SellersPage() {
       <h1 className="font-display font-bold text-4xl mb-2">Sellers</h1>
       <p className="text-white/60 mb-8">Gestao de vendedores e KYC pendente</p>
 
-      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+      {/* FIX-WORKER-4 pass 427 (a11y parity cross-admin paridade payouts): role=alert + retry */}
+      {loadError && (
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>Erro carregando lista: {loadError}</span>
+          <button type="button" onClick={() => { setLoadError(''); load(); }}
+            aria-label="Tentar carregar sellers novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">retry</button>
+        </div>
+      )}
 
       {/* FIX-WORKER-4 pass 2 + 171 (a11y V8 R23): role=alert/status + type=button + aria-label */}
       {action.error && (

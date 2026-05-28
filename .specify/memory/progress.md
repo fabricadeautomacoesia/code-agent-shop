@@ -33211,3 +33211,42 @@ Pattern V8 W3: deep-link UX = hash handler + id targets + scroll-margin
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 427 W4 ADMIN: a11y parity loadError role=alert + retry (payouts + sellers)
+commit pendente
+BUG admin/payouts + admin/sellers loadError SEM role=alert
+PRE-FIX:
+- qa-queue pass 5 ja tinha role=alert + retry button
+- orders pass 171 idem
+- financeiro seller pass 240, qna pass 248, loja pass 263 (cross-app parity)
+- payouts/page.tsx linha 89 + sellers/page.tsx linha 76 = banner inline 1-line sem role=alert
+- SR (screen reader) nao anunciava falha load -> admin invisual ve "pagina vazia"
+- Sem retry button -> ate refresh manual page p/ tentar novamente
+
+CENARIO:
+- Admin abre /admin/payouts em hora de pico (gateway 502 transient)
+- loadError seta com message
+- SR pula banner silencioso -> admin nao sabe que falhou
+- Sem retry -> F5 manual obrigatorio (perde scroll/filter state)
+
+POST-FIX (ambos arquivos):
+- role=alert (SR anuncia automaticamente)
+- + retry button (clear loadError + re-call load())
+- aria-label "Tentar carregar X novamente" (descritivo)
+- Pattern V8 paridade qa-queue + orders + financeiro/qna/loja
+
+W4 a11y parity series:
+  pass 2 sellers action banner role=alert
+  pass 5 qa-queue loadError role=alert
+  pass 170 a11y V8 R23 buttons
+  pass 171 orders role=alert
+  pass 263 loja seller paridade
+  pass 427 payouts+sellers loadError role=alert <- ESTE
+
+Pattern V8 W4: ALL error banners need role=alert + retry/dismiss button
+
+160 passes acumulados (268->427) sem deploy VPS
+5 CRITICAL + 25 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
