@@ -74,6 +74,18 @@ async function refundPayment(id, value, description) {
   return api('POST', `/payments/${id}/refund`, value ? { value, description } : { description });
 }
 
+/* FIX-WORKER-11 pass 289 (BUG REAL MONEY LOSS - cancelPayment ausente):
+   PRE-FIX: server.js linha 368 chama asaas.cancelPayment?.(payment.id) com
+   optional chaining. cancelPayment NAO EXISTE em exports -> silently no-op.
+   Cenario race condition: 2 requests createPayment simultaneo -> 2 Asaas
+   payments criados -> apenas 1 vence UPDATE no DB. O outro Asaas payment
+   permanece billable - user pode pagar 2 PIX/boletos para mesma order.
+   POST-FIX: implementar cancelPayment via DELETE /payments/:id (Asaas v3 docs).
+   Combina com upd.rows.length=0 path para evitar double-charge real. */
+async function cancelPayment(id) {
+  return api('DELETE', `/payments/${id}`);
+}
+
 /* FIX-WORKER-11 pass 282: externalReference em createTransfer
    PRE-FIX: transfer Asaas criado sem campo externalReference - reconciliacao
    pos-transfer (webhook TRANSFER_DONE ou status check manual) precisa lookup
@@ -89,6 +101,6 @@ async function createTransfer({ wallet, value, description, externalReference })
 
 module.exports = {
   createCustomer, getCustomer,
-  createPayment, getPayment, getPixQrCode, refundPayment,
+  createPayment, getPayment, getPixQrCode, refundPayment, cancelPayment,
   createTransfer,
 };

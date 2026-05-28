@@ -364,8 +364,13 @@ app.post('/payments/asaas/create',
       // duplicado no Asaas (best-effort, evita cobrar usuario duas vezes).
       log.warn({ order_id: order.id, payment_id: payment.id },
         '[asaas.create.race_detected] outra request ja autorizou, tentando cancelar duplicate');
+      /* FIX-WORKER-11 pass 289: cancelPayment AGORA implementado em asaas.js
+         PRE-FIX: optional chaining .?() silently no-op (funcao nao existia)
+         -> duplicate Asaas payment continuava billable -> real money loss
+         POST-FIX: DELETE /payments/:id efetivamente cancela invoice */
       try {
-        await asaas.cancelPayment?.(payment.id);
+        await asaas.cancelPayment(payment.id);
+        log.info({ payment_id: payment.id }, '[asaas.cancel.ok] duplicate payment cancelado com sucesso');
       } catch (e) {
         log.error({ err: e.message, payment_id: payment.id },
           '[asaas.cancel.fail] duplicate Asaas payment criado mas falhou cancelar - investigar manual');
@@ -1297,8 +1302,15 @@ app.get('/payments/webhooks/dead',
     const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
+    /* FIX-WORKER-18 pass 289: COUNT(*) OVER() window consolidation.
+       PRE-FIX: 2 queries separadas (rows + COUNT separado) = 2 scan duplos
+       no asaas_webhook_events. Pattern V8 cross-svc consolidado em 11+
+       endpoints (auditLogHandler pass 200, alertsHandler pass 202, etc).
+       POST-FIX: 1 query window aggregate - latencia 2x -> 1x scan.
+       Tiebreaker received_at DESC + id DESC ja existia. */
     const r = await query(
-      `SELECT id, event_type, asaas_payment_id, processing_error, retry_count, received_at
+      `SELECT id, event_type, asaas_payment_id, processing_error, retry_count, received_at,
+              COUNT(*) OVER()::INT AS _total
          FROM asaas_webhook_events
         WHERE signature_valid = TRUE
           AND processed_at IS NULL
@@ -1308,25 +1320,25 @@ app.get('/payments/webhooks/dead',
       [limit, offset]
     );
 
+    const total = r.rows[0]?._total ?? 0;
+
     // FIX-WORKER-7 pass 61: DLP mask processing_error
     // Stack traces podem conter secrets (PG_PASS, Bearer tokens, JWT, CPF)
-    const webhooks = r.rows.map((row) => ({
-      ...row,
-      processing_error: row.processing_error ? mask.text(row.processing_error) : null,
-    }));
-
-    // Total count para UX pagination
-    const totalRes = await query(
-      `SELECT COUNT(*)::INT AS total FROM asaas_webhook_events
-        WHERE signature_valid = TRUE AND processed_at IS NULL AND retry_count > 5`
-    );
+    const webhooks = r.rows.map((row) => {
+      const { _total, ...rest } = row;
+      return {
+        ...rest,
+        processing_error: rest.processing_error ? mask.text(rest.processing_error) : null,
+      };
+    });
 
     res.json({
       webhooks,
       count: webhooks.length,
-      total: totalRes.rows[0].total,
+      total,
       limit,
       offset,
+      has_more: (offset + webhooks.length) < total,
     });
   })
 );

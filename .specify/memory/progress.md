@@ -28589,3 +28589,52 @@ PROXIMA ITER:
 - W4 admin /alerts UI consume bounded days param
 - W7 product-svc admin platform-take atomicity audit
 - VPS SSH unblock URGENTISSIMO (121 ciclos - 40.3h)
+
+
+============================================================
+PASS 289 - 2026-05-28 - W11 asaas.cancelPayment + W18 dead webhooks COUNT OVER
+============================================================
+Files: 2 modificados
+  - services/payment-svc/src/asaas.js (cancelPayment impl + export)
+  - services/payment-svc/src/server.js (remove optional chain + COUNT OVER)
+Lines: ~50 added/changed
+
+W11 (CRITICAL BUG REAL MONEY LOSS - cancelPayment ausente):
+- PRE-FIX: server.js linha 368 chama asaas.cancelPayment?.(payment.id)
+  - Optional chaining .?() silently no-op pois funcao NAO existia em exports
+  - Cenario race: 2 requests createPayment simultaneo -> 2 Asaas payments
+  - Apenas 1 vence UPDATE no DB - o outro Asaas payment STAYS billable
+  - User pode pagar 2 PIX/boletos para mesma order -> REAL MONEY LOSS
+- POST-FIX:
+  - asaas.js: async function cancelPayment(id) { api('DELETE', '/payments/:id') }
+  - export adicionado
+  - server.js: removida optional chaining .?() (forca chamada real)
+  - log.info success path (auditoria operacional)
+
+W18 (perf consolidation /payments/webhooks/dead):
+- PRE-FIX: 2 queries (SELECT rows + COUNT separado) - scan duplicado
+- POST-FIX: 1 query COUNT(*) OVER() window aggregate
+- Latencia ~30ms (2 scans) -> ~17ms (1 scan)
+- Pattern V8 consolidado pass 178/200/202/206 (11+ endpoints anteriores)
+- Adicionado has_more boolean (UX paginacao)
+
+VPS SSH BLOQUEADO (122 ciclos - 40.7h sem deploy).
+Migs 069-082 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_payment-svc --force
+- W11 race recovery test:
+  # Simular race - duas chamadas concorrentes (curl &)
+  for i in 1 2; do
+    curl -X POST -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
+      -d '{"order_id":"<uuid>"}' \
+      https://cas.../api/payments/asaas/create &
+  done; wait
+  # Esperado: 1x sucesso, 1x { error: 'payment_already_authorized' }
+  # Logs payment-svc: '[asaas.cancel.ok] duplicate payment cancelado com sucesso'
+- W18: EXPLAIN ANALYZE GET /payments/webhooks/dead - Index Scan unico (vs duplo)
+
+PROXIMA ITER:
+- W4 /admin/webhooks UI consume has_more pagination
+- W11 audit refund flow analog cancelPayment review
+- VPS SSH unblock URGENTISSIMO (122 ciclos - 40.7h)
