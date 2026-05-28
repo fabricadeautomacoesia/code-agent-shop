@@ -29333,3 +29333,44 @@ PROXIMA ITER:
 - W11 payment-svc audit getPayment/refundPayment DLP cobertura
 - W4 admin notification-bell stats panel
 - VPS SSH unblock URGENTISSIMO (139 ciclos - 46.3h)
+
+
+============================================================
+PASS 307 - 2026-05-28 - W5 seller /me explicit fields + W17 vault rotation deleted_at
+============================================================
+Files: 2 modificados
+  - services/seller-svc/src/routes/me.js (Regra I explicit fields)
+  - services/vault-svc/src/server.js (rotation cron deleted_at filter)
+Lines: ~40 added/changed
+
+W5 (Regra I cross-svc - seller-svc /me explicit fields):
+- PRE-FIX: SELECT s.* + delete s.document_number_hash (frágil)
+- Schema add nova coluna interna -> auto-exposed
+- Manual delete em 1 field so cobre 1 caso, scaling falha
+- POST-FIX: lista explicita de 30+ fields safe-to-expose
+- Exclusoes:
+  - document_number_hash (security fingerprint)
+  - metadata raw JSONB (objeto livre admin)
+  - deleted_at (admin-only)
+  - kyc_*_internal (futuras colunas reserved)
+- Pattern V8 Regra I cross-svc consolidado
+
+W17 (vault rotation cron admin recipient filter):
+- PRE-FIX: SELECT users WHERE role IN ('admin','staff') AND is_active AND is_banned=FALSE
+- SEM deleted_at IS NULL filter
+- Admin soft-deleted continua recebendo rotation alerts
+- Compliance LGPD: ex-funcionario nao deve continuar recebendo operacional sensivel
+- POST-FIX: + deleted_at IS NULL paridade cross-svc Pattern V8 Regra B
+
+VPS SSH BLOQUEADO (140 ciclos - 46.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_vault-svc --force
+- W5: curl seller GET /me - verificar nao tem document_number_hash em response
+- W17: simular admin deleted -> rotation cron 24h -> notif NAO enviada
+
+PROXIMA ITER:
+- W4 admin sellers UI nao quebrar com novo response shape
+- W17 audit notification recipient queries cross-svc deleted_at coverage
+- VPS SSH unblock URGENTISSIMO (140 ciclos - 46.7h)

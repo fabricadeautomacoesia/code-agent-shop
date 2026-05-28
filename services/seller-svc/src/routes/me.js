@@ -54,8 +54,32 @@ const sellerMeCacheKey = (req) => `seller:me:${req.user.sub}`;
 router.get('/',
   cache.cacheMiddleware(sellerMeCacheKey, 30),
   asyncHandler(async (req, res, next) => {
+  /* FIX-WORKER-5 pass 307 (Regra I cross-svc explicit fields):
+     PRE-FIX: SELECT s.* + delete s.document_number_hash manual cleanup.
+     Frágil:
+     - Schema add nova coluna interna (ex: kyc_internal_score) -> auto-exposed
+     - delete em 1 field só (futuro add mais internas = leak silencioso)
+     - Pattern V8 Regra I: NUNCA SELECT * em endpoints public-facing
+     POST-FIX: lista explicita de 30+ fields safe-to-expose.
+     Excluidos: document_number_hash, kyc_*_internal, metadata raw (objeto livre),
+                deleted_at (admin only). */
   const r = await query(
-    `SELECT s.*, vp.qna_pending, vp.disputes_open, vp.products_in_qa,
+    `SELECT s.id, s.user_id, s.seller_class, s.status,
+            s.store_slug, s.store_name, s.store_description,
+            s.store_banner_url, s.store_logo_url,
+            s.document_type, s.document_verified_at,
+            s.legal_name,
+            s.address_line1, s.address_line2, s.address_city,
+            s.address_state, s.address_zip, s.address_country,
+            s.asaas_customer_id, s.asaas_wallet_id, s.asaas_pix_key,
+            s.sla_active, s.sla_days, s.sla_last_upload_at,
+            s.sla_next_deadline_at, s.sla_warning_sent_at, s.sla_revoked_count,
+            s.auto_approve_qa, s.allow_platform_resale,
+            s.custom_commission_rate, s.payout_min_amount_cents,
+            s.total_sales, s.total_revenue_cents, s.total_products_active,
+            s.avg_rating, s.reputation_tier, s.reputation_score,
+            s.created_at, s.updated_at, s.kyc_submitted_at,
+            vp.qna_pending, vp.disputes_open, vp.products_in_qa,
             vp.products_rejected, vp.sla_days_remaining
        FROM sellers s
        LEFT JOIN vw_seller_pending vp ON vp.seller_id = s.id
@@ -63,10 +87,7 @@ router.get('/',
     [req.user.sub]
   );
   if (!r.rows.length) return next(errorHandler.notFound('seller_profile_not_found'));
-  // ocultar fingerprint do documento
-  const s = r.rows[0];
-  delete s.document_number_hash;
-  res.json({ seller: s });
+  res.json({ seller: r.rows[0] });
 }));
 
 const updateSchema = z.object({

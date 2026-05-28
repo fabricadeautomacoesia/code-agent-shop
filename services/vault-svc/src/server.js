@@ -209,7 +209,20 @@ async function rotationAlertCron() {
     );
     if (!r.rows.length) return;
     // Pega lista de admin user_ids para criar notifications
-    const admins = await query(`SELECT id FROM users WHERE role IN ('admin','staff') AND is_active = TRUE AND is_banned = FALSE`);
+    /* FIX-WORKER-17 pass 307 (Regra B deleted_at filter):
+       PRE-FIX: filtro is_active+is_banned mas SEM deleted_at IS NULL.
+       Admin soft-deleted (admin demitido, conta encerrada via PATCH /users)
+       continua recebendo rotation alerts via email/in_app.
+       Compliance LGPD: ex-funcionario nao deve continuar recebendo info
+       operacional sensivel (key rotation = security signal de keys ativas).
+       POST-FIX: + deleted_at IS NULL paridade cross-svc Pattern V8. */
+    const admins = await query(
+      `SELECT id FROM users
+        WHERE role IN ('admin','staff')
+          AND is_active = TRUE
+          AND is_banned = FALSE
+          AND deleted_at IS NULL`
+    );
     if (!admins.rows.length) return;
     log.info({ keys_due: r.rows.length, admins: admins.rows.length }, '[vault.rotation.alert]');
 
