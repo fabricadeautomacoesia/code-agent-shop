@@ -17332,6 +17332,27 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Rewrites PT-BR /loja + /produto + descobrindo URLs reais dashboards (pass 112)
 - ✅ Audit E2E cart + MLB features prod (pass 113) - 0 bugs novos
 - ✅ Rebuild dashboard-admin + dashboard-seller (pass 114) - 6 pages admin ressurgiram
+- ✅ Fix /conta link Downloads + audit admin pages (pass 115 esta iter)
+
+W7 PASS 115 RESUMO - AUDIT ADMIN PAGES + FIX LINK QUEBRADO:
+- Audit 7 admin pages novas (criadas pass 114):
+  * /audit-log, /reports, /vault, /webhooks, /alerts - HTML completo c/ H1
+  * /db-audit, /disputes - 'use client' + useEffect (sem H1 SSR mas OK)
+- Audit 6 APIs admin via CORS (Origin: https://admin.cas...):
+  * /api/aiops/db/dead-indexes -> 200 + 4 candidates summary
+  * /api/orders/admin/disputes -> 200 empty
+  * /api/aiops/alerts -> 200 + 1 alerta (denuncia spam)
+  * /api/sellers/admin/all -> 200 + vendedor1
+  * /api/reviews/admin/reports -> 200 + 1 reporte spam
+  * /api/payments/webhooks/dead -> 200 empty
+- FIX BUG /conta link Downloads:
+  * PRE: href='/conta/downloads' -> 404 (route eh /conta/downloads/[token] dynamic)
+  * POS: href='/conta/pedidos' (lista orders com download por token)
+  * UX claro: "Baixar produtos comprados"
+- VALIDATION POS-FIX:
+  * /conta -> HTTP 200 sem href=/conta/downloads (grep -oc 0)
+  * Link redireciona p/ /conta/pedidos onde user clica order p/ download
+- Pattern W7 em 140+ endpoints/pages LIVE - 115 micro-iters
 
 W7 PASS 114 RESUMO - DEPLOY DASHBOARDS NOVOS:
 - Audit 22 paginas (storefront /conta/* + admin/* + seller/*) detectou 6 ADMIN 404:
