@@ -1,7 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { LayoutDashboard, Users, Package, ShoppingCart, AlertTriangle, DollarSign, Activity, KeyRound, Shield, Webhook, FileText, Scale, Database, Cpu, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, Users, Package, ShoppingCart, AlertTriangle, DollarSign, Activity, KeyRound, Shield, Webhook, FileText, Scale, Database, Cpu, RefreshCw, Wallet } from 'lucide-react';
 import { PromptDialogProvider } from '@/components/prompt-dialog';
 
 // FIX-WORKER-9 pass 177 (CRITICAL SEO/PRIVACY): adicionar robots noindex+nofollow
@@ -23,6 +23,9 @@ const NAV = [
   { href: '/qa-queue',    Icon: Shield,          label: 'QA Queue' },
   { href: '/orders',      Icon: ShoppingCart,    label: 'Pedidos' },
   { href: '/payouts',     Icon: DollarSign,      label: 'Saques' },
+  // FIX-WORKER-4 pass 275: Payouts pendentes (sem wallet config seller)
+  // Endpoint pass 273 + UI page pass 274 - nav link agora consume
+  { href: '/payouts-pending-wallet', Icon: Wallet, label: 'Payouts Sem Wallet' },
   { href: '/reports',     Icon: AlertTriangle,   label: 'Denuncias' },
   { href: '/alerts',      Icon: Activity,        label: 'Alertas AIOps' },
   { href: '/vault',       Icon: KeyRound,        label: 'Vault (API keys)' },

@@ -27883,3 +27883,86 @@ PROXIMA ITER:
 - W4 dashboard-admin nav link p/ nova page
 - W11 forfeit cron (seller delete account sem liquidar)
 - VPS SSH unblock CRITICAL (107 ciclos - 35.7h MARCO!!)
+
+============================================================
+PASS 275 (2026-05-28) - W4 nav link + W11 forfeit cron
+============================================================
+
+OBJETIVO: 2 workers (W18 audit clean)
+- W4 dashboard-admin: nav link /payouts-pending-wallet
+- W11 payment-svc: forfeit cron (90d threshold orphan payouts)
+
+============================================================
+1. W4 - dashboard-admin nav link /payouts-pending-wallet
+============================================================
+FILE: apps/dashboard-admin/src/app/layout.tsx:19-41
+
+CONTEXTO (completes pass 274 visibility):
+- Pass 274 criou /payouts-pending-wallet page + layout
+- Mas SEM nav link no sidebar -> page invisible aos admins
+- Endpoint backend + UI + cron sem entry point UX
+
+POST-FIX:
+- Add Wallet icon import (lucide-react)
+- Insert NAV entry apos /payouts (logical grouping financeiro)
+- Label: "Payouts Sem Wallet"
+
+============================================================
+2. W11 - forfeit cron orphan payouts (90d seller deleted/banned)
+============================================================
+FILE: services/payment-svc/src/server.js:1542-1591
+
+PROBLEMA:
+- Pass 270-274 implementou pending->liquidated path
+- MAS: seller deletes account / banned permanente sem wallet ->
+  payouts_pending_wallet ficam stuck 'pending' INDEFINIDAMENTE
+- Sem cleanup -> table cresce + idx bloat + compliance gap
+
+POST-FIX:
+- forfeitOrphanPendingPayouts() cron 24h interval
+- Detect: pw.status='pending' AND (s.deleted_at>90d OR s.banned>90d)
+- UPDATE SET status='forfeited', forfeited_at, forfeited_reason
+- Audit_log INSERT 'payouts_pending.forfeit_batch' c/ count + total
+- Severity 'warn' (orphan funds tracking - compliance LGPD/SOC2)
+- 90s warm-up offset apos liquidator (60s + 30s)
+
+============================================================
+3. W18 - audit clean
+============================================================
+Reviewed:
+- /aiops/llm-cost 3 queries product_qa_runs SCANS mas cache 300s
+- /search/trending GROUP BY HAVING - cache 300s
+- /loyalty/earn race-safe ON CONFLICT - well structured
+Nenhum gap critico esta iter.
+
+============================================================
+SUMARIO PASS 275
+============================================================
+Files: 2 modificados
+  - apps/dashboard-admin/src/app/layout.tsx (nav link)
+  - services/payment-svc/src/server.js (forfeit cron)
+Lines: ~75 added
+
+MARCO: Feature payouts_pending_wallet TRULY COMPLETE end-to-end:
+- Schema (mig 078) + indices (mig 078, 079)
+- Backend INSERT fallback (order-svc)
+- Cron liquidator 24h (payment-svc - pass 272)
+- Admin endpoint (seller-svc - pass 273)
+- Admin UI page (dashboard-admin - pass 274)
+- Admin nav link (este pass) - DISCOVERABLE
+- Forfeit cron (este pass) - LIFECYCLE COMPLETE
+
+VPS SSH BLOQUEADO (108 ciclos - 36h sem deploy).
+Migs 069-079 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-admin cas_payment-svc --force
+- W4: admin login -> sidebar tem entry "Payouts Sem Wallet"
+- W11: seller deleted_at < NOW()-90d com pending payouts ->
+  After cron 24h: SELECT status FROM payouts_pending_wallet -> 'forfeited'
+  SELECT FROM audit_log WHERE action='payouts_pending.forfeit_batch'
+
+PROXIMA ITER:
+- W4 admin batch actions (force-liquidate manual)
+- W3 PDP installments preview cache
+- VPS SSH unblock CRITICAL (108 ciclos - 36h MARCO!!!)

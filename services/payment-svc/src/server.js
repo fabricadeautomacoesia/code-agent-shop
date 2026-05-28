@@ -1539,6 +1539,58 @@ setInterval(() => liquidatePendingWalletPayouts().catch((e) =>
   log.error({ err: e.message }, '[payouts_pending.cron.fail]')), 24 * 60 * 60 * 1000);
 log.info('[payouts_pending.cron] liquidate cron started (24h interval)');
 
+// ============================================================
+// FIX-WORKER-11 pass 275: forfeit cron payouts_pending_wallet
+// ============================================================
+// Cenario: seller deleta conta (sellers.deleted_at NOT NULL) ou e banned
+// permanente sem nunca configurar asaas_wallet_id.
+// payouts_pending_wallet rows associadas ficam stuck 'pending' indefinidamente.
+// Cron diario detecta sellers deletados/banned > 90d com pending payouts ->
+// marca status='forfeited' (cancelado por inatividade prolongada).
+// Compliance: receita fica com plataforma (orphan funds) - admin auditavel.
+async function forfeitOrphanPendingPayouts() {
+  try {
+    const r = await query(
+      `UPDATE payouts_pending_wallet pw
+          SET status = 'forfeited',
+              forfeited_at = NOW(),
+              forfeited_reason = 'seller_deleted_or_banned_90d'
+         FROM sellers s
+        WHERE pw.seller_id = s.id
+          AND pw.status = 'pending'
+          AND (
+            (s.deleted_at IS NOT NULL AND s.deleted_at < NOW() - INTERVAL '90 days') OR
+            (s.status = 'banned' AND s.updated_at < NOW() - INTERVAL '90 days')
+          )
+        RETURNING pw.id, pw.seller_id, pw.amount_cents`
+    );
+    if (r.rows.length) {
+      const totalForfeited = r.rows.reduce((a, x) => a + Number(x.amount_cents || 0), 0);
+      log.warn({
+        count: r.rows.length,
+        total_cents: totalForfeited,
+      }, '[payouts_pending.forfeit] orphan payouts forfeited (seller deleted/banned >90d)');
+      // Audit log para compliance LGPD/SOC2 (orphan funds tracking)
+      await query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES (NULL, 'system', 'payouts_pending.forfeit_batch', 'payouts_pending_wallet', NULL, 'warn', $1::JSONB)`,
+        [JSON.stringify({
+          count: r.rows.length,
+          total_cents: totalForfeited,
+          reason: 'seller_deleted_or_banned_90d',
+        })]
+      ).catch(() => {});
+    }
+  } catch (e) {
+    log.error({ err: e.message }, '[payouts_pending.forfeit.cron.fail]');
+  }
+}
+// 24h interval offset 90s warm-up (apos liquidator 60s)
+setTimeout(() => forfeitOrphanPendingPayouts().catch(() => {}), 90000);
+setInterval(() => forfeitOrphanPendingPayouts().catch((e) =>
+  log.error({ err: e.message }, '[payouts_pending.forfeit.cron.fail]')), 24 * 60 * 60 * 1000);
+log.info('[payouts_pending.forfeit.cron] forfeit cron started (24h interval, 90d threshold)');
+
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
 app.use(errorHandler.errorMiddleware);
 
