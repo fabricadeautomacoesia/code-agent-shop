@@ -22,7 +22,9 @@ async function invalidateSellerCache(userId) {
     if (userId) {
       tasks.push(
         cache.del(`seller:sla-status:${userId}`),
-        cache.del(`seller:kpi:${userId}`)
+        cache.del(`seller:kpi:${userId}`),
+        // FIX-WORKER-18 pass 231: invalidate seller:me apos PATCH/KYC/etc
+        cache.del(`seller:me:${userId}`)
       );
     }
     if (r.rows.length) {
@@ -37,8 +39,21 @@ async function invalidateSellerCache(userId) {
   } catch (e) { log.warn({ err: e.message }, '[cache.invalidate_fail]'); }
 }
 
+// FIX-WORKER-18 pass 231: cache key helper p/ GET /sellers/me (vary by user)
+const sellerMeCacheKey = (req) => `seller:me:${req.user.sub}`;
+
 // GET /sellers/me - perfil completo do seller logado
-router.get('/', asyncHandler(async (req, res, next) => {
+// FIX-WORKER-18 pass 231 (endpoint sem cache - hot path dashboard-seller):
+//   Endpoint chamado em CADA navegacao do dashboard-seller (header SellerNav
+//   + sidebar puxam Api.sellerMe(token) em mount). Sem cache, cada page-view
+//   dispara JOIN sellers + vw_seller_pending (5-30ms DB cada).
+//   Seller ativo: ~50 page-views/sessao -> 50 DB hits desnecessarios.
+//   FIX: cacheMiddleware TTL 30s vary by user.sub. Invalidacao em PATCH
+//   abaixo via invalidateSellerCache (W18 pass 6 helper). 30s TTL aceitavel:
+//   muda apenas em edit profile (rare) ou KYC status (cron 1min sync ja).
+router.get('/',
+  cache.cacheMiddleware(sellerMeCacheKey, 30),
+  asyncHandler(async (req, res, next) => {
   const r = await query(
     `SELECT s.*, vp.qna_pending, vp.disputes_open, vp.products_in_qa,
             vp.products_rejected, vp.sla_days_remaining

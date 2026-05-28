@@ -24148,3 +24148,88 @@ PROXIMA ITER:
 - W3 PDP: AddToCart audit (postponed pass 230)
 - W10 search-svc: autocomplete trending fallback
 - VPS SSH unblock URGENTE (63 ciclos - 21h sem deploy)
+
+============================================================
+PASS 231 (2026-05-28) - W18 + W6 + W8 perf/timeout/UX
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W18 seller-svc: cache GET /sellers/me (endpoint hot path sem cache)
+- W6 gateway: TIMEOUT_SLOW para /api/qa + /api/payments (Asaas/LLM chain)
+- W8 storefront: wishlist PDP hover state quando favoritado
+
+============================================================
+1. W18 - seller-svc GET /sellers/me cache
+============================================================
+FILE: services/seller-svc/src/routes/me.js:40-55
+
+PROBLEMA (hot path sem cache):
+- Endpoint chamado em CADA navegacao dashboard-seller (header SellerNav +
+  sidebar fazem Api.sellerMe(token) em mount)
+- Sem cache: JOIN sellers + vw_seller_pending (5-30ms DB) per page-view
+- Seller ativo ~50 page-views/sessao = 50 hits DB desnecessarios
+- vw_seller_pending recomputada (qna_pending + disputes_open + sla)
+
+FIX: cache.cacheMiddleware(sellerMeCacheKey, 30) - TTL 30s vary by user.sub
+- Invalidacao em PATCH /sellers/me via invalidateSellerCache (W18 pass 6)
+- Adiciona cache.del('seller:me:${userId}') ao helper de invalidate
+- 30s aceitavel: muda apenas em edit profile (rare) ou KYC sync cron
+
+============================================================
+2. W6 - gateway TIMEOUT_SLOW para /api/qa + /api/payments
+============================================================
+FILE: services/gateway/src/server.js:295-297
+
+PROBLEMA:
+- /api/payments default TIMEOUT 30s. Asaas createPayment chain pode
+  demorar 5-10s normal, 30-45s em peak. Gateway corta enquanto payment-svc
+  ainda espera Asaas -> Asaas eventually cria payment + cobra cliente,
+  mas response nao chega ao storefront -> orphan + double-charge risk.
+- /api/qa similar: qa-worker LLM fallback OpenAI->Gemini->Groq com
+  LLM_PROVIDER_TIMEOUT 20s cada = 60s budget. Gateway 30s cortava chain
+  antes do Groq fallback, perdendo verdict gerado.
+
+FIX: timeout: TIMEOUT_SLOW (60s) em ambos. Alinhado com /api/uploads e
+/api/products/upload que ja eram SLOW.
+
+============================================================
+3. W8 - wishlist PDP variant hover quando favoritado
+============================================================
+FILE: apps/storefront/src/components/wishlist-button.tsx:135-141
+
+PROBLEMA:
+- PDP variant (botao grande) tinha hover:border-white/30 SO no estado
+  nao-favoritado. Estado favoritado: bg-magenta/20 border-magenta SEM
+  hover -> botao parecia estatico/desabilitado
+- Card variant (linha 116-119) ja tinha hover:bg-magenta/80 quando
+  favoritado. Inconsistencia.
+
+FIX: hover:bg-magenta/30 quando favoritado + hover:bg-white/5 quando nao
+favoritado (UX feedback tactile que botao continua clicavel mesmo apos
+favoritar).
+
+============================================================
+SUMARIO CIRURGICO PASS 231
+============================================================
+Files: 3 modificados
+  - services/seller-svc/src/routes/me.js (cache + invalidation)
+  - services/gateway/src/server.js (timeout slow)
+  - apps/storefront/src/components/wishlist-button.tsx (hover state)
+Lines: ~30 changed
+
+VPS SSH BLOQUEADO (64 ciclos - 21.3h sem deploy).
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_gateway cas_storefront --force
+- W18 test cache hit: navegar dashboard-seller 2x rapido /
+  monitorar logs -> 1a request DB query, 2a sem (cache hit)
+  Validar TTL 30s: PATCH /sellers/me + GET imediato -> dados novos (invalidate)
+- W6 test timeout: simular Asaas lento (mock 45s) -> gateway nao corta em 30s
+  curl POST /api/payments com mock -> response 50s ok (era 30s timeout antes)
+- W8 test hover: navegar /product/X favoritar -> hover botao corner agora
+  responde com bg shift (era estatico)
+
+PROXIMA ITER:
+- W16 MLB feature: Comparador de produtos UI (rota /comparar ja existe?)
+- W3 PDP: AddToCart audit (postponed)
+- VPS SSH unblock URGENTE (64 ciclos - 21.3h sem deploy!)

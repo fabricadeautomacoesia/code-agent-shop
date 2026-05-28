@@ -292,9 +292,20 @@ app.use('/api/products',      fail2ban.middleware(), proxy(UPSTREAMS.product,   
 // Default 30s OK pois LLM eh setImmediate background.
 // FIX-WORKER-6 pass 207: + fail2ban (qa.callback eh service-token endpoint,
 // mas /qa/runs e /qa/run sao admin/seller - protege contra spam)
-app.use('/api/qa',            fail2ban.middleware(), proxy(UPSTREAMS.qa,           { pathRewrite: (p) => '/qa' + p }));
+// FIX-WORKER-6 pass 231: TIMEOUT_SLOW (60s) para /api/qa e /api/payments
+// PRE-FIX: default TIMEOUT 30s. Asaas createPayment + createCustomer chain
+// pode demorar 5-10s normal, 30-45s em peak. Gateway timeout 30s cortava
+// request enquanto payment-svc ainda esperava Asaas -> Asaas eventually
+// criava payment + cobrava cliente, mas response nao chegava ao storefront
+// -> orphan record + double-charge risk se user clica novamente.
+// /api/qa similar: qa-worker LLM fallback chain (OpenAI->Gemini->Groq) com
+// LLM_PROVIDER_TIMEOUT 20s cada = 60s budget total. Gateway 30s cortava
+// chain antes do fallback Groq, perdendo verdict gerado mas nao salvo.
+// POST-FIX: ambos para TIMEOUT_SLOW (60s), alinhado com /api/uploads e
+// /api/products/upload que ja eram SLOW.
+app.use('/api/qa',            fail2ban.middleware(), proxy(UPSTREAMS.qa,           { pathRewrite: (p) => '/qa' + p, timeout: TIMEOUT_SLOW }));
 app.use('/api/orders',        fail2ban.middleware(), proxy(UPSTREAMS.order,        { pathRewrite: (p) => '/orders' + p }));
-app.use('/api/payments',      fail2ban.middleware(), proxy(UPSTREAMS.payment,      { pathRewrite: (p) => '/payments' + p })); // inclui MLB-5 /payments/installments/preview
+app.use('/api/payments',      fail2ban.middleware(), proxy(UPSTREAMS.payment,      { pathRewrite: (p) => '/payments' + p, timeout: TIMEOUT_SLOW })); // inclui MLB-5 /payments/installments/preview
 // FIX-WORKER-6 pass 207: fail2ban em /api/reviews + /api/qna (mutations spam vector)
 // reviews POST + qna POST sao buyer-facing - sem fail2ban gateway:
 // 1. Buyer compromised conta -> mass spam reviews/perguntas

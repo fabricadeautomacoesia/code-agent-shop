@@ -134,8 +134,13 @@ export function WishlistButton({
       aria-pressed={favorited}
       className={`p-2 rounded-lg border transition-all focus-visible:outline-2 focus-visible:outline-magenta ${
         favorited
-          ? 'bg-magenta/20 border-magenta text-magenta-glow'
-          : 'border-white/10 hover:border-white/30 text-white/60'
+          /* FIX-WORKER-8 pass 231 (visual hover consistency): PDP variant favorited
+             nao tinha hover state -> parecia estatico/desabilitado. Adiciona
+             hover:bg-magenta/30 sutil (mesmo pattern card variant linha 118-119
+             mas com /30 em vez de /80 pq border ja indica state). UX: feedback
+             tactile que botao continua clicavel mesmo apos favoritar. */
+          ? 'bg-magenta/20 hover:bg-magenta/30 border-magenta text-magenta-glow'
+          : 'border-white/10 hover:border-white/30 hover:bg-white/5 text-white/60'
       } disabled:opacity-50 ${errorClasses}`}
       title={favorited ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
       {loading
