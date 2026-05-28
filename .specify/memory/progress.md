@@ -32449,3 +32449,34 @@ MLB pattern: order# = search-key universal
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W18 perf optimization
+
+## PASS 402 W14: fix idx_disputes_admin_queue (mig 042 column typo opened_at)
+commit dfed4eb
+BUG CRITICAL silent migration failure
+PRE-FIX mig 042: CREATE INDEX ON disputes(status, opened_at ASC)
+  - Coluna opened_at NAO EXISTE (schema usa created_at)
+  - SEM EXCEPTION wrap = silent fail
+  - Idx idx_disputes_admin_queue ZERO deploys aplicaram
+  - Admin /disputes Seq Scan em prod
+  - Peak 10+ disputes: 50-200ms query
+
+EVIDENCE:
+- psql \d disputes | grep opened_at = vazio
+- pg_indexes idx_disputes_admin_queue = 0 rows
+
+POST-FIX mig 091:
+- DROP IF EXISTS (graceful)
+- CREATE com (status, created_at DESC)
+  * Column correto
+  * DESC paridade endpoint
+- PARTIAL WHERE status IN ('opened','under_review')
+- ANALYZE disputes
+
+Pattern V8 W14: migrations precisam EXCEPTION wrap
+
+135 passes acumulados (268->402) sem deploy VPS
+5 CRITICAL + 23 migrations pendentes apply (069-091)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Self-correction audit: search outras migrations sem EXCEPTION
