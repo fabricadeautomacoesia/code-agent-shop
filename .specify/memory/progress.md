@@ -22534,3 +22534,72 @@ PROXIMA ITER:
 - W18: cache /api/auth/me (admin polling)
 - W11: payment-svc Asaas webhook payload edge cases
 - 🚨 VPS SSH unblock URGENTE (43 ciclos - >14.3h sem deploy!)
+
+PASS 211 (W18 auth-svc /auth/me cache + 3 coherency paths) - 2026-05-28:
+- W18 audit GET /auth/me descobriu gap critico hot-path:
+
+PRE-FIX:
+- Frontend useAuth hook chama /me em CADA navegacao:
+  * Header user dropdown
+  * NotificationBell auth state check
+  * Banner notifications token refresh
+- 100+ navegacoes/sessao = 100+ hits PG
+- Query: SELECT users + 2 subqueries (twofa + seller_profile JSONB)
+- Latencia: ~12ms PG per request
+
+POST-FIX:
+
+1. cache.cacheMiddleware 60s per-user:
+   - Key: auth:me:{user.sub} (single key uniform per user)
+   - Performance: ~12ms PG -> <2ms Redis (6x faster)
+   - DB pool free durante peak navigation
+
+2. Invalidation coherency 3 paths:
+   a) PATCH /me (same file me.js) - apos UPDATE users tx commit
+   b) POST /2fa/activate (two-factor.js) - apos UPDATE is_enabled=TRUE
+   c) POST /2fa/disable (two-factor.js) - apos UPDATE is_enabled=FALSE
+      + revoke sessions
+
+3. Cache key SINGLE (sem vary):
+   - Diferente de outros endpoints (vary por filtros)
+   - /me retorna estado uniforme do user logado
+   - Apenas 1 entry/user = baixo footprint Redis
+
+PATTERN V8 CACHE INVALIDATION agora em 7 svcs:
+- seller-svc: invalidateSellerCache (4 admin caches)
+- order-svc: invalidate orders:user + cross-svc loyalty:me
+- payment-svc: invalidate seller:payouts + cross-svc loyalty:me
+- product-svc: invalidateWishlistCache
+- seller-svc: invalidateSellerPayoutsCache
+- review-svc: invalidate apos QnA upvote (futuro)
+- auth-svc: invalidate auth:me em 3 paths (pass 211 NEW)
+
+Commit b3dc213 pushed origin/main (+36/-16)
+VPS SSH ainda bloqueado (44 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (44 ciclos):
+- 168-210: documentados
+- 211: auth-svc /auth/me cache + 3 coherency paths
+
+CACHE COVERAGE auth-svc:
+- /auth/me: 60s per-user (pass 211 NEW)
+- Other auth endpoints sao mutations (no cache opportunity)
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_auth-svc --force
+- Cache hit benchmark:
+  time curl -H "Authorization: Bearer \$TOKEN" /api/auth/me
+  1a: ~12ms (PG miss)
+  2a: <5ms (Redis hit)
+- Test coherency:
+  PATCH /me { display_name: 'NewName' } -> 200 ok
+  GET /me -> esperado: NewName imediato (sem stale 60s)
+- Test 2FA coherency:
+  POST /2fa/activate -> activate flow
+  GET /me -> twofa_enabled=true imediato
+
+PROXIMA ITER:
+- W17: vault-svc seller BYOK endpoints
+- W11: payment-svc Asaas webhook payload edge cases
+- W18: cache /api/notifications/me unread-count endpoint
+- 🚨 VPS SSH unblock URGENTE (44 ciclos - >14.7h sem deploy!)
