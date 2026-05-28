@@ -30313,3 +30313,46 @@ PROXIMA ITER:
 - W7 audit other schemas (review POST, qna, etc)
 - W4 admin force-approve schema audit
 - VPS SSH unblock URGENTISSIMO (165 ciclos - 55h)
+
+
+============================================================
+PASS 333 - 2026-05-28 - W5/W7 URL/version max() hardening cross-svc
+============================================================
+Files: 2 modificados
+  - services/seller-svc/src/routes/me.js (updateSchema URL max)
+  - services/product-svc/src/routes/seller-mgmt.js (versions schema max)
+Lines: ~10 added
+
+W5/W7 (URL schemas anti-DoS max paridade pass 332):
+- PRE-FIX: z.string().url() sem .max() em 3 fields
+  - store_banner_url + store_logo_url (seller updateSchema)
+  - package_url (product versions POST)
+- 10kb URLs possiveis - storage waste + render slow CDN attribute abuse
+- POST-FIX:
+  - URLs: .max(2048) RFC 7230 recommended limit
+  - version: .max(40) (semver realista: '1.0.0' = 5 chars)
+- Pattern V8 anti-DoS validation consolidado
+
+Total schema hardening cross-svc cumulative (passes 270+):
+- product-svc seller-mgmt draft+patch: 7 fields max (pass 332)
+- product-svc versions: package_url + version max (pass 333)
+- seller-svc updateSchema: 2 URLs max (pass 333)
+- vault-svc: key_alias + plain_key (passes 254/276)
+- notif-svc: template_code regex (pass 292)
+- auth-svc: ua_prefix mask (passes 282-322)
+- Various Zod max() additions
+
+VPS SSH BLOQUEADO (166 ciclos - 55.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_product-svc --force
+- W5/W7 verify URLs > 2048 chars rejeitam:
+  LONG_URL='https://test.com/'$(printf 'a%.0s' $(seq 1 2050))
+  curl -X PATCH -d "{\"store_banner_url\":\"$LONG_URL\"}" /api/sellers/me
+  Esperado: 400 Zod validation
+
+PROXIMA ITER:
+- W7 audit upload routes schemas
+- W4 admin schemas max validation
+- VPS SSH unblock URGENTISSIMO (166 ciclos - 55.3h)

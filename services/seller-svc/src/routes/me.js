@@ -92,11 +92,15 @@ router.get('/',
   res.json({ seller: r.rows[0] });
 }));
 
+/* FIX-WORKER-5 pass 333: URL max() hardening paridade pass 332 product-svc.
+   PRE-FIX: z.string().url() sem .max() - URLs 10kb possiveis (storage waste,
+   render slow, CDN attribute abuse). Asaas/CDN realistas <500 chars.
+   POST-FIX: .max(2048) defensive (RFC 7230 recomendado limit). */
 const updateSchema = z.object({
   store_name: z.string().min(3).max(120).optional(),
   store_description: z.string().max(5000).optional(),
-  store_banner_url: z.string().url().optional(),
-  store_logo_url: z.string().url().optional(),
+  store_banner_url: z.string().url().max(2048).optional(),
+  store_logo_url: z.string().url().max(2048).optional(),
   asaas_pix_key: z.string().max(200).optional(),
   allow_platform_resale: z.boolean().optional(),
 });

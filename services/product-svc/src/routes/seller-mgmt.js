@@ -729,11 +729,12 @@ const versionPublishLimiter = rateLimiter.createLimiter({
 
 router.post('/:id/versions',
   versionPublishLimiter,
+  /* FIX-WORKER-7 pass 333: package_url max() paridade pass 332 */
   validate({ body: z.object({
-    version: z.string().regex(/^\d+\.\d+\.\d+$/),
+    version: z.string().regex(/^\d+\.\d+\.\d+$/).max(40),
     changelog: z.string().min(5).max(5000),
     breaking_changes: z.boolean().default(false),
-    package_url: z.string().url().optional(),
+    package_url: z.string().url().max(2048).optional(),
     package_hash_sha256: z.string().length(64).optional(),
   })}),
   asyncHandler(async (req, res, next) => {
