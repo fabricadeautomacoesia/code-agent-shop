@@ -31715,3 +31715,25 @@ Pattern V8 W1: deep-link redirect + defensive URL parse
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
+
+## PASS 376 W17 VAULT: tiebreaker direction parity (Regra D)
+commit 7081ec2
+BUG pagination drift mixed direction
+PRE-FIX: ORDER BY created_at DESC, id ASC
+  - PG default tiebreaker ASC
+  - Mixed direction = pagination drift em mass-insert
+  - Mesmo created_at burst: user ve key 2x OR pula
+  - Pass 251 corrigiu orders, vault ficou lagged
+
+POST-FIX: ORDER BY created_at DESC, id DESC
+  - SAME direction (ambos representam tempo)
+  - Pagination deterministic
+  - Consolidacao Pattern V8 Regra D cross-svc
+
+109 passes acumulados (268->376) sem deploy VPS
+4 CRITICAL + 20 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W18 perf optimization
