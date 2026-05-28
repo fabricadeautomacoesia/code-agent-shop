@@ -38,8 +38,12 @@ export default function QAQueuePage() {
     });
   }
   async function platformTake(id: string) {
-    if (!confirm('Acionar Clausula Master de Revenda Direta?\nIsso cria copia do produto como is_platform_owned=TRUE (100% lucro plataforma).')) return;
-    const reason = prompt('Justificativa:');
+    const { confirmDialog, promptDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog('Acionar Clausula Master de Revenda Direta?', {
+      body: 'Isso cria copia do produto como is_platform_owned=TRUE (100% lucro plataforma).',
+      variant: 'danger', confirmLabel: 'Acionar Clausula',
+    })) return;
+    const reason = await promptDialog('Justificativa:', 'Ex: produto abandonado pelo vendedor');
     if (!reason) return;
     action.run(`take-${id}`, async () => {
       await adminFetch(`/products/admin/${id}/platform-take`, { method: 'POST', body: JSON.stringify({ reason }) });

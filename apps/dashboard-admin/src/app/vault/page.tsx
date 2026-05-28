@@ -70,8 +70,12 @@ export default function VaultPage() {
   async function rotateKey(id: string, alias: string) {
     const plain_key = prompt(`Rotacionar chave "${alias}"\n\nCole AQUI a NOVA chave plain (sera criptografada e a antiga revogada atomicamente):`);
     if (!plain_key || plain_key.length < 10) return;
-    const reason = prompt('Motivo da rotacao (audit log):') || 'rotacao programada';
-    if (!confirm(`Confirma rotacao de "${alias}"?\n\nNova chave sera ATIVADA e antiga REVOGADA na mesma transacao.`)) return;
+    const { confirmDialog, promptDialog } = await import('@/components/prompt-dialog');
+    const reason = await promptDialog('Motivo da rotacao (audit log):', 'Ex: rotacao 90d programada', 'rotacao programada') || 'rotacao programada';
+    if (!await confirmDialog(`Confirma rotacao de "${alias}"?`, {
+      body: 'Nova chave sera ATIVADA e antiga REVOGADA na mesma transacao.',
+      variant: 'danger', confirmLabel: 'Rotacionar',
+    })) return;
     action.run(`rotate-${id}`, async () => {
       const r = await adminFetch<{ new_fingerprint: string; new_key_id: string }>(
         `/vault/keys/${id}/rotate`,

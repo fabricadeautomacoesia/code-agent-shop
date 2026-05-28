@@ -38,15 +38,17 @@ export default function AdminProductsPage() {
   const action = useAdminAction(load);
 
   async function archive(id: string) {
-    if (!confirm('Arquivar este produto?')) return;
+    const { confirmDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog('Arquivar este produto?', { variant: 'danger', confirmLabel: 'Arquivar' })) return;
     action.run(`archive-${id}`, async () => {
       await adminFetch(`/products/admin/${id}/archive`, { method: 'POST' });
       return `Produto ${id.slice(0, 8)}... arquivado`;
     });
   }
   async function platformTake(id: string) {
-    if (!confirm('Acionar Clausula Master? Vai criar copia 100% plataforma.')) return;
-    const reason = prompt('Justificativa:');
+    const { confirmDialog, promptDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog('Acionar Clausula Master?', { body: 'Vai criar copia 100% plataforma.', variant: 'danger', confirmLabel: 'Acionar' })) return;
+    const reason = await promptDialog('Justificativa:', 'Ex: produto abandonado, vendedor inadimplente');
     if (!reason) return;
     action.run(`take-${id}`, async () => {
       await adminFetch(`/products/admin/${id}/platform-take`, { method: 'POST', body: JSON.stringify({ reason }) });

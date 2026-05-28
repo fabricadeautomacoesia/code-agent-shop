@@ -44,7 +44,8 @@ export default function PayoutsPage() {
     });
   }
   async function processTransfer(id: string) {
-    if (!confirm('Processar transferencia Asaas agora?')) return;
+    const { confirmDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog('Processar transferencia Asaas agora?')) return;
     action.run(`transfer-${id}`, async () => {
       await adminFetch(`/payments/payouts/${id}/process`, { method: 'POST' });
       return `Transferencia ${id.slice(0, 8)}... enviada para Asaas`;

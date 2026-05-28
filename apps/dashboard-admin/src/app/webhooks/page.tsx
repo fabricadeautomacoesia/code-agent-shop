@@ -41,7 +41,8 @@ export default function AdminWebhooksPage() {
   const action = useAdminAction(load);
 
   async function resetWebhook(id: string) {
-    if (!confirm(`Resetar webhook ${id.slice(0, 8)}... e tentar reprocessar imediatamente?`)) return;
+    const { confirmDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog(`Resetar webhook ${id.slice(0, 8)}...?`, { body: 'E tentar reprocessar imediatamente.', confirmLabel: 'Resetar' })) return;
     action.run(`reset-${id}`, async () => {
       const r = await adminFetch<{ ok: boolean; previous_retry_count: number }>(`/payments/webhooks/${id}/reset`, {
         method: 'POST',

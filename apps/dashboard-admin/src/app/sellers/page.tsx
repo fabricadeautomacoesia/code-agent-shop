@@ -29,7 +29,8 @@ export default function SellersPage() {
     });
   }
   async function promoteB(id: string) {
-    if (!confirm('Promover este seller para Classe B (Cloud Code Ilimitado)?')) return;
+    const { confirmDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog('Promover este seller para Classe B?', { body: 'Acesso ao programa Cloud Code Ilimitado.' })) return;
     action.run(`promote-${id}`, async () => {
       await adminFetch(`/sellers/admin/${id}/promote-class-b`, { method: 'POST', body: JSON.stringify({ sla_days: 15 }) });
       return `Seller ${id.slice(0, 8)}... promovido para Classe B`;
