@@ -30041,3 +30041,38 @@ PROXIMA ITER:
 - W2 sellers /:slug GET COUNT OVER (linha 168, 180, 192, 325)
 - W4 admin dashboard /api/sellers stats
 - VPS SSH unblock URGENTISSIMO (158 ciclos - 52.7h)
+
+
+============================================================
+PASS 326 - 2026-05-28 - W12 qa-worker callback retry classification
+============================================================
+Files: 1 modificado
+  - services/qa-worker/app/main.py (4xx fail-fast + 5xx retry)
+Lines: ~15 added
+
+W12 (qa-worker callback retry refinement):
+- PRE-FIX pass 309: retry para QUALQUER non-2xx (4xx + 5xx)
+- 4xx errors sao permanentes (waste retry budget):
+  - 400 schema invalid = bug code worker
+  - 401 HMAC mismatch = QA_CALLBACK_SECRET inconsistent
+  - 404 run_id nao existe = race com qa-svc cleanup
+- 5xx errors transient legitimas para retry
+- POST-FIX classify:
+  - 200-299: success
+  - 4xx: permanent fail-fast (no retry, log specific)
+  - 5xx: retry com backoff (1s, 3s) ate exhausted
+- Pattern V8 paridade notif-svc pass 219 (transient classification)
+
+VPS SSH BLOQUEADO (159 ciclos - 53h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-worker --force
+- W12 verify:
+  - Simular qa-svc 401 (mudar QA_CALLBACK_SECRET temp) -> log PERMANENT_FAIL
+  - Simular 503 (kill qa-svc) -> log retry attempt=0/1/2 + exhausted
+
+PROXIMA ITER:
+- W12 qa-svc parallel idempotency check
+- W18 final perf consolidation review
+- VPS SSH unblock URGENTISSIMO (159 ciclos - 53h)

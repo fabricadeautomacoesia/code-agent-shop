@@ -672,9 +672,21 @@ async def send_callback(url: str, payload: dict):
                 if attempt > 0:
                     print(f"[qa-worker] callback OK apos retry attempt={attempt} url_prefix={masked_url}", flush=True)
                 return
-            # 4xx/5xx - retry com backoff
+            # FIX-WORKER-12 pass 326: classify retry by status code.
+            # PRE-FIX pass 309: retry para QUALQUER non-2xx (4xx + 5xx).
+            # 4xx errors sao permanentes (bad payload, HMAC mismatch real):
+            #   - 400 schema invalido = bug code worker
+            #   - 401 HMAC mismatch = QA_CALLBACK_SECRET inconsistent
+            #   - 404 run_id nao existe = race com qa-svc cleanup
+            # Retry 4xx waste budget + atrasa cron fallback discovery.
+            # POST-FIX: 5xx retry (transient), 4xx fail-fast.
+            # Pattern paridade notif-svc pass 219 (transient classification).
             last_err_type = f"http_{r.status_code}"
             print(f"[qa-worker] callback non-2xx attempt={attempt} status={r.status_code} url_prefix={masked_url}", flush=True)
+            if 400 <= r.status_code < 500:
+                # Permanent failure - no retry
+                print(f"[qa-worker] callback PERMANENT_FAIL status={r.status_code} skipping retries url_prefix={masked_url}", flush=True)
+                return
         except Exception as e:
             # FIX-WORKER-12 pass 272 (DLP callback failure log):
             #   PRE-FIX: print(f"callback FAIL: {e}") - exception pode conter:
