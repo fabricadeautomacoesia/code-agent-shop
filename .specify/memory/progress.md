@@ -17334,7 +17334,38 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Rebuild dashboard-admin + dashboard-seller (pass 114) - 6 pages admin ressurgiram
 - ✅ Fix /conta link Downloads + audit admin pages (pass 115)
 - ✅ Audit visual/UX + Fix OG layout completo (pass 116)
-- ✅ Audit perf+sec + Fix internal-token bypass (pass 117 esta iter)
+- ✅ Audit perf+sec + Fix internal-token bypass (pass 117)
+- ✅ SEO metadata /sellers + /products enriquecida (pass 118 esta iter)
+
+W7 PASS 118 RESUMO - SEO METADATA + FALSO POSITIVO PASS 117:
+- INVESTIGATION pass 117 alerta 'security_events table missing':
+  * FALSO POSITIVO confirmado - fail2ban e in-memory only
+    (packages/shared/src/fail2ban.js usa Map() global)
+  * Nao ha schema p/ aplicar, sistema funciona como projetado
+- WORKER 9 SEO/META: audit pages sem export const metadata:
+  10 pages sem metadata explicita (so SSR root inherit):
+  cart, checkout, conta, esqueci-senha, login, products, redefinir-senha,
+  register, sellers, status
+- CASOS ESPECIAIS detectados:
+  * /cart + /checkout: layout.tsx JA tinha metadata (pass 7, completo)
+  * /login + /register + /esqueci-senha: 'use client' - layouts pai talvez
+  * /conta + /status: auth-required, robots index:false (esperado)
+- FIX adicionado em 2 pages publicas SEO-criticas:
+  * /sellers/page.tsx: NEW metadata
+    - title: 'Vendedores Verificados | Code & Agent Shop'
+    - description com keywords KYC + reputacao
+    - canonical /sellers (evita duplicate ?sort=X)
+    - OG type/url/title/description/images apontando opengraph-image
+    - keywords array p/ search engines
+  * /products/layout.tsx: COMPLETED metadata (faltava images + twitter)
+    - + openGraph.url canonical
+    - + openGraph.images opengraph-image
+    - + keywords array
+    - + twitter card summary_large_image
+- VALIDATION POS-DEPLOY:
+  * /sellers HTTP 200, title 'Vendedores Verificados'
+  * /products HTTP 200, title + 4 twitter:* tags
+- Pattern W7 em 148+ endpoints/pages LIVE - 118 micro-iters
 
 W7 PASS 117 RESUMO - AUDIT PERF+SEC + FIX TOKEN BYPASS:
 - Audit performance prod:
