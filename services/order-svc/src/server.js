@@ -3,7 +3,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../../../.env') });
 
 const express = require('express');
-const { logger, sanitize, errorHandler, startup } = require('@cas/shared');
+const { logger, sanitize, errorHandler, startup, mask } = require('@cas/shared');
 const { query, healthcheck } = require('@cas/db-client');
 
 // FIX-WORKER-17 pass 8: order-svc faz fetch para payment-svc/qa-svc com
@@ -59,7 +59,8 @@ async function cleanupAbandonedCarts() {
       log.info({ deleted: r.rowCount, days: CART_CLEANUP_DAYS }, '[cart.cleanup]');
     }
   } catch (e) {
-    log.error({ err: e.message }, '[cart.cleanup.fail]');
+    /* FIX-WORKER-2 pass 342: DLP mask cart cleanup error */
+    log.error({ err: mask.text(String(e.message || '').slice(0, 300)) }, '[cart.cleanup.fail]');
   }
 }
 

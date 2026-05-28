@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, errorHandler, logger } = require('@cas/shared');
+const { jwt, asyncHandler, errorHandler, logger, mask } = require('@cas/shared');
 
 const router = express.Router();
 const log = logger.child({ svc: 'order-svc', mod: 'download' });
@@ -155,7 +155,8 @@ router.get('/:token', asyncHandler(async (req, res, next) => {
       );
     } catch (e) {
       // audit log fail nao quebra download (graceful)
-      log.warn({ err: e.message, item_id: item.id }, '[download.audit_fail]');
+      /* FIX-WORKER-2 pass 342: DLP mask download audit failure */
+      log.warn({ err: mask.text(String(e.message || '').slice(0, 300)), item_id: item.id }, '[download.audit_fail]');
     }
 
     response = {

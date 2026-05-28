@@ -30668,3 +30668,48 @@ PROXIMA ITER:
 - W4 audit other svcs log paths (aiops/order/notif)
 - W11 payment-svc audit additional
 - VPS SSH unblock URGENTISSIMO (174 ciclos - 58h)
+
+
+============================================================
+PASS 342 - 2026-05-28 - MARCO cross-svc raw e.message DLP mask sweep
+============================================================
+Files: 3 modificados
+  - services/aiops-svc/src/server.js (3 logs via replace_all)
+  - services/order-svc/src/server.js (1 log + import mask)
+  - services/order-svc/src/routes/download.js (1 log + import mask)
+Lines: ~10 changed
+
+W4/W2 (cross-svc e.message DLP sweep):
+- aiops-svc 3 logs (replace_all):
+  - alert.telegram.fail (Telegram API error msg)
+  - autoheal.ram.fail (system exec error)
+  - collect.err (metrics collector error)
+- order-svc cart.cleanup.fail (cron error)
+- order-svc download.audit_fail (audit log INSERT error)
+
+DLP Error Logging Final cross-svc consolidacao:
+- auth-svc: 18 paths (15 audit_log + 3 log.error/warn)
+- product-svc: 1 audit_log
+- vault-svc: 3 (1 audit + 1 log + 1 /usage)
+- qa-svc: 4 (1 audit + 3 log)
+- payment-svc: 6 (3 audit + 3 log)
+- seller-svc: 1 log
+- order-svc: 4 (2 dispatch pass 340 + 2 pass 342)
+- qa-worker: 2 log Python
+- notif-svc: 1 outbox failed_reason
+- aiops-svc: 3 log (pass 342)
+= TOTAL: ~43 paths cross-svc DLP error mask
+
+VPS SSH BLOQUEADO (175 ciclos - 58.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_aiops-svc cas_order-svc --force
+- Verify Pino logs:
+  docker service logs cas_aiops-svc | grep -i "alert.telegram.fail\|autoheal.ram\|collect.err"
+  Esperado: err strings masked (sem raw stack traces)
+
+PROXIMA ITER:
+- W4 final audit: notification-svc + qa-worker remaining log paths
+- W11 payment audit deeper
+- VPS SSH unblock URGENTISSIMO (175 ciclos - 58.3h)

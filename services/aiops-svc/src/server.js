@@ -98,7 +98,7 @@ async function sendTelegramAlert(title, message) {
       body: JSON.stringify({ chat_id: chat, text: `*[CAS AIOPS]* ${title}\n${message}`, parse_mode: 'Markdown' }),
       signal: AbortSignal.timeout(10000),
     });
-  } catch (e) { log.warn({ err: e.message }, '[alert.telegram.fail]'); }
+  } catch (e) { log.warn({ /* FIX pass 342 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[alert.telegram.fail]'); }
 }
 
 async function dispatchAlert({ severity, source, code, title, message, targetType, targetId }) {
@@ -160,7 +160,7 @@ async function autoHealRAM(m) {
       message: `RAM em ${m.ram_percent.toFixed(1)}% no host ${m.host}. Cache de kernel limpo.`,
     });
   } catch (e) {
-    log.error({ err: e.message }, '[autoheal.ram.fail]');
+    log.error({ /* FIX pass 342 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[autoheal.ram.fail]');
   }
 }
 
@@ -792,7 +792,7 @@ cron.schedule('*/10 * * * * *', async () => { // a cada 10s
     const m = await collectMetrics();
     await persistMetrics(m);
     await checkThresholds(m);
-  } catch (e) { log.error({ err: e.message }, '[collect.err]'); }
+  } catch (e) { log.error({ /* FIX pass 342 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[collect.err]'); }
 });
 
 cron.schedule('*/5 * * * *', () => releaseSpikeBlocks().catch(() => {})); // a cada 5min
