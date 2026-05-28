@@ -496,6 +496,9 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
       const slugNorm = String(outcome.slug).toLowerCase().trim();
       await cache.del(`products:qna:${slugNorm}:*`).catch(() => {});
     }
+    // FIX-WORKER-18 pass 361: invalidate seller pending queue cache
+    //   Nova qna -> queue do seller incrementa -> dashboard mostra realtime
+    cache.del('qna:seller:pending:*').catch(() => {});
     res.status(201).json({ qna });
   })
 );
@@ -728,7 +731,27 @@ app.get('/qna/:id/voted', jwt.requireAuth(),
 //   (contato direto, marketing nao-consentido).
 //   FIX: maskEmail aplicado (seller so precisa display_name p/ contexto).
 //   Admin path vê full (investigacao).
+// FIX-WORKER-18 pass 361 (cache ausente em hot path dashboard-seller):
+//   PRE-FIX: /qna/seller/pending SEM cacheMiddleware
+//   - Dashboard-seller /qna page polls a cada 30-60s
+//   - 100 sellers ativos = 100+ queries DB/min (JOIN products + sellers + users
+//     + WHERE filter complexo + COUNT OVER window)
+//   - Cada query ~30-100ms - load DB significativo
+//   - Latencia perceptivel (UI bookmark a cada page nav)
+//   POST-FIX: cache 30s vary by user.sub + paginacao + isAdmin path
+//   - 30s freshness adequada (qna pending nao realtime critical)
+//   - Per-user (seller A nao vê seller B no cache)
+//   - Invalidation natural via TTL (qna_responder fluxo bate /qna/:id/answer)
+//   - Pattern V8 cross-svc paridade ja existing (pass 200/202/216/289).
+const qnaSellerPendingCacheKey = (req) => {
+  const q = req.query;
+  const isAdmin = req.user?.role === 'admin';
+  const sellerId = isAdmin ? (q.seller_id || 'all') : (req.user?.sub || 'anon');
+  return `qna:seller:pending:u=${sellerId}:lim=${q.limit||50}:off=${q.offset||0}`;
+};
+
 app.get('/qna/seller/pending', jwt.requireAuth({ roles: ['seller','admin'] }),
+  cache.cacheMiddleware(qnaSellerPendingCacheKey, 30),
   asyncHandler(async (req, res) => {
     const isAdmin = req.user && req.user.role === 'admin';
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
@@ -922,6 +945,9 @@ app.post('/qna/:id/answer',
       const slugNorm = String(result.slug).toLowerCase().trim();
       await cache.del(`products:qna:${slugNorm}:*`).catch(() => {});
     }
+    // FIX-WORKER-18 pass 361: invalidate seller pending queue cache
+    //   Resposta -> queue do seller decrementa -> dashboard mostra realtime
+    cache.del('qna:seller:pending:*').catch(() => {});
     res.json({ ok: true, answered_by_admin: result.answered_by_admin });
   })
 );
