@@ -235,7 +235,8 @@ export default function CheckoutPage() {
         </div>
       )}
 
-      <button onClick={pay} disabled={loading || !cart?.items_count || hasCpf === false}
+      <button type="button" onClick={pay} disabled={loading || !cart?.items_count || hasCpf === false}
+        aria-label={loading ? 'Processando pagamento' : 'Finalizar pagamento'}
         className="btn-primary w-full text-base disabled:opacity-50">
         {loading ? 'Processando...' : (hasCpf === false ? 'Complete cadastro para pagar' : 'Confirmar e pagar')}
       </button>

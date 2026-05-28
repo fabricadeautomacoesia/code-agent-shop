@@ -154,26 +154,29 @@ export default function CartPage() {
                   <div className="text-sm text-white/60">{it.product?.seller_name}</div>
                   <div className="flex items-center justify-between mt-2 gap-2">
                     {/* FIX-WORKER-2: controles +/- de quantidade */}
+                    {/* FIX-WORKER-2 pass 161 (a11y): type='button' + aria-label dinamico + aria-live qty */}
                     <div className="inline-flex items-center rounded-lg border border-white/10 bg-white/5">
-                      <button onClick={() => setQty(it.id, it.quantity - 1)}
-                        aria-label="Diminuir quantidade"
-                        className="p-1.5 hover:bg-white/10 rounded-l-lg transition-colors disabled:opacity-30"
+                      <button type="button" onClick={() => setQty(it.id, it.quantity - 1)}
+                        aria-label={`Diminuir quantidade de ${it.product?.title || 'produto'} (atual: ${it.quantity})`}
+                        className="p-1.5 hover:bg-white/10 rounded-l-lg transition-colors disabled:opacity-30 focus-visible:outline-2 focus-visible:outline-magenta"
                         disabled={it.quantity <= 1}>
-                        <Minus className="w-3.5 h-3.5" />
+                        <Minus className="w-3.5 h-3.5" aria-hidden="true" />
                       </button>
-                      <span className="px-3 text-sm font-mono font-semibold min-w-[32px] text-center">{it.quantity}</span>
-                      <button onClick={() => setQty(it.id, it.quantity + 1)}
-                        aria-label="Aumentar quantidade"
-                        className="p-1.5 hover:bg-white/10 rounded-r-lg transition-colors disabled:opacity-30"
+                      <span aria-live="polite" className="px-3 text-sm font-mono font-semibold min-w-[32px] text-center">{it.quantity}</span>
+                      <button type="button" onClick={() => setQty(it.id, it.quantity + 1)}
+                        aria-label={`Aumentar quantidade de ${it.product?.title || 'produto'} (atual: ${it.quantity})`}
+                        className="p-1.5 hover:bg-white/10 rounded-r-lg transition-colors disabled:opacity-30 focus-visible:outline-2 focus-visible:outline-magenta"
                         disabled={it.quantity >= 99}>
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-3.5 h-3.5" aria-hidden="true" />
                       </button>
                     </div>
                     <div className="font-display font-bold text-magenta-glow">{Api.formatBRL(it.line_total_cents)}</div>
                   </div>
                 </div>
-                <button onClick={() => remove(it.id)} className="text-white/40 hover:text-red-400 p-2">
-                  <Trash2 className="w-5 h-5" />
+                <button type="button" onClick={() => remove(it.id)}
+                  aria-label={`Remover ${it.product?.title || 'produto'} do carrinho`}
+                  className="text-white/40 hover:text-red-400 p-2 focus-visible:outline-2 focus-visible:outline-red-400 rounded">
+                  <Trash2 className="w-5 h-5" aria-hidden="true" />
                 </button>
               </div>
             ))}
@@ -240,21 +243,26 @@ export default function CartPage() {
                     <div className="text-xs text-magenta-glow">
                       {cart.loyalty_points_redeemed} pts aplicados
                     </div>
-                    <button onClick={clearRedeem} className="text-[11px] text-white/60 hover:text-white underline">
+                    {/* FIX-WORKER-2 pass 161 (a11y): type='button' + aria-label */}
+                    <button type="button" onClick={clearRedeem}
+                      aria-label="Remover pontos de fidelidade aplicados"
+                      className="text-[11px] text-white/60 hover:text-white underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
                       Remover
                     </button>
                   </div>
                 ) : (
                   <div className="flex gap-1.5">
                     {[500, 1000, 5000].filter((p) => p <= Number(loyalty.points_balance)).map((p) => (
-                      <button key={p} onClick={() => applyRedeem(p)}
-                        className="flex-1 px-2 py-1.5 rounded text-[11px] bg-white/5 hover:bg-magenta/20 border border-white/10 hover:border-magenta/50 transition-colors">
+                      <button type="button" key={p} onClick={() => applyRedeem(p)}
+                        aria-label={`Aplicar ${p} pontos (desconto ${Api.formatBRL(p)})`}
+                        className="flex-1 px-2 py-1.5 rounded text-[11px] bg-white/5 hover:bg-magenta/20 border border-white/10 hover:border-magenta/50 transition-colors focus-visible:outline-2 focus-visible:outline-magenta">
                         {p}pts<br /><span className="text-magenta-glow">-{Api.formatBRL(p)}</span>
                       </button>
                     ))}
                     {Number(loyalty.points_balance) > 5000 && (
-                      <button onClick={() => applyRedeem(Number(loyalty.points_balance))}
-                        className="flex-1 px-2 py-1.5 rounded text-[11px] bg-white/5 hover:bg-magenta/20 border border-white/10 hover:border-magenta/50 transition-colors">
+                      <button type="button" onClick={() => applyRedeem(Number(loyalty.points_balance))}
+                        aria-label={`Aplicar maximo ${Number(loyalty.points_balance)} pontos disponiveis`}
+                        className="flex-1 px-2 py-1.5 rounded text-[11px] bg-white/5 hover:bg-magenta/20 border border-white/10 hover:border-magenta/50 transition-colors focus-visible:outline-2 focus-visible:outline-magenta">
                         Max<br /><span className="text-magenta-glow">{Number(loyalty.points_balance)}pts</span>
                       </button>
                     )}
@@ -312,7 +320,9 @@ export default function CartPage() {
               <span className="text-magenta-glow">{Api.formatBRL(cart?.total_cents || 0)}</span>
             </div>
 
-            <button onClick={() => router.push('/checkout')} className="btn-primary w-full text-base">
+            <button type="button" onClick={() => router.push('/checkout')}
+              aria-label="Ir para checkout"
+              className="btn-primary w-full text-base focus-visible:outline-2 focus-visible:outline-magenta">
               Finalizar compra
             </button>
             {err && <div className="text-sm text-red-400 mt-3">{err}</div>}
