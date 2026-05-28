@@ -858,7 +858,17 @@ async function cleanupTimeSeriesData() {
     if (r.status === 'fulfilled' && r.value.deleted > 0) {
       log.info({ table: cleanups[i].name, days: cleanups[i].days, deleted: r.value.deleted }, '[cleanup.ok]');
     } else if (r.status === 'rejected') {
-      log.error({ table: cleanups[i].name, err: r.reason?.message }, '[cleanup.fail]');
+      // FIX-WORKER-18 pass 415 (DLP mask cleanup error - paridade cross-svc):
+      //   PRE-FIX: err: r.reason?.message raw
+      //   - PG errors podem conter PG_PASS em URI/connection string ('connect to host=cas user=pass=XYZ')
+      //   - DELETE FK violation pode incluir constraint name + table data (PII rows)
+      //   - audit_log/notifications JA mask (passes 277-400 series)
+      //   - aiops cleanup ficou lagged
+      //   POST-FIX: mask.text() paridade DLP cross-svc consolidacao
+      log.error({
+        table: cleanups[i].name,
+        err: mask.text(String(r.reason?.message || '').slice(0, 300)),
+      }, '[cleanup.fail]');
     }
   }
 }
