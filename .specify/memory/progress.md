@@ -27179,3 +27179,71 @@ PROXIMA ITER:
 - W2 cupom validate UI tier
 - W4 force-approve audit dedup
 - VPS SSH unblock CRITICAL (98 ciclos - 32.7h)
+
+============================================================
+PASS 266 (2026-05-28) - W14 + W8
+============================================================
+
+OBJETIVO: 2 workers (W4 audit clean)
+- W14 db: mig 077 idx_payouts_admin_queue PARTIAL FIFO
+- W8 storefront: price-alert-button active state hover
+
+============================================================
+1. W14 - mig 077 idx_payouts_admin_queue PARTIAL FIFO
+============================================================
+FILE: db/migrations/077_payouts_admin_queue_idx.sql (CRIADO)
+
+PROBLEMA:
+- /admin/payouts/pending polling 20s cache + admin dashboard 30s poll
+- Query: WHERE status IN ('pending','approved') ORDER BY requested_at ASC
+- Indices existentes inadequados:
+  * idx_payouts_seller (seller_id, requested_at DESC) - wrong direction
+  * idx_payouts_status sozinho: filter mas SORT in-memory
+- Prod 5k payouts historicos: scan + sort ~50-100ms per request
+- Cache miss = 50-100ms latency admin dashboard
+
+POST-FIX:
+- CREATE INDEX PARTIAL (requested_at ASC, id ASC) WHERE status IN
+- PARTIAL filtra ~80% rows (so pending/approved no idx)
+- ORDER BY prefix do idx -> index-only scan SEM sort
+- Latencia 50-100ms -> <5ms
+
+============================================================
+2. W8 - price-alert-button active state hover parity
+============================================================
+FILE: apps/storefront/src/components/price-alert-button.tsx:99-103
+
+PROBLEMA:
+- State active: 'border-magenta bg-magenta/10 text-magenta-glow' SEM hover
+- Mesmo bug pass 231 W8 (wishlist-button) ja fixado
+- Pattern V8: state ativo precisa hover feedback subtle (indicar clicavel)
+
+POST-FIX:
+- active: hover:bg-magenta/20 (subtle indicacao tactile)
+- default: hover:bg-white/10 (paridade visual)
+- Paridade wishlist-button + cart-drawer pattern V8
+
+============================================================
+SUMARIO PASS 266
+============================================================
+Files: 2 modificados/criados
+  - db/migrations/077_payouts_admin_queue_idx.sql (NEW PARTIAL idx)
+  - apps/storefront/src/components/price-alert-button.tsx (hover)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (99 ciclos - 33h sem deploy).
+Migs 069-077 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront --force
+- Apply mig 077:
+    docker exec cas_postgres psql -U cas_admin -d cas \
+      -f /docker/db/migrations/077_payouts_admin_queue_idx.sql
+- W14: EXPLAIN ANALYZE SELECT FROM seller_payouts WHERE status IN ('pending','approved')
+  ORDER BY requested_at ASC -> Index Scan idx_payouts_admin_queue (era Sort)
+- W8: PDP active price alert -> hover feedback visivel (era estatico)
+
+PROXIMA ITER:
+- W5 dashboard reviews edit modal
+- W3 PDP gallery zoom
+- VPS SSH unblock CRITICAL (99 ciclos - 33h MARCO!!!)

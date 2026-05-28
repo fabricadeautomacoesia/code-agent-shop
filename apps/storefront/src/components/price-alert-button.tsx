@@ -98,8 +98,11 @@ export function PriceAlertButton({ productId, currentPriceCents: _unused }: Prop
       title={active ? 'Voce sera notificado se o preco baixar' : 'Receber email se o preco baixar'}
       className={`w-full px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta ${
         active
-          ? 'border-magenta bg-magenta/10 text-magenta-glow'
-          : 'border-white/10 bg-white/5 hover:border-white/30 text-white/70'
+          /* FIX-WORKER-8 pass 266 (active state hover parity):
+             Paridade com wishlist-button pass 231 - state ativo sem hover feedback
+             parecia estatico. hover:bg-magenta/20 sutil indica clicavel. */
+          ? 'border-magenta bg-magenta/10 hover:bg-magenta/20 text-magenta-glow'
+          : 'border-white/10 bg-white/5 hover:border-white/30 hover:bg-white/10 text-white/70'
       } ${errorFlash ? 'ring-2 ring-red-500 animate-pulse' : ''}`}>
       <div className="flex items-center justify-center gap-2">
         {active
