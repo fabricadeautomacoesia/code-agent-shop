@@ -33055,3 +33055,48 @@ W13 cache invalidation:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 423 W18 PERFORMANCE: idx_products_cat_sales widening platform_owned
+commit pendente
+BUG /search hot-path subquery is_top_seller forca Seq Scan products
+PRE-FIX:
+- Mig 010 idx_products_cat_sales PARTIAL WHERE status='approved'
+- Mig 016/029 introduziu status='platform_owned' (revenda direta)
+- search-svc /search subquery: status IN ('approved','platform_owned')
+- PG planner NAO usa idx PARTIAL pq WHERE clause nao matches
+- Seq Scan products (50k rows) por subquery is_top_seller
+- LIMIT 24 -> 24 subscans * ~7.5ms = ~180ms hot-path
+
+CENARIO:
+- Homepage /search?category=ia -> calcula is_top_seller para 24 produtos
+- Cada produto roda MAX(sales_count) WHERE cat_id=X AND status IN (...)
+- Sem idx matching = full Seq Scan
+- 10-50 req/s prod -> 240-1200 subscans/seg products
+
+POST-FIX:
+- mig 093 DROP idx_products_cat_sales antigo
+- Recreate WHERE status IN ('approved','platform_owned') AND deleted_at IS NULL
+- + idx_products_cat_sales_max (sem DESC) para index-only MAX scan
+- ANALYZE products
+
+Performance esperada:
+- /search latencia ~190ms -> ~50ms (3.8x melhoria)
+- Subquery ~7.5ms cada -> ~0.5ms cada
+- Index Scan vs Seq Scan em hot path
+
+Pattern V8 W18: PARTIAL index WHERE clause = exact match query usage
+
+W18 perf series:
+  pass 197 sellers/all cache+window
+  pass 198 payouts/pending cache+window
+  pass 199 pending-kyc cache+window
+  pass 289 webhooks/dead window
+  pass 321 /search window COUNT
+  pass 423 idx_products_cat_sales widen <- ESTE
+
+156 passes acumulados (268->423) sem deploy VPS
+5 CRITICAL + 25 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Apply mig 093 prod p/ medir EXPLAIN ANALYZE real
