@@ -22728,3 +22728,75 @@ PROXIMA ITER:
 - W11: payment-svc Asaas refund edge cases (PAYMENT_REFUND_FAILED retry)
 - W13: notification-svc Telegram retry edge cases
 - 🚨 VPS SSH unblock URGENTE (46 ciclos - >15.3h sem deploy!)
+
+PASS 214 (W4 order-svc /admin/disputes 4 fixes + coherency) - 2026-05-28:
+- W4 audit GET /orders/admin/disputes descobriu 4 bugs compostos:
+
+1. LIMIT \$2 sem ?offset paginacao quebrada
+2. 2 queries por hit (rows + stats GROUP BY)
+3. NO cache - admin polling sem proteção
+4. response 'limit: lim' sem total absolute (UI 'X de Y' impossivel)
+
+POST-FIX (4 melhorias + coherency):
+
+1. ?limit (1-200) + ?offset (>=0) V8 Regra E
+
+2. COUNT(*) OVER()::INT AS _total window:
+   - Strip _total + has_more boolean
+   - Pattern V8 16o endpoint cache+window
+
+3. cache.cacheMiddleware 30s vary by status+limit+offset:
+   - Key: order:admin:disputes:s={status}:lim={lim}:off={off}
+   - 30s OK: disputes resolution baixa frequencia
+
+4. Cache coherency:
+   - POST /admin/disputes/:id/resolve invalida order:admin:disputes:*
+   - Best-effort try/catch (cache fail nao quebra resolve tx)
+
+Stats GROUP BY query (counts agregados 90d) mantida na segunda query
+- Cached junto via cache miss hit cobre ambas (1 cache key = ambas queries)
+- Stats sao pequenas - poucos KB
+
+Response shape final consistente V8:
+{ disputes, counts, total, limit, offset, filter, has_more }
+
+LGPD mask preserved via maskPII helper.
+
+PATTERN V8 COUNT WINDOW agora em 16 endpoints / 8 microsservices:
+- product-svc (4), notification-svc (1), vault-svc (2), search-svc (1),
+- review-svc (2), seller-svc (4), aiops-svc (3),
+- order-svc (2): /orders user (pass 206), /admin/disputes (pass 214 NEW)
+
+Commit e405be7 pushed origin/main (+50/-16)
+VPS SSH ainda bloqueado (47 ciclos consecutivos)
+
+CACHE COVERAGE order-svc COMPLETA:
+- /orders user: 30s (pass 206)
+- /admin/disputes: 30s (pass 214 NEW)
+- /cart: 5s (existing W18 anterior)
+- /coupon/:code/preview: 60s (existing)
+- /admin/recent: TODO (audit futura)
+- /:id detalhe: TODO (audit futura)
+
+CODIGO ACUMULADO ORIGIN/MAIN (47 ciclos):
+- 168-213: documentados
+- 214: order-svc /admin/disputes cache + window + coherency
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_order-svc --force
+- Cache hit benchmark:
+  time curl -H "Bearer \$ADMIN" "/api/orders/admin/disputes?status=opened"
+  1a: ~25ms (PG window + stats)
+  2a: <5ms (Redis hit)
+- Pagination test:
+  curl "?limit=10&offset=0" -> total absoluto + count 10
+  curl "?limit=10&offset=10" -> mesmo total + next 10
+- Coherency test:
+  POST /admin/disputes/{id}/resolve -> 200
+  GET /admin/disputes -> dispute resolved no list imediato
+
+PROXIMA ITER:
+- W17: vault-svc seller BYOK endpoints
+- W11: payment-svc Asaas refund edge cases
+- W13: notification-svc Telegram retry edge cases
+- 🚨 VPS SSH unblock URGENTE (47 ciclos - >15.7h sem deploy!)
