@@ -842,9 +842,19 @@ app.get('/qa/runs/stuck',
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const thresholdMin = Math.max(1, Math.min(1440, parseInt(req.query.threshold_minutes, 10) || 5));
 
+    // FIX-WORKER-12+W18 pass 265 (COUNT window consolidation + idx_qa_runs_inflight reuse):
+    //   PRE-FIX: 2 queries (SELECT rows + SELECT COUNT) com WHERE identico
+    //   Endpoint /admin/qa-runs/stuck eh polled por dashboard admin (30s).
+    //   2 roundtrips DB per request + plan executado 2x.
+    //   Idx idx_qa_runs_inflight (mig 071, pass 239) cobre WHERE verdict='running'
+    //   + started_at DESC mas query usa ASC (FIFO oldest stuck first).
+    //   POST-FIX: COUNT(*) OVER() window consolida. Pattern V8 consolidado
+    //   passes 178-249+ em 14+ endpoints.
+    //   ASC mantido (FIFO operational - admin trabalha oldest first em incident).
     const r = await query(
       `SELECT id, product_id, started_at, llm_provider, n8n_execution_id,
-              EXTRACT(EPOCH FROM (NOW() - started_at))/60::INT AS minutes_running
+              (EXTRACT(EPOCH FROM (NOW() - started_at))/60)::INT AS minutes_running,
+              COUNT(*) OVER()::INT AS _total
          FROM product_qa_runs
         WHERE verdict = 'running'
           AND started_at < NOW() - ($1 || ' minutes')::INTERVAL
@@ -853,20 +863,16 @@ app.get('/qa/runs/stuck',
       [String(thresholdMin), limit, offset]
     );
 
-    const totalRes = await query(
-      `SELECT COUNT(*)::INT AS total FROM product_qa_runs
-        WHERE verdict = 'running'
-          AND started_at < NOW() - ($1 || ' minutes')::INTERVAL`,
-      [String(thresholdMin)]
-    );
+    const total = r.rows[0]?._total ?? 0;
+    const runs = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
 
     res.json({
-      runs: r.rows,
-      count: r.rows.length,
-      total: totalRes.rows[0].total,
+      runs,
+      count: runs.length,
+      total,
       limit, offset,
       threshold_minutes: thresholdMin,
-      has_more: (offset + r.rows.length) < totalRes.rows[0].total,
+      has_more: (offset + runs.length) < total,
     });
   })
 );

@@ -27117,3 +27117,65 @@ PROXIMA ITER:
 - W2 checkout cupom validate UI
 - W4 admin force-approve audit dedup
 - VPS SSH unblock CRITICAL (97 ciclos - 32.3h)
+
+============================================================
+PASS 265 (2026-05-28) - W12 + W18 qa-svc + arithmetic
+============================================================
+
+OBJETIVO: 2 workers (W6 audit clean, sem gap critico)
+- W12+W18 qa-svc /admin/qa-runs/stuck COUNT window + arithmetic bug
+
+============================================================
+1. W12+W18 - qa-svc stuck-runs consolidation
+============================================================
+FILE: services/qa-svc/src/server.js:845-871
+
+PROBLEMA 1 (perf):
+- /admin/qa-runs/stuck endpoint polled por dashboard 30s
+- 2 queries separadas (SELECT rows + SELECT COUNT) com WHERE replicado
+- 2 DB roundtrips per request + plan executado 2x
+- Pattern V8 consolidado passes 178-249+ em 14+ endpoints
+
+PROBLEMA 2 (arithmetic bug LATENT):
+- EXTRACT(EPOCH FROM (NOW() - started_at))/60::INT AS minutes_running
+- Precedencia PG: 60::INT cast PRIMEIRO -> divisao com cast INT
+- Resultado float (NOT INT) - alias minutes_running expected INT
+- Frontend dashboard typescript: number assumido INT, decimal exibido
+- Edge case raro mas tipagem inconsistente
+
+POST-FIX:
+- COUNT(*) OVER()::INT AS _total inline
+- Strip _total no map response
+- (EXTRACT(...)/60)::INT parenteses corretos - INT garantido
+- 50% reducao DB roundtrip + plan reuse
+
+============================================================
+2. W6 - gateway/notif audit (clean)
+============================================================
+Reviewed:
+- gateway timeouts: TIMEOUT_FAST/DEFAULT/SLOW corretamente aplicados
+- bodyLimitMiddleware /api global = 1MB (cobre reviews/qna)
+- notification-svc /:id/read + /read-all + /test: rate-limit local
+  presente (readLimiter 100/min, readAllLimiter, testEmailLimiter)
+- /test endpoint: whitelist destinations + audit_log atomic
+Nenhum gap critico esta iter.
+
+============================================================
+SUMARIO PASS 265
+============================================================
+Files: 1 modificado
+  - services/qa-svc/src/server.js (COUNT window + arithmetic)
+Lines: ~25 added
+
+VPS SSH BLOQUEADO (98 ciclos - 32.7h sem deploy).
+Migs 069-076 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-svc --force
+- W12+W18: EXPLAIN ANALYZE /admin/qa-runs/stuck - 1 query unica
+  Response.runs[].minutes_running garantido INT (era float)
+
+PROXIMA ITER:
+- W2 cupom validate UI tier
+- W4 force-approve audit dedup
+- VPS SSH unblock CRITICAL (98 ciclos - 32.7h)
