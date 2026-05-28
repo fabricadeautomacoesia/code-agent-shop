@@ -29444,3 +29444,43 @@ PROXIMA ITER:
 - W12 qa-svc audit deadlock retry handling
 - W3 PDP add cleanup useEffect timers
 - VPS SSH unblock URGENTISSIMO (142 ciclos - 47.3h)
+
+
+============================================================
+PASS 310 - 2026-05-28 - W12 qa-svc + W17 vault withRetry deadlock
+============================================================
+Files: 2 modificados
+  - services/qa-svc/src/server.js (callback tx withRetry wrap)
+  - services/vault-svc/src/server.js (/use pool tx withRetry wrap)
+Lines: ~25 added
+
+W12 (qa-svc callback deadlock retry):
+- PRE-FIX: tx() callback handler sem withRetry wrap
+- Cenarios deadlock 40P01:
+  - 2 callbacks concorrentes (n8n burst retry) SELECT FOR UPDATE mesma row
+  - Pass 309 qa-worker retry 3x dispara callbacks paralelos
+  - PG detecta deadlock, mata 1 com 40P01 - callback retorna erro 500
+- POST-FIX: withRetry('qa.callback.tx', ...) wrap tx()
+- 3 attempts com backoff exponencial (500ms base, jitter 200ms)
+- Pattern V8 cross-svc consolidado
+
+W17 (vault /use pool deadlock retry):
+- PRE-FIX: tx() pool fallback sem withRetry wrap
+- FOR UPDATE SKIP LOCKED minimiza mas nao elimina deadlock 100%
+- Cron concorrente + 30 req/min /use - risk raro mas existe
+- POST-FIX: withRetry('vault.use.pool', ...) wrap
+- Paridade pass 309 qa-worker + pass 310 qa-svc
+
+VPS SSH BLOQUEADO (143 ciclos - 47.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-svc cas_vault-svc --force
+- W12 verify retry on simulated deadlock:
+  Logs filtros 'withRetry' apos burst test
+- W17 verify pool fallback retry similar
+
+PROXIMA ITER:
+- W17 vault provision/revoke tx withRetry (paridade)
+- W11 payment-svc tx audit withRetry coverage
+- VPS SSH unblock URGENTISSIMO (143 ciclos - 47.7h)

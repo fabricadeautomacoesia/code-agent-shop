@@ -7,7 +7,7 @@ const nodeCrypto = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp, fail2ban, startup, cache, mask } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp, fail2ban, startup, cache, mask, withRetry } = require('@cas/shared');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
 // VAULT_AES_KEY 64-char hex obrigatorio (encrypt/decrypt de API keys).
@@ -624,6 +624,10 @@ app.post('/use',
     let k = r.rows[0];
     if (!k) {
       // FIX bug 2+3: tx() atomic - SELECT FOR UPDATE + UPDATE atomicos
+      /* FIX-WORKER-17 pass 310: withRetry deadlock 40P01 defesa em camada
+         FOR UPDATE SKIP LOCKED minimiza mas nao elimina deadlock 100%.
+         Pattern V8 cross-svc (paridade pass 309 qa-worker, pass 310 qa-svc). */
+      await withRetry('vault.use.pool', async () => {
       await tx(async (c) => {
         const poolR = await c.query(
           `SELECT ${KEY_FIELDS} FROM vault_api_keys
@@ -645,6 +649,7 @@ app.post('/use',
           );
         }
       });
+      }); // close withRetry pass 310
     } else {
       // Seller-specific path - UPDATE simples (sem race em uma key por seller)
       await query(

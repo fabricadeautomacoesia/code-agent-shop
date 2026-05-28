@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, startup, mask, cache } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, startup, mask, cache, withRetry } = require('@cas/shared');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
 // QA_CALLBACK_SECRET obrigatorio (HMAC do worker -> autenticidade de scores).
@@ -428,6 +428,15 @@ app.post('/qa/callback',
     // FIX-WORKER-12 pass 174: captura user_id do seller p/ invalidacao cache pos-tx
     let sellerUserIdToInvalidate = null;
 
+    /* FIX-WORKER-12 pass 310 (deadlock retry callback handler):
+       PRE-FIX: await tx() sem withRetry wrap. Cenarios deadlock 40P01:
+       - 2 callbacks concorrentes (n8n burst retry) - ambos SELECT FOR UPDATE
+         em mesmo product row -> PG detecta deadlock, mata 1 com 40P01
+       - Pass 309 frontend retry 3x dispara callbacks paralelos
+       - Sem retry, callback falha -> qa-worker tenta 3x mas mesmo deadlock
+       POST-FIX: withRetry envolve tx(), 3 attempts com backoff exponencial.
+       Pattern V8 cross-svc consolidado (asaas.js, payment-svc, vault-svc). */
+    await withRetry('qa.callback.tx', async () => {
     await tx(async (c) => {
       // FIX bug 3 (Regra K): SELECT FOR UPDATE em product_qa_runs - lock primeiro
       // FIX bug 1 (idempotency): verifica verdict atual ANTES de UPDATE
@@ -609,6 +618,7 @@ app.post('/qa/callback',
       // Sem invalidacao seller veria SLA stale ate 60s apos QA approve.
       sellerUserIdToInvalidate = u.rows?.[0]?.user_id || null;
     });
+    }); // close withRetry pass 310
 
     // FIX-WORKER-12 pass 174: cache invalidation pos-tx commit (best-effort).
     // Evita: seller submete produto -> QA approve -> dashboard mostra SLA timer
