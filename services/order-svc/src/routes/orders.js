@@ -577,12 +577,16 @@ router.get('/admin/disputes',
     const statusFilter = VALID_STATUSES.includes(status) ? status : null;
     const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
 
+    // FIX-WORKER-7 pass 110 deploy: schema real disputes (psql \\d):
+    //   created_at (não opened_at), resolved_in_favor_of (não resolution_*),
+    //   evidence_urls, seller_response, seller_responded_at, mediator_user_id,
+    //   mediator_notes, resolution_action. Sem 'opened_at' separado.
     const r = await query(
       `SELECT d.id, d.order_id, d.order_item_id, d.opened_by_user_id,
               d.against_seller_id, d.reason_code, d.description,
               d.requested_resolution, d.status,
-              d.opened_at, d.resolved_at, d.resolution_action,
-              d.refund_amount_cents,
+              d.created_at, d.resolved_at, d.resolved_in_favor_of,
+              d.resolution_action, d.refund_amount_cents,
               u.email AS buyer_email, u.full_name AS buyer_name,
               s.store_name AS seller_store_name, s.store_slug AS seller_store_slug,
               o.order_number, o.total_cents
@@ -599,7 +603,7 @@ router.get('/admin/disputes',
             WHEN 'resolved_seller' THEN 4
             ELSE 5
           END,
-          d.opened_at DESC,
+          d.created_at DESC,
           d.id
         LIMIT $2`,
       [statusFilter, lim]

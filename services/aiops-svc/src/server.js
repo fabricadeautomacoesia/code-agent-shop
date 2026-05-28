@@ -296,8 +296,14 @@ const metricsHandler = asyncHandler(async (req, res) => {
   // BUG 3 *** Regra E OFFSET MISSING ***
   const limit = Math.max(1, Math.min(parseInt(req.query.limit || '60', 10), 500));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  // FIX-WORKER-7 pass 110 deploy: schema real metrics_history (psql \\d):
+  //   cpu_percent (não cpu_pct), ram_percent, disk_percent, load_avg_1m
+  //   (não load_avg). Tambem tem ram_total/used_mb, disk_total/used_gb,
+  //   load_avg_5m/15m, process_count, network_in/out_mb, extras (jsonb).
   const r = await query(
-    `SELECT id, cpu_pct, ram_pct, disk_pct, load_avg, host, collected_at
+    `SELECT id, cpu_percent, ram_percent, disk_percent, load_avg_1m,
+            load_avg_5m, load_avg_15m, ram_used_mb, disk_used_gb,
+            process_count, host, collected_at
        FROM metrics_history
       ORDER BY collected_at DESC, id DESC
       LIMIT $1 OFFSET $2`, [limit, offset]);
@@ -505,7 +511,7 @@ app.get('/db/dead-indexes',
   asyncHandler(async (_req, res) => {
     // 1. Indices ZERO scans (candidatos DROP, exclui PK/UNIQUE)
     const dead = await query(
-      `SELECT schemaname, tablename, indexname,
+      `SELECT schemaname, relname AS tablename, indexrelname AS indexname,
               pg_size_pretty(pg_relation_size(ui.indexrelid)) AS size,
               pg_relation_size(ui.indexrelid) AS size_bytes,
               idx_scan AS scans, idx_tup_read AS reads, idx_tup_fetch AS fetches,
@@ -524,7 +530,7 @@ app.get('/db/dead-indexes',
 
     // 2. Bloat estimation - idx > 50% table size
     const bloated = await query(
-      `SELECT schemaname, tablename, indexname,
+      `SELECT schemaname, relname AS tablename, indexrelname AS indexname,
               pg_size_pretty(pg_relation_size(indexrelid)) AS idx_size,
               pg_size_pretty(pg_relation_size(relid)) AS table_size,
               ROUND(100.0 * pg_relation_size(indexrelid) / NULLIF(pg_relation_size(relid), 0), 1) AS pct_of_table
@@ -538,7 +544,8 @@ app.get('/db/dead-indexes',
 
     // 3. Top usage (sanity check - critical idx ativos)
     const topUsed = await query(
-      `SELECT schemaname, tablename, indexname, idx_scan AS scans,
+      `SELECT schemaname, relname AS tablename, indexrelname AS indexname,
+              idx_scan AS scans,
               pg_size_pretty(pg_relation_size(indexrelid)) AS size
          FROM pg_stat_user_indexes
         WHERE schemaname NOT IN ('pg_catalog', 'information_schema')

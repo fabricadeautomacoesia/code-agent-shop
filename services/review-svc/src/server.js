@@ -1149,10 +1149,14 @@ app.get('/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
     const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
+    // FIX-WORKER-7 pass 110 deploy: schema real reports (psql \\d):
+    //   reason_code (não reason), description (não notes), resolved_by
+    //   (não resolved_by_user_id), evidence_urls. Removidos campos
+    //   ficticios: reason, notes, resolved_by_user_id.
     const r = await query(
-      `SELECT r.id, r.target_type, r.target_id, r.reason, r.notes,
-              r.status, r.resolution_notes, r.resolved_at, r.resolved_by_user_id,
-              r.reporter_user_id, r.created_at,
+      `SELECT r.id, r.target_type, r.target_id, r.reason_code, r.description,
+              r.evidence_urls, r.status, r.resolution_notes, r.resolved_at,
+              r.resolved_by, r.reporter_user_id, r.created_at,
               u.email AS reporter_email, u.full_name AS reporter_name
          FROM reports r
          LEFT JOIN users u ON u.id = r.reporter_user_id
