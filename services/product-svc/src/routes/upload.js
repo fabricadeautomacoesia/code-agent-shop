@@ -203,15 +203,50 @@ router.post('/media', upload.single('file'), asyncHandler(async (req, res, next)
 }));
 
 // erro do multer
-router.use((err, _req, res, _next) => {
-  if (err) {
-    log.warn({ /* FIX pass 345 DLP */ err: mask.text(String(err.message || '').slice(0, 300)) }, '[upload.err]');
-    /* FIX-WORKER-7 pass 346: DLP response message paridade pass 346 */
-    return res.status(400).json({
-      error: 'upload_error',
-      message: mask.text(String(err.message || '').slice(0, 200)),
+// FIX-WORKER-7 pass 348: multer error code classification + next(err) fallthrough.
+//
+// BUG *** MULTER CODE GENERIC HANDLING ***
+//   PRE-FIX: todos os erros do multer retornavam 400 generico 'upload_error' com
+//   message DLP-mascarada. Seller via "File too large" mascarado e nao entendia
+//   o que precisava fazer (reduzir arquivo abaixo de 50MB).
+//   Codigos comuns:
+//     - LIMIT_FILE_SIZE: arquivo > QA_MAX_FILE_SIZE_MB env
+//     - LIMIT_UNEXPECTED_FILE: campo errado no form-data
+//     - extensao_nao_permitida: fileFilter rejeitou
+//   POST-FIX: switch case por err.code + mensagens user-friendly + 413 p/
+//   payload-too-large (semantica HTTP correta). Sem err.code -> 400 generico DLP.
+//   Tambem chamado next(err) quando err undefined (Express edge case - middleware
+//   de erro sem err recebido nao deve hang request).
+router.use((err, _req, res, next) => {
+  if (!err) return next();
+  const code = err.code || '';
+  const safeMsg = mask.text(String(err.message || '').slice(0, 200));
+  log.warn({ /* FIX pass 345 DLP */ err: mask.text(String(err.message || '').slice(0, 300)), code }, '[upload.err]');
+  // FIX pass 348: user-friendly per code + correct HTTP semantics
+  if (code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      error: 'file_too_large',
+      message: `Arquivo excede o limite de ${Math.round(MAX_SIZE/(1024*1024))}MB. Reduza ou divida em partes.`,
+      max_bytes: MAX_SIZE,
     });
   }
+  if (code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(400).json({
+      error: 'unexpected_field',
+      message: 'Campo de upload incorreto. Use "file" no multipart/form-data.',
+    });
+  }
+  if (safeMsg === 'extensao_nao_permitida') {
+    return res.status(400).json({
+      error: 'invalid_extension',
+      message: 'Extensao de arquivo nao permitida.',
+    });
+  }
+  /* FIX-WORKER-7 pass 346: DLP response message paridade pass 346 */
+  return res.status(400).json({
+    error: 'upload_error',
+    message: safeMsg,
+  });
 });
 
 module.exports = router;
