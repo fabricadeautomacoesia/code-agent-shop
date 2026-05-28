@@ -35,7 +35,19 @@ const patchMeSchema = z.object({
   locale: z.string().refine((s) => ALLOWED_LOCALES.has(s), { message: 'locale invalido' }).optional(),
   timezone: z.string().max(50).regex(/^[A-Za-z_/+\-0-9]+$/, 'timezone inválido').optional(),
   phone_e164: z.string().regex(/^\+\d{10,15}$/, 'phone_e164 deve seguir formato E.164: +DDIDDIDNumero').optional(),
-  cpf_cnpj: z.string().min(11).max(20).optional(),
+  // FIX-WORKER-6 pass 385 (cpf_cnpj regex hardening):
+  //   PRE-FIX: z.string().min(11).max(20) - aceita qualquer chars dentro do range
+  //   Vetores aceitos:
+  //   - "abc12345678" (11 chars) -> isValidCpf algorithm catch MAS Zod passa
+  //   - "11.222.333-44/55-6" (18 chars) -> mascara inconsistente vs DB digits
+  //   - "<svg>11" (8 chars Zod reject, mas 11+ chars passa - varia ataque)
+  //   Risco: audit_log payload com input raw antes da validacao algoritmo
+  //   POST-FIX: regex whitelist digitos + pontuacao BR (. - /) cap real
+  //   - CPF format: 111.222.333-44 (14 chars com mask) ou 11122233344 (11 raw)
+  //   - CNPJ format: 11.222.333/0001-44 (18 chars com mask) ou 11222333000144 (14 raw)
+  //   - Apenas digitos + . - / aceitos (chars validos formato BR)
+  //   - Algoritmo isValidCpf/Cnpj (linha 144-150) valida DV apos normalizacao
+  cpf_cnpj: z.string().min(11).max(20).regex(/^[0-9./\-]+$/, 'cpf_cnpj deve conter apenas digitos e . - /').optional(),
 });
 
 // FIX-WORKER-2 pass 5: GET /me agora retorna cpf_cnpj (era omitido).
