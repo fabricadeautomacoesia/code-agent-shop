@@ -9,6 +9,7 @@ import { WishlistButton } from './wishlist-button';
 import { RecentSaleBadge } from './recent-sale-badge';
 import { InstantDownloadBadge } from './instant-download-badge';
 import { PixDiscountBadge } from './pix-discount-badge';
+import { VerifiedSellerBadge } from './verified-seller-badge';
 
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
   iniciante:      { label: 'Iniciante', color: 'bg-gray-500/20 text-gray-300' },
@@ -66,6 +67,12 @@ export function ProductCard({ product }: { product: any }) {
               <span className={`text-[10px] px-2 py-0.5 rounded-full ${tier.color}`}>{tier.label}</span>
             )}
           </div>
+          {/* MLB-17 WORKER 16 pass 169: Trust mark "Lider Premium"/"Verificado" para tiers altos */}
+          {(product.reputation_tier === 'lider_platinum' || product.reputation_tier === 'platinum') && (
+            <div className="mb-2">
+              <VerifiedSellerBadge reputationTier={product.reputation_tier} variant="card" />
+            </div>
+          )}
           <h3 className="font-display font-semibold text-lg leading-tight mb-2 line-clamp-2 group-hover:text-magenta transition-colors">
             {product.title}
           </h3>

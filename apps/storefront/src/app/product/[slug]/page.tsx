@@ -14,6 +14,7 @@ import { ShareButton } from '@/components/share-button';
 import { Installments } from '@/components/installments';
 import { InstantDownloadBadge } from '@/components/instant-download-badge';
 import { PixDiscountBadge } from '@/components/pix-discount-badge';
+import { VerifiedSellerBadge } from '@/components/verified-seller-badge';
 import { OfficialBadge } from '@/components/official-badge';
 import { RecentlyViewedStrip } from '@/components/recently-viewed-strip';
 import { RecentlyViewedGuest } from '@/components/recently-viewed-guest';
@@ -277,6 +278,8 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                     <Award className="w-3 h-3" /> {product.reputation_tier === 'lider_platinum' ? 'Lider Platinum' : product.reputation_tier === 'platinum' ? 'Platinum' : 'Ouro'}
                   </div>
                 )}
+                {/* MLB-17 WORKER 16 pass 169: Trust Mark destaque "Lider Premium / Verificado" */}
+                <VerifiedSellerBadge reputationTier={product.reputation_tier} variant="pdp" />
               </div>
             )}
 
