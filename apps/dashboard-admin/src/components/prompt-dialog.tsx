@@ -34,6 +34,9 @@ interface PromptState {
   confirmLabel?: string;
   confirmVariant?: 'primary' | 'danger';
   hideCancel?: boolean; // FIX-WORKER-4 pass 153: alertDialog so tem OK button
+  // FIX-WORKER-4 pass 382: inputType p/ password (vault rotate key plain)
+  // Anti-shoulder-surfing + native masked typing UX em chaves AES-256 sensitive
+  inputType?: 'text' | 'password';
   resolver: Resolver | null;
   confirmResolver: ConfirmResolver | null;
 }
@@ -47,7 +50,12 @@ let setStateExternal: ((s: PromptState) => void) | null = null;
  * @param placeholder - placeholder do input (opcional)
  * @returns Promise<string | null> - string se confirmou, null se cancelou/vazio
  */
-export function promptDialog(title: string, placeholder?: string, defaultValue?: string): Promise<string | null> {
+export function promptDialog(
+  title: string,
+  placeholder?: string,
+  defaultValue?: string,
+  opts?: { inputType?: 'text' | 'password' }
+): Promise<string | null> {
   return new Promise((resolve) => {
     if (!setStateExternal) {
       const val = window.prompt(title, defaultValue || '');
@@ -60,6 +68,7 @@ export function promptDialog(title: string, placeholder?: string, defaultValue?:
       title,
       placeholder,
       defaultValue,
+      inputType: opts?.inputType || 'text',
       resolver: resolve,
       confirmResolver: null,
     });
@@ -228,13 +237,15 @@ export function PromptDialogProvider() {
           {state.mode === 'prompt' && (
             <div>
               <label htmlFor="prompt-input" className="sr-only">{state.title}</label>
+              {/* FIX pass 382: state.inputType='password' p/ chaves sensiveis (vault rotate) */}
               <input
                 ref={inputRef}
                 id="prompt-input"
+                type={state.inputType || 'text'}
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 placeholder={state.placeholder || ''}
-                autoComplete="off"
+                autoComplete={state.inputType === 'password' ? 'new-password' : 'off'}
                 className="w-full px-3 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none text-sm"
               />
             </div>

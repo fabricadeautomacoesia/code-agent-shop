@@ -58,7 +58,18 @@ export default function VaultPage() {
   }
 
   async function revoke(id: string) {
-    const reason = prompt('Motivo da revogacao:');
+    // FIX-WORKER-17 pass 382 (a11y + UX consistency vault revoke):
+    //   PRE-FIX: prompt() nativo (vs rotateKey usa promptDialog moderno)
+    //   - Inconsistencia W4 admin pattern
+    //   - Vault revoke = SECURITY CRITICAL (chave AES-256-GCM revogada)
+    //   - Deveria ter confirmDialog danger variant + promptDialog reason
+    //   POST-FIX: paridade pattern V8 W4 critical actions consolidacao
+    const { confirmDialog, promptDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog('Revogar esta chave AES-256?', {
+      body: 'Apos revogada, a chave NAO podera mais ser usada para decrypt/encrypt. Operacoes dependentes da chave falharao ate nova chave ser provisionada.',
+      variant: 'danger', confirmLabel: 'Sim, revogar',
+    })) return;
+    const reason = await promptDialog('Motivo da revogacao (audit log):', 'Ex: chave comprometida, rotacao manual, compliance');
     if (!reason) return;
     action.run(`revoke-${id}`, async () => {
       await adminFetch(`/vault/keys/${id}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) });
@@ -68,14 +79,27 @@ export default function VaultPage() {
 
   // FIX-WORKER-17 pass 13: rotate 1-click - cria nova + revoga atomic
   async function rotateKey(id: string, alias: string) {
-    const plain_key = prompt(`Rotacionar chave "${alias}"\n\nCole AQUI a NOVA chave plain (sera criptografada e a antiga revogada atomicamente):`);
-    if (!plain_key || plain_key.length < 10) return;
+    // FIX-WORKER-17 pass 382 (promptDialog p/ plain_key - era prompt() nativo):
+    //   PRE-FIX: prompt(`Cole nova chave plain`) browser nativo
+    //   - Chave AES-256-GCM plain NUNCA deveria passar por prompt() (nao mask)
+    //   - prompt nativo expone em browser history (acessivel via dev tools)
+    //   - Sync block UI durante input critico
+    //   - Sem visual security signal (vs promptDialog inputType=password)
+    //   POST-FIX: promptDialog inputType="password" (UX masked typing)
+    //   + sequence reordenada: confirmDialog ANTES (intencao) -> plain_key -> reason
     const { confirmDialog, promptDialog } = await import('@/components/prompt-dialog');
-    const reason = await promptDialog('Motivo da rotacao (audit log):', 'Ex: rotacao 90d programada', 'rotacao programada') || 'rotacao programada';
     if (!await confirmDialog(`Confirma rotacao de "${alias}"?`, {
-      body: 'Nova chave sera ATIVADA e antiga REVOGADA na mesma transacao.',
-      variant: 'danger', confirmLabel: 'Rotacionar',
+      body: 'Nova chave sera ATIVADA e antiga REVOGADA na mesma transacao. Tenha a nova chave plain pronta.',
+      variant: 'danger', confirmLabel: 'Prosseguir',
     })) return;
+    const plain_key = await promptDialog(
+      `Cole a NOVA chave plain para "${alias}":`,
+      'sk-...',
+      '',
+      { inputType: 'password' }
+    );
+    if (!plain_key || plain_key.length < 10) return;
+    const reason = await promptDialog('Motivo da rotacao (audit log):', 'Ex: rotacao 90d programada', 'rotacao programada') || 'rotacao programada';
     action.run(`rotate-${id}`, async () => {
       const r = await adminFetch<{ new_fingerprint: string; new_key_id: string }>(
         `/vault/keys/${id}/rotate`,
