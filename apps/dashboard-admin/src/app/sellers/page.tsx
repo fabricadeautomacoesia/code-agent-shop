@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
-import { Ban, CheckCircle, ArrowUp } from 'lucide-react';
+import { Ban, CheckCircle, ArrowUp, ShieldCheck } from 'lucide-react';
 
 export default function SellersPage() {
   const [pending, setPending] = useState<any[]>([]);
@@ -34,6 +34,22 @@ export default function SellersPage() {
     action.run(`promote-${id}`, async () => {
       await adminFetch(`/sellers/admin/${id}/promote-class-b`, { method: 'POST', body: JSON.stringify({ sla_days: 15 }) });
       return `Seller ${id.slice(0, 8)}... promovido para Classe B`;
+    });
+  }
+
+  // FIX-WORKER-4 pass 370 (endpoint /kyc/approve NAO TINHA UI):
+  //   PRE-FIX: backend /sellers/admin/:id/kyc/approve (pass 42) existia
+  //   mas frontend dashboard-admin nao tinha botao p/ acionar.
+  //   Admin precisava acessar via curl manual ou Postman.
+  //   Apenas "Suspender" e "Classe B" disponiveis - aprovacao KYC ficou inacessivel.
+  //   Resultado: admin nao conseguia aprovar KYC de sellers rejeitados.
+  //   POST-FIX: + funcao approveKyc + botao verde com ShieldCheck icon.
+  async function approveKyc(id: string) {
+    const { confirmDialog } = await import('@/components/prompt-dialog');
+    if (!await confirmDialog('Aprovar KYC deste seller?', { body: 'Seller podera operar normalmente (publicar produtos, receber payouts).' })) return;
+    action.run(`approve-${id}`, async () => {
+      await adminFetch(`/sellers/admin/${id}/kyc/approve`, { method: 'POST' });
+      return `KYC do seller ${id.slice(0, 8)}... aprovado`;
     });
   }
 
@@ -78,6 +94,12 @@ export default function SellersPage() {
                   <td className="text-white/40 text-xs">{fmtDate(s.created_at)}</td>
                   <td className="text-right space-x-2">
                     {/* FIX-WORKER-4 pass 171 (a11y V8 R23): type=button + aria-label */}
+                    {/* FIX-WORKER-4 pass 370: + Aprovar KYC button (endpoint pre-existing pass 42) */}
+                    <button type="button" onClick={() => approveKyc(s.id)} disabled={action.busyKey === `approve-${s.id}`}
+                      aria-label={`Aprovar KYC do seller ${s.store_name}`}
+                      className="text-green-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-green-400 rounded">
+                      <ShieldCheck className="w-3 h-3" aria-hidden="true" /> {action.busyKey === `approve-${s.id}` ? '...' : 'Aprovar KYC'}
+                    </button>
                     {s.seller_class === 'class_a' && (
                       <button type="button" onClick={() => promoteB(s.id)} disabled={action.busyKey === `promote-${s.id}`}
                         aria-label={`Promover ${s.store_name} para classe B (KYC completo)`}
