@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, errorHandler, validate, rateLimiter, mask, maskPII } = require('@cas/shared');
+const { jwt, asyncHandler, errorHandler, validate, rateLimiter, mask, maskPII, cache } = require('@cas/shared');
 
 const router = express.Router();
 router.use(jwt.requireAuth());
@@ -40,20 +40,31 @@ const patchMeSchema = z.object({
 
 // FIX-WORKER-2 pass 5: GET /me agora retorna cpf_cnpj (era omitido).
 // W2 pass 4 checkout faz Api.me() e verifica user.cpf_cnpj para banner CPF.
-router.get('/', asyncHandler(async (req, res) => {
-  const r = await query(
-    `SELECT u.id, u.email, u.full_name, u.display_name, u.role, u.avatar_url, u.locale, u.timezone,
-            u.cpf_cnpj, u.phone_e164,
-            u.is_email_verified, u.is_phone_verified, u.created_at,
-            (SELECT is_enabled FROM user_two_factor WHERE user_id = u.id) AS twofa_enabled,
-            (SELECT to_jsonb(s) - 'metadata' FROM sellers s WHERE s.user_id = u.id) AS seller_profile
-     FROM users u
-     WHERE u.id = $1 AND u.deleted_at IS NULL`,
-    [req.user.sub]
-  );
-  if (!r.rows.length) return res.status(404).json({ error: 'user_not_found' });
-  res.json({ user: r.rows[0] });
-}));
+// FIX-WORKER-18 pass 211: cache 60s per-user.
+// Frontend useAuth hook chama /me em CADA navegacao (header user dropdown,
+// banner notifications, auth state refresh). 100+ navegacoes/sessao = hits PG.
+// PRE-FIX: SELECT users + 2 subqueries (twofa + seller_profile JSON agg) = ~12ms PG.
+// POST-FIX: 60s cache vary by user.sub.
+// Invalidation: PATCH /me, /2fa/enable, /2fa/disable, role change, etc.
+const meCacheKey = (req) => `auth:me:${req.user?.sub || 'anon'}`;
+
+router.get('/',
+  cache.cacheMiddleware(meCacheKey, 60),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `SELECT u.id, u.email, u.full_name, u.display_name, u.role, u.avatar_url, u.locale, u.timezone,
+              u.cpf_cnpj, u.phone_e164,
+              u.is_email_verified, u.is_phone_verified, u.created_at,
+              (SELECT is_enabled FROM user_two_factor WHERE user_id = u.id) AS twofa_enabled,
+              (SELECT to_jsonb(s) - 'metadata' FROM sellers s WHERE s.user_id = u.id) AS seller_profile
+       FROM users u
+       WHERE u.id = $1 AND u.deleted_at IS NULL`,
+      [req.user.sub]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'user_not_found' });
+    res.json({ user: r.rows[0] });
+  })
+);
 
 // FIX-WORKER-2 pass 5: valida CPF/CNPJ algoritmo dos digitos verificadores.
 // Antes: backend aceitava qualquer string (so registerSchema validava no register).
@@ -202,6 +213,11 @@ router.patch('/',
         message: 'CPF/CNPJ ja registrado em outra conta.',
       });
     }
+
+    // FIX-WORKER-18 pass 211: invalida cache auth:me apos PATCH (cache 60s pode mostrar stale)
+    try {
+      await cache.del(`auth:me:${req.user.sub}`);
+    } catch (_) { /* best-effort */ }
 
     res.json({ ok: true });
   })

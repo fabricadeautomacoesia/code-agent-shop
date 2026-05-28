@@ -8,7 +8,7 @@ const { z } = require('zod');
 const bcrypt = require('bcrypt');
 const crypto = require('node:crypto');
 const { query, tx } = require('@cas/db-client');
-const { jwt, validate, asyncHandler, errorHandler, crypto: cryp } = require('@cas/shared');
+const { jwt, validate, asyncHandler, errorHandler, crypto: cryp, cache } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 54: REFRESH_COOKIE constante p/ clearCookie em /disable.
 // Mesmo valor de auth.js linha 65 - duplicado por design (modulo standalone).
@@ -192,6 +192,8 @@ router.post('/activate',
         [req.user.sub, JSON.stringify({ ip: req.ip, ua_prefix: (req.headers['user-agent'] || '').slice(0, 60), recovery_codes_count: 10 })]
       );
     });
+    // FIX-WORKER-18 pass 211: invalida cache auth:me (twofa_enabled mudou)
+    await cache.del(`auth:me:${req.user.sub}`).catch(() => {});
     res.json({ enabled: true, recovery_codes: recovery, warn: 'Guarde estes codigos. Nao serao mostrados novamente.' });
   })
 );
@@ -342,6 +344,8 @@ router.post('/disable',
         [req.user.sub]
       );
     });
+    // FIX-WORKER-18 pass 211: invalida cache auth:me (twofa_enabled=false)
+    await cache.del(`auth:me:${req.user.sub}`).catch(() => {});
     // Clear cookie current session (force re-login)
     res.clearCookie(REFRESH_COOKIE, { path: '/' });
     res.json({ enabled: false, sessions_revoked: revokedCount, warn: 'Todas suas sessoes foram encerradas. Faca login novamente.' });
