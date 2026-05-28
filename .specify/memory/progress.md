@@ -22306,3 +22306,70 @@ PROXIMA ITER:
 - W14: audit views materialized (mv_seller_kpi refresh)
 - W18: cache analytics endpoints (orderly polling endpoints)
 - 🚨 VPS SSH unblock URGENTE (40 ciclos - >13.3h sem deploy!)
+
+PASS 208 (W14 mv_seller_kpi refresh observability + admin endpoint) - 2026-05-28:
+- W14 audit mv_seller_kpi descobriu 2 bugs no refresh policy:
+
+BUG 1 (silent fail no cron noturno):
+- review-svc/cron refreshAllReputations (3:03 AM diario)
+- 'REFRESH MATERIALIZED VIEW CONCURRENTLY mv_seller_kpi'.catch(() => {})
+- Erro silenciosamente swallowed - admin nunca soube se MV atualizou
+- Em prod: observamos KPIs antigos 24h+ sem causa identificavel
+- audit_log historico de refresh impossivel reconstruir
+
+BUG 2 (sem path manual admin):
+- Cron noturno 3:03 AM era unico path para REFRESH
+- Admin precisava aguardar 24h apos eventos disruptivos para ver KPI fresh:
+  * Mass platform-take 50 produtos -> seller revenue stale
+  * Pagamento payout grande -> gross_revenue stale
+  * Bulk class promotion -> reputation_tier stale
+  * Investigacao admin (KPI errado) - impossivel forcar refresh
+
+FIX 1 (review-svc cron error tracking):
+- Try/catch explicit em REFRESH
+- log.error em fail (era silent .catch)
+- audit_log INSERT success E fail:
+  action='mv_seller_kpi.refresh' (info) ou .refresh.fail (critical)
+  payload: sellers_total, ok/err counts, durations_ms
+- Admin pode: SELECT FROM audit_log WHERE action LIKE 'mv_seller_kpi%'
+  -> timeline completo refresh historico
+
+FIX 2 (NEW endpoint POST /sellers/admin/mv-kpi/refresh):
+- Admin manual trigger para REFRESH (sem aguardar cron)
+- Protection:
+  - admin/staff only (jwt.requireAuth na router.use)
+  - mvKpiRefreshLimiter 5/h (operacao pesada CPU/IO)
+  - audit_log INSERT success E fail (forense)
+  - cache invalidate seller:admin:all + sellers:list pos-refresh
+- Response: { ok, refreshed, duration_ms }
+
+PATTERN V8 RATE-LIMITERS em mutations pesadas/criticas:
+- forgot-password 3/h, patch-me 20/h
+- checkout 20/h, disputes/open 5/h
+- payouts/process 30/h (pass 205)
+- mv-kpi/refresh 5/h (pass 208 NEW)
+
+Commit 96fb504 pushed origin/main (+96/-2)
+VPS SSH ainda bloqueado (41 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (41 ciclos):
+- 168-207: documentados
+- 208: mv_seller_kpi refresh observability + admin manual endpoint
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_review-svc cas_seller-svc --force
+- Test cron observability (proximo 3:03 AM):
+  SELECT * FROM audit_log WHERE action LIKE 'mv_seller_kpi%'
+   ORDER BY created_at DESC LIMIT 10;
+  Esperado: novo row apos cron execute
+- Test manual endpoint:
+  curl -X POST -H "Bearer \$ADMIN" /api/sellers/admin/mv-kpi/refresh
+  Esperado: { ok:true, refreshed:true, duration_ms: ~500-2000ms }
+- Test rate-limit:
+  6x POST em 1h -> 6o retorna 429
+
+PROXIMA ITER:
+- W4 dashboard-admin: page /admin/mv-kpi-refresh (consume endpoint)
+- W17: vault-svc seller BYOK endpoints
+- W14: audit fn_refresh_seller_reputation perf (loop seller eh O(N))
+- 🚨 VPS SSH unblock URGENTE (41 ciclos - ~13.7h sem deploy!)
