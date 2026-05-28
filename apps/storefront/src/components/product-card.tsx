@@ -7,6 +7,7 @@ import { CompareButton } from './compare-button';
 import { OfficialBadge } from './official-badge';
 import { WishlistButton } from './wishlist-button';
 import { RecentSaleBadge } from './recent-sale-badge';
+import { InstantDownloadBadge } from './instant-download-badge';
 
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
   iniciante:      { label: 'Iniciante', color: 'bg-gray-500/20 text-gray-300' },
@@ -42,6 +43,8 @@ export function ProductCard({ product }: { product: any }) {
           <WishlistButton productId={product.id} variant="card" />
           {/* MLB-NEW WORKER 16: badge "Vendido hoje/semana/mes" overlay bottom-left */}
           <RecentSaleBadge lastSaleAt={product.last_sale_at} variant="card" />
+          {/* MLB-15 WORKER 16 pass 166: badge 'Download imediato' (pattern ML 'Chegada hoje' adapted) */}
+          <InstantDownloadBadge hasPackage={!!product.package_url} variant="card" />
           {/* Mais vendido standalone (apenas se NAO combo) - posicao top-left */}
           {product.is_top_seller && !product.is_platform_owned && (
             <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-gradient-to-r from-yellow-400 to-orange-500 text-black text-[10px] font-bold flex items-center gap-1 shadow-lg">

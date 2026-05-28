@@ -12,6 +12,7 @@ import { AskQuickButton } from '@/components/ask-quick-button';
 import { CompareButton } from '@/components/compare-button';
 import { ShareButton } from '@/components/share-button';
 import { Installments } from '@/components/installments';
+import { InstantDownloadBadge } from '@/components/instant-download-badge';
 import { OfficialBadge } from '@/components/official-badge';
 import { RecentlyViewedStrip } from '@/components/recently-viewed-strip';
 import { RecentlyViewedGuest } from '@/components/recently-viewed-guest';
@@ -182,6 +183,10 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             </div>
             {/* MLB-NEW WORKER 17: parcelamento sem juros estilo Mercado Credito */}
             <Installments priceCents={product.price_cents} isFree={product.is_free} variant="pdp" />
+            {/* MLB-15 WORKER 16 pass 166: badge 'Download imediato' inline (trust signal pre-buy) */}
+            <div className="mt-2 mb-4">
+              <InstantDownloadBadge hasPackage={!!product.package_url} variant="pdp" />
+            </div>
             <div className="flex gap-2 mb-3">
               <div className="flex-1">
                 <AddToCart productId={product.id} isFree={product.is_free} />
