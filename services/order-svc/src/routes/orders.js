@@ -208,15 +208,21 @@ router.post('/checkout',
 
     res.status(201).json({ ok: true, order: result });
 
-    // FIX-WORKER-18 pass 176: invalida cache loyalty:me se pts debitados (cross-svc).
-    // Cache GET /loyalty/me em seller-svc 30s TTL. Sem invalidate user veria
-    // saldo stale apos checkout (mostra pontos ja gastos como disponivel).
-    if (loyaltyDebited) {
-      try {
-        await cache.del(`loyalty:me:${req.user.sub}:*`);
-      } catch (e) {
-        log.warn({ err: e.message, user: req.user.sub }, '[cache.invalidate_fail]');
+    // FIX-WORKER-18 pass 176 + 206: invalida caches relevantes pos checkout.
+    // - loyalty:me se pts debitados (pass 176 cross-svc seller-svc)
+    // - orders:user:* (pass 206 NEW) - cache /conta/pedidos pode mostrar stale
+    //   sem novo order no topo (UX broken: user finaliza compra, redireciona
+    //   /conta/pedidos e nao ve seu pedido)
+    try {
+      const tasks = [
+        cache.del(`orders:user:${req.user.sub}:*`),  // pass 206: orders list cache
+      ];
+      if (loyaltyDebited) {
+        tasks.push(cache.del(`loyalty:me:${req.user.sub}:*`));  // pass 176: cross-svc
       }
+      await Promise.all(tasks);
+    } catch (e) {
+      log.warn({ err: e.message, user: req.user.sub }, '[cache.invalidate_fail.checkout]');
     }
 
     // Dispara payment-svc para criar cobranca Asaas (assincrono)
@@ -289,63 +295,79 @@ const ORDER_STATUS_ENUM = new Set([
   'pending_payment','paid','fulfilled','cancelled','refunded','disputed'
 ]);
 
-router.get('/', asyncHandler(async (req, res) => {
-  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 30));
-  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-  const statusFilter = req.query.status ? String(req.query.status) : null;
-  if (statusFilter && !ORDER_STATUS_ENUM.has(statusFilter)) {
-    return res.status(400).json({
-      error: 'invalid_status',
-      allowed: Array.from(ORDER_STATUS_ENUM),
+// FIX-WORKER-18 pass 206 (cache + window):
+// PRE-FIX:
+// - 2 queries por hit (rows + COUNT separado)
+// - NO cache - buyer /conta/pedidos polling sem proteção
+// - Pattern V8 gap (consolidado em 13 endpoints anteriores)
+// POST-FIX:
+// + cache.cacheMiddleware 30s vary by user+status+limit+offset
+//   Curto pq orders user-facing mutations frequentes (checkout/refund)
+// + COUNT(*) OVER()::INT AS _total window consolidation
+// + has_more boolean response
+// Performance: ~30ms (2 queries) -> ~17ms (1 query)
+const ordersListCacheKey = (req) => {
+  const userId = req.user?.sub || 'anon';
+  return `orders:user:${userId}:s=${req.query.status||''}:lim=${req.query.limit||30}:off=${req.query.offset||0}`;
+};
+
+router.get('/',
+  cache.cacheMiddleware(ordersListCacheKey, 30),
+  asyncHandler(async (req, res) => {
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 30));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const statusFilter = req.query.status ? String(req.query.status) : null;
+    if (statusFilter && !ORDER_STATUS_ENUM.has(statusFilter)) {
+      return res.status(400).json({
+        error: 'invalid_status',
+        allowed: Array.from(ORDER_STATUS_ENUM),
+      });
+    }
+
+    // Regra B (deleted_at) nao aplicavel em orders (sem soft-delete table)
+    const whereParts = ['o.buyer_user_id = $1'];
+    const params = [req.user.sub];
+    let i = 2;
+    if (statusFilter) {
+      whereParts.push(`o.status = $${i++}`);
+      params.push(statusFilter);
+    }
+    params.push(limit, offset);
+    const limIdx = i++;
+    const offIdx = i++;
+
+    // FIX-WORKER-18 pass 206: COUNT(*) OVER() window + json_agg items_preview
+    const r = await query(
+      `SELECT o.id, o.order_number, o.status, o.payment_status,
+              o.total_cents, o.subtotal_cents, o.discount_cents,
+              o.coupon_code, o.loyalty_points_redeemed, o.loyalty_discount_cents,
+              o.currency, o.payment_method, o.created_at, o.paid_at,
+              COALESCE(
+                (SELECT json_agg(json_build_object('title', snapshot->>'title', 'cover', snapshot->>'cover_image_url'))
+                   FROM order_items WHERE order_id = o.id),
+                '[]'::JSON
+              ) AS items_preview,
+              COUNT(*) OVER()::INT AS _total
+         FROM orders o
+        WHERE ${whereParts.join(' AND ')}
+        ORDER BY o.created_at DESC, o.id DESC
+        LIMIT $${limIdx} OFFSET $${offIdx}`,
+      params
+    );
+
+    const total = r.rows[0]?._total ?? 0;
+    const orders = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
+
+    res.json({
+      orders,
+      total,
+      limit,
+      offset,
+      has_more: (offset + orders.length) < total,
+      status: statusFilter,
     });
-  }
-
-  // Regra B (deleted_at) nao aplicavel em orders (sem soft-delete table)
-  const whereParts = ['o.buyer_user_id = $1'];
-  const params = [req.user.sub];
-  let i = 2;
-  if (statusFilter) {
-    whereParts.push(`o.status = $${i++}`);
-    params.push(statusFilter);
-  }
-  params.push(limit, offset);
-  const limIdx = i++;
-  const offIdx = i++;
-
-  const r = await query(
-    `SELECT o.id, o.order_number, o.status, o.payment_status,
-            o.total_cents, o.subtotal_cents, o.discount_cents,
-            o.coupon_code, o.loyalty_points_redeemed, o.loyalty_discount_cents,
-            o.currency, o.payment_method, o.created_at, o.paid_at,
-            COALESCE(
-              (SELECT json_agg(json_build_object('title', snapshot->>'title', 'cover', snapshot->>'cover_image_url'))
-                 FROM order_items WHERE order_id = o.id),
-              '[]'::JSON
-            ) AS items_preview
-       FROM orders o
-      WHERE ${whereParts.join(' AND ')}
-      ORDER BY o.created_at DESC, o.id DESC
-      LIMIT $${limIdx} OFFSET $${offIdx}`,
-    params
-  );
-
-  // Total count para has_more UX (paginacao "Carregar mais")
-  const countParams = params.slice(0, -2);
-  const totalRes = await query(
-    `SELECT COUNT(*)::INT AS total FROM orders o WHERE ${whereParts.join(' AND ')}`,
-    countParams
-  );
-  const total = totalRes.rows[0].total;
-
-  res.json({
-    orders: r.rows,
-    total,
-    limit,
-    offset,
-    has_more: (offset + r.rows.length) < total,
-    status: statusFilter,
-  });
-}));
+  })
+);
 
 // GET /orders/admin/recent (todos pedidos, role admin)
 // FIX-WORKER-7 pass 59: LGPD role-tier PII masking (admin=full, staff=masked)
