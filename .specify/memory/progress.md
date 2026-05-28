@@ -31186,3 +31186,28 @@ PROXIMA ITER:
 - W17 vault security audit
 - W2 checkout E2E
 - VPS SSH unblock URGENTISSIMO (3 CRITICAL acumulados)
+
+## PASS 358 W10 SEARCH: invalidate search:categories cache
+commit f8bb811
+BUG: search:categories:v3 TTL=900s sem invalidation
+  - Admin force-approve/archive/platform-take NAO invalida
+  - Seller publish/edit NAO invalida
+  - Mega menu storefront product_count stale ate 15min
+  - PDP nova publicada mas mega menu "147 produtos" (148 real)
+
+POST-FIX:
+- admin.js + seller-mgmt.js batch invalidation:
+  * cache.del('search:categories:v3') (key exata)
+  * cache.del('search:categories:*') (wildcard futuro-proof)
+- Paridade pattern V8 cross-route
+
+W10 cache consolidation completa:
+  * search:facets:* (existing)
+  * search:top-sellers:* (existing admin)
+  * search:categories:* (pass 358) <- ESTE
+
+91 passes acumulados (268->358) sem deploy VPS
+
+PROXIMA ITER:
+- W17 vault security audit
+- VPS SSH unblock URGENTISSIMO (3 CRITICAL acumulados)
