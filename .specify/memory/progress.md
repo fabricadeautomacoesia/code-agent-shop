@@ -23280,3 +23280,68 @@ PROXIMA ITER:
 - W4 admin: vault-svc filtrar seller_id (frontend filter UI)
 - W18: cache /api/notifications/me list (with TTL care)
 - 🚨 VPS SSH unblock URGENTE (53 ciclos - >17.7h sem deploy!)
+
+PASS 221 (W11 payment-svc createPayment 2 bugs) - 2026-05-28:
+- W11 audit POST /payments/asaas/create descobriu 2 bugs:
+
+BUG 1 (dueDate uniforme 24h - vendas perdidas BOLETO):
+- 'dueDate = NOW() + 24h' aplicado a TODOS billing types
+- PIX/CREDIT_CARD: ok (instantaneo/cosmetico)
+- BOLETO: PROBLEMA serio:
+  * Bancos exigem typically 3+ dias
+  * Compensacao bancaria D+1
+  * User normalmente paga em 3 dias uteis
+  * 24h was too short - boletos venciam antes user pagar
+- Em prod: vendas perdidas + retry checkout (user frustrated)
+
+FIX 1 (dueDate adaptativo):
+- BOLETO: 3 dias (compensacao + window pagamento)
+- PIX/CREDIT_CARD: 1 dia (cosmetico)
+- Logica: const dueDays = order.payment_method === 'boleto' ? 3 : 1;
+
+BUG 2 (customerId defensive missing):
+- cust = await asaas.createCustomer(...)
+- customerId = cust.id (sem validation)
+- Edge cases failure:
+  * Asaas timeout pos-create (created MAS response truncated)
+  * Rate-limit graceful degrade ({ok:false} sem id)
+  * Body anormal (status 200 sem id field)
+- Consequencia em prod:
+  * customerId = undefined
+  * UPDATE metadata grava undefined
+  * createPayment customer=undefined -> Asaas 400
+  * 500 errorHandler bubble up -> UX confuso
+
+FIX 2 (explicit type validation + friendly error):
+- if (!customerId || typeof customerId !== 'string')
+- log.error detalhado com asaas_response p/ debug
+- 400 'asaas_customer_invalid' + friendly UX message
+
+CONSOLIDADO PATTERN V8 DEFENSIVE UPSTREAM CALLS:
+- pass 192: qa-worker LLM fallback (timeout/4xx vs 5xx classification)
+- pass 219: notification-svc Telegram retry classification
+- pass 220: notification-svc Email retry classification
+- pass 221: payment-svc Asaas customerId validation - NEW
+
+Commit f086c6b pushed origin/main (+28/-1)
+VPS SSH ainda bloqueado (54 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (54 ciclos):
+- 168-220: documentados
+- 221: payment-svc dueDate boleto + customerId defensive
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_payment-svc --force
+- Test boleto dueDate:
+  POST /api/orders/checkout {payment_method: 'boleto'}
+  Verificar asaas_payment dueDate = D+3 (vs D+1 antes)
+- Test customerId defensive:
+  Mock Asaas createCustomer return {} (no id)
+  Antes: 500 errorHandler
+  Depois: 400 'asaas_customer_invalid' com UX friendly
+
+PROXIMA ITER:
+- W11: payment-svc PAYMENT_REFUND_FAILED retry edge cases
+- W4 admin: vault-svc admin filter seller_id UI
+- W18: cache /api/orders/admin/disputes/:id detalhe
+- 🚨 VPS SSH unblock URGENTE (54 ciclos - 18h sem deploy!)
