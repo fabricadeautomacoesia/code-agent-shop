@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 import tempfile
@@ -534,18 +535,48 @@ def parse_score_response(text: str) -> dict:
     try:
         data = json.loads(m.group(0))
         # Sanitize/normalize todos os campos esperados pelo callback
-        score = float(data.get("confidence_score", 0) or 0)
+        # FIX-WORKER-12 pass 387 (defensive score parse - LLM output drift):
+        #   PRE-FIX: score = float(data.get("confidence_score", 0) or 0)
+        #   Falhas observaveis:
+        #   1. LLM retorna string com virgula PT-BR ("0,85") -> ValueError fallback
+        #      catch linha 550 -> score=0.0 (false negative valido produto rejected)
+        #   2. LLM retorna NaN/Infinity (rare matematica invalida): float("nan")=NaN
+        #      max/min preserva NaN -> callback grava NaN PG -> serialize crash
+        #   3. LLM retorna lista [0.85] ou dict {"value":0.85} -> TypeError
+        #   POST-FIX: parse defensive multi-layer:
+        #   - Normalize comma to dot (PT-BR LLM responses)
+        #   - math.isfinite check rejeita NaN/Infinity
+        #   - try/except per-field nao quebra outros campos
+        raw_score = data.get("confidence_score", 0)
+        if isinstance(raw_score, str):
+            raw_score = raw_score.replace(",", ".").strip()
+        try:
+            score = float(raw_score) if raw_score not in (None, "") else 0.0
+        except (ValueError, TypeError):
+            score = 0.0
+        # math.isfinite rejeita NaN, +inf, -inf (LLM hallucinations matematicas)
+        if not math.isfinite(score):
+            score = 0.0
         data["confidence_score"] = max(0.0, min(1.0, score))
         data["sintaxe_ok"] = bool(data.get("sintaxe_ok", False))
         data["resolves_problem"] = bool(data.get("resolves_problem", False))
         data["is_functional"] = bool(data.get("is_functional", False))
         reasons = data.get("reasons") or []
-        data["reasons"] = [str(r)[:300] for r in (reasons if isinstance(reasons, list) else [reasons])][:10]
+        # FIX pass 387: reasons defensive - dict iter retorna keys (UX broken)
+        if isinstance(reasons, dict):
+            reasons = list(reasons.values())  # extrai values, nao keys
+        elif not isinstance(reasons, list):
+            reasons = [reasons]
+        data["reasons"] = [str(r)[:300] for r in reasons if r is not None][:10]
         # Se score=0 mas LLM nao deu motivos, adiciona generic para o seller saber
         if data["confidence_score"] < 0.8 and not data["reasons"]:
             data["reasons"] = ["LLM rejeitou sem motivos especificos. Revise descricao + codigo."]
         suggestions = data.get("suggestions") or []
-        data["suggestions"] = [str(s)[:300] for s in (suggestions if isinstance(suggestions, list) else [suggestions])][:5]
+        if isinstance(suggestions, dict):
+            suggestions = list(suggestions.values())
+        elif not isinstance(suggestions, list):
+            suggestions = [suggestions]
+        data["suggestions"] = [str(s)[:300] for s in suggestions if s is not None][:5]
         return data
     except Exception as e:
         return {
