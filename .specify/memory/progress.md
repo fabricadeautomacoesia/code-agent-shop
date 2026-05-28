@@ -17333,7 +17333,41 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Audit E2E cart + MLB features prod (pass 113) - 0 bugs novos
 - ✅ Rebuild dashboard-admin + dashboard-seller (pass 114) - 6 pages admin ressurgiram
 - ✅ Fix /conta link Downloads + audit admin pages (pass 115)
-- ✅ Audit visual/UX + Fix OG layout completo (pass 116 esta iter)
+- ✅ Audit visual/UX + Fix OG layout completo (pass 116)
+- ✅ Audit perf+sec + Fix internal-token bypass (pass 117 esta iter)
+
+W7 PASS 117 RESUMO - AUDIT PERF+SEC + FIX TOKEN BYPASS:
+- Audit performance prod:
+  * Security headers EXCELENTES (CSP strict, STS 1y, COOP, COEP+CORP)
+  * Cache hit ratio: index 96.99%, table 95.11% (acima threshold 95%)
+  * 3 indices orfaos baixo (idx_metrics_host_time + 2 outros)
+- Audit security gaps:
+  * pg_stat_statements ausente -> CREATE EXTENSION executado
+    (shared_preload_libraries vazio - requires PG restart p/ full effect)
+  * security_events table missing (W17 fail2ban schema nao aplicado)
+  * vault_api_keys vazia (0 keys configuradas)
+  * ASAAS_API_KEY=__PREENCHER__ literal (Asaas integration nao configurada)
+- BUG CRITICO detectado em logs prod (3 errors order-svc):
+  * payment-svc /asaas/create retornava 401 missing_token
+  * order-svc nao passava PAYMENT_INTERNAL_TOKEN (env ausente)
+  * E quando token foi adicionado: payment-svc crashava em
+    'Cannot read properties of undefined (reading sub)'
+- ROOT CAUSE:
+  * env PAYMENT_INTERNAL_TOKEN missing em ambos services
+  * asaasCreateGuard tem 2 paths: x-internal-token (sem req.user)
+    vs JWT (com req.user) - handler usava req.user.sub crashing path 1
+- FIX duplo:
+  * env: docker service update --env-add PAYMENT_INTERNAL_TOKEN=<64hex>
+    + STRICT_INTERNAL_TOKENS=1 em order-svc e payment-svc
+  * code: order-svc passa buyer_user_id no body internal POST
+    payment-svc fallback req.user?.sub || req.body.buyer_user_id
+  * Zod schema permite buyer_user_id opcional p/ compat
+- VALIDATION POS-FIX:
+  * Checkout PIX E2E: order CAS-2026-000014 created (HTTP 200)
+  * payment-svc logs sem 'Cannot read properties of undefined'
+  * asaas_payment_id ainda null porque ASAAS_API_KEY=__PREENCHER__ literal
+    (issue separado - admin precisa configurar key real Asaas)
+- Pattern W7 em 147+ endpoints/pages LIVE - 117 micro-iters
 
 W7 PASS 116 RESUMO - AUDIT VISUAL + OG COMPLETO:
 - Audit visual 10 pages prod via curl + heuristic regex:
