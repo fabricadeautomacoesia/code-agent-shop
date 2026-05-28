@@ -17363,7 +17363,24 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Migration 055 idx user_sessions active composite (pass 143)
 - ✅ Migration 056 drop hardcoded rolling indices (pass 144)
 - ✅ Seller upload form a11y 14 inputs (pass 145)
-- ✅ Seller /loja KYC + store form a11y 14 inputs (pass 146 esta iter)
+- ✅ Seller /loja KYC + store form a11y 14 inputs (pass 146)
+- ✅ Seller /qna response textarea aria-label (pass 147 esta iter)
+
+W7 PASS 147 RESUMO - W5 /qna RESPONSE FORM A11Y:
+- AUDIT /qna page (seller answering buyer questions): textarea SEM label
+  -> SR anunciava apenas 'campo edicao' sem contexto de qual pergunta responde
+- Comparado /reviews (pass 138 pattern): JA tinha aria-label dinamico
+- /qna era ultimo form sem cobertura
+- FIX em apps/dashboard-seller/src/app/qna/page.tsx:
+  * Textarea aria-label dinamico: 'Resposta para pergunta: {q.question.slice(0,60)}...'
+  * Button aria-label tambem dinamico
+  * Send icon aria-hidden (decorativo)
+  * type='button' explicito (default era submit - bug latente se form parent)
+- 7 forms a11y compliant total:
+  * Storefront (4): QnaForm/ReviewForm/Register/Checkout
+  * Seller (3): Upload/Loja/Qna
+- BUILD dashboard-seller OK + service converged
+- COMMIT 28d022d pushed GitHub main + deployed prod
 
 W7 PASS 146 RESUMO - W5 /loja KYC+STORE FORM A11Y:
 - AUDIT /loja page (seller KYC + store edit): 14 inputs SEM htmlFor/id
