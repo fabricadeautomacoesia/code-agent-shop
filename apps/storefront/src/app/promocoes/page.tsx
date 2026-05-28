@@ -12,6 +12,23 @@ export const metadata = {
   description: 'Descontos por tempo limitado em automacoes e agentes IA. Aproveite enquanto duram!',
   // FIX-WORKER-9 pass 3: canonical (estava herdando root '/' incorretamente)
   alternates: { canonical: '/promocoes' },
+  // FIX-WORKER-9 pass 133: openGraph + twitter + keywords (faltavam - compartilhamento
+  // social de URLs /promocoes em WhatsApp/Twitter/Slack mostrava preview generico
+  // herdado do root layout /, sem destaque para a feature "promocoes relampago").
+  openGraph: {
+    type: 'website',
+    url: 'https://cas.inovareinteligenciaartificial.com/promocoes',
+    title: 'Promocoes Relampago - Code & Agent Shop',
+    description: 'Descontos por tempo limitado em automacoes e agentes IA. Aproveite enquanto duram!',
+    images: ['/opengraph-image'],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Promocoes Relampago - Code & Agent Shop',
+    description: 'Descontos por tempo limitado em automacoes e agentes IA.',
+    images: ['/opengraph-image'],
+  },
+  keywords: ['promocoes', 'descontos', 'relampago', 'flash sale', 'automacoes', 'agentes IA', 'marketplace'],
 };
 
 async function fetchSafe<T>(path: string): Promise<T | null> {
