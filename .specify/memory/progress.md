@@ -32903,3 +32903,28 @@ Pattern V8: TODO cat slug resolution precisa is_active filter
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 418 W11 PAYMENT: loyalty earn INSERT $::UUID paridade SELECT
+commit b4c0cad
+BUG cast inconsistencia loyalty_transactions
+PRE-FIX:
+- SELECT (linha 937): $2::UUID (pass 257 fix)
+- INSERT (linha 971): $3::text (LAGGED)
+
+Pass 257 corrigiu SELECT mas INSERT ficou lagged:
+- Schema mig 010 reference_id UUID
+- idx_loyalty_tx_reference em (type, id UUID)
+- INSERT TEXT cast funciona mas pode skip idx + audit confuso
+
+POST-FIX:
+- INSERT $3::UUID paridade SELECT
+- Schema-type consistent
+- Idx utilization garantido
+
+Pattern V8 W11: SELECT/INSERT casts paridade
+
+151 passes acumulados (268->418) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
