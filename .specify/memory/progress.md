@@ -30975,3 +30975,27 @@ PROXIMA ITER:
 - W4 admin DLP audit-log viewer
 - W2 checkout E2E completion
 - VPS SSH unblock URGENTISSIMO (60h+ ciclos)
+
+## PASS 350 W18: cache key normalization PDP detail (hottest endpoint)
+commit e1f94c5
+- product-svc/public.js GET /:slug (PDP detail - hot path):
+  - PRE: cacheKey = `products:detail:${req.params.slug}` raw
+  - Atacante /Product-X /PRODUCT-X /product-x = 3 entries Redis
+  - DoS amp 3x DB load + memory waste
+  - POST: slugNorm = trim().toLowerCase() consolidation pattern
+- review-svc cache.del agora normalizado (paridade SAVE key):
+  - POST /reviews linha 130-142
+  - POST /reviews/:id/reply linha 380-384
+- Pre-existing normalization OK:
+  - product-svc/admin.js (pass 328) ✓
+  - product-svc/seller-mgmt.js (pass 328) ✓
+  - review-svc qna paths (pass 327) ✓
+  - upvote endpoint (pass 349) ✓
+- W18 PDP detail consolidation cross-svc finalmente completa
+
+83 passes acumulados (268->350) sem deploy VPS
+
+PROXIMA ITER:
+- W4 admin DLP audit-log viewer
+- W2 checkout E2E completion
+- VPS SSH unblock URGENTISSIMO (62h+ ciclos)
