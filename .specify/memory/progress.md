@@ -31499,3 +31499,32 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (100+ passes!)
 - TRANSFER_DONE/FAILED webhook handler (gap funcional descoberto)
 - W4 admin audit-log viewer
+
+## PASS 369 W2 CHECKOUT: capture order_item_id em payouts_pending_wallet
+commit 0eed4ec
+BUG payouts_pending_wallet.order_item_id sempre NULL
+PRE-FIX: INSERT pending_wallet com order_item_id=null
+  - Comentario pass 270 'needs row lookup post-insert' inline (debt)
+  - Schema mig 078 declara FK REFERENCES order_items(id)
+  - FK desperdicada - sempre NULL desde implementacao
+
+IMPACTO AUDIT:
+- Cron liquidation cross-reference item-level perdida
+- Admin reconciliacao "qual item gerou pending" impossivel
+- Forense seller dispute sem granularidade
+
+POST-FIX:
+- INSERT order_items RETURNING id + capture const orderItemId
+- INSERT payouts_pending_wallet usa orderItemId real
+- 1 query extra ZERO (RETURNING free PG)
+- FK constraint AGORA exercida (cascade DELETE item)
+
+Pattern V8: comentarios 'fix later' inline precisam fix imediato
+
+102 passes acumulados (268->369) sem deploy VPS
+4 CRITICAL + 19 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (100+ passes!)
+- TRANSFER_DONE/FAILED webhook handler
+- W4 admin audit-log viewer
