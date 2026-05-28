@@ -1377,15 +1377,36 @@ app.post('/payments/payouts/:id/process',
         //   Comparar pass 258 W4 (seller_new_sale priority=2)
         //   payout_paid e o evento MAIS critico (dinheiro recebido!)
         //   POST-FIX: INSERT notification priority=2 (cash flow visibility)
+        //
+        // FIX-WORKER-11 pass 396 (in_app + email dual channel para payout_paid):
+        //   PRE-FIX pass 263: APENAS channel='email' inserido
+        //   - Email tem latencia outbox processor 30s + SMTP send
+        //   - Em peak SMTP outage, email pode demorar 5-10min
+        //   - Seller refresh dashboard /financeiro -> nao ve realtime
+        //   - In_app notification (sininho) eh instantaneo
+        //   MLB pattern: cash flow events SEMPRE dual channel
+        //   POST-FIX: INSERT in_app PRIMEIRO (instantaneo - badge no header)
+        //   + email (paridade pass 263 - mantido p/ paper trail)
         if (u.rows[0]?.user_id) {
+          const notifTitle = `Saque processado: R$ ${(Number(payout.amount_cents)/100).toFixed(2)}`;
+          const notifBody = `Seu saque de R$ ${(Number(payout.amount_cents)/100).toFixed(2)} foi processado e enviado para sua conta. Transfer ID Asaas: ${transfer.id}.`;
+          const notifPayload = JSON.stringify({
+            payout_id: req.params.id,
+            asaas_transfer_id: transfer.id,
+            amount_cents: payout.amount_cents,
+          });
+          // FIX pass 396: in_app PRIMEIRO (instantaneo - sininho header)
+          await query(
+            `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+             VALUES ($1, 'in_app', 'payout_paid', $2, $3, 2, $4::JSONB)`,
+            [u.rows[0].user_id, notifTitle, notifBody, notifPayload]
+          ).catch((e) => log.warn({ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payout.notif.in_app.fail]'));
+          // Pass 263 mantido: email paper trail
           await query(
             `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
              VALUES ($1, 'email', 'payout_paid', $2, $3, 2, $4::JSONB)`,
-            [u.rows[0].user_id,
-             `Saque processado: R$ ${(Number(payout.amount_cents)/100).toFixed(2)}`,
-             `Seu saque de R$ ${(Number(payout.amount_cents)/100).toFixed(2)} foi processado e enviado para sua conta. Transfer ID Asaas: ${transfer.id}.`,
-             JSON.stringify({ payout_id: req.params.id, asaas_transfer_id: transfer.id, amount_cents: payout.amount_cents })]
-          ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payout.notif.fail]'));
+            [u.rows[0].user_id, notifTitle, notifBody, notifPayload]
+          ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payout.notif.email.fail]'));
         }
       } catch (_) { /* best-effort */ }
     }
