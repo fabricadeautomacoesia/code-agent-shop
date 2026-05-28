@@ -17360,7 +17360,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Checkout payment + installments radiogroup (pass 140)
 - ✅ Seller dashboard 6 titles especificos (pass 141)
 - ✅ /conta/downloads/[token] generateMetadata dinamico + DLP (pass 142)
-- ✅ Migration 055 idx user_sessions active composite (pass 143 esta iter)
+- ✅ Migration 055 idx user_sessions active composite (pass 143)
+- ✅ Migration 056 drop hardcoded rolling indices (pass 144 esta iter)
+
+W7 PASS 144 RESUMO - W18 DROP product_views HARDCODED indices:
+- AUDIT pg_indexes detectou 2 idx com timestamp LITERAL anti-pattern:
+  * idx_pviews_rolling_30d WHERE created_at > '2026-05-05 00:00:00+00'
+  * idx_pviews_rolling_90d WHERE created_at > '2026-03-06 00:00:00+00'
+- VALIDATION: pg_stat_user_indexes idx_scan=0 em ambos
+  -> NUNCA usados desde criacao (~3-4 semanas)
+- Root cause:
+  * Queries reais usam WHERE created_at > NOW() - INTERVAL 'N days'
+  * Planner nao matcha partial WHERE LITERAL com STABLE expression NOW()
+  * Indices ficavam orfaos ocupando ~50KB storage zero-value
+- CREATED db/migrations/056_drop_hardcoded_rolling_indices.sql:
+  * DROP INDEX IF EXISTS idx_pviews_rolling_30d
+  * DROP INDEX IF EXISTS idx_pviews_rolling_90d
+  * ANALYZE product_views
+- APPLIED via SSH em prod:
+  * Pre: 6 indices product_views
+  * Post: 4 indices (-2 confirmado)
+  * idx_pviews_user_recent (ja existia) cobre as queries
+  * Storage liberado: ~50KB
+- 56 migrations totais (era 55)
+- COMMIT 8a6b2ac pushed GitHub main + applied prod
 
 W7 PASS 143 RESUMO - W14 IDX USER_SESSIONS ACTIVE QUERY:
 - AUDIT EXPLAIN ANALYZE em queries criticas restantes:
