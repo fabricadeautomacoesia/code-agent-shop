@@ -26961,3 +26961,82 @@ PROXIMA ITER:
 - W4 admin force-approve audit dedup
 - W11 chargeback timeline events
 - VPS SSH unblock CRITICAL (95 ciclos - 31.7h!!!)
+
+============================================================
+PASS 263 (2026-05-28) - W5 + W8 + W11
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W5 dashboard-seller: loja loadError a11y (pattern 240/248)
+- W8 storefront: pontos tier icons aria-hidden
+- W11 payment-svc: payout_paid notification gap
+
+============================================================
+1. W5 - /loja loadError sem role=alert
+============================================================
+FILE: apps/dashboard-seller/src/app/loja/page.tsx:65
+
+PROBLEMA:
+- loadError div sem role=alert enquanto action.error/success ja tinham
+- Pattern V8 a11y consolidado passes 240 (financeiro), 248 (qna), agora 263
+- Screen reader nao anunciava falha load KYC/profile
+
+POST-FIX: role="alert" + comentario paridade
+
+============================================================
+2. W8 - tier icons aria-hidden em /conta/pontos
+============================================================
+FILE: apps/storefront/src/app/conta/pontos/page.tsx:71-76
+
+PROBLEMA:
+- Trophy/Award/Star icons exibidos junto a tier.name texto
+- Redundancia screen reader: "imagem Trophy Platinum"
+- Pattern V8 cleanup pass 255/256 (Star icons) - completar tier icons
+
+POST-FIX: aria-hidden="true" em Trophy + Award + Star tier icons
+
+============================================================
+3. W11 - payout_paid notification missing
+============================================================
+FILE: services/payment-svc/src/server.js:1119-1156
+
+PROBLEMA (notif gap):
+- Admin process payout -> Asaas createTransfer success -> UPDATE 'paid'
+- Cache invalidate executa
+- MAS nenhuma notif ao seller "Saque processado: R$ X"
+- Seller aguardando dias para ver dinheiro creditado - silent UX
+- Comparar pass 258 W4 (seller_new_sale priority=2)
+- payout_paid e o evento MAIS critico (dinheiro recebido!)
+
+POST-FIX:
+- INSERT notification priority=2 (cash flow visibility)
+- channel='email' (engagement critico)
+- title + body com amount + transfer.id
+- payload {payout_id, asaas_transfer_id, amount_cents}
+- .catch(log.warn) - notif fail nao quebra response
+- Aplicado dentro do try (cache invalidate path)
+
+============================================================
+SUMARIO PASS 263
+============================================================
+Files: 3 modificados
+  - apps/dashboard-seller/src/app/loja/page.tsx (a11y)
+  - apps/storefront/src/app/conta/pontos/page.tsx (tier icons)
+  - services/payment-svc/src/server.js (payout notif)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (96 ciclos - 32h sem deploy!).
+Migs 069-076 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-seller cas_storefront cas_payment-svc --force
+- W5: simular network fail em /loja -> NVDA anuncia "Erro carregando dados"
+- W8: NVDA navegar /conta/pontos -> sem "imagem Trophy/Award"
+- W11: POST /payments/payouts/:id/process success ->
+  SELECT FROM notifications WHERE template_code='payout_paid' ORDER BY created_at DESC LIMIT 1
+  Deve ter row priority=2
+
+PROXIMA ITER:
+- W4 force-approve idempotency check
+- W17 vault decrypt cache (LRU)
+- VPS SSH unblock URGENTISSIMO (96 ciclos - 32h MARCO)

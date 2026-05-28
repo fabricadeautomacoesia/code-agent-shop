@@ -1133,6 +1133,23 @@ app.post('/payments/payouts/:id/process',
           tasks.push(cache.del(`seller:payouts:${u.rows[0].user_id}:*`));  // W18 pass 175: seller view
         }
         await Promise.all(tasks);
+
+        // FIX-WORKER-11 pass 263 (notif gap payout_paid):
+        //   PRE-FIX: seller esperava aprovacao + processamento (minutos)
+        //   Payout vai p/ Asaas com sucesso mas seller nao recebia notif
+        //   Comparar pass 258 W4 (seller_new_sale priority=2)
+        //   payout_paid e o evento MAIS critico (dinheiro recebido!)
+        //   POST-FIX: INSERT notification priority=2 (cash flow visibility)
+        if (u.rows[0]?.user_id) {
+          await query(
+            `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+             VALUES ($1, 'email', 'payout_paid', $2, $3, 2, $4::JSONB)`,
+            [u.rows[0].user_id,
+             `Saque processado: R$ ${(Number(payout.amount_cents)/100).toFixed(2)}`,
+             `Seu saque de R$ ${(Number(payout.amount_cents)/100).toFixed(2)} foi processado e enviado para sua conta. Transfer ID Asaas: ${transfer.id}.`,
+             JSON.stringify({ payout_id: req.params.id, asaas_transfer_id: transfer.id, amount_cents: payout.amount_cents })]
+          ).catch((e) => log.warn({ err: e.message }, '[payout.notif.fail]'));
+        }
       } catch (_) { /* best-effort */ }
     }
     await query(

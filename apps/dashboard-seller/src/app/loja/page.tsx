@@ -62,7 +62,16 @@ export default function LojaPage() {
       <p className="text-white/60 mb-8">Personalize sua loja e dados de pagamento.</p>
 
       {/* FIX-WORKER-5 pass 3: banners centralizados (era inline no form rodape) */}
-      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando dados: {loadError}</div>}
+      {/* FIX-WORKER-5 pass 263 (a11y parity): loadError sem role=alert
+          enquanto action.error/success ja tem. Pattern V8 consolidado
+          passes 240 (financeiro), 248 (qna), agora 263 (loja).
+          Screen reader nao anunciava falha de load KYC/profile - UX confuso
+          (page parece vazia sem feedback). */}
+      {loadError && (
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">
+          Erro carregando dados: {loadError}
+        </div>
+      )}
       {/* FIX-WORKER-5 pass 172 (a11y V8 R23) */}
       {action.error && (
         <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">

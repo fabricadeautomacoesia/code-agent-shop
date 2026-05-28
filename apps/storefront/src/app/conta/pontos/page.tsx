@@ -68,10 +68,14 @@ export default function PontosPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 sm:gap-2 mb-4">
           <div>
             <div className={`text-xs uppercase font-bold ${tier.color}`}>Tier atual</div>
+            {/* FIX-WORKER-8 pass 263 (a11y tier icons decorative):
+                Trophy/Award/Star sao redundantes ao tier.name texto adjacente.
+                NVDA/JAWS anuncia "imagem Trophy Platinum" duplicate.
+                Pattern V8 a11y - aria-hidden em icons decorativos. */}
             <div className="font-display font-bold text-2xl sm:text-3xl flex items-center gap-2 mt-1">
-              {tier.name === 'Platinum' && <Trophy className="w-6 h-6 sm:w-7 sm:h-7 text-cyan-300" />}
-              {tier.name === 'Gold' && <Award className="w-6 h-6 sm:w-7 sm:h-7 text-yellow-300" />}
-              {tier.name === 'Starter' && <Star className="w-6 h-6 sm:w-7 sm:h-7 text-gray-300" />}
+              {tier.name === 'Platinum' && <Trophy className="w-6 h-6 sm:w-7 sm:h-7 text-cyan-300" aria-hidden="true" />}
+              {tier.name === 'Gold' && <Award className="w-6 h-6 sm:w-7 sm:h-7 text-yellow-300" aria-hidden="true" />}
+              {tier.name === 'Starter' && <Star className="w-6 h-6 sm:w-7 sm:h-7 text-gray-300" aria-hidden="true" />}
               {tier.name}
             </div>
           </div>
