@@ -20056,3 +20056,31 @@ PROXIMA ITER:
 - W7 pass 59: audit /admin/* endpoints em outros svcs (seller-svc admin.js, order-svc admin)
 - W3 pass 14: Dialog wrapper e2e tests
 - W14: monitor /aiops/db/dead-indexes prod 2+ semanas
+
+PASS 169 (W16 MLB-17 + W13 in_app trigger) - 2026-05-28:
+- W16 MLB-17: VerifiedSellerBadge.tsx novo Server Component
+  * lider_platinum -> "LIDER PREMIUM" (crown + magenta/yellow gradient)
+  * platinum -> "VERIFICADO" (shield cyan)
+  * 2 variants: card (mini badge inline) + pdp (destaque com descricao)
+  * Pattern Mercado Lider Premium adaptado ao CAS
+- Integrado em product-card.tsx (sob tier badge)
+- Integrado em product/[slug]/page.tsx (sob Award badge na seller section)
+- W13 pass 168 ja deployed em prod (migration 057 applied):
+  * Trigger fn_notif_in_app_auto_sent BEFORE INSERT
+  * Backfill 3 in_app pending -> sent
+- Commit ef9570b pushed origin/main
+- VPS deploy pending (SSH temporariamente bloqueado - fail2ban transient)
+  Pull/rebuild acontecera em proximo ciclo SSH OK
+
+LINKS PARA TESTE (apos VPS rebuild):
+- https://shop.inovareinteligenciaartificial.com/ (cards com tier badges)
+- https://shop.inovareinteligenciaartificial.com/product/[slug] (PDP)
+- Tier visivel apenas se seller tem reputation_tier=platinum/lider_platinum
+
+PROXIMA ITER:
+- W7 pass 58: extract @cas/shared.maskPII
+- W16 MLB-18: Cupom progressivo (10% off 2 items, 15% off 3+)
+- W16 MLB-19: Promocao relampago timer (countdown)
+- W11 SMTP credenciais Gmail (3 emails failed)
+- W11 ASAAS_API_KEY substituir placeholder
+- VPS SSH unblock + git pull + rebuild storefront
