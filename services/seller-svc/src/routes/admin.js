@@ -513,11 +513,15 @@ router.post('/:id/kyc/approve',
       );
 
       // Notification ao seller (UX engagement - aprovado!)
+      // FIX-WORKER-4 pass 271 (priority kyc_approve):
+      //   Paridade pass 258 W4 (seller_suspended=3) + 259 W11 (seller_new_sale=2)
+      //   KYC approve = critical engagement (seller now can sell + receive payout)
+      //   priority=2 (medium-high) - paridade com seller_reactivated/new_sale
       await c.query(
-        `INSERT INTO notifications (user_id, channel, template_code, title, body)
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
          SELECT user_id, 'email', 'kyc_approved',
                 'KYC aprovado!',
-                'Seu KYC foi aprovado. Voce ja pode publicar produtos e solicitar saques.'
+                'Seu KYC foi aprovado. Voce ja pode publicar produtos e solicitar saques.', 2
            FROM sellers WHERE id = $1::UUID`,
         [req.params.id]
       );
@@ -584,11 +588,13 @@ router.post('/:id/kyc/reject',
       );
 
       // Notification ao seller (UX - sabe motivo + corrigir)
+      // FIX-WORKER-4 pass 271: priority=3 (critical) - bloqueia cash flow
+      // ate seller re-submeter KYC. Comparar pass 258 seller_suspended priority=3.
       await c.query(
-        `INSERT INTO notifications (user_id, channel, template_code, title, body)
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
          SELECT user_id, 'email', 'kyc_rejected',
                 'KYC nao aprovado',
-                $2
+                $2, 3
            FROM sellers WHERE id = $1::UUID`,
         [req.params.id, `Motivo: ${req.body.reason}. Voce pode re-submeter o KYC com correcoes.`]
       );

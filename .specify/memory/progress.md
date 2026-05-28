@@ -27551,3 +27551,79 @@ PROXIMA ITER:
 - W11 cron liquidar payouts_pending_wallet
 - W4 admin UI payouts_pending_wallet view
 - VPS SSH unblock CRITICAL (103 ciclos - 34.3h)
+
+============================================================
+PASS 271 (2026-05-28) - W4 + W17
+============================================================
+
+OBJETIVO: 3 workers (W2 audit clean)
+- W4 seller-svc admin: kyc_approve + kyc_reject notification priority
+- W17 vault-svc: /use seller key ORDER BY direction parity
+
+============================================================
+1. W4 - kyc_approve/kyc_reject priority
+============================================================
+FILE: services/seller-svc/src/routes/admin.js:515-521, 590-598
+
+PROBLEMA (notif gap pattern V8):
+- kyc_approved INSERT notifications SEM priority -> default 0
+- kyc_rejected INSERT notifications SEM priority -> default 0
+- Pass 258 ja estabeleceu pattern (seller_suspended=3 critical)
+- Pass 259 W11 (seller_new_sale=2, loyalty_tier_up=2)
+- Pass 263 W11 (payout_paid=2)
+- KYC approve = HIGH engagement (cash flow unlocked) -> priority=2
+- KYC reject = CRITICAL (blocks income ate re-submeter) -> priority=3
+
+POST-FIX:
+- kyc_approved priority=2 (engagement engagement)
+- kyc_rejected priority=3 (critical block - paridade suspended)
+
+============================================================
+2. W17 - vault /use seller key ORDER BY direction parity
+============================================================
+FILE: services/vault-svc/src/server.js:547-553
+
+PROBLEMA (pattern V8 cross-svc):
+- ORDER BY created_at DESC, id (sem DESC tiebreaker)
+- Mixed direction (DESC + ASC default)
+- Seller com 2+ keys mesmo provider (rotation in-flight):
+  - 2 LLM requests podem pegar keys DIFERENTES
+  - usage_this_month_cents distribuido inconsistente
+  - Forensics dificil (qual key foi usada quando?)
+- Pattern V8 pass 251/256/259/261 - same direction (DESC)
+
+POST-FIX:
+- ORDER BY created_at DESC, id DESC
+- Deterministic per-snapshot key selection
+
+============================================================
+3. W2 - checkout audit clean
+============================================================
+Reviewed:
+- /cart DELETE /loyalty/redeem: tx wrap + recalcCart - OK
+- /cart/items DELETE: UUID validate + tx + recalc - OK
+- Sem gap critico esta iter (passes 230/249/258/262 ja cobriram)
+
+============================================================
+SUMARIO PASS 271
+============================================================
+Files: 2 modificados
+  - services/seller-svc/src/routes/admin.js (kyc priorities)
+  - services/vault-svc/src/server.js (ORDER BY direction)
+Lines: ~30 added
+
+VPS SSH BLOQUEADO (104 ciclos - 34.7h sem deploy).
+Migs 069-078 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_vault-svc --force
+- W4: admin kyc/approve seller -> SELECT priority FROM notifications
+  WHERE template_code='kyc_approved' = 2
+  kyc/reject -> SELECT priority WHERE template_code='kyc_rejected' = 3
+- W17: 2 LLM calls concurrent same seller_id + provider ->
+  ambas pegam mesma key (deterministic id DESC tiebreaker)
+
+PROXIMA ITER:
+- W11 cron liquidator payouts_pending_wallet (mig 078 setup)
+- W4 admin /payouts_pending_wallet UI view
+- VPS SSH unblock CRITICAL (104 ciclos - 34.7h)

@@ -544,11 +544,17 @@ app.post('/use',
                         key_fingerprint, key_alias, is_platform_pool`;
 
     // 1. tenta seller-specific (sem race - uma key por seller normalmente)
+    // FIX-WORKER-17 pass 271 (ORDER BY direction parity):
+    //   PRE-FIX: ORDER BY created_at DESC, id (sem DESC no tiebreaker)
+    //   Mixed direction (DESC + ASC default). Seller com 2+ keys mesmo provider
+    //   (rotation in-flight): ordering arbitrario entre requests = key chosen
+    //   varia entre LLM calls.
+    //   Pattern V8 consolidated pass 251/256/259/261 - same direction (DESC).
     let r = seller_id ? await query(
       `SELECT ${KEY_FIELDS} FROM vault_api_keys
         WHERE provider = $1 AND seller_id = $2 AND is_active
           AND (expires_at IS NULL OR expires_at > NOW())
-        ORDER BY created_at DESC, id LIMIT 1`,
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
       [provider, seller_id]
     ) : { rows: [] };
 
