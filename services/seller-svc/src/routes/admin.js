@@ -24,11 +24,15 @@ const router = express.Router();
 const log = logger.child({ svc: 'seller-svc', mod: 'admin' });
 router.use(jwt.requireAuth({ roles: ['admin','staff'] }));
 
-// FIX-WORKER-18 pass 6: helper invalidate cache apos admin mutations
+// FIX-WORKER-18 pass 6 + 197: helper invalidate cache apos admin mutations
+// Pass 197 estendeu para incluir seller:admin:all:* (W18 pass 197 cache)
 async function invalidateSellerCache(sellerId) {
   try {
     const r = await query('SELECT store_slug FROM sellers WHERE id = $1', [sellerId]);
-    const tasks = [cache.del('sellers:list:*')];
+    const tasks = [
+      cache.del('sellers:list:*'),          // public list cache
+      cache.del('seller:admin:all:*'),      // W18 pass 197: admin /all dashboard cache
+    ];
     if (r.rows.length) {
       const slug = r.rows[0].store_slug;
       tasks.push(
@@ -260,41 +264,66 @@ router.get('/sla-risk', asyncHandler(async (req, res) => {
 // FIX-WORKER-4: GET /sellers/admin/all - listing geral com filtros + paginacao.
 // Suporta ?status=active|pending_kyc|suspended|banned, ?seller_class=class_a|class_b,
 // ?q=search_term (matches store_name ou email), ?limit, ?page.
-router.get('/all', asyncHandler(async (req, res) => {
-  // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
-  const lim = Math.max(1, Math.min(parseInt(req.query.limit || '30', 10), 100));
-  const off = (Math.max(parseInt(req.query.page || '1', 10), 1) - 1) * lim;
-  const where = ['1=1'];
-  const params = [];
-  let i = 1;
-  if (req.query.status) {
-    where.push(`s.status = $${i++}`); params.push(req.query.status);
-  }
-  if (req.query.seller_class) {
-    where.push(`s.seller_class = $${i++}`); params.push(req.query.seller_class);
-  }
-  if (req.query.q) {
-    where.push(`(s.store_name ILIKE $${i} OR u.email ILIKE $${i})`);
-    params.push(`%${req.query.q}%`); i++;
-  }
-  params.push(lim, off);
-  const r = await query(
-    `SELECT s.id, s.store_slug, s.store_name, s.seller_class, s.status,
-            s.reputation_tier, s.reputation_score, s.total_sales, s.total_products_active,
-            s.created_at, u.email, u.full_name
-       FROM sellers s JOIN users u ON u.id = s.user_id
-      WHERE ${where.join(' AND ')}
-      ORDER BY s.created_at DESC
-      LIMIT $${i} OFFSET $${i+1}`,
-    params
-  );
-  const cnt = await query(
-    `SELECT COUNT(*) AS total FROM sellers s JOIN users u ON u.id = s.user_id WHERE ${where.join(' AND ')}`,
-    params.slice(0, -2)
-  );
-  // FIX-WORKER-7 pass 60: LGPD role-tier masking
-  res.json({ sellers: maskSellersForStaff(req, r.rows), total: parseInt(cnt.rows[0].total, 10), page: parseInt(req.query.page || '1', 10), limit: lim });
-}));
+// FIX-WORKER-18 pass 197 (cache + window + tiebreaker):
+// PRE-FIX: 2 queries (rows + COUNT separado), sem cache, ORDER BY sem tiebreaker
+//   Em prod 500+ sellers + admin recarregando dashboard /sellers a cada 1min:
+//   - 2 queries por hit -> 4 PG round-trips/min/admin
+//   - Sem tiebreaker: 2 sellers created_at identicos (bulk migration) -> ordem
+//     indefinida entre cache evictions/refreshes
+// POST-FIX:
+//   - cache.cacheMiddleware 30s vary by filtros (admin freshness rapida)
+//   - COUNT(*) OVER()::INT AS _total window consolidation
+//   - + s.id ASC tiebreaker (Regra D V8)
+// Performance: ~25ms (2 queries) -> ~12ms (1 query) ou ~1ms (Redis hit)
+const sellersListCacheKey = (req) => {
+  const q = req.query;
+  return `seller:admin:all:s=${q.status||''}:c=${q.seller_class||''}:q=${q.q||''}:lim=${q.limit||30}:p=${q.page||1}`;
+};
+
+router.get('/all',
+  cache.cacheMiddleware(sellersListCacheKey, 30),
+  asyncHandler(async (req, res) => {
+    // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
+    const lim = Math.max(1, Math.min(parseInt(req.query.limit || '30', 10), 100));
+    const off = (Math.max(parseInt(req.query.page || '1', 10), 1) - 1) * lim;
+    const where = ['1=1'];
+    const params = [];
+    let i = 1;
+    if (req.query.status) {
+      where.push(`s.status = $${i++}`); params.push(req.query.status);
+    }
+    if (req.query.seller_class) {
+      where.push(`s.seller_class = $${i++}`); params.push(req.query.seller_class);
+    }
+    if (req.query.q) {
+      where.push(`(s.store_name ILIKE $${i} OR u.email ILIKE $${i})`);
+      params.push(`%${req.query.q}%`); i++;
+    }
+    params.push(lim, off);
+    const r = await query(
+      `SELECT s.id, s.store_slug, s.store_name, s.seller_class, s.status,
+              s.reputation_tier, s.reputation_score, s.total_sales, s.total_products_active,
+              s.created_at, u.email, u.full_name,
+              COUNT(*) OVER()::INT AS _total
+         FROM sellers s JOIN users u ON u.id = s.user_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY s.created_at DESC, s.id ASC
+        LIMIT $${i} OFFSET $${i+1}`,
+      params
+    );
+    const total = r.rows[0]?._total ?? 0;
+    const rows = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
+
+    // FIX-WORKER-7 pass 60: LGPD role-tier masking
+    res.json({
+      sellers: maskSellersForStaff(req, rows),
+      total,
+      page: parseInt(req.query.page || '1', 10),
+      limit: lim,
+      has_more: (off + rows.length) < total,
+    });
+  })
+);
 
 // GET /sellers/admin/pending-kyc
 // FIX-WORKER-7 pass 42: 3 BUGS corrigidos:
