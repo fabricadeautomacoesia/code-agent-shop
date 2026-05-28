@@ -17344,7 +17344,33 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Migration 050 trigger updated_at user_loyalty (pass 124)
 - ✅ Sync product-svc SORT_ENUM (+recent_sales) (pass 125)
 - ✅ Migration 051 BRIN idx metrics_history (pass 126)
-- ✅ MLB-13 ShareButton PDP WhatsApp/X/LinkedIn/Copy (pass 127 esta iter)
+- ✅ MLB-13 ShareButton PDP WhatsApp/X/LinkedIn/Copy (pass 127)
+- ✅ generateMetadata dinamico /products c/ filtros (pass 128 esta iter)
+
+W7 PASS 128 RESUMO - W9 SEO DINAMICO /products?filters:
+- AUDIT pages SEM metadata explicita: /products tinha layout.tsx estatico
+  -> variacoes infinitas (q, kind, category, free, tier, sort, page, min_price)
+     ALL com mesmo title -> duplicate content penalty SEO
+- ADDED generateMetadata em apps/storefront/src/app/products/page.tsx:
+  * Title parts dinamicos por filtro:
+    - q='automacao' -> '"automacao"'
+    - kind='ai_agent' -> 'Agentes IA' (KIND_LABELS map)
+    - category='automacoes' -> 'Automacoes' (kebab->Title)
+    - free=true -> '+Gratis'
+    - tier=gold -> '+Vendedor gold'
+  * Description per scenario (q vs kind vs default)
+  * Canonical preserva filtro PRINCIPAL:
+    - kind > category > q (hierarchy)
+    - Variacoes ?sort=X &page=Y &min_price=Z -> canonical limpo
+  * Robots noindex em paginas 2+ ou ?sort= (evita thin content SERPs)
+  * openGraph + twitter cards per-variation
+- VALIDATED via curl prod:
+  * /products?q=automacao retorna:
+    <title>'automacao' | Code & Agent Shop</title>
+    <link rel='canonical' href='.../products?q=automacao'>
+    <meta property='og:title' content='"automacao" - Code & Agent Shop'>
+    <meta name='robots' content='index, follow'>
+- BUILD storefront OK + service converged
 
 W7 PASS 127 RESUMO - W16 MLB-13 ShareButton no PDP:
 - AUDIT MLB gaps: SEM share button no projeto inteiro
