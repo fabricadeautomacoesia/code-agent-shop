@@ -28987,3 +28987,49 @@ PROXIMA ITER:
 - W4 admin /admin/sellers pending_kyc UI consume idx pass 297
 - W17 audit notifications retention KPI dashboard
 - VPS SSH unblock URGENTISSIMO (130 ciclos - 43.3h)
+
+
+============================================================
+PASS 298 - 2026-05-28 - W7 product cache key normalize + W17 vault /usage DLP
+============================================================
+Files: 2 modificados
+  - services/product-svc/src/routes/public.js (4 cache keys normalized)
+  - services/vault-svc/src/server.js (error_message DLP mask + length cap)
+Lines: ~50 changed
+
+W7 (4 cache keys normalization product public):
+- /:slug/also-bought: cache key + clamp limit
+- /:slug/related: cache key + clamp limit
+- /:slug/reviews: cache key + clamp lim/page/sort/rating
+- /:slug/qna: cache key + clamp lim/page/answered_only
+- Pattern: slug.toString().trim().toLowerCase()
+- Paridade pass 291 search-svc cache key normalization
+- Cache pollution scenarios:
+  - /SLUG-A vs /slug-a -> 2 entries diferentes
+  - ?limit=10 vs ?limit=10.0 vs ?limit= -> 3 entries
+- POST-FIX: Redis MEMORY USAGE reduzido + cache hit rate aumentado
+
+W17 (vault /usage DLP + length cap):
+- error_message: z.string().optional() sem .max() - LLM stacks podem ser MB
+- Atacante poderia DoS via 100MB error_message field
+- LLM exception stacks contem sk-/Bearer/JWT/PG_PASS leaks
+- POST-FIX:
+  - operation/model: .max() defensive limits
+  - error_message: .max(2000) + mask.text() antes INSERT
+- Paridade pass 277 (qa-worker), pass 285 (notif), pass 289 (asaas)
+
+VPS SSH BLOQUEADO (131 ciclos - 43.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc cas_vault-svc --force
+- W7: redis-cli KEYS 'products:reviews:*' | sort -u
+  Esperado: menos chaves duplicadas pos-warmup (case variants colidem)
+- W17: POST /api/vault/usage com error_message='Bearer abc123 stack...'
+  SELECT error_message FROM vault_key_usage ORDER BY created_at DESC LIMIT 1;
+  Esperado: 'Bearer **** stack...' (Bearer masked)
+
+PROXIMA ITER:
+- W18 audit /admin/sellers list COUNT OVER consolidation
+- W4 admin /vault dashboard error_message viewer
+- VPS SSH unblock URGENTISSIMO (131 ciclos - 43.7h)

@@ -943,18 +943,24 @@ app.post('/keys/:id/rotate',
 //    cobranca a outros seller_id (fraude billing).
 // Agora exige header interno OU role admin/staff/service (mesmo guard do /use).
 app.post('/usage', vaultUseGuard,
+  /* FIX-WORKER-17 pass 298: error_message length cap + DLP mask defense.
+     PRE-FIX: error_message z.string().optional() sem .max() - LLM stack
+     traces podem ser MB. PG TEXT column accept mas storage waste +
+     potencial Bearer/sk-key/PG_PASS em stacks vazado em audit/reports.
+     POST-FIX: .max(2000) + mask.text() no INSERT (paridade pass 285/289
+     que aplicaram mask.text em error tracking cross-svc). */
   validate({ body: z.object({
     key_id: z.string().uuid(),
     seller_id: z.string().uuid().optional(),
     product_id: z.string().uuid().optional(),
-    operation: z.string(),
-    model: z.string().optional(),
+    operation: z.string().max(80),
+    model: z.string().max(100).optional(),
     tokens_input: z.number().int().nonnegative().optional(),
     tokens_output: z.number().int().nonnegative().optional(),
     cost_usd_cents: z.number().int().nonnegative(),
     duration_ms: z.number().int().nonnegative().optional(),
     success: z.boolean().default(true),
-    error_message: z.string().optional(),
+    error_message: z.string().max(2000).optional(),
   })}),
   asyncHandler(async (req, res) => {
     const b = req.body;
@@ -969,6 +975,11 @@ app.post('/usage', vaultUseGuard,
     //   POST-FIX: tx() wrap atomic - all-or-nothing
     //   Mesmo pattern de pass 247 W11 outras tx-wrapped writes vault.
     await tx(async (c) => {
+      /* FIX-WORKER-17 pass 298: DLP mask error_message antes storage.
+         LLM exception stacks podem conter sk-/Bearer/JWT/PG_PASS leak.
+         Paridade pass 277 (qa-worker download_failed), pass 285 (notif
+         outbox failed_reason), pass 289 (asaas processing_error). */
+      const safeErr = b.error_message ? mask.text(String(b.error_message).slice(0, 2000)) : null;
       await c.query(
         `INSERT INTO vault_key_usage
           (vault_key_id, seller_id, product_id, operation, model, tokens_input, tokens_output,
@@ -976,7 +987,7 @@ app.post('/usage', vaultUseGuard,
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [b.key_id, b.seller_id||null, b.product_id||null, b.operation, b.model||null,
          b.tokens_input||null, b.tokens_output||null, b.cost_usd_cents, b.duration_ms||null,
-         b.success, b.error_message||null, req.ip]
+         b.success, safeErr, req.ip]
       );
       await c.query(
         `UPDATE vault_api_keys SET usage_this_month_cents = usage_this_month_cents + $1 WHERE id = $2`,

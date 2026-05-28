@@ -238,7 +238,15 @@ router.get('/recently-viewed',
 //    se produto top-N foi removido SUPERVENIENTE durante TTL 600s cache.
 //    FIX: filtros DENTRO de also_bought (joina p2 inline + filtra)
 router.get('/:slug/also-bought',
-  cache.cacheMiddleware((req) => `products:also-bought:${req.params.slug}:lim=${Math.min(parseInt(req.query.limit) || 6, 12)}`, 600),
+  /* FIX-WORKER-7 pass 298: cache key normalization paridade pass 291 search.
+     PRE-FIX: req.params.slug raw - case-variants criam cache entries duplicados.
+     Slugs DB sao lowercase canonical mas Express path nao normaliza.
+     POST-FIX: trim().toLowerCase() + clamp limit defensive. */
+  cache.cacheMiddleware((req) => {
+    const slug = (req.params.slug || '').toString().trim().toLowerCase();
+    const lim = Math.min(parseInt(req.query.limit, 10) || 6, 12);
+    return `products:also-bought:${slug}:lim=${lim}`;
+  }, 600),
   asyncHandler(async (req, res, next) => {
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 6, 12));
 
@@ -321,7 +329,12 @@ router.get('/:slug/also-bought',
 // 5. Subqueries (SELECT ... FROM sellers WHERE id=p2.seller_id) 2x redundantes -> JOIN unico
 // 6. Cache populado em 404 (gastava memoria Redis com slug ruim em loop bot)
 router.get('/:slug/related',
-  cache.cacheMiddleware((req) => `products:related:${req.params.slug}:lim=${Math.min(parseInt(req.query.limit) || 6, 24)}`, 300),
+  /* FIX-WORKER-7 pass 298: cache key normalization paridade also-bought */
+  cache.cacheMiddleware((req) => {
+    const slug = (req.params.slug || '').toString().trim().toLowerCase();
+    const lim = Math.min(parseInt(req.query.limit, 10) || 6, 24);
+    return `products:related:${slug}:lim=${lim}`;
+  }, 300),
   asyncHandler(async (req, res, next) => {
   // FIX bug 1: validar e clampear limit (default 6, max 24 - evita scrape massivo)
   const limit = Math.min(Math.max(parseInt(req.query.limit) || 6, 1), 24);
@@ -851,7 +864,15 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
 const REVIEW_SORT_ENUM = new Set(['helpful','newest','critical','highest']);
 
 router.get('/:slug/reviews',
-  cache.cacheMiddleware((req) => `products:reviews:${req.params.slug}:lim=${req.query.limit||20}:p=${req.query.page||1}:s=${req.query.sort||'helpful'}:r=${req.query.rating||''}`, 60),
+  /* FIX-WORKER-7 pass 298: cache key normalization paridade */
+  cache.cacheMiddleware((req) => {
+    const slug = (req.params.slug || '').toString().trim().toLowerCase();
+    const lim = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const sort = (req.query.sort || 'helpful').toString().toLowerCase();
+    const rating = (req.query.rating || '').toString();
+    return `products:reviews:${slug}:lim=${lim}:p=${page}:s=${sort}:r=${rating}`;
+  }, 60),
   asyncHandler(async (req, res, next) => {
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 20, 100));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
@@ -951,7 +972,14 @@ router.get('/:slug/reviews',
 // BUG 4 *** ?answered_only filter MISSING *** UX MLB "ver só respondidas"
 // BUG 5 *** No total/has_more *** pagination UI quebrada
 router.get('/:slug/qna',
-  cache.cacheMiddleware((req) => `products:qna:${req.params.slug}:lim=${req.query.limit||50}:p=${req.query.page||1}:ans=${req.query.answered_only||''}`, 60),
+  /* FIX-WORKER-7 pass 298: cache key normalization paridade */
+  cache.cacheMiddleware((req) => {
+    const slug = (req.params.slug || '').toString().trim().toLowerCase();
+    const lim = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const ans = (req.query.answered_only || '').toString();
+    return `products:qna:${slug}:lim=${lim}:p=${page}:ans=${ans}`;
+  }, 60),
   asyncHandler(async (req, res, next) => {
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 100));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
