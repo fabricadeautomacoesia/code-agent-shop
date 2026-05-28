@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup, cache, mask } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup, cache, mask, rateLimiter } = require('@cas/shared');
 const asaas = require('./asaas');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
@@ -799,7 +799,25 @@ async function processWebhookEvent(evt) {
 // POST /payments/payouts/:id/process - admin manda processar transfer
 // FIX-WORKER-4: regex UUID antes do DB para evitar PG 22P02 -> 404 generico do global handler
 const PAYOUT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// FIX-WORKER-11 pass 205 (CRITICAL): rate-limit /payments/payouts/:id/process.
+// REAL MONEY OUT endpoint - mais critico que /checkout (pass 196).
+// PRE-FIX: zero rate-limit. Admin/atacante com token admin pode:
+//   - Spam /process em loop -> Asaas createTransfer disparado N vezes
+//   - Mesmo com idempotent UPDATE guard (status='processing'), tx FOR UPDATE
+//     pega lock breve - 100 reqs/s ainda criam pressao DB severa
+//   - Asaas API rate-limit upstream -> calls subsequentes 429 + cost
+//   - Audit log enche de payout.process_start tentativas
+// FIX: 30 process/hora/admin (admin tipico processa <50/dia em mass payout day).
+// Pattern V8 W7: high-impact real-$ mutations DEVEM ter limiter (mais restrito
+// que /checkout pass 196 que tem 20/h - aqui 30/h cobre admin power user).
+const payoutProcessLimiter = rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 30,
+  message: 'Muitas tentativas de processar payouts. Aguarde alguns minutos.',
+});
+
 app.post('/payments/payouts/:id/process',
+  payoutProcessLimiter,  // FIX-WORKER-11 pass 205: rate-limit anti-spam DoS Asaas API
   jwt.requireAuth({ roles: ['admin','staff'] }),
   asyncHandler(async (req, res, next) => {
     // FIX-WORKER-7 pass 23: 5 BUGS CRITICOS (real money out endpoint):
@@ -920,11 +938,22 @@ app.post('/payments/payouts/:id/process',
       log.error({ payout_id: req.params.id, transfer_id: transfer.id },
         '[payout.race.final] UPDATE falhou (status nao processing) - transfer Asaas executou, investigar manual');
     } else {
-      // FIX-WORKER-18 pass 175: invalida cache seller (pos-paid)
-      // seller_payouts agora 'paid' - seller veria stale ate 30s no /financeiro
+      // FIX-WORKER-18 pass 175 + 205: invalida cache seller + admin (pos-paid).
+      // 2 paths de cache afetadas por payout 'paid':
+      // - seller:payouts:{userId}:* (W18 pass 175) - seller /financeiro view
+      // - seller:admin:payouts-pending:* (W18 pass 198) - admin /payouts dashboard
+      // Sem isto: admin dashboard mostra 'approved' payout (stale 20s)
+      // mesmo apos Asaas transfer confirmado. UX: admin clica process e ainda
+      // ve mesmo payout listado nos 20s seguintes.
       try {
         const u = await query('SELECT user_id FROM sellers WHERE id = $1', [finalUpd.rows[0].seller_id]);
-        if (u.rows[0]?.user_id) await cache.del(`seller:payouts:${u.rows[0].user_id}:*`);
+        const tasks = [
+          cache.del('seller:admin:payouts-pending:*'),  // W18 pass 205: admin view
+        ];
+        if (u.rows[0]?.user_id) {
+          tasks.push(cache.del(`seller:payouts:${u.rows[0].user_id}:*`));  // W18 pass 175: seller view
+        }
+        await Promise.all(tasks);
       } catch (_) { /* best-effort */ }
     }
     await query(
