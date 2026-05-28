@@ -22447,3 +22447,90 @@ PROXIMA ITER:
 - W14: fn_refresh_seller_reputation perf audit (loop O(N))
 - W18: cache /api/auth/me (admin polling auth status)
 - 🚨 VPS SSH unblock URGENTE (42 ciclos - 14h sem deploy!)
+
+PASS 210 (W14 bulk fn_refresh_all_seller_reputations) - 2026-05-28:
+- W14 perf audit fn_refresh_seller_reputation descobriu O(N*6) loop
+
+PRE-FIX (cron noturno 3:03 AM review-svc):
+- Loop sellers ativos chama fn_refresh_seller_reputation per seller
+- Function executa 6 queries per chamada:
+  * SELECT order_items COUNT
+  * SELECT product_reviews AVG + COUNT
+  * SELECT disputes COUNT
+  * SELECT product_qna AVG response_time
+  * SELECT sellers (SLA check)
+  * UPDATE sellers + INSERT seller_reputation_history
+- Em prod 1000 sellers: 6000+ queries por cron run
+- Duration: ~30-60s tipico (bloqueia DB pool 30-60s)
+- Cron ainda inclui REFRESH MV apos (mais 1-2s)
+
+POST-FIX (migration 063 bulk function):
+
+NEW fn_refresh_all_seller_reputations() set-based:
+- 5 CTEs agregam metricas GROUP BY seller_id (1 query each)
+  * active_sellers (base scope)
+  * sales_agg (COUNT DISTINCT orders)
+  * reviews_agg (AVG rating + COUNT)
+  * disputes_agg (COUNT)
+  * qna_agg (AVG response time)
+- computed CTE LEFT JOIN aggregates per seller
+- scored CTE chama fn_calc_reputation_score + fn_calc_reputation_tier
+- UPDATE sellers ... FROM scored bulk
+- INSERT seller_reputation_history bulk ON CONFLICT DO UPDATE
+- Returns: { seller_count, duration_ms }
+- TOTAL: 7 queries (vs 6000) - 99.88% reducao
+
+Review-svc cron atualizado:
+- await query('SELECT * FROM fn_refresh_all_seller_reputations()')
+- ok = bulkResult.seller_count
+- Fallback per-seller catch (migration 063 nao aplicada / erro bulk)
+- audit_log INSERT preserved (pass 208)
+- Logs preserved: ok/err/total/refresh_ms/cron_duration_ms
+
+Performance esperada prod:
+- 1000 sellers ativos: ~30-60s -> ~2-5s (10-30x faster)
+- DB pool free during cron (vs blocked anteriormente)
+- Cron 3:03 AM completes faster -> less impact on early-morning users
+
+TRADE-OFF:
+- Bulk em 1 tx longa: acceptable cron noturno
+- fn_refresh_seller_reputation(p_seller_id) MANTIDA:
+  * Edge case admin reset 1 seller (futuro endpoint admin)
+  * Fallback automatico se bulk falhar
+
+PATTERN V8 BULK SET-BASED consolidado:
+- pass 181: search-svc /categories CTE GROUP BY
+- pass 188: vault-svc rotation cron WITH CTEs jsonb_array_elements
+- pass 210: fn_refresh_all_seller_reputations CTEs bulk - NEW
+
+Commit 4f08ae1 pushed origin/main (+167/-7)
+VPS SSH ainda bloqueado (43 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (43 ciclos):
+- 168-209: documentados
+- 210: migration 063 + review-svc bulk cron
+
+MIGRATIONS PROD-PENDING (6 acumuladas):
+- 058 audit_log actor_created composto
+- 059 wishlist + notif compound idx
+- 060 users email LOWER UNIQUE + backfill
+- 061 loyalty_transactions idempotency partial UNIQUE
+- 062 drop idx_loyalty_user_recent duplicate
+- 063 fn_refresh_all_seller_reputations bulk - NEW
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply: psql -f /opt/cas/db/migrations/063_bulk_seller_reputation.sql
+- Test direct call:
+  psql -c "SELECT * FROM fn_refresh_all_seller_reputations();"
+  Esperado: { seller_count: N, duration_ms: 2000-5000 }
+- Rebuild: docker service update cas_review-svc --force
+- Test cron observability (proximo 3:03 AM):
+  SELECT * FROM audit_log WHERE action='mv_seller_kpi.refresh'
+   ORDER BY created_at DESC LIMIT 1;
+  payload_after deve ter cron_duration_ms muito menor (10-30x)
+
+PROXIMA ITER:
+- W17: vault-svc seller BYOK endpoints
+- W18: cache /api/auth/me (admin polling)
+- W11: payment-svc Asaas webhook payload edge cases
+- 🚨 VPS SSH unblock URGENTE (43 ciclos - >14.3h sem deploy!)
