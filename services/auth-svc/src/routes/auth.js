@@ -409,7 +409,10 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
   await query(
     `INSERT INTO user_sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at)
      VALUES ($1, $2, $3, $4, NOW() + INTERVAL '7 days')`,
-    [user.id, jwt.hashToken(refresh.token), req.headers['user-agent'] || null, req.ip]
+    // FIX-WORKER-6 pass 403 (DLP mask user_agent paridade /refresh + audit_log)
+    [user.id, jwt.hashToken(refresh.token),
+     mask.text((req.headers['user-agent'] || '').slice(0, 200)) || null,
+     req.ip]
   );
 
   // FIX-WORKER-17 pass 4: tambem reset locked_until em sucesso (clear lock state)
@@ -582,7 +585,14 @@ router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
     await c.query(
       `INSERT INTO user_sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at)
        VALUES ($1,$2,$3,$4, NOW() + INTERVAL '7 days')`,
-      [user.id, jwt.hashToken(newRefresh.token), req.headers['user-agent'] || null, req.ip]
+      // FIX-WORKER-6 pass 403 (DLP mask user_agent paridade audit_log pass 282)
+      //   user_sessions.user_agent storage = forense + admin investigation
+      //   Raw UA pode conter Bearer/JWT em corner cases (custom UAs corporate)
+      //   + LGPD: minimização dados storage longos (sessions live 7d)
+      //   mask.text(UA prefix 200 chars) - paridade audit_log/notifications
+      [user.id, jwt.hashToken(newRefresh.token),
+       mask.text((req.headers['user-agent'] || '').slice(0, 200)) || null,
+       req.ip]
     );
   });
 
