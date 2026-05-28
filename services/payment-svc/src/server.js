@@ -493,6 +493,10 @@ async function processWebhookEvent(evt) {
     return;
   }
 
+  // FIX-WORKER-11 pass 204: capture user_ids p/ invalidate loyalty:me cache cross-svc pos-tx
+  // (PAYMENT_REFUNDED/CHARGEBACK estornam loyalty - seller-svc cache stale sem isso)
+  const loyaltyUsersToInvalidate = new Set();
+
   await tx(async (c) => {
     // FIX-WORKER-7 pass 22 (bug 1 RACE Regra K): SELECT FOR UPDATE.
     // Pre-fix: SELECT sem lock fora do tx() permitia 2 webhooks
@@ -682,6 +686,10 @@ async function processWebhookEvent(evt) {
         [evt.event === 'PAYMENT_CHARGEBACK' ? 'chargeback' : 'refund', order.id]
       );
       // 2. Estorna loyalty points (procura tx de earn deste order e cria reversa)
+      // FIX-WORKER-11 pass 204: ON CONFLICT DO NOTHING (consume migration 061
+      // idx_loyalty_idempotency UNIQUE). Asaas retry PAYMENT_REFUNDED webhook
+      // pode disparar 23505 sem isso. Pattern consolidado pass 184/191.
+      // Capture user_ids para invalidate loyalty:me cache cross-svc pos-tx.
       const earnTx = await c.query(
         `SELECT user_id, points_delta FROM loyalty_transactions
           WHERE reference_type = 'order' AND reference_id = $1::text AND reason = 'order_paid'`,
@@ -698,9 +706,11 @@ async function processWebhookEvent(evt) {
         );
         await c.query(
           `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
-           VALUES ($1::UUID, $2::INT, 'order_refunded', 'order', $3::text)`,
+           VALUES ($1::UUID, $2::INT, 'order_refunded', 'order', $3::text)
+           ON CONFLICT (user_id, reason, reference_id) WHERE reference_id IS NOT NULL DO NOTHING`,
           [tx.user_id, reversal, order.id]
         );
+        loyaltyUsersToInvalidate.add(tx.user_id);
       }
       // 3. Estorna pontos resgatados (devolve ao buyer o que foi gasto)
       const refundRedeem = await c.query(
@@ -716,9 +726,11 @@ async function processWebhookEvent(evt) {
         );
         await c.query(
           `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
-           VALUES ($1::UUID, $2::INT, 'order_refund_restore', 'order', $3::text)`,
+           VALUES ($1::UUID, $2::INT, 'order_refund_restore', 'order', $3::text)
+           ON CONFLICT (user_id, reason, reference_id) WHERE reference_id IS NOT NULL DO NOTHING`,
           [refundRedeem.rows[0].buyer_user_id, pts, order.id]
         );
+        loyaltyUsersToInvalidate.add(refundRedeem.rows[0].buyer_user_id);
       }
       // 4. Decrementa counters de produtos + sellers
       await c.query(
@@ -764,6 +776,23 @@ async function processWebhookEvent(evt) {
     }
 
   });
+
+  // FIX-WORKER-11 pass 204: invalidate loyalty:me cache cross-svc apos refund tx commit
+  // (PAYMENT_REFUNDED/CHARGEBACK estornam loyalty - seller-svc cache stale sem isso)
+  // Pattern consolidado: pass 174 sla-status, 175 payouts, 176 loyalty checkout, 191 earn
+  if (loyaltyUsersToInvalidate.size > 0) {
+    try {
+      const tasks = [];
+      for (const userId of loyaltyUsersToInvalidate) {
+        tasks.push(cache.del(`loyalty:me:${userId}:*`));
+      }
+      await Promise.all(tasks);
+    } catch (e) {
+      log.warn({ err: e.message, users: loyaltyUsersToInvalidate.size },
+        '[cache.invalidate_fail.refund]');
+    }
+  }
+
   log.info({ event: evt.event, order_id: order.id }, '[webhook.processed]');
 }
 
