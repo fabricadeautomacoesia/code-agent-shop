@@ -951,10 +951,41 @@ cron.schedule('*/30 * * * * *', () => processOutbox().catch((e) => log.error({ e
 // Cron: a cada minuto recupera locks orfaos
 cron.schedule('* * * * *', () => reclaimOrphanLocks().catch((e) => log.error({ err: e.message }, '[outbox.reclaim_err]')));
 
-// Cron diario: limpeza de notifications antigas (60d)
+// Cron diario: limpeza de notifications antigas
+// FIX-WORKER-14 pass 276 (security notifs retention 1y vs regular 60d):
+//   PRE-FIX: DELETE WHERE created_at < NOW() - 60d sem distinguir security alerts
+//   Security templates (security_refresh_reuse, password_reset, 2fa_*) perdidos
+//   apos 60d - LGPD/SOC2 forensics post-incident dificil
+//   POST-FIX: 2-tier retention:
+//   - Security/auth events (priority=3 OR template prefix sec/2fa/password): 365d
+//   - Regular notifs (engagement, transactional): 60d
 cron.schedule('0 4 * * *', async () => {
-  const r = await query(`DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '60 days' RETURNING id`);
-  log.info({ deleted: r.rowCount }, '[notif.cleanup]');
+  // Regular notifications (60d) - exclude security
+  const r1 = await query(
+    `DELETE FROM notifications
+      WHERE created_at < NOW() - INTERVAL '60 days'
+        AND priority < 3
+        AND template_code NOT LIKE 'security_%'
+        AND template_code NOT LIKE 'password_%'
+        AND template_code NOT LIKE '2fa_%'
+        AND template_code != 'asaas_refund_failed'
+      RETURNING id`
+  );
+  // Security/critical (365d) - retention forensics
+  const r2 = await query(
+    `DELETE FROM notifications
+      WHERE created_at < NOW() - INTERVAL '365 days'
+        AND (priority >= 3
+             OR template_code LIKE 'security_%'
+             OR template_code LIKE 'password_%'
+             OR template_code LIKE '2fa_%'
+             OR template_code = 'asaas_refund_failed')
+      RETURNING id`
+  );
+  log.info({
+    regular_deleted: r1.rowCount,
+    security_deleted: r2.rowCount,
+  }, '[notif.cleanup]');
 });
 
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));

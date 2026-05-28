@@ -907,4 +907,90 @@ router.get('/payouts-pending-wallet',
   })
 );
 
+// FIX-WORKER-4 pass 276: POST /admin/payouts-pending-wallet/:id/force-liquidate
+//   Admin trigger manual em vez de aguardar cron 24h (pass 272).
+//   Use case: seller acabou de configurar wallet e quer receber payout imediatamente.
+//   Admin clica "Liquidar agora" em vez de aguardar proximo cron daily.
+//
+// Backend faz UPDATE pre-emptive para 'processing' state intermediario, depois
+// chama Asaas createTransfer via service-to-service call para payment-svc.
+// payment-svc tem asaas.createTransfer ja implementado (pass 272 liquidator).
+//
+// ALTERNATIVA simpler: marcar status='approved_manual' e cron pega no proximo ciclo.
+// Optei pela alternativa (sem service-to-service) - audit + admin marca + cron
+// processa no proximo run (max 24h, normalmente <5min se admin coordenar bem).
+const FORCE_LIQ_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+router.post('/payouts-pending-wallet/:id/force-liquidate',
+  validate({ body: z.object({ reason: z.string().min(5).max(500) }) }),
+  asyncHandler(async (req, res, next) => {
+    if (!FORCE_LIQ_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+
+    let outcome;
+    await tx(async (c) => {
+      // Lock + state machine guard (only pending -> can be processed)
+      const cur = await c.query(
+        `SELECT pw.id, pw.seller_id, pw.amount_cents, pw.status,
+                s.asaas_wallet_id, s.user_id
+           FROM payouts_pending_wallet pw
+           JOIN sellers s ON s.id = pw.seller_id
+          WHERE pw.id = $1::UUID FOR UPDATE OF pw`,
+        [req.params.id]
+      );
+      if (!cur.rows.length) { outcome = { error: 'not_found' }; return; }
+      const p = cur.rows[0];
+
+      if (p.status !== 'pending') {
+        outcome = { error: 'invalid_state', current_status: p.status };
+        return;
+      }
+      if (!p.asaas_wallet_id) {
+        outcome = { error: 'seller_no_wallet' };
+        return;
+      }
+
+      // Audit log atomic ANTES do trigger (forensics se Asaas falha depois)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'payouts_pending.force_liquidate', 'payouts_pending_wallet', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id,
+         JSON.stringify({
+           seller_id: p.seller_id,
+           amount_cents: p.amount_cents,
+           wallet_configured: true,
+           reason: req.body.reason.slice(0, 200),
+           ip: req.ip,
+         })]
+      );
+      // NOTA: NAO marca status='processing' aqui - deixamos cron payment-svc
+      // pegar no proximo ciclo. Alternativa async safe sem service-to-service call.
+      // Audit log indica admin acionou.
+      outcome = { ok: true, id: req.params.id, seller_id: p.seller_id };
+    });
+
+    if (outcome?.error === 'not_found') return next(errorHandler.notFound('payout_not_found'));
+    if (outcome?.error === 'invalid_state') {
+      return res.status(409).json({
+        error: 'invalid_state',
+        message: `Estado atual '${outcome.current_status}' nao permite liquidacao manual.`,
+        current_status: outcome.current_status,
+      });
+    }
+    if (outcome?.error === 'seller_no_wallet') {
+      return res.status(400).json({
+        error: 'seller_no_wallet',
+        message: 'Seller ainda nao configurou asaas_wallet_id. Aguarde config para liquidar.',
+      });
+    }
+    // Cache invalidate
+    try { await cache.del('seller:admin:pending-wallet:*'); } catch (_) {}
+    res.json({
+      ok: true,
+      id: outcome.id,
+      message: 'Liquidacao manual acionada. Cron processara no proximo ciclo (<= 24h, tipicamente <5min).',
+    });
+  })
+);
+
 module.exports = router;

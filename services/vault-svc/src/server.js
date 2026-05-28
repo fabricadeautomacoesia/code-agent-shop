@@ -103,10 +103,18 @@ const provisionRateLimit = rateLimit({
 });
 
 // FIX-WORKER-17 pass 254: plain_key DoS prevention (max 500 chars - cobre todos providers)
+// FIX-WORKER-17 pass 276 (key_alias XSS + log injection):
+//   PRE-FIX: key_alias z.string().min(3).max(100) sem regex
+//   Atacante: key_alias='<script>alert(1)</script>' (HTML/JS injection)
+//   key_alias='line1\r\nline2' (log injection - fake log entries)
+//   Usado em: logs.info, audit_log.payload_after, admin dashboard rendering
+//   Defesa: regex whitelist alfanumerico + - _ . (typical alias chars)
+//   Pattern V8 cross-svc: 'safe-key-alias-123' OK, '<script>' bloqueado
+const KEY_ALIAS_REGEX = /^[a-zA-Z0-9._\-]{3,100}$/;
 const provisionSchema = z.object({
   seller_id: z.string().uuid().nullable().optional(),
   provider: z.enum(['openai','anthropic','gemini','groq','cohere','mistral','azure-openai','custom']),
-  key_alias: z.string().min(3).max(100),
+  key_alias: z.string().regex(KEY_ALIAS_REGEX, 'Apenas letras/numeros/._- (3-100 chars)'),
   plain_key: z.string().min(10).max(500),
   monthly_quota_usd_cents: z.number().int().positive().nullable().optional(),
   is_platform_pool: z.boolean().default(true),
@@ -990,7 +998,8 @@ app.post('/usage', vaultUseGuard,
 //   Provision endpoint admin tambem fix (paridade).
 const sellerKeyProvisionSchema = z.object({
   provider: z.enum(['openai','anthropic','gemini','groq','cohere','mistral','azure-openai','custom']),
-  key_alias: z.string().min(3).max(100),
+  // FIX-WORKER-17 pass 276: paridade XSS/log injection regex (KEY_ALIAS_REGEX)
+  key_alias: z.string().regex(KEY_ALIAS_REGEX, 'Apenas letras/numeros/._- (3-100 chars)'),
   plain_key: z.string().min(10).max(500),
   monthly_quota_usd_cents: z.number().int().positive().nullable().optional(),
   // Seller NUNCA pode setar is_platform_pool (so admin):

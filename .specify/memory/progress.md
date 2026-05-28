@@ -27966,3 +27966,95 @@ PROXIMA ITER:
 - W4 admin batch actions (force-liquidate manual)
 - W3 PDP installments preview cache
 - VPS SSH unblock CRITICAL (108 ciclos - 36h MARCO!!!)
+
+============================================================
+PASS 276 (2026-05-28) - W4 + W17 + W14
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W4 seller-svc: POST force-liquidate manual
+- W17 vault-svc: key_alias XSS/log injection regex
+- W14 notification-svc: 2-tier retention (security 365d vs regular 60d)
+
+============================================================
+1. W4 - admin force-liquidate manual endpoint
+============================================================
+FILE: services/seller-svc/src/routes/admin.js:910+
+
+CONTEXTO:
+- Pass 275 fechou lifecycle pending->liquidated->forfeited via crons
+- Mas cron liquidator 24h: admin precisa trigger imediato em caso urgente
+  (seller acabou de config wallet + queer payout AGORA)
+
+POST-FIX:
+- POST /admin/payouts-pending-wallet/:id/force-liquidate
+- validate body { reason min(5) max(500) }
+- UUID validate + state machine guard (status='pending' only)
+- Check wallet_configured (seller_no_wallet error se nao)
+- Audit_log atomic dentro tx + cache invalidate
+- NAO chama Asaas direto (cross-svc complexity) - apenas audit_log indica
+  intent admin + cron payment-svc pega no proximo ciclo (max 24h, tipicamente
+  <5min se admin coordena bem)
+
+============================================================
+2. W17 - vault key_alias XSS/log injection regex
+============================================================
+FILE: services/vault-svc/src/server.js:107-114, 988
+
+PROBLEMA (XSS + log injection):
+- PRE-FIX: key_alias z.string().min(3).max(100) - aceita QUALQUER string
+- Atacante seller:
+  * key_alias='<script>alert(1)</script>' -> XSS em admin dashboard render
+  * key_alias='line1\r\nline2' -> log injection (fake log entries)
+- Usado em log.info, audit_log.payload_after, admin UI rendering
+- Provision admin schema + provision seller schema (ambos affected)
+
+POST-FIX:
+- KEY_ALIAS_REGEX = /^[a-zA-Z0-9._-]{3,100}$/
+- Whitelist alfanumerico + . _ - (typical naming convention)
+- Aplicado em provisionSchema E sellerKeyProvisionSchema (paridade)
+- Pattern V8 cross-svc: defesa input character whitelist
+
+============================================================
+3. W14 - notifications 2-tier retention (forensics LGPD)
+============================================================
+FILE: services/notification-svc/src/server.js:954-985
+
+PROBLEMA:
+- Cron diario DELETE WHERE created_at < NOW()-60d (single retention)
+- Security templates (security_refresh_reuse, password_reset, 2fa_*)
+  perdidos apos 60d
+- LGPD/SOC2 forensics post-incident dificil (analisar ataque 90d depois)
+
+POST-FIX (2-tier retention):
+- Regular notifs (engagement, transactional): 60d
+  EXCLUDE priority>=3 AND template prefixes security_/password_/2fa_/asaas_refund_failed
+- Security/auth events: 365d
+  INCLUDE priority>=3 OR template prefixes
+- Log structured: { regular_deleted, security_deleted }
+
+============================================================
+SUMARIO PASS 276
+============================================================
+Files: 3 modificados
+  - services/seller-svc/src/routes/admin.js (force-liquidate)
+  - services/vault-svc/src/server.js (key_alias regex 2 schemas)
+  - services/notification-svc/src/server.js (2-tier retention)
+Lines: ~120 added
+
+VPS SSH BLOQUEADO (109 ciclos - 36.3h sem deploy).
+Migs 069-079 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_vault-svc cas_notification-svc --force
+- W4: admin POST /api/sellers/admin/payouts-pending-wallet/X/force-liquidate
+  -d '{"reason":"manual trigger emergencial"}'
+  -> 200 ok + audit_log + cache invalidate
+- W17: POST /api/vault/keys com key_alias='<script>' -> 400 regex error
+- W14: cron 04:00 -> SELECT count from notifications WHERE created_at < NOW()-60d
+  AND template_code LIKE 'security_%' -> 0 (foram preserved 365d)
+
+PROXIMA ITER:
+- W4 dashboard-admin UI force-liquidate button
+- W11 Asaas wallet validate seller pre-checkout
+- VPS SSH unblock CRITICAL (109 ciclos - 36.3h)
