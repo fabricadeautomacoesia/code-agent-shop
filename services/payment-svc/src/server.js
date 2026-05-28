@@ -872,13 +872,20 @@ app.post('/payments/payouts/:id/process',
       `UPDATE seller_payouts SET status = 'paid', paid_at = NOW(),
                                   asaas_transfer_id = $1
         WHERE id = $2 AND status = 'processing'
-        RETURNING id`,
+        RETURNING id, seller_id`,
       [transfer.id, req.params.id]
     );
     if (!finalUpd.rows.length) {
       // Race extremamente raro: cron reconcile virou status durante fase 2
       log.error({ payout_id: req.params.id, transfer_id: transfer.id },
         '[payout.race.final] UPDATE falhou (status nao processing) - transfer Asaas executou, investigar manual');
+    } else {
+      // FIX-WORKER-18 pass 175: invalida cache seller (pos-paid)
+      // seller_payouts agora 'paid' - seller veria stale ate 30s no /financeiro
+      try {
+        const u = await query('SELECT user_id FROM sellers WHERE id = $1', [finalUpd.rows[0].seller_id]);
+        if (u.rows[0]?.user_id) await cache.del(`seller:payouts:${u.rows[0].user_id}:*`);
+      } catch (_) { /* best-effort */ }
     }
     await query(
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)

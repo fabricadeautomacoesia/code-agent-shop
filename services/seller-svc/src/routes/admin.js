@@ -524,6 +524,20 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // FIX-WORKER-4: antes silenciava ok:true mesmo com UPDATE 0 rows (UUID inexistente ou nao-pending).
 // Admin clicava aprovar -> mensagem de sucesso falsa, mas nada havia acontecido.
 // Agora: 400 invalid_uuid / 404 payout_not_pending com RETURNING id.
+// FIX-WORKER-18 pass 175: helper p/ invalidar cache /payouts do seller dono.
+// Apos UPDATE status, seller veria status stale ate 30s no /financeiro.
+async function invalidateSellerPayoutsCache(payoutId) {
+  try {
+    const r = await query(
+      `SELECT s.user_id FROM seller_payouts p
+         JOIN sellers s ON s.id = p.seller_id WHERE p.id = $1`,
+      [payoutId]
+    );
+    const userId = r.rows[0]?.user_id;
+    if (userId) await cache.del(`seller:payouts:${userId}:*`);
+  } catch (_) { /* best-effort */ }
+}
+
 router.post('/payouts/:id/approve', asyncHandler(async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) {
     return next(errorHandler.badRequest('invalid_uuid'));
@@ -534,6 +548,8 @@ router.post('/payouts/:id/approve', asyncHandler(async (req, res, next) => {
     [req.user.sub, req.params.id]
   );
   if (!r.rows.length) return next(errorHandler.notFound('payout_not_pending'));
+  // FIX-WORKER-18 pass 175: invalida cache seller (pos-UPDATE)
+  await invalidateSellerPayoutsCache(req.params.id);
   // payment-svc disparara Asaas transfer
   res.json({ ok: true, approved: r.rows[0].id });
 }));
@@ -552,6 +568,8 @@ router.post('/payouts/:id/reject',
       [req.body.reason, req.params.id]
     );
     if (!r.rows.length) return next(errorHandler.notFound('payout_not_pending'));
+    // FIX-WORKER-18 pass 175: invalida cache seller (pos-UPDATE)
+    await invalidateSellerPayoutsCache(req.params.id);
     res.json({ ok: true, rejected: r.rows[0].id });
   })
 );
