@@ -31055,3 +31055,28 @@ PROXIMA ITER:
 - W2 checkout E2E completion
 - W17 vault security audit
 - VPS SSH unblock URGENTISSIMO (63h+ ciclos)
+
+## PASS 353 W2 CHECKOUT: cart coupon case-insensitive + error code mapping
+commit f8311b7
+BUG 1 case-sensitive duplicate check:
+  - cart.coupon_code === code comparacao raw
+  - User aplica 'Win10' -> reload -> digita 'WIN10' -> condicao falha
+  - Backend re-aplica consumindo rate-limit token (30/hr)
+  - FIX: trim().toUpperCase() em ambos antes do compare
+
+BUG 2 error mapping nao cobre pass 352:
+  - Regex em msg apenas (fragil)
+  - NAO mapeava coupon_max_uses_per_user_reached
+  - FIX: structural error code mapping
+    * coupon_max_uses_per_user_reached -> 'Voce ja utilizou Xx (limite: Yx)'
+    * coupon_tier_insufficient -> 'exclusivo para tier X'
+    * coupon_invalid -> 'nao encontrado ou expirado'
+    * regex fallbacks mantidos
+
+W2 frontend paridade error contract backend (pass 352)
+86 passes acumulados (268->353) sem deploy VPS
+
+PROXIMA ITER:
+- W4 admin DLP audit-log viewer
+- W17 vault security audit
+- VPS SSH unblock URGENTISSIMO (63h+ ciclos)
