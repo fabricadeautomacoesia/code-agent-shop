@@ -926,12 +926,17 @@ const reportLimiter = rateLimiter.createLimiter({
 app.post('/reports',
   reportLimiter,
   jwt.requireAuth(),
+  /* FIX-WORKER-7 pass 334: evidence_urls max() hardening paridade pass 332/333.
+     PRE-FIX: array(z.string().url()) sem item.max() ou array.max().
+     Atacante pode enviar 1000 URLs de 10kb cada = 10MB payload.
+     express.json 256kb catches, mas ate isso storage waste.
+     POST-FIX: array.max(10) - reports raramente >5 evidencias + item.max(2048). */
   validate({ body: z.object({
     target_type: z.enum(['product','seller','review','user','qna']),
     target_id: z.string().uuid(),
     reason_code: z.enum(['plagiarism','spam','scam','offensive','copyright','other']),
     description: z.string().max(2000).optional(),
-    evidence_urls: z.array(z.string().url()).optional(),
+    evidence_urls: z.array(z.string().url().max(2048)).max(10).optional(),
   })}),
   asyncHandler(async (req, res, next) => {
     // FIX-WORKER-7 pass 38: 6 BUGS aplicando Pattern W7 17 regras.

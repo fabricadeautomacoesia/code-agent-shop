@@ -30356,3 +30356,38 @@ PROXIMA ITER:
 - W7 audit upload routes schemas
 - W4 admin schemas max validation
 - VPS SSH unblock URGENTISSIMO (166 ciclos - 55.3h)
+
+
+============================================================
+PASS 334 - 2026-05-28 - W7 review evidence_urls anti-DoS array max
+============================================================
+Files: 1 modificado
+  - services/review-svc/src/server.js (evidence_urls array+item max)
+Lines: ~5 added
+
+W7 (review POST /reports evidence_urls):
+- PRE-FIX: array(z.string().url()) sem array.max() nem item.max()
+- Atacante: 1000 URLs * 10kb = 10MB payload
+- express.json 256kb catches, mas dentro deste limit storage waste
+- POST-FIX:
+  - array.max(10) - reports raramente >5 evidencias legitimo
+  - item.max(2048) URL RFC 7230 paridade pass 332/333
+- Cobertura URL max() schemas cross-svc:
+  - product-svc seller-mgmt (pass 332)
+  - product-svc versions package_url (pass 333)
+  - seller-svc updateSchema (pass 333)
+  - review-svc evidence_urls (pass 334)
+
+VPS SSH BLOQUEADO (167 ciclos - 55.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_review-svc --force
+- W7 verify:
+  curl -X POST -d '{"target_type":"product","target_id":"...","reason_code":"spam","evidence_urls":["a","b",...,"k"]}' (11 items)
+  Esperado: 400 'Array must contain at most 10 element(s)'
+
+PROXIMA ITER:
+- W7 audit qa-svc Zod schemas additional
+- W4 admin schemas validation
+- VPS SSH unblock URGENTISSIMO (167 ciclos - 55.7h)
