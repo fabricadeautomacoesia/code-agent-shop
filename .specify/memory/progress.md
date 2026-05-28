@@ -25946,3 +25946,81 @@ PROXIMA ITER:
 - W4 admin: bulk select payouts
 - W11 payment: dispute timeline events
 - VPS SSH unblock URGENTISSIMO (83 ciclos - 27.7h!!!)
+
+============================================================
+PASS 251 (2026-05-28) - W13 + W18 transient + pagination
+============================================================
+
+OBJETIVO: 2 workers paralelos (W6 skip - sem gap)
+- W13 notification-svc: sendTelegram e.transient parity
+- W18 order-svc: pagination tiebreaker direction drift
+
+============================================================
+1. W13 - sendTelegram e.transient flag parity
+============================================================
+FILE: services/notification-svc/src/server.js:197-209
+
+PROBLEMA:
+- sendTelegram 'telegram_not_configured' error sem e.transient flag
+- Outbox processor (pass 219) trata: isPermanent = e.transient === false
+- Quando undefined, fallback isPermanent=false -> 5 retries waste
+- Misconfig (env var faltando) eh PERMANENT ate admin fix
+- Pattern sendEmail linha 142 ja aplica e.transient = false para
+  'email_not_configured' - paridade cross-channel missing
+
+POST-FIX:
+- e.transient = false em 'telegram_not_configured'
+- Outbox processor agora skipa imediato (sent_status='failed')
+- Operacional: env config issue surge no admin dashboard imediato
+  ao inves de aguardar 5 retries x backoff (~30min wasted)
+
+============================================================
+2. W18 - pagination tiebreaker direction drift
+============================================================
+FILE: services/order-svc/src/routes/orders.js:405-414
+
+PROBLEMA (deterministic pagination violation):
+- ORDER BY created_at DESC, id (sem direction no tiebreaker)
+- PG default ASC -> mixed direction (DESC, ASC)
+- Mass-insert burst: 10 orders no mesmo timestamp
+- Page 1 oset=0 -> [id=A1, A2, A3, A4, A5] (ASC entre mesmo ts)
+- Cache evict + new order arrives -> pages reordenam
+- User ve duplicate em 2 pages OU pula order entre paginas
+- Pattern V8: tiebreaker MESMA direction (DESC, DESC) garante ordering
+  deterministic per snapshot
+
+POST-FIX:
+- ORDER BY created_at DESC, id DESC (paridade direction)
+- Mass-insert: orders mesmo ts ordenam DESC pelo id (mais recente primeiro)
+- Pagination consistente entre refreshes (cached snapshot)
+
+============================================================
+3. W6 - audit skipped (rateLimit defaults OK)
+============================================================
+registerLimiter/forgotPasswordLimiter sem keyGenerator explicit, MAS
+trust proxy=1 em auth-svc/server.js linha 27 garante req.ip via X-Forwarded-For
+do gateway. express-rate-limit default req.ip OK em Swarm setup.
+
+============================================================
+SUMARIO PASS 251
+============================================================
+Files: 2 modificados
+  - services/notification-svc/src/server.js (transient parity)
+  - services/order-svc/src/routes/orders.js (pagination direction)
+Lines: ~30 added
+
+VPS SSH BLOQUEADO (84 ciclos - 28h sem deploy).
+Migs 069-074 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_notification-svc cas_order-svc --force
+- W13: unset TELEGRAM_BOT_TOKEN + criar notif telegram channel ->
+  SELECT sent_status FROM notifications WHERE channel='telegram'
+  Deve ser 'failed' (era 'pending' x5 retries)
+- W18: mass-insert 10 orders mesmo timestamp + paginar 2x ->
+  Sem duplicates entre pages 1 e 2 (era possivel duplicate)
+
+PROXIMA ITER:
+- W4 admin: bulk select payouts
+- W17 vault: rotate atomic state machine
+- VPS SSH unblock URGENTISSIMO (84 ciclos - 28h)

@@ -198,7 +198,16 @@ async function sendTelegram(message) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chat = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chat) {
-    throw new Error('telegram_not_configured: TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID ausente');
+    // FIX-WORKER-13 pass 251 (transient flag parity):
+    //   PRE-FIX: error sem e.transient flag. Outbox processor (pass 219) trata
+    //   isPermanent = e.transient === false. Quando undefined, default
+    //   isPermanent=false -> retenta 5x antes failed_status. Para misconfig
+    //   admin-side (env var faltando) eh permanent ate admin fix - retry waste.
+    //   Mesmo pattern sendEmail linha 142 ja aplica e.transient = false
+    //   para 'email_not_configured'. Paridade cross-channel.
+    const e = new Error('telegram_not_configured: TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID ausente');
+    e.transient = false;
+    throw e;
   }
   let r;
   try {

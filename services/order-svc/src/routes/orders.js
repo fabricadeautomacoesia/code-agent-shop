@@ -402,6 +402,16 @@ router.get('/admin/recent',
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
     // FIX-WORKER-4 pass 215: COUNT(*) OVER() window aggregate
+    // FIX-WORKER-18 pass 251 (pagination drift tiebreaker direction):
+    //   PRE-FIX: ORDER BY created_at DESC, id (sem direction explicit no tiebreaker)
+    //   PG default ASC para tiebreaker => mixed direction:
+    //     page 1: created_at DESC, id ASC -> orders ordem inconsistente
+    //   Em mass-insert burst (10 orders mesmo created_at), pages shifteam:
+    //     page 1 oset=0: [id=A1, A2, A3, A4, A5] (ASC entre mesmo ts)
+    //     page 2 oset=5: [A6, A7, A8, A9, A10]
+    //   MAS cache evict + insert novo order entre pages -> ids reordenam,
+    //   user ve mesmo order em 2 pages OR pula um. Pattern V8: tiebreaker
+    //   SAME direction (DESC, DESC) p/ ordering deterministic per snapshot.
     const r = await query(
       `SELECT o.id, o.order_number, o.status, o.payment_status, o.total_cents, o.currency,
               o.payment_method, o.buyer_user_id, o.created_at, o.paid_at,
@@ -409,7 +419,7 @@ router.get('/admin/recent',
               COUNT(*) OVER()::INT AS _total
          FROM orders o
          JOIN users u ON u.id = o.buyer_user_id
-        ORDER BY o.created_at DESC, o.id LIMIT $1 OFFSET $2`,
+        ORDER BY o.created_at DESC, o.id DESC LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
 
