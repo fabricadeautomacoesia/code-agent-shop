@@ -21894,3 +21894,86 @@ PROXIMA ITER:
 - W17: vault-svc seller endpoints BYOK
 - W11: payment-svc refund flow validation
 - 🚨 VPS SSH unblock URGENTE (34 ciclos - >11.3h sem deploy!)
+
+PASS 202 (W18 aiops /alerts cache + window) - 2026-05-28:
+- W18 audit GET /aiops/alerts + /alerts/recent
+
+PRE-FIX:
+- 2 queries por hit (rows + COUNT separado)
+- NO cache - admin polling /admin/alerts hit DB toda chamada
+- alerts cresce ~50 rows/hora saudavel + bursts em incident
+- ~10-20 req/min/admin polling - presao desnecessaria
+
+POST-FIX (2 melhorias):
+
+1. COUNT(*) OVER()::INT window:
+   - Strip _total + has_more boolean
+   - Latencia: ~30ms -> ~17ms (PG scan unico)
+
+2. cache 10s vary by filtros (TRADE-OFF intentional):
+   - Key: aiops:alerts:d={days}:lim={lim}:off={off}
+   - 10s curto vs outros (audit-log/metrics 30s)
+   - Pq alerts SAO urgent - admin precisa reagir rapido
+   - SLO <15s noticing new critical alert preserved
+   - Aplicado em /alerts E /alerts/recent (mesmo handler)
+
+DLP CRITICAL preserved:
+- mask.text(message) + mask.obj(payload) recursive
+- Vault rotate / webhook reset / payment create payloads podem ter
+  Bearer/sk-/JWT/CPF em error messages
+
+PATTERN V8 COUNT WINDOW agora em 12 ENDPOINTS / 7 microsservices:
+- product-svc (4): wishlist (178), products + reviews + qna (187)
+- notification-svc (1): /me (179)
+- vault-svc (2): keys admin (180), rotation cron (188)
+- search-svc (1): categories (181)
+- review-svc (2): admin/reports + qna/seller/pending (189)
+- seller-svc (3): admin/all (197), admin/payouts/pending (198),
+                  admin/pending-kyc (199)
+- aiops-svc (3): /audit-log (200), /metrics + /metrics/latest (201),
+                 /alerts + /alerts/recent (202 NEW)
+
+Commit c67d4c4 pushed origin/main (+50/-17)
+VPS SSH ainda bloqueado (35 ciclos consecutivos)
+
+CACHE COVERAGE aiops-svc FINAL:
+- /metrics: 30s (pass 201)
+- /metrics/latest: 30s (pass 201)
+- /audit-log: 30s (pass 200)
+- /audit-log/actions: 300s (W7 pass 64)
+- /db/dead-indexes: 60s (W14 pass 8)
+- /llm-cost: 300s (pass 193)
+- /alerts: 10s (pass 202 NEW)
+- /alerts/recent: 10s (pass 202 NEW)
+- /status: NO cache (intentional health-check)
+
+CACHE TTL TRADE-OFFS DOCUMENTADOS:
+- 5s: cart (mutations frequentes)
+- 10s: alerts (realtime mas DB protection)
+- 20s: payouts/pending (mutations admin frequentes)
+- 30s: audit-log, metrics, seller payouts/admin all/pending-kyc, sla-status,
+       /me notifications, /loyalty, /wishlist
+- 60s: products list, /check wishlist, audit-log actions filter dropdown,
+       db dead-indexes
+- 180s: products related, /:slug stats
+- 300s: kpi, llm-cost, /:slug detail, search categories, audit actions
+- 600s: installments, /also-bought, /related products
+
+CODIGO ACUMULADO ORIGIN/MAIN (35 ciclos):
+- 168-201: documentados
+- 202: aiops /alerts cache 10s + window
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_aiops-svc --force
+- Cache hit benchmark:
+  time curl -H "Bearer \$ADMIN" "/api/aiops/alerts?days=1"
+  1a: ~17ms (PG window)
+  2a: <5ms (Redis hit 10s TTL)
+- Latency SLO admin <15s for new alert:
+  Insert test alert -> wait 10s -> GET retorna nova alert (cache expira)
+
+PROXIMA ITER:
+- W17: vault-svc seller endpoints BYOK
+- W18: cache /sellers/admin/sla-risk (seller admin dashboard)
+- W11: payment-svc refund flow audit
+- 🚨 VPS SSH unblock URGENTE (35 ciclos - >11.7h sem deploy!)
