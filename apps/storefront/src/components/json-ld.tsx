@@ -12,15 +12,18 @@ export function JsonLd({ data }: { data: Record<string, any> | Record<string, an
   );
 }
 
-// FIX-WORKER-3 pass 351: domain mismatch -> SEO broken
-// PRE-FIX: SITE_URL = 'cas.inovareinteligenciaartificial.com' (subdomain inexistente)
-//   - URLs em productLd/breadcrumbLd/organizationLd apontavam p/ host fantasma
-//   - Google SERP exibia URL quebrada -> rich snippet rejeitado
-//   - canonical link tambem afetado (sitemap, OpenGraph url)
-// POST-FIX: env-driven (NEXT_PUBLIC_SITE_URL) com fallback no host real
-//   code-agent-shop.inovareinteligenciaartificial.com.
+// FIX-WORKER-1 pass 355: reverter SITE_URL pass 351 (Traefik host real)
+// PRE-FIX pass 351: troquei p/ code-agent-shop.inovareinteligenciaartificial.com
+//   ASSUMINDO host. Audit subsequente revelou:
+//   - deploy/stack.inovare.yml (active deploy) usa cas.inovareinteligenciaartificial.com
+//   - deploy/stack.yml (alternative) usa code-agent-shop.com.br
+//   Pass 351 deixou JSON-LD com host inexistente no Traefik ativo.
+// POST-FIX pass 355: env-driven NEXT_PUBLIC_SITE_URL (deploy controla via env)
+//   + fallback no host Traefik ativo (stack.inovare.yml).
+//   3 outros fixes do pass 351 (status whitelist, filter order, breadcrumb URL)
+//   permanecem corretos - nao tocar.
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ||
-  'https://code-agent-shop.inovareinteligenciaartificial.com';
+  'https://cas.inovareinteligenciaartificial.com';
 
 export function productLd(product: any, reviews: any[] = []) {
   const url = `${SITE_URL}/product/${product.slug}`;

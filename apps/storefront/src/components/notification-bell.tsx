@@ -6,6 +6,16 @@ import { Bell, X, Check, CheckCheck, ExternalLink } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 
+// FIX-WORKER-1 pass 355: env-driven seller dashboard URL
+//   PRE-FIX: 'https://seller.cas.inovareinteligenciaartificial.com/financeiro' hardcoded
+//   - deploy/stack.yml alternativo usa seller.code-agent-shop.com.br
+//   - Dev environments e custom deployments precisam override sem rebuild
+//   - Mudanca de domain em prod = re-build storefront (lento - 8-12min)
+//   POST-FIX: NEXT_PUBLIC_SELLER_URL env-driven + fallback Traefik host ativo
+//   (stack.inovare.yml). Deploy controla via env -> tempo zero pra mudar.
+const SELLER_DASH_URL = process.env.NEXT_PUBLIC_SELLER_URL ||
+  'https://seller.cas.inovareinteligenciaartificial.com';
+
 // FIX-WORKER-1: infere URL para template quando cta_url eh null (~99% das notifs hoje).
 // Mercado Livre: sino sempre tem onde clicar -> reduz friccao + aumenta engajamento.
 function inferCtaUrl(n: any): string | null {
@@ -28,7 +38,7 @@ function inferCtaUrl(n: any): string | null {
     case 'payout_approved':
     case 'payout_paid':
     case 'payout_rejected':
-      return 'https://seller.cas.inovareinteligenciaartificial.com/financeiro';
+      return `${SELLER_DASH_URL}/financeiro`;
     case 'welcome_bonus':
     case 'loyalty_tier_up':
       return '/conta/pontos';
