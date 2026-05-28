@@ -31,4 +31,10 @@ export async function adminFetch<T = any>(path: string, init: RequestInit = {}):
 export const fmtBRL = (cents: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((cents || 0) / 100);
 
-export const fmtDate = (d: string) => new Date(d).toLocaleString('pt-BR');
+/* FIX-WORKER-4 pass 315: defensive date guard paridade dashboard-seller mesma pass.
+   Coverage cross-app (storefront pass 306, seller pass 315, admin pass 315). */
+export const fmtDate = (d: string | null | undefined): string => {
+  if (!d) return '-';
+  const t = new Date(d).getTime();
+  return isNaN(t) ? '-' : new Date(d).toLocaleString('pt-BR');
+};

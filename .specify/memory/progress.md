@@ -29630,3 +29630,48 @@ PROXIMA ITER:
 - W18 payment-svc additional 2-query patterns consolidate (1061, 1398, 1447)
 - W11 webhook tx fields explicit (s.* style audit)
 - VPS SSH unblock URGENTISSIMO (147 ciclos - 49h)
+
+
+============================================================
+PASS 315 - 2026-05-28 - W6 auth refresh DLP + W5 fmtDate defensive guard
+============================================================
+Files: 3 modificados
+  - services/auth-svc/src/routes/auth.js (mask.text ua refresh paths)
+  - apps/dashboard-seller/src/lib/seller-api.ts (fmtDate isNaN guard)
+  - apps/dashboard-admin/src/lib/admin-api.ts (fmtDate isNaN guard)
+Lines: ~25 added/changed
+
+W6 (auth /refresh reuse breach ua DLP):
+- PRE-FIX: 2 paths (log.warn + audit_log INSERT) com ua raw
+  - linha 451 log.warn ua slice raw
+  - linha 471 audit_log payload_after ua slice raw
+- Paridade pass 282/292/296 - mas /refresh estava sem mask
+- POST-FIX: safeUa = mask.text((req.headers['user-agent']||'').slice(0,200))
+- Aplicado em ambos paths
+
+W5 (dashboard fmtDate defensive guard cross-app):
+- PRE-FIX: fmtDate(d: string) = new Date(d).toLocaleString
+- created_at=null/undefined/invalid -> 'Invalid Date' UX feio
+- POST-FIX (helper):
+  - aceita null|undefined explicit
+  - !d return '-'
+  - isNaN(getTime()) return '-'
+- COVERAGE cross-app:
+  - apps/storefront pass 306 notification-bell defensive (component-level)
+  - apps/dashboard-seller pass 315 lib-level (cobre 6+ pages)
+  - apps/dashboard-admin pass 315 lib-level (cobre 15+ pages)
+- Pattern V8 defensive helper: 1 fix em lib propaga p/ TODOS consumers
+
+VPS SSH BLOQUEADO (148 ciclos - 49.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_auth-svc cas_dashboard-seller cas_dashboard-admin --force
+- W6: SELECT payload_after->>'ua' FROM audit_log WHERE action='auth.refresh_reuse_breach' LIMIT 3;
+  Esperado: ua masked
+- W5: render qualquer page seller/admin com data null -> '-' em vez de 'Invalid Date'
+
+PROXIMA ITER:
+- W5 audit other helper fns (fmtBRL, ouros) defensive
+- W4 admin dashboard refresh_reuse audit panel
+- VPS SSH unblock URGENTISSIMO (148 ciclos - 49.3h)

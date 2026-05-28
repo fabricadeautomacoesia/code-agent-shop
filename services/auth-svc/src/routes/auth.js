@@ -445,10 +445,13 @@ router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
   // Cascade logout: revoga TODAS sessoes do user (incluindo a roubada)
   if (s.rows[0].is_revoked) {
     const userId = s.rows[0].user_id;
+    /* FIX-WORKER-6 pass 315: ua mask.text() paridade pass 282/292/296.
+       Refresh reuse breach paths estavam sem DLP mask. */
+    const safeUa = mask.text((req.headers['user-agent'] || '').slice(0, 200));
     log.warn({
       user_id: userId,
       ip: req.ip,
-      ua: req.headers['user-agent']?.slice(0, 200),
+      ua: safeUa,
       session_id: s.rows[0].id,
     }, '[refresh.reuse.detected]');
     // Cascade revoke + audit
@@ -468,7 +471,7 @@ router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
           userId, s.rows[0].id,
           JSON.stringify({
             ip: req.ip,
-            ua: req.headers['user-agent']?.slice(0, 200),
+            ua: safeUa,
             cascaded_sessions: cascaded.rowCount,
             original_session_id: s.rows[0].id,
           })

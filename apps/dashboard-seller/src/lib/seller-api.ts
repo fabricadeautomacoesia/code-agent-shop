@@ -55,4 +55,12 @@ export async function sellerUpload(path: string, file: File): Promise<any> {
 
 export const fmtBRL = (cents: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((cents || 0) / 100);
-export const fmtDate = (d: string) => new Date(d).toLocaleString('pt-BR');
+/* FIX-WORKER-5 pass 315: defensive date guard paridade pass 254/283/306 (cross-app).
+   PRE-FIX: new Date(null/undef/invalid).toLocaleString -> 'Invalid Date' UI feio.
+   POST-FIX: !isNaN guard + fallback '-'. Aplica em todas pages dashboard-seller
+   que usam fmtDate (qna, financeiro, products, reviews, loja, downloads). */
+export const fmtDate = (d: string | null | undefined): string => {
+  if (!d) return '-';
+  const t = new Date(d).getTime();
+  return isNaN(t) ? '-' : new Date(d).toLocaleString('pt-BR');
+};
