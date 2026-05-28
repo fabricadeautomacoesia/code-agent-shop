@@ -17342,7 +17342,34 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ MLB-12 Buscas Recentes localStorage (pass 122)
 - ✅ Fix /facets HTTP 500 enum cast (pass 123)
 - ✅ Migration 050 trigger updated_at user_loyalty (pass 124)
-- ✅ Sync product-svc SORT_ENUM (+recent_sales) (pass 125 esta iter)
+- ✅ Sync product-svc SORT_ENUM (+recent_sales) (pass 125)
+- ✅ Migration 051 BRIN idx metrics_history (pass 126 esta iter)
+
+W7 PASS 126 RESUMO - W18 PERF BRIN INDEX METRICS_HISTORY:
+- AUDIT W17 vault: endpoints OK (health 200, keys+use 401 sem auth)
+- AUDIT W18 cache hit ratio:
+  * idx_hit 96.70% (>=95% OK)
+  * heap_hit 94.41% (<95% threshold)
+- DEEP-DIVE pg_statio_user_tables:
+  * metrics_history heap_hit 84.9% (PIOR)
+  * 14223 hits / 2529 reads / 12k rows / 1.3d / 3.1MB
+  * aiops worker INSERT ~6k/dia -> futuro 180k/mes sem retention
+- W12 audit: qa-svc usa 'verdict' (nao 'status') corretamente. Sem bug.
+- CREATED db/migrations/051_metrics_history_retention.sql:
+  * CREATE INDEX BRIN em collected_at (pages_per_range=32)
+  * BRIN ideal p/ time-series: 20-100x menor que btree
+  * INSERT mais rapido (menos pages atualizar)
+  * Range queries (WHERE collected_at > NOW()-INTERVAL) optimal quando >100k rows
+- APPLIED via SSH em prod:
+  * Pre: idx_metrics_collected (btree) 488kB + pkey 280kB
+  * Post: +idx_metrics_collected_brin 24kB (20x menor que btree!)
+  * Total agora: btree 488kB + brin 24kB + pkey 280kB = 792kB
+- VALIDATED EXPLAIN: planner ainda usa btree p/ 360 rows (corretamente -
+  btree mais rapido em datasets pequenos). BRIN brilhara quando metrics
+  crescer >100k rows (no horizonte com retention 30d).
+- MANTEMOS btree por 1 pass para audit comparativo
+- 51 migrations totais (era 50)
+- COMMIT 71e671e pushed GitHub main + applied prod
 
 W7 PASS 125 RESUMO - W7 SORT_ENUM SYNC product-svc vs search-svc:
 - AUDIT W6 auth-svc endpoints: 10 endpoints OK (register/login/forgot/reset/refresh/logout/2fa)
