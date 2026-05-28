@@ -342,9 +342,16 @@ router.post('/coupon',
   }) }),
   asyncHandler(async (req, res, next) => {
     // FIX-WORKER-7 pass 16: SELECT explicit + UPPER case-insensitive.
+    // FIX-WORKER-14 pass 352: + coupon.id + max_uses_per_user
+    //   coupons table tem coluna max_uses_per_user (mig 006 linha 211) MAS
+    //   endpoint NUNCA validava -> user podia aplicar/reaplicar mesmo cupom
+    //   N+1 vezes (UX bug + abuse vector p/ cupons %50 high-value).
+    //   MLB feature standard: cupom 1x per user (raro 2-3x).
+    //   POST-FIX: query inclui max_uses_per_user, count check via idx
+    //   composto idx_cuses_coupon_user (mig 085 pass 352) - O(log n).
     const c = await query(
-      `SELECT code, discount_type, discount_value, tier_breakpoints,
-              expires_at, min_tier, max_uses, used_count, is_active
+      `SELECT id, code, discount_type, discount_value, tier_breakpoints,
+              expires_at, min_tier, max_uses, max_uses_per_user, used_count, is_active
          FROM coupons
         WHERE UPPER(code) = UPPER($1) AND is_active
           AND (starts_at IS NULL OR starts_at <= NOW())
@@ -354,8 +361,28 @@ router.post('/coupon',
     );
     if (!c.rows.length) return next(errorHandler.notFound('coupon_invalid'));
 
-    // FIX-WORKER-16 MLB++: cupom segmentado por tier - check elegibilidade do user
+    // FIX-WORKER-14 pass 352: max_uses_per_user check (gap funcional descoberto)
+    //   Defesa antes do tier check p/ early reject (UX + perf).
+    //   COUNT exact com idx composto - cheap.
     const coupon = c.rows[0];
+    if (coupon.max_uses_per_user && req.user?.sub) {
+      const useCountRow = await query(
+        `SELECT COUNT(*)::INT AS n FROM coupon_uses
+          WHERE coupon_id = $1::UUID AND user_id = $2::UUID`,
+        [coupon.id, req.user.sub]
+      );
+      const userUses = Number(useCountRow.rows[0]?.n || 0);
+      if (userUses >= Number(coupon.max_uses_per_user)) {
+        return res.status(403).json({
+          error: 'coupon_max_uses_per_user_reached',
+          message: `Voce ja utilizou este cupom ${userUses}x (limite: ${coupon.max_uses_per_user}).`,
+          user_uses: userUses,
+          max_uses_per_user: Number(coupon.max_uses_per_user),
+        });
+      }
+    }
+
+    // FIX-WORKER-16 MLB++: cupom segmentado por tier - check elegibilidade do user
     if (coupon.min_tier) {
       const userTierRow = await query(
         `SELECT tier FROM user_loyalty WHERE user_id = $1::UUID`, [req.user.sub]
