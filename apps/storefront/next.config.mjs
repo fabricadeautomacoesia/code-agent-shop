@@ -26,6 +26,11 @@ const nextConfig = {
       { source: '/produtos', destination: '/products' },
       { source: '/produtos/:path*', destination: '/products/:path*' },
       { source: '/buscar', destination: '/products' },
+      // FIX-WORKER-7 pass 112: + /loja -> /seller (storefront seller pages)
+      { source: '/loja', destination: '/sellers' },
+      { source: '/loja/:slug', destination: '/seller/:slug' },
+      // PT-BR alias para PDP individual (compat)
+      { source: '/produto/:slug', destination: '/product/:slug' },
     ];
   },
   poweredByHeader: false,
