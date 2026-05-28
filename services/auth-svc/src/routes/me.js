@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, errorHandler, validate, rateLimiter, mask } = require('@cas/shared');
+const { jwt, asyncHandler, errorHandler, validate, rateLimiter, mask, maskPII } = require('@cas/shared');
 
 const router = express.Router();
 router.use(jwt.requireAuth());
@@ -178,9 +178,10 @@ router.patch('/',
            JSON.stringify({
              fields: fieldsProvided,
              cpf_changed: cpfChanged,
-             cpf_masked: cpfChanged && req.body.cpf_cnpj
-               ? (req.body.cpf_cnpj.slice(0, 3) + '.***.***-' + req.body.cpf_cnpj.slice(-2))
-               : null,
+             // FIX-WORKER-7 pass 173 (DRY): inline mask -> @cas/shared.maskPII.cpf
+             // Garante consistencia com display LGPD (mesma representacao em
+             // audit_log, admin UI, /me responses) + null-safe pra CPFs invalidos.
+             cpf_masked: cpfChanged ? maskPII.cpf(req.body.cpf_cnpj) : null,
              ip: req.ip,
            })]
         );
