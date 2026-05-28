@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup, cache, mask, rateLimiter } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup, cache, mask, rateLimiter, withRetry } = require('@cas/shared');
 const asaas = require('./asaas');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
@@ -616,6 +616,14 @@ async function processWebhookEvent(evt) {
   // (webhook PAYMENT_RECEIVED muda paid_at + status - buyer /conta/pedidos/[id] ve stale)
   let orderIdToInvalidate = null;
 
+  /* FIX-WORKER-11 pass 311 (webhook deadlock retry):
+     PRE-FIX: tx() webhook handler sem withRetry wrap. Cenarios deadlock 40P01:
+     - Asaas retry burst (3-5 callbacks paralelos por order quando 503 transient)
+     - SELECT FOR UPDATE em mesma order_id row -> deadlock detected -> 1 morre 40P01
+     - Webhook retorna 500 -> Asaas retry com backoff (10x mais) -> amplifica
+     POST-FIX: withRetry wrap tx, 3 attempts backoff exponencial.
+     Pattern V8 cross-svc (paridade pass 310 qa-svc + vault-svc). */
+  await withRetry('payment.webhook.tx', async () => {
   await tx(async (c) => {
     // FIX-WORKER-7 pass 22 (bug 1 RACE Regra K): SELECT FOR UPDATE.
     // Pre-fix: SELECT sem lock fora do tx() permitia 2 webhooks
@@ -954,6 +962,7 @@ async function processWebhookEvent(evt) {
     }
 
   });
+  }); // close withRetry pass 311
 
   // FIX-WORKER-11 pass 204: invalidate loyalty:me cache cross-svc apos refund tx commit
   // (PAYMENT_REFUNDED/CHARGEBACK estornam loyalty - seller-svc cache stale sem isso)

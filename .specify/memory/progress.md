@@ -29484,3 +29484,48 @@ PROXIMA ITER:
 - W17 vault provision/revoke tx withRetry (paridade)
 - W11 payment-svc tx audit withRetry coverage
 - VPS SSH unblock URGENTISSIMO (143 ciclos - 47.7h)
+
+
+============================================================
+PASS 311 - 2026-05-28 - W11 payment webhook withRetry deadlock + W13 notif audit
+============================================================
+Files: 1 modificado
+  - services/payment-svc/src/server.js (webhook tx withRetry wrap + import)
+Lines: ~15 added
+
+W11 (payment webhook deadlock retry):
+- PRE-FIX: tx() webhook handler (linha 619) sem withRetry wrap
+- Cenario hot path Asaas retry burst:
+  - Asaas envia webhook PAYMENT_RECEIVED
+  - Recebe 5xx transient -> retry burst (3-5 callbacks paralelos)
+  - SELECT FOR UPDATE em mesma order_id row -> deadlock 40P01
+  - Webhook 500 -> Asaas amplifica retries (exponential backoff dele)
+  - Loop deadlock + retry burst
+- POST-FIX: withRetry('payment.webhook.tx', ...) wrap tx
+- 3 attempts com backoff exponencial (500ms base + jitter)
+- Pattern V8 cross-svc consolidado pass 310 (qa-svc + vault-svc)
+
+W13 (notif outbox audit - no tx() critical):
+- Outbox processor usa queries individuais (sem tx())
+- UPDATE single-row notifications.locked_by - atomic naturalmente
+- Deadlock risk minimal - no SELECT FOR UPDATE chains
+- Nenhuma alteracao necessaria
+
+VPS SSH BLOQUEADO (144 ciclos - 48h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_payment-svc --force
+- W11 verify: logs payment-svc burst webhook
+  Esperado raro: '[withRetry] retry 1/3 op=payment.webhook.tx code=40P01'
+
+withRetry Coverage Final cross-svc:
+- pass 309: qa-worker callback HTTP retry
+- pass 310: qa-svc callback DB tx deadlock + vault-svc /use pool tx deadlock
+- pass 311: payment-svc webhook tx deadlock
+- (existing): asaas.js api + various tx critical writes
+
+PROXIMA ITER:
+- W11 payment processWebhookEvent additional withRetry coverage
+- W4 admin dashboard withRetry events logging panel
+- VPS SSH unblock URGENTISSIMO (144 ciclos - 48h)
