@@ -17328,7 +17328,24 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ DEPLOY VPS PROD EXECUTADO via SSH (pass 108) - 107 W7 passes LIVE
 - ✅ Fix /sla-history + /kpi schema mismatch (pass 109) - 2 bugs prod
 - ✅ Audit admin endpoints + 5 schema fixes (pass 110)
-- ✅ Audit storefront SSR + 3 fixes deploy infra (pass 111 esta iter)
+- ✅ Audit storefront SSR + 3 fixes deploy infra (pass 111)
+- ✅ Rewrites PT-BR /loja + /produto + descobrindo URLs reais dashboards (pass 112)
+
+W7 PASS 112 RESUMO - DASHBOARDS DISCOVERY + PT-BR EXPANSION:
+- Audit dashboard-admin + dashboard-seller via curl + Traefik inspect
+- DESCOBERTAS:
+  * Admin dashboard LIVE em https://admin.cas.inovareinteligenciaartificial.com
+  * Seller dashboard LIVE em https://seller.cas.inovareinteligenciaartificial.com
+  * Storefront LIVE em https://cas.inovareinteligenciaartificial.com
+- 3 NOVAS URLs PT-BR (rewrites Next.js):
+  * /loja -> /sellers (vitrine vendedores)
+  * /loja/:slug -> /seller/:slug (loja individual)
+  * /produto/:slug -> /product/:slug (PDP singular alias)
+- VALIDATION POS-FIX:
+  * /loja -> "Vendedores" 200 OK
+  * /loja/vendedor-demo-um-9470 -> "Vendedor Demo Um" 200 OK
+  * /produto/prompt-pack-vendas-b2b-cas-007 -> "Prompt Pack..." 200 OK
+- Pattern W7 em 128 endpoints/pages LIVE - 112 micro-iters
 
 W7 PASS 111 RESUMO - SSR AUDIT + INFRA FIXES:
 - Audit 18 paginas SSR storefront via curl, identificou 2 URLs PT-BR 404:
