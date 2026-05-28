@@ -693,10 +693,14 @@ app.get('/qna/seller/pending', jwt.requireAuth({ roles: ['seller','admin'] }),
     const limitParamIdx = params.length - 1;
     const offsetParamIdx = params.length;
 
+    // FIX-WORKER-7 pass 189: COUNT(*) OVER() window (consolidation pattern)
+    // + BUG total errado: 'total: qna.length' reportava paginated count em
+    // vez de absolute. UI seller "X de Y" Y stale.
     const r = await query(
       `SELECT q.id, q.question, q.asked_at, q.upvote_count,
               p.id AS product_id, p.slug AS product_slug, p.title AS product_title, p.cover_image_url,
-              u.display_name AS asker_name, u.email AS asker_email
+              u.display_name AS asker_name, u.email AS asker_email,
+              COUNT(*) OVER()::INT AS _total
          FROM product_qna q
          JOIN products p ON p.id = q.product_id
          JOIN sellers s ON s.id = q.seller_id
@@ -706,13 +710,22 @@ app.get('/qna/seller/pending', jwt.requireAuth({ roles: ['seller','admin'] }),
         LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`, params
     );
 
+    const total = r.rows[0]?._total ?? 0;
+
     // LGPD masking: seller só vê email mascarado (data minimization)
     const qna = r.rows.map((row) => {
-      if (isAdmin) return row;
-      return { ...row, asker_email: maskEmail(row.asker_email) };
+      const { _total, ...rest } = row;
+      if (isAdmin) return rest;
+      return { ...rest, asker_email: maskEmail(rest.asker_email) };
     });
 
-    res.json({ qna, total: qna.length, limit, offset });
+    res.json({
+      qna,
+      total,
+      limit,
+      offset,
+      has_more: (offset + qna.length) < total,
+    });
   })
 );
 
@@ -1153,11 +1166,19 @@ app.get('/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
     //   reason_code (não reason), description (não notes), resolved_by
     //   (não resolved_by_user_id), evidence_urls. Removidos campos
     //   ficticios: reason, notes, resolved_by_user_id.
+    // FIX-WORKER-7 pass 189 (BUG TOTAL ERRADO):
+    //   PRE-FIX: 'total: reports.length' reportava paginated count (max 50)
+    //   em vez de absolute total. UI admin "X de Y" Y stale: 50 de 200 -> 50 de 50.
+    //   "Carregar mais" disabled erroneamente quando havia mais reports.
+    //   FIX: COUNT(*) OVER()::INT window aggregate + strip _total interno
+    //   Same pattern aplicado em product-svc (pass 187), wishlist (pass 178),
+    //   notification (pass 179), vault keys list (pass 180).
     const r = await query(
       `SELECT r.id, r.target_type, r.target_id, r.reason_code, r.description,
               r.evidence_urls, r.status, r.resolution_notes, r.resolved_at,
               r.resolved_by, r.reporter_user_id, r.created_at,
-              u.email AS reporter_email, u.full_name AS reporter_name
+              u.email AS reporter_email, u.full_name AS reporter_name,
+              COUNT(*) OVER()::INT AS _total
          FROM reports r
          LEFT JOIN users u ON u.id = r.reporter_user_id
         WHERE r.status = $1
@@ -1165,22 +1186,26 @@ app.get('/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
         LIMIT $2 OFFSET $3`, [status, limit, offset]
     );
 
+    const total = r.rows[0]?._total ?? 0;
+
     // LGPD masking: admin vê full, staff vê masked (data minimization)
     const isAdmin = req.user && req.user.role === 'admin';
     const reports = r.rows.map((row) => {
-      if (isAdmin) return row;
+      const { _total, ...rest } = row;
+      if (isAdmin) return rest;
       return {
-        ...row,
-        reporter_email: maskEmail(row.reporter_email),
-        reporter_name: maskName(row.reporter_name),
+        ...rest,
+        reporter_email: maskEmail(rest.reporter_email),
+        reporter_name: maskName(rest.reporter_name),
       };
     });
 
     res.json({
       reports,
-      total: reports.length,
+      total,
       limit,
       offset,
+      has_more: (offset + reports.length) < total,
       status,
     });
   })
