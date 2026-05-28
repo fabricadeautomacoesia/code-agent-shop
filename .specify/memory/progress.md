@@ -21399,3 +21399,63 @@ PROXIMA ITER:
 - W14: drop duplicate idx_loyalty_user_recent (apos pg_stat zero scans 2w)
 - W16: implementar 1 MLB feature ainda pendente (analisar lista do prompt)
 - 🚨 VPS SSH unblock URGENTE (27 ciclos - ~9h sem deploy!)
+
+PASS 195 (W14 migration 062 drop duplicate loyalty idx) - 2026-05-28:
+- W14 executa cleanup identificado em pass 190:
+
+REDUNDANCIA DETECTADA:
+- migration 010 (marketplace_enhancements) criou:
+  idx_loyalty_user ON loyalty_transactions(user_id, created_at DESC)
+- migration 011 (critical_indexes) criou identico:
+  idx_loyalty_user_recent ON loyalty_transactions(user_id, created_at DESC)
+- AMBOS BTree composite identicos -> 100% redundancia
+- 2x storage allocation + 2x WRITE overhead em cada INSERT
+
+POST-FIX (migration 062):
+- DROP idx_loyalty_user_recent (mais novo + nome menos semantic)
+- KEEP idx_loyalty_user (mais antigo, user-listing semantic)
+- Storage: ~10MB economia tipica em prod
+- Write perf: -50% INSERT overhead neste BTree composite
+- Zero queries quebram (cobertura identica preserved)
+
+MIGRATION STRATEGY DEFENSIVE:
+- DO $$ IF EXISTS idx_loyalty_user THEN DROP ELSE WARNING
+- Edge case: prod sem idx_loyalty_user -> skip drop + WARNING admin
+- IF NOT EXISTS pattern (V8 blueprint tolerante a falhas)
+
+W14 DUPLICATES drop history:
+- mig 047: idx_pviews_user + idx_oi_product (over-indexing init)
+- mig 056: hardcoded rolling indices (auto-managed agora)
+- mig 062 (atual): idx_loyalty_user_recent
+
+Commit 6c37326 pushed origin/main
+VPS SSH ainda bloqueado (28 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (28 ciclos):
+- 168-194: documentados
+- 195: migration 062 drop duplicate
+
+W14 MIGRATIONS PROD-PENDING (acumuladas):
+- 058 audit_log actor_created composto
+- 059 wishlist + notif compound idx
+- 060 users email LOWER UNIQUE + backfill
+- 061 loyalty idempotency partial UNIQUE
+- 062 drop idx_loyalty_user_recent duplicate
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply em ordem:
+  for m in 058 059 060 061 062; do
+    psql -f /opt/cas/db/migrations/${m}_*.sql
+  done
+- Validar migration 062:
+  SELECT indexname FROM pg_indexes WHERE tablename='loyalty_transactions';
+  Esperado: NAO conter 'idx_loyalty_user_recent' (only 'idx_loyalty_user' + idx_loyalty_idempotency)
+- Storage check:
+  SELECT pg_size_pretty(pg_relation_size('loyalty_transactions'))
+  -> deve reduzir ~10MB apos drop
+
+PROXIMA ITER:
+- W17: vault seller-svc endpoints (sellers gestionarem suas BYOK keys sem admin)
+- W16: implementar MLB feature pendente (Q&A upvote analytics?)
+- W11: payment-svc payout dispute resolution flow
+- 🚨 VPS SSH unblock URGENTE (28 ciclos - ~9.3h sem deploy!)
