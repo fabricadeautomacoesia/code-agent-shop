@@ -31601,3 +31601,38 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
 - W2 checkout E2E
+
+## PASS 372 W6 AUTH: notification gap /2fa/activate (anti-takeover)
+commit a955361
+BUG notif gap /activate vs /recovery + /disable
+PRE-FIX: /activate so audit_log, sem notification cross-device
+  /recovery (pass 220) JA notificava priority 2
+  /disable (pass 286) JA notificava priority 3
+  /activate ficou lagged - sec event invisivel
+
+CENARIO FRAUDE:
+  1. Atacante captura sessao XSS/MITM
+  2. User sem 2FA pre-ativo
+  3. Atacante setup + activate -> 2FA dele
+  4. User perde acesso + recovery codes nas maos atacante
+  5. SEM warning notification -> sec event silencioso
+
+POST-FIX:
+- two-factor.js /activate: + INSERT notifications dentro tx()
+- Template '2fa_activated' priority 2 (sec setting change)
+- Mig 088: seed template em notification_templates
+- ON CONFLICT UPDATE idempotente
+
+W6 AUTH 2FA notification coverage completo:
+  /activate -> '2fa_activated' p2 (pass 372)
+  /recovery -> '2fa_recovery_regen' p2 (pass 220)
+  /disable -> '2fa_disabled' p3 (pass 286)
+
+105 passes acumulados (268->372) sem deploy VPS
+20 migrations pendentes apply (069-088)
+4 CRITICAL acumulados
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W2 checkout E2E
