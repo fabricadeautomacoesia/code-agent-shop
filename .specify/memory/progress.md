@@ -29374,3 +29374,35 @@ PROXIMA ITER:
 - W4 admin sellers UI nao quebrar com novo response shape
 - W17 audit notification recipient queries cross-svc deleted_at coverage
 - VPS SSH unblock URGENTISSIMO (140 ciclos - 46.7h)
+
+
+============================================================
+PASS 308 - 2026-05-28 - W1 reset-password consume sessions_revoked UI
+============================================================
+Files: 1 modificado
+  - apps/storefront/src/app/redefinir-senha/page.tsx (consume sessions_revoked)
+Lines: ~25 added
+
+W1 (reset-password sessions_revoked UI feedback):
+- Backend pass 282 retorna { sessions_revoked: N, message }
+- PRE-FIX: frontend ignorava count - redirect 2.5s sem aviso
+- User 3+ devices conectados nao sabia que TODOS foram desconectados
+- POST-FIX:
+  - cast Api.api<{ sessions_revoked?: number }> response
+  - state sessionsRevoked + render yellow banner no done view
+  - Pluralizacao PT-BR (1 sessao vs N sessoes)
+  - redirectDelay 4.5s se sessions>0 (user precisa ler), 2.5s se 0
+- UX seguranca: user sabe que devices foram invalidados
+
+VPS SSH BLOQUEADO (141 ciclos - 47h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront --force
+- W1 manual: /redefinir-senha?token=valid -> submit -> done view
+  Esperado banner amarelo: "Por seguranca, N sessoes encerradas em outros dispositivos"
+
+PROXIMA ITER:
+- W4 admin /admin/audit-log consume novos events 2fa.disable/payout.reject
+- W17 audit other admin recipient queries cross-svc deleted_at
+- VPS SSH unblock URGENTISSIMO (141 ciclos - 47h)

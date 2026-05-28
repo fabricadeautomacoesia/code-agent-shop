@@ -21,6 +21,7 @@ function ResetInner() {
   const [confirm, setConfirm] = useState('');
   const [pwScore, setPwScore] = useState(0);
   const [done, setDone] = useState(false);
+  const [sessionsRevoked, setSessionsRevoked] = useState(0);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
@@ -50,9 +51,19 @@ function ResetInner() {
     }
     setLoading(true);
     try {
-      await Api.api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) });
+      /* FIX-WORKER-1 pass 308: consume sessions_revoked from response (backend pass 282).
+         PRE-FIX: redirect imediato 2.5s sem informar quantas sessoes foram invalidadas.
+         User com 3 devices conectados nao sabia que TODOS foram desconectados.
+         POST-FIX: cast response + state sessionsRevoked + render explicito no done view. */
+      const r = await Api.api<{ sessions_revoked?: number }>(
+        '/auth/reset-password',
+        { method: 'POST', body: JSON.stringify({ token, password }) }
+      );
+      setSessionsRevoked(Number(r?.sessions_revoked || 0));
       setDone(true);
-      setTimeout(() => router.push('/login?reset=1'), 2500);
+      // Delay maior se houver sessoes invalidadas (user precisa ler msg)
+      const redirectDelay = (r?.sessions_revoked || 0) > 0 ? 4500 : 2500;
+      setTimeout(() => router.push('/login?reset=1'), redirectDelay);
     } catch (e: any) {
       setErr(friendlyAuthError(e));
     } finally { setLoading(false); }
@@ -68,8 +79,17 @@ function ResetInner() {
   if (done) return (
     <div className="container mx-auto px-6 py-16 max-w-md">
       <div className="glass p-8 text-center">
-        <CheckCircle className="w-16 h-16 mx-auto mb-4 text-green-400" />
+        <CheckCircle className="w-16 h-16 mx-auto mb-4 text-green-400" aria-hidden="true" />
         <h1 className="font-display font-bold text-2xl mb-3">Senha redefinida!</h1>
+        {/* FIX-WORKER-1 pass 308: feedback sessions_revoked count + pluralizacao PT-BR */}
+        {sessionsRevoked > 0 && (
+          <p className="text-sm text-yellow-300 bg-yellow-500/10 border border-yellow-500/30 p-3 rounded-lg mb-3">
+            Por seguranca, {sessionsRevoked === 1
+              ? '1 sessao ativa em outro dispositivo foi encerrada'
+              : `${sessionsRevoked} sessoes ativas em outros dispositivos foram encerradas`}.
+            Faca login novamente.
+          </p>
+        )}
         <p className="text-white/70">Redirecionando para login...</p>
       </div>
     </div>
