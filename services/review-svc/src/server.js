@@ -625,14 +625,23 @@ app.get('/qna/:id/voted', jwt.requireAuth(),
     );
     if (!exists.rows.length) return next(errorHandler.notFound('qna_not_found'));
 
-    // BUG 3: retornar direcao do voto (frontend UX)
+    // FIX-WORKER-7 pass 213 (BUG CRITICO): coluna 'vote' NAO EXISTE em
+    // product_qna_votes. Schema (mig 010 linha 8-13):
+    //   qna_id UUID, user_id UUID, created_at TIMESTAMPTZ, PK(qna_id, user_id)
+    // PRE-FIX query 'SELECT vote' disparava PG 42703 column does not exist.
+    // Em prod: errorHandler 500 -> frontend QnaUpvote UI mostrava bell-icon
+    // sem state preservado (NotificationBell nao distinguia voted/not).
+    //
+    // FIX: simplificar query - vote binario (exists = upvoted, !exists = not voted).
+    // No down-vote UI implementado - vote_direction sempre 'up' se voted.
     const r = await query(
-      `SELECT vote FROM product_qna_votes WHERE qna_id = $1::UUID AND user_id = $2::UUID`,
+      `SELECT 1 FROM product_qna_votes WHERE qna_id = $1::UUID AND user_id = $2::UUID`,
       [req.params.id, req.user.sub]
     );
+    const voted = r.rows.length > 0;
     res.json({
-      voted: r.rows.length > 0,
-      vote_direction: r.rows[0]?.vote || null,
+      voted,
+      vote_direction: voted ? 'up' : null,
     });
   })
 );
