@@ -232,8 +232,17 @@ app.post('/qa/run',
           api_keys_required: product.api_keys_required,
           install_instructions: product.install_instructions,
           callback_url: `${CALLBACK_BASE}/qa/callback`,
-          callback_secret_hint: QA_CALLBACK_SECRET ? 'present' : 'missing',
+          // FIX-WORKER-12 pass 235 (DLP operational): removido callback_secret_hint
+          // do payload. PRE-FIX: hint=present|missing vazado em logs n8n + worker
+          // + nodes intermediarios (Traefik/firewall) revelava se HMAC config
+          // estava ativo. Atacante observando logs sabia se podia tentar forjar
+          // callback sem assinatura. Hint nao tem uso functional - logging local
+          // dentro do qa-svc cobre o gap operacional sem expor cross-service.
         };
+        // Log local p/ ops debug (nao sai do svc)
+        if (!QA_CALLBACK_SECRET) {
+          log.warn({ run_id }, '[qa.dispatch.no_secret] QA_CALLBACK_SECRET ausente - callbacks sem HMAC');
+        }
 
         // Opcao A: n8n se configurado (orquestracao externa)
         if (N8N_URL) {

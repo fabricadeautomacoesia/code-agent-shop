@@ -24495,3 +24495,103 @@ PROXIMA ITER:
 - W16 MLB: Cupom progressivo (R$100=5%, R$300=10%, R$500=15%)
 - W8 visual: PriceAlertButton hover consistency
 - VPS SSH unblock URGENTE (67 ciclos - 22.3h sem deploy)
+
+============================================================
+PASS 235 (2026-05-28) - W11 + W12 + W4 financial/security/audit
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W11 payment-svc: payout amount float precision (Asaas transfer)
+- W12 qa-svc: DLP callback_secret_hint leak operacional
+- W4 admin: audit_log gap em /payouts/:id/approve + /reject
+
+============================================================
+1. W11 - payment-svc createTransfer float precision
+============================================================
+FILE: services/payment-svc/src/server.js:1029-1033
+
+PROBLEMA:
+- payout.amount_cents BIGINT em cents
+- value: payout.amount_cents / 100 -> divisao direta JS produz float
+- IEEE 754 drift em casos edge (raro mas conhecido):
+  333333 / 100 -> 3333.33 OK
+  333333.7 / 100 -> 3333.337 (Asaas rejeita "invalid_value 2 casas")
+- Asaas createTransfer rejeita valores com >2 casas decimais
+- Pattern W11 pass 230 ja aplicou Math.round em installmentValue,
+  agora padronizar tambem em createTransfer
+
+POST-FIX:
+- value: Math.round(Number(payout.amount_cents)) / 100
+- Number(...) defensivo se PG retorna BIGINT como string
+- Math.round garante 2 casas decimais exatas
+
+============================================================
+2. W12 - qa-svc DLP callback_secret_hint
+============================================================
+FILE: services/qa-svc/src/server.js:234
+
+PROBLEMA (DLP operational):
+- Payload enviado para n8n/worker incluia:
+    callback_secret_hint: QA_CALLBACK_SECRET ? 'present' : 'missing'
+- Vazava status de configuracao HMAC em logs:
+  - n8n logs (operador externo via configuracao)
+  - worker logs (acessivel cross-node em swarm)
+  - Traefik/firewall logs (rede intermediaria)
+- Atacante observando logs sabe se podia tentar forjar callback
+  sem HMAC (se hint=missing significa svc aceita sem assinatura)
+- Hint nao tinha uso functional - era debugging artifact
+
+POST-FIX:
+- Removido callback_secret_hint do payload
+- Logging local dentro qa-svc (log.warn) preserva ops debug
+- Atacante external sem acesso aos logs internos do qa-svc
+
+============================================================
+3. W4 - admin /payouts/:id/approve|reject audit_log gap
+============================================================
+FILE: services/seller-svc/src/routes/admin.js:711+729
+
+PROBLEMA (compliance LGPD/SOC2):
+- /payouts/approve dispara Asaas transfer real (dinheiro saindo)
+- /payouts/reject impacta seller financeiramente (cash flow)
+- Pattern W7 estabelece: high-impact admin endpoints sempre audit
+- PRE-FIX: ambos endpoints faziam UPDATE sem audit_log
+  - LGPD direito-acesso: user pede "qual operador aprovou meu payout?"
+    -> sem trail no audit_log = compliance gap
+  - SOC2 CC1.4: "Documented authorization decisions"
+  - Forense fraud: incident response sem timeline operadores
+
+POST-FIX: ambos endpoints adicionam audit_log INSERT:
+- action: 'payout.approve' | 'payout.reject'
+- target_type: 'seller_payout'
+- target_id: payout.id
+- severity: 'warn'
+- payload_after: { seller_id, amount_cents, ip, [reason] }
+- Pattern .catch(log.warn) - audit fail nao quebra response
+- RETURNING agora inclui seller_id + amount_cents (audit payload)
+
+============================================================
+SUMARIO PASS 235
+============================================================
+Files: 3 modificados
+  - services/payment-svc/src/server.js (float precision)
+  - services/qa-svc/src/server.js (DLP)
+  - services/seller-svc/src/routes/admin.js (audit log)
+Lines: ~60 added
+
+VPS SSH BLOQUEADO (68 ciclos - 22.7h sem deploy).
+Migs 069+070 ainda pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild:
+    docker service update cas_payment-svc cas_qa-svc cas_seller-svc --force
+- W11 test: criar payout R$ 3333.33 -> Asaas transfer success
+- W12 test: dispatch QA + monitorar payload n8n - sem callback_secret_hint
+- W4 test: aprovar 1 payout -> SELECT * FROM audit_log
+  WHERE action='payout.approve' ORDER BY created_at DESC LIMIT 1
+  Deve ter row recente com actor_user_id, target_id matching
+
+PROXIMA ITER:
+- W16 MLB: Cupom progressivo
+- W7 product-svc: bulk action endpoints
+- VPS SSH unblock URGENTE (68 ciclos)

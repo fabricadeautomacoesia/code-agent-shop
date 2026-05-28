@@ -1024,11 +1024,19 @@ app.post('/payments/payouts/:id/process',
     // FASE 2 (Asaas API - fora tx, demorado): createTransfer.
     // Em caso de exception, payout fica 'processing' - cron reconcile
     // detecta stuck > 5min e reverte para 'approved' (operator retry manual).
+    // FIX-WORKER-11 pass 235 (float precision payout amount):
+    //   payout.amount_cents e BIGINT em cents. Divisao direta /100 produz float
+    //   suscetivel a IEEE 754 drift: R$1234.56 = 123456 cents -> 1234.56 OK,
+    //   mas valores como 333333 cents -> 3333.33 (preciso) vs 333333.7 cents
+    //   (raro mas Asaas pode retornar splits residuais com 1 decimal) ->
+    //   3333.337 -> Asaas rejeita "invalid_value formato 2 casas".
+    //   POST-FIX: Math.round(amount_cents) / 100 garante 2 casas decimais
+    //   exatas mesmo se amount_cents vier como string PG ou float residual.
     let transfer;
     try {
       transfer = await asaas.createTransfer({
         wallet: payout.asaas_wallet_id,
-        value: payout.amount_cents / 100,
+        value: Math.round(Number(payout.amount_cents)) / 100,
         description: `Saque seller ${payout.seller_id}`,
       });
     } catch (e) {

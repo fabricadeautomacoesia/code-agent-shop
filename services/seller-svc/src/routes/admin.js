@@ -714,12 +714,29 @@ router.post('/payouts/:id/approve', asyncHandler(async (req, res, next) => {
   }
   const r = await query(
     `UPDATE seller_payouts SET status = 'approved', approved_at = NOW(), approved_by = $1
-      WHERE id = $2 AND status = 'pending' RETURNING id`,
+      WHERE id = $2 AND status = 'pending'
+      RETURNING id, seller_id, amount_cents`,
     [req.user.sub, req.params.id]
   );
   if (!r.rows.length) return next(errorHandler.notFound('payout_not_pending'));
   // FIX-WORKER-18 pass 175: invalida cache seller (pos-UPDATE)
   await invalidateSellerPayoutsCache(req.params.id);
+  // FIX-WORKER-4 pass 235 (audit gap admin financial decision):
+  //   Aprovacao de payout = decisao financeira critica que dispara Asaas transfer
+  //   real (dinheiro saindo). PRE-FIX: sem audit_log -> compliance gap LGPD
+  //   "direito de acesso" (user pede historico - operador X aprovou meu payout
+  //   quando?). SOC2 CC1.4: documented authorization decisions.
+  //   /payouts/:id/reject (linha 729) tambem faltava - fix conjunto.
+  //   POST-FIX: INSERT audit_log atomic (.catch nao quebrar response).
+  query(
+    `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+     VALUES ($1, $2, 'payout.approve', 'seller_payout', $3, 'warn', $4::JSONB)`,
+    [req.user.sub, req.user.role, r.rows[0].id, JSON.stringify({
+      seller_id: r.rows[0].seller_id,
+      amount_cents: r.rows[0].amount_cents,
+      ip: req.ip,
+    })]
+  ).catch((e) => log.warn({ err: e.message }, '[payout.approve.audit_fail]'));
   // payment-svc disparara Asaas transfer
   res.json({ ok: true, approved: r.rows[0].id });
 }));
@@ -734,12 +751,24 @@ router.post('/payouts/:id/reject',
     }
     const r = await query(
       `UPDATE seller_payouts SET status = 'rejected', rejected_reason = $1
-       WHERE id = $2 AND status = 'pending' RETURNING id`,
+       WHERE id = $2 AND status = 'pending'
+       RETURNING id, seller_id, amount_cents`,
       [req.body.reason, req.params.id]
     );
     if (!r.rows.length) return next(errorHandler.notFound('payout_not_pending'));
     // FIX-WORKER-18 pass 175: invalida cache seller (pos-UPDATE)
     await invalidateSellerPayoutsCache(req.params.id);
+    // FIX-WORKER-4 pass 235: audit log (paridade com /approve - financial trail)
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'payout.reject', 'seller_payout', $3, 'warn', $4::JSONB)`,
+      [req.user.sub, req.user.role, r.rows[0].id, JSON.stringify({
+        seller_id: r.rows[0].seller_id,
+        amount_cents: r.rows[0].amount_cents,
+        reason: req.body.reason.slice(0, 500),
+        ip: req.ip,
+      })]
+    ).catch((e) => log.warn({ err: e.message }, '[payout.reject.audit_fail]'));
     res.json({ ok: true, rejected: r.rows[0].id });
   })
 );
