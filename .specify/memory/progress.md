@@ -31761,3 +31761,28 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
 - W18 perf optimization
+
+## PASS 378 W7 PRODUCT-SVC: rate-limit + UUID guard /platform-take
+commit 720891a
+BUG defensive consolidation gap
+PRE-FIX: /platform-take SEM rate-limit + SEM UUID validate
+  - force-approve (pass 201) JA tem ambos
+  - archive (pass 242) JA tem ambos
+  - platform-take lagged
+IMPACTO:
+- Token admin compromised = mass spam duplicate products
+- PG 22P02 leak em UUID malformed -> 500
+
+POST-FIX:
+- forceApproveLimiter (5/min)
+- PLATFORM_TAKE_UUID_RE upfront 404
+- 3 admin mutation endpoints paridade:
+  /force-approve, /archive, /platform-take
+
+111 passes acumulados (268->378) sem deploy VPS
+4 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W18 perf optimization
