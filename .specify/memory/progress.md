@@ -23600,3 +23600,94 @@ PROXIMA ITER:
 - W4 admin: vault-svc filter seller_id UI
 - W18: cache /api/orders/admin/disputes/:id detalhe
 - 🚨 VPS SSH unblock URGENTE (57 ciclos - 19h sem deploy!)
+
+PASS 225 (W13 migration 067 - 5 templates remaining debt cleanup) - 2026-05-28:
+- W13 completa debt pass 224 - 5 templates restantes notification_templates
+
+TEMPLATES SEEDED (5):
+
+1. qa_dispatch_failed (qa-svc pipeline failure):
+   'QA pipeline indisponivel' + retry em alguns minutos
+
+2. qa_run_timeout (qa-svc >5min run):
+   'Analise QA expirou' + causas (pacote grande, deps, LLM lento)
+
+3. product_approved (qa-svc QA pass):
+   'Produto aprovado!' + confidence score + ja na vitrine
+
+4. product_rejected (qa-svc QA fail):
+   'Necessario ajustar' + reasons list + reenviar CTA
+
+5. 2fa_disabled (auth-svc security alert):
+   '2FA desativado' + sessoes revogadas + change pass CTA
+
+CATEGORIA AUTO-DERIVED:
+- qa_* OR product_* -> 'qa_pipeline'
+- 2fa_* OR security_* -> 'security'
+- DEFAULT -> 'general'
+
+ESTRATEGIA DEFENSIVA REUSE 3 layers (mesmo mig 065/066):
+
+CONSOLIDADO TEMPLATES NOTIFICATION_TEMPLATES (16 total):
+
+Pre-pass-223 (3 templates - 2 migrations historicas):
+- product_new_version (mig 018)
+- vault_rotation_due (mig 036)
+
+Pass 223 (mig 065):
+- asaas_refund_failed (1)
+
+Pass 224 (mig 066 - 8):
+- welcome, password_reset, loyalty_tier_up,
+  order_paid, order_refunded,
+  seller_new_sale, seller_sale_refunded,
+  security_refresh_reuse
+
+Pass 225 (mig 067 - 5 NEW):
+- qa_dispatch_failed, qa_run_timeout,
+  product_approved, product_rejected,
+  2fa_disabled
+
+TOTAL: 16 templates cobrindo 100% INSERT notifications cross-svc.
+
+CATEGORIAS para filtros admin futuro:
+- product_updates (1): product_new_version
+- vault_alerts (1): vault_rotation_due
+- asaas_alerts (1): asaas_refund_failed
+- general (1): welcome
+- security (3): password_reset, security_refresh_reuse, 2fa_disabled
+- loyalty (1): loyalty_tier_up
+- orders (2): order_paid, order_refunded
+- seller_alerts (2): seller_new_sale, seller_sale_refunded
+- qa_pipeline (4): qa_dispatch_failed, qa_run_timeout, product_approved, product_rejected
+
+Commit 492bd61 pushed origin/main (+75)
+VPS SSH ainda bloqueado (58 ciclos consecutivos)
+
+MIGRATIONS PROD-PENDING (10 acumuladas):
+- 058 audit_log actor_created composto
+- 059 wishlist + notif compound idx
+- 060 users email LOWER UNIQUE + backfill
+- 061 loyalty idempotency partial UNIQUE
+- 062 drop idx_loyalty_user_recent duplicate
+- 063 fn_refresh_all_seller_reputations bulk
+- 064 notif unread invalidate hint (doc-only)
+- 065 asaas_refund_failed template
+- 066 batch seed 8 templates
+- 067 batch seed 5 templates restantes NEW
+
+CODIGO ACUMULADO ORIGIN/MAIN (58 ciclos):
+- 168-224: documentados
+- 225: migration 067 remaining templates cleanup
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply: psql -f /opt/cas/db/migrations/067_*.sql
+- Verificar 16 templates totais:
+  SELECT template_code, category FROM notification_templates ORDER BY category, template_code;
+  Esperado: 16 rows
+
+PROXIMA ITER:
+- W4 admin: vault-svc filter seller_id UI (filter component admin)
+- W18: cache /api/orders/admin/disputes/:id detalhe
+- W13: notification-svc template_code consistency cross-svc audit
+- 🚨 VPS SSH unblock URGENTE (58 ciclos - >19.3h sem deploy!)
