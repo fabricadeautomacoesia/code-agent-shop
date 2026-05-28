@@ -83,20 +83,21 @@ export default function UploadPage() {
       <form onSubmit={submit} className="space-y-6">
         <section className="glass p-6 space-y-4">
           <h3 className="font-display font-bold text-lg">Identidade</h3>
+          {/* FIX-WORKER-5 pass 145 (a11y): 14 labels c/ htmlFor + inputs c/ id (WCAG 1.3.1) */}
           <div>
-            <label className="text-xs text-white/60 uppercase">Titulo</label>
-            <input value={form.title} onChange={(e) => setForm({...form, title: e.target.value})} required minLength={5}
+            <label htmlFor="up-title" className="text-xs text-white/60 uppercase">Titulo</label>
+            <input id="up-title" value={form.title} onChange={(e) => setForm({...form, title: e.target.value})} required minLength={5}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm focus:border-magenta focus:outline-none" />
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase">Subtitulo</label>
-            <input value={form.subtitle} onChange={(e) => setForm({...form, subtitle: e.target.value})}
+            <label htmlFor="up-subtitle" className="text-xs text-white/60 uppercase">Subtitulo</label>
+            <input id="up-subtitle" value={form.subtitle} onChange={(e) => setForm({...form, subtitle: e.target.value})}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
           </div>
           <div className="grid md:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs text-white/60 uppercase">Categoria</label>
-              <select value={form.category_id} onChange={(e) => setForm({...form, category_id: e.target.value})} required
+              <label htmlFor="up-category" className="text-xs text-white/60 uppercase">Categoria</label>
+              <select id="up-category" value={form.category_id} onChange={(e) => setForm({...form, category_id: e.target.value})} required
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm">
                 <option value="">Selecione</option>
                 {categories.map((c) => (
@@ -108,8 +109,8 @@ export default function UploadPage() {
               </select>
             </div>
             <div>
-              <label className="text-xs text-white/60 uppercase">Tipo</label>
-              <select value={form.kind} onChange={(e) => setForm({...form, kind: e.target.value})}
+              <label htmlFor="up-kind" className="text-xs text-white/60 uppercase">Tipo</label>
+              <select id="up-kind" value={form.kind} onChange={(e) => setForm({...form, kind: e.target.value})}
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm">
                 {['automation','ai_agent','n8n_workflow','node_script','python_script','php_script','prompt_pack','template','dataset','other'].map((k) => (
                   <option key={k} value={k}>{k}</option>
@@ -118,13 +119,13 @@ export default function UploadPage() {
             </div>
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase">Descricao curta (max 500)</label>
-            <input value={form.short_description} onChange={(e) => setForm({...form, short_description: e.target.value})} maxLength={500}
+            <label htmlFor="up-shortdesc" className="text-xs text-white/60 uppercase">Descricao curta (max 500)</label>
+            <input id="up-shortdesc" value={form.short_description} onChange={(e) => setForm({...form, short_description: e.target.value})} maxLength={500}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase">Descricao completa (min 50 chars)</label>
-            <textarea value={form.description} onChange={(e) => setForm({...form, description: e.target.value})} required minLength={50} rows={6}
+            <label htmlFor="up-desc" className="text-xs text-white/60 uppercase">Descricao completa (min 50 chars)</label>
+            <textarea id="up-desc" value={form.description} onChange={(e) => setForm({...form, description: e.target.value})} required minLength={50} rows={6}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
           </div>
         </section>
@@ -132,23 +133,23 @@ export default function UploadPage() {
         <section className="glass p-6 space-y-4">
           <h3 className="font-display font-bold text-lg">Tecnico</h3>
           <div>
-            <label className="text-xs text-white/60 uppercase">Tech Stack (CSV: ex Node,PostgreSQL,OpenAI)</label>
-            <input value={form.tech_stack} onChange={(e) => setForm({...form, tech_stack: e.target.value})}
+            <label htmlFor="up-techstack" className="text-xs text-white/60 uppercase">Tech Stack (CSV: ex Node,PostgreSQL,OpenAI)</label>
+            <input id="up-techstack" value={form.tech_stack} onChange={(e) => setForm({...form, tech_stack: e.target.value})}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase">APIs requeridas (CSV: ex OPENAI_API_KEY)</label>
-            <input value={form.api_keys_required} onChange={(e) => setForm({...form, api_keys_required: e.target.value})}
+            <label htmlFor="up-apikeys" className="text-xs text-white/60 uppercase">APIs requeridas (CSV: ex OPENAI_API_KEY)</label>
+            <input id="up-apikeys" value={form.api_keys_required} onChange={(e) => setForm({...form, api_keys_required: e.target.value})}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase">Instrucoes de instalacao</label>
-            <textarea value={form.install_instructions} onChange={(e) => setForm({...form, install_instructions: e.target.value})} rows={4}
+            <label htmlFor="up-install" className="text-xs text-white/60 uppercase">Instrucoes de instalacao</label>
+            <textarea id="up-install" value={form.install_instructions} onChange={(e) => setForm({...form, install_instructions: e.target.value})} rows={4}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase">Tempo estimado de instalacao (minutos)</label>
-            <input type="number" value={form.estimated_install_min} onChange={(e) => setForm({...form, estimated_install_min: Number(e.target.value)})}
+            <label htmlFor="up-installmin" className="text-xs text-white/60 uppercase">Tempo estimado de instalacao (minutos)</label>
+            <input id="up-installmin" type="number" inputMode="numeric" value={form.estimated_install_min} onChange={(e) => setForm({...form, estimated_install_min: Number(e.target.value)})}
               className="w-32 px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
           </div>
         </section>
@@ -157,13 +158,13 @@ export default function UploadPage() {
           <h3 className="font-display font-bold text-lg">Preco e licenca</h3>
           <div className="grid md:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs text-white/60 uppercase">Preco em centavos (R$ 29,90 = 2990)</label>
-              <input type="number" min={0} value={form.price_cents} onChange={(e) => setForm({...form, price_cents: Number(e.target.value)})}
+              <label htmlFor="up-price" className="text-xs text-white/60 uppercase">Preco em centavos (R$ 29,90 = 2990)</label>
+              <input id="up-price" type="number" inputMode="numeric" min={0} value={form.price_cents} onChange={(e) => setForm({...form, price_cents: Number(e.target.value)})}
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
             </div>
             <div>
-              <label className="text-xs text-white/60 uppercase">Tipo de licenca</label>
-              <select value={form.license_kind} onChange={(e) => setForm({...form, license_kind: e.target.value})}
+              <label htmlFor="up-license" className="text-xs text-white/60 uppercase">Tipo de licenca</label>
+              <select id="up-license" value={form.license_kind} onChange={(e) => setForm({...form, license_kind: e.target.value})}
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm">
                 <option value="single_use">Uso unico</option>
                 <option value="unlimited">Uso ilimitado</option>
@@ -177,18 +178,18 @@ export default function UploadPage() {
         <section className="glass p-6 space-y-4">
           <h3 className="font-display font-bold text-lg">Midia & Pacote</h3>
           <div>
-            <label className="text-xs text-white/60 uppercase mb-2 block">Imagem de capa</label>
-            <input type="file" accept="image/*" onChange={(e) => handleFile('cover', e)} className="text-sm" />
-            {uploading.cover && <div className="text-xs text-magenta mt-1">Enviando...</div>}
+            <label htmlFor="up-cover" className="text-xs text-white/60 uppercase mb-2 block">Imagem de capa</label>
+            <input id="up-cover" type="file" accept="image/*" onChange={(e) => handleFile('cover', e)} className="text-sm" />
+            {uploading.cover && <div role="status" aria-live="polite" className="text-xs text-magenta mt-1">Enviando...</div>}
             {form.cover_image_url && (
               <div className="flex items-center gap-2 mt-2 text-sm text-green-400">
-                <ImageIcon className="w-4 h-4" /> Cover: <code className="font-mono text-xs">{form.cover_image_url}</code>
+                <ImageIcon className="w-4 h-4" aria-hidden="true" /> Cover: <code className="font-mono text-xs">{form.cover_image_url}</code>
               </div>
             )}
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase mb-2 block">Pacote do produto (ZIP/JSON)</label>
-            <input type="file" accept=".zip,.json,.tar,.gz" onChange={(e) => handleFile('pkg', e)} className="text-sm" />
+            <label htmlFor="up-pkg" className="text-xs text-white/60 uppercase mb-2 block">Pacote do produto (ZIP/JSON)</label>
+            <input id="up-pkg" type="file" accept=".zip,.json,.tar,.gz" onChange={(e) => handleFile('pkg', e)} className="text-sm" />
             {uploading.pkg && <div className="text-xs text-magenta mt-1">Enviando...</div>}
             {form.package_url && (
               <div className="flex items-center gap-2 mt-2 text-sm text-green-400">
