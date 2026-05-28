@@ -21459,3 +21459,65 @@ PROXIMA ITER:
 - W16: implementar MLB feature pendente (Q&A upvote analytics?)
 - W11: payment-svc payout dispute resolution flow
 - 🚨 VPS SSH unblock URGENTE (28 ciclos - ~9.3h sem deploy!)
+
+PASS 196 (W2 CRITICAL checkout rate-limit + friendly UX) - 2026-05-28:
+- W2 audit fluxo /cart -> /checkout -> /conta/pedidos descobriu bug critico:
+
+BUG: POST /orders/checkout ZERO rate-limit
+- Real money endpoint sem proteção anti-spam
+- Atacante autenticado pode spam 1000 orders pending em segundos:
+  * PG pool exhaustion (cada tx checkout faz SELECT FOR UPDATE + 10+ queries)
+  * Asaas createPayment dispara paralelo -> upstream rate-limit + cost extra
+  * DB enche orders pending_payment orfas
+  * User experience: 1 checkout serializa toda app
+- Pattern W7 V8 high-impact mutations DEVEM ter limiter (era gap)
+
+FIX (3 arquivos, 56 insertions):
+
+1. services/order-svc/src/routes/orders.js:
+   - Novo checkoutLimiter: 20 checkouts/hora/user
+   - Real users <5/dia tipicamente - limite generoso cobre power users
+   - Aplicado em router.post('/checkout', checkoutLimiter, ...)
+
+2. apps/storefront/src/lib/friendly-errors.ts:
+   - Novo friendlyCheckoutError mapper com 8 codes
+   - empty_cart, rate_limited, insufficient_points_at_checkout,
+     product_unavailable, payment_method_unsupported,
+     installment_count_invalid, validation_error, forbidden_role
+   - Detect 429 status (rate-limiter pode nao retornar code legivel)
+
+3. apps/storefront/src/app/checkout/page.tsx:
+   - catch (e) agora usa friendlyCheckoutError(e)
+   - Era setErr(e.data?.message || e.message) raw - sem context UX
+
+PADRAO V8 W7 RATE-LIMITERS CONSOLIDADO em mutations criticas:
+- auth-svc: forgotPasswordLimiter (3/h), resetPasswordLimiter, patchMeLimiter
+- order-svc: disputeOpenLimiter (5/h), checkoutLimiter NEW (20/h)
+- payment-svc: useRateLimit (vault), webhookRateLimit
+- vault-svc: provisionRateLimit, useRateLimit
+- product-svc: reviewLimiter, qnaLimiter, listLimiter
+
+Commit b3359be pushed origin/main
+VPS SSH ainda bloqueado (29 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (29 ciclos):
+- 168-195: documentados
+- 196: order-svc checkout rate-limit + friendly UX
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_order-svc cas_storefront --force
+- Teste rate-limit:
+  for i in {1..25}; do
+    curl -X POST -H "Bearer $T" /api/orders/checkout -d '{"payment_method":"pix"}'
+  done
+  Esperado: primeiras 20 = 201, restantes = 429 com 'rate_limited'
+  Frontend: "Voce fez muitas tentativas de checkout..."
+- Teste friendly UX:
+  Disparar checkout cart vazio -> backend 400 empty_cart
+  Frontend mostra: 'Seu carrinho esta vazio...'
+
+PROXIMA ITER:
+- W17: vault-svc seller endpoints (BYOK self-management)
+- W16: implementar MLB feature pendente
+- W11: payment-svc payout dispute resolution flow
+- 🚨 VPS SSH unblock URGENTE (29 ciclos - ~9.7h sem deploy!)
