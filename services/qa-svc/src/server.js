@@ -625,8 +625,19 @@ app.post('/qa/callback',
       }
 
       // 4. Notification ao seller
+      // FIX-WORKER-12 pass 435 (slug em notification payload - consume inferCtaUrl pass 355):
+      //   PRE-FIX: SELECT s.user_id, p.title, u.full_name, u.email - SEM p.slug
+      //   payload notification INSERT linha 657-663 SEM slug field
+      //   notification-bell inferCtaUrl pass 355:
+      //     case 'product_approved'/'product_rejected':
+      //       return p.slug ? `/product/${p.slug}` : '/conta';
+      //   Sem slug -> fallback '/conta' generic -> seller clicava notif
+      //   "Produto aprovado: X" -> ia para /conta dashboard (nao para PDP)
+      //   UX gap critico: seller queria ver produto live na vitrine, ia para conta vazia
+      //   POST-FIX: + p.slug no SELECT + payload JSONB slug field
+      //   Paridade pass 434 (qna_id) - notification payload DEVE conter all fields p/ deep-link
       const u = await c.query(
-        `SELECT s.user_id, p.title, u.full_name, u.email
+        `SELECT s.user_id, p.title, p.slug, u.full_name, u.email
            FROM products p
            JOIN sellers s ON s.id = p.seller_id
            JOIN users u ON u.id = s.user_id
@@ -659,6 +670,9 @@ app.post('/qa/callback',
              reasons: reasonsList.length > 0 ? reasonsList.join('\n- ') : null,
              reasons_count: reasonsList.length,
              title: seller.title,
+             // FIX pass 435: slug p/ inferCtaUrl deep-link /product/{slug}
+             // Sem slug -> fallback '/conta' generic (UX gap pre-fix)
+             slug: seller.slug,
            }),
            approved ? 0 : 1]
         );

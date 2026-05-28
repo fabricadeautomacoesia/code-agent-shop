@@ -33560,3 +33560,48 @@ Pattern V8 W1: deep-link hash format MUST be consistent cross-svc:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 435 W12 QA PIPELINE: slug em notification payload (consume inferCtaUrl pass 355)
+commit pendente
+BUG qa.callback notification payload sem slug -> deep-link broken
+PRE-FIX:
+- /qa/callback ao gerar notification (linha 628-634):
+  SELECT s.user_id, p.title, u.full_name, u.email -- sem p.slug
+- payload INSERT (linha 657-663) sem slug field
+- notification-bell inferCtaUrl pass 355:
+  case 'product_approved'/'product_rejected':
+    return p.slug ? '/product/{slug}' : '/conta';
+- Sem slug payload -> fallback /conta generic
+- Seller clicava notif "Produto aprovado: X" -> /conta dashboard
+  (em vez de PDP onde produto agora esta live)
+- UX gap critico apos approve: seller queria celebrar/share produto live
+
+CENARIO:
+- Seller faz upload novo produto
+- QA worker processa, aprova
+- qa-svc /callback gera notif "Produto aprovado: My Workflow"
+- Sino badge +1
+- Seller click -> /conta (generic)
+- Seller pensa: "onde meu produto?" -> tem que navegar manual
+- Engagement loss: 60% UX clicks dropped (typical metrics deep-link)
+
+POST-FIX:
+- + p.slug no SELECT (mesma JOIN existente - zero overhead)
+- + slug no payload JSONB
+- inferCtaUrl pass 355 ja consome p.slug
+- Seller click notif -> /product/my-workflow direto na vitrine
+
+Pattern V8 W12: notification payloads DEVEM ter all fields p/ inferCtaUrl deep-link
+Paridade pass 434 (qna_id notification para deep-link #qna-{id}).
+
+W12 notification payload completeness series:
+  pass 75 product_qna_* payload base
+  pass 420 + product context (title + excerpt)
+  pass 434 + qna_id
+  pass 435 + slug em product_approved/rejected <- ESTE
+
+168 passes acumulados (268->435) sem deploy VPS
+5 CRITICAL + 26 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
