@@ -17382,7 +17382,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ /conta/seguranca 2FA flow a11y MASSIVE (pass 162)
 - ✅ conta pages 3 buttons + PII protection (pass 163)
 - ✅ Admin audit-log + db-audit a11y rico + WAI-ARIA tabs (pass 164)
-- ✅ Admin /disputes 7 buttons + radiogroup (pass 165 esta iter)
+- ✅ Admin /disputes 7 buttons + radiogroup (pass 165)
+- ✅ MLB-15 InstantDownloadBadge trust signal (pass 166 esta iter)
+
+W7 PASS 166 RESUMO - W16 MLB-15 INSTANT DOWNLOAD BADGE:
+- AUDIT MLB features: tinhamos 14 features (paridade ML), faltava trust signal
+- Pattern Mercado Livre 'Chegada hoje' adapted p/ produtos digitais
+- IMPLEMENTED MLB-15 InstantDownloadBadge:
+  * NEW component instant-download-badge.tsx (50 linhas)
+  * Server Component puro (zero JS bundle - SSR only)
+  * 2 variants:
+    - 'card': overlay top-right (badge compacto 'Instant' + Zap icon)
+    - 'pdp': inline gradient cyan/blue 'Download imediato'
+  * Renderiza apenas se product.package_url truthy (defensive)
+  * aria-label rico p/ SR: 'Download imediato apos confirmacao de pagamento'
+- INTEGRATED:
+  * ProductCard card: overlay badge top-right (acima RecentSale)
+  * PDP pricing area: inline badge logo apos Installments
+- Business impact:
+  * Conversao: shopper ve 'download instant' = certeza entrega imediata
+  * Diferencial vs marketplaces fisicos (frete demora)
+  * Pattern Trust Signal: + visual = + confianca pre-buy
+- 15 MLB features agora (era 14) - paridade ML COMPLETA + extras
+- BUILD storefront OK + service converged
+- COMMIT 84ea318 pushed GitHub main + deployed prod
 
 W7 PASS 165 RESUMO - W4 ADMIN /disputes A11Y MASSIVE:
 - AUDIT /disputes admin: 7 buttons sem type=button + 6 filter buttons sem radiogroup
