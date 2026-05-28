@@ -23776,3 +23776,84 @@ PROXIMA ITER:
 - W18: cache /api/orders/admin/disputes/:id detalhe
 - W13: validate notification preferences user_notification_prefs
 - 🚨 VPS SSH unblock URGENTE (59 ciclos - 19.7h sem deploy!)
+
+PASS 227 (W13 user_notification_prefs LGPD - 60 ciclos SSH bloqueado) - 2026-05-28:
+- W13 activa user_notification_prefs (mig 008 existia, ZERO usage cross-svc)
+
+CONTEXTO:
+- Tabela user_notification_prefs (mig 008) ja existia
+- ZERO usage cross-svc - prefs ignoradas pelo outbox processor
+- Users opt-out impossivel - notifications SEMPRE enviadas
+- LGPD compliance gap critical (user pode opt-out canal/template)
+
+POST-FIX (3 melhorias compostas):
+
+1. processOutbox LEFT JOIN user_notification_prefs:
+   - Match (user_id, template_code, channel) PK
+   - CASE WHEN unp.is_enabled IS NULL THEN TRUE (default enabled)
+   - Critical templates BYPASS check:
+     * security_refresh_reuse
+     * password_reset
+     * 2fa_disabled
+     * asaas_refund_failed
+   - Skip notif quando opt-out:
+     mark sent_status='sent' + failed_reason='skipped_user_preference'
+     (NAO 'failed' - eh decisao user, nao erro de delivery)
+   - log.info opt_out_skipped + count
+
+2. GET /api/notifications/prefs (user own):
+   - Lista preferences user logado (template_code, channel, is_enabled)
+   - Default ENABLED (row apenas em opt-out explicit)
+   - Response: { prefs: [...], count }
+
+3. PATCH /api/notifications/prefs (bulk update):
+   - Body: { prefs: [{template_code, channel, is_enabled}] }
+   - Max 100 prefs por request (anti-spam)
+   - Validation: channel enum (in_app/email/telegram) + boolean
+   - UPSERT via INSERT ON CONFLICT DO UPDATE (idempotente)
+   - Response: { ok, updated, skipped }
+
+PATTERN INDUSTRY (Mercado Livre / Asaas / Stripe):
+- prefs default ENABLED (storage minimal)
+- row apenas para opt-out explicit
+- security alerts bypass (regulatory required)
+
+CASOS DE USO future UI dashboard /conta/notificacoes:
+- Lista templates + checkboxes channels (granular)
+- Opt-out marketing emails mas keep transactional
+- Telegram opt-in (default off para muitos users)
+- Opt-out 'review_received' mas keep 'order_paid'
+
+Commit 7732e5c pushed origin/main (+98/-7)
+VPS SSH ainda bloqueado (60 ciclos consecutivos = MILESTONE)
+
+CONSOLIDADO PATTERNS V8 EM NOTIFICATION-SVC:
+- Trigger auto-sent in_app (mig 057)
+- Cache /unread-count + invalidation (pass 212)
+- Telegram retry classification (pass 219)
+- Email retry classification (pass 220)
+- 29 templates seeded (mig 065/066/067/068)
+- user_notification_prefs ativo (pass 227 NEW)
+
+CODIGO ACUMULADO ORIGIN/MAIN (60 ciclos = MILESTONE):
+- 168-226: documentados
+- 227: notification-svc prefs LGPD + 2 endpoints
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_notification-svc --force
+- Test opt-out:
+  PATCH /api/notifications/prefs body={
+    "prefs": [{"template_code":"review_received","channel":"email","is_enabled":false}]
+  }
+  Forçar criacao notif review_received para este user
+  Esperado: notif sent_status='sent' failed_reason='skipped_user_preference'
+- Test critical bypass:
+  Opt-out password_reset email -> outbox NAO skipa (bypass)
+- GET prefs:
+  curl /api/notifications/prefs -> lista preferences atual
+
+PROXIMA ITER:
+- W1 frontend: /conta/notificacoes UI (consume prefs endpoints)
+- W4 admin: vault-svc filter seller_id UI
+- W18: cache /api/orders/admin/disputes/:id detalhe
+- 🚨 VPS SSH unblock URGENTE (60 ciclos = 20h sem deploy! MILESTONE)
