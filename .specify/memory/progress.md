@@ -17343,7 +17343,29 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Fix /facets HTTP 500 enum cast (pass 123)
 - ✅ Migration 050 trigger updated_at user_loyalty (pass 124)
 - ✅ Sync product-svc SORT_ENUM (+recent_sales) (pass 125)
-- ✅ Migration 051 BRIN idx metrics_history (pass 126 esta iter)
+- ✅ Migration 051 BRIN idx metrics_history (pass 126)
+- ✅ MLB-13 ShareButton PDP WhatsApp/X/LinkedIn/Copy (pass 127 esta iter)
+
+W7 PASS 127 RESUMO - W16 MLB-13 ShareButton no PDP:
+- AUDIT MLB gaps: SEM share button no projeto inteiro
+  * grep Share|share-button|copyToClipboard|navigator.share -> 0 hits
+- IMPLEMENTED ShareButton component em apps/storefront/src/components/share-button.tsx:
+  * 4 canais: WhatsApp (wa.me deep link), X intent, LinkedIn share API, Copy clipboard
+  * UTM tracking automatico per channel: utm_source=share&utm_medium={ch}&utm_campaign=product_share
+  * Web Share API native em mobile: tenta navigator.share() primeiro
+    - Title + text + URL p/ iOS/Android native sheet
+    - AbortError (user cancel) -> nao abre menu fallback
+  * Fallback dropdown desktop: 4 links + copy button
+  * Clipboard: navigator.clipboard.writeText() + fallback execCommand textarea
+  * Copy state: 'Link copiado!' + Check icon 1.5s
+  * A11y: aria-expanded, aria-haspopup=menu, role=menuitem
+  * Esc fecha menu + click-outside fecha menu
+- INTEGRATED no /product/[slug]/page.tsx logo apos CompareButton:
+  * <ShareButton title={product.title} productSlug={product.slug} productId={product.id} />
+- BUILD storefront OK + service converged
+- VALIDATED prod: novo CSS chunk 772481bfcfe2cee8.css (era 75f3207f5bb3b148.css)
+  -> confirma componente novo no bundle
+- MLB count: 13 features (era 12) - paridade ML + Amazon
 
 W7 PASS 126 RESUMO - W18 PERF BRIN INDEX METRICS_HISTORY:
 - AUDIT W17 vault: endpoints OK (health 200, keys+use 401 sem auth)
