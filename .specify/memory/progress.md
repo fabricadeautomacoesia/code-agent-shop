@@ -17348,7 +17348,29 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ generateMetadata dinamico /products c/ filtros (pass 128)
 - ✅ PDP aside sticky so lg+ (mobile UX) (pass 129)
 - ✅ Migration 052 idx_products_last_sale +platform_owned (pass 130)
-- ✅ MLB-14 RecentlyViewedGuest localStorage (pass 131 esta iter)
+- ✅ MLB-14 RecentlyViewedGuest localStorage (pass 131)
+- ✅ Migration 053 idx sellers.asaas_wallet/customer (pass 132 esta iter)
+
+W7 PASS 132 RESUMO - W14 IDX SELLERS ASAAS WALLET + CUSTOMER:
+- AUDIT W4 admin endpoints: caminhos /api/admin/* nao existem (design correto)
+  Caminhos REAIS sao /api/sellers/admin/*, /api/orders/admin/*, /api/products/admin/*
+  Todos validados HTTP 401 missing_token (correto sem auth)
+- AUDIT W11 payment-svc: detectado GAP em sellers schema:
+  * asaas_wallet_id SEM INDICE (lookup em todo payment create p/ split nativo)
+  * asaas_customer_id SEM INDICE (webhook reverse-lookup vendor)
+  * Hoje 1 seller -> Seq Scan OK, mas >100 sellers vira gargalo
+- CREATED db/migrations/053_sellers_asaas_indexes.sql:
+  * CREATE INDEX IF NOT EXISTS idx_sellers_asaas_wallet WHERE NOT NULL
+  * CREATE INDEX IF NOT EXISTS idx_sellers_asaas_customer WHERE NOT NULL
+  * ANALYZE sellers
+- Partial WHERE NOT NULL: maioria sellers nao tem wallet ate KYC completo
+  -> menor storage + accelera lookup ativo
+- APPLIED via SSH em prod:
+  * 2 CREATE INDEX OK + ANALYZE OK
+  * Registrada em schema_migrations
+  * idx_sellers_asaas_wallet 8kB + idx_sellers_asaas_customer 8kB
+- Pattern Asaas docs recomendam idx em customer_id p/ webhook latency
+- 53 migrations totais (era 52)
 
 W7 PASS 131 RESUMO - W16 MLB-14 RECENTLY VIEWED GUESTS:
 - AUDIT W7: endpoints OK (force-approve/wishlist 404 sem id valido, OK)
