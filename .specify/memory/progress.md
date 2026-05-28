@@ -17351,7 +17351,31 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ MLB-14 RecentlyViewedGuest localStorage (pass 131)
 - ✅ Migration 053 idx sellers.asaas_wallet/customer (pass 132)
 - ✅ W9 enrich /promocoes metadata OG+twitter+keywords (pass 133)
-- ✅ W11 /installments validation amount<100 (pass 134 esta iter)
+- ✅ W11 /installments validation amount<100 (pass 134)
+- ✅ Migration 054 coupons updated_at + trigger (pass 135 esta iter)
+
+W7 PASS 135 RESUMO - W14 ADD updated_at COLUMN EM COUPONS:
+- AUDIT 53 tabelas public + ones SEM updated_at:
+  * 38 tabelas SEM updated_at - maioria sao log/event/audit (esperado)
+  * coupons identificada como GAP critico (entity CRUD-heavy)
+- USE CASES afetados:
+  * Admin extende expires_at (campanha estendida)
+  * Admin ajusta discount_value
+  * Admin desativa is_active
+  * Sistema incrementa used_count em apply
+- CREATED db/migrations/054_coupons_updated_at.sql:
+  * ALTER TABLE ADD COLUMN IF NOT EXISTS updated_at NOT NULL DEFAULT NOW()
+  * Backfill SQL (UPDATE 0 - rows novos defaultam para NOW migrate time)
+  * CREATE TRIGGER trg_coupons_updated_at BEFORE UPDATE
+  * Reusa fn_set_updated_at function (12 tabelas + user_loyalty ja usam)
+- APPLIED via SSH em prod:
+  * ALTER TABLE OK
+  * CREATE TRIGGER OK
+  * Validated: column existe + trigger ativo
+  * Test UPDATE used_count -> updated_at atualizou (timestamp +1s)
+  * Registrada em schema_migrations
+- 54 migrations totais (era 53)
+- W18 audit: 0 indices orfaos atualmente (migration 048 limpou todos)
 
 W7 PASS 134 RESUMO - W11 INSTALLMENTS AMOUNT TOO SMALL FIX:
 - AUDIT /api/payments/installments/preview edge cases:
