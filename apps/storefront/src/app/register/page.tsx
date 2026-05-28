@@ -81,22 +81,32 @@ function RegisterInner() {
       </div>
 
       <form onSubmit={submit} className="glass p-8 space-y-5">
+        {/* FIX-WORKER-1 pass 139 (a11y): 5 labels c/ htmlFor + 5 inputs c/ id (WCAG 1.3.1)
+            + autoComplete proper + inputMode mobile keyboard adequado.
+            ANTES: <label> sem htmlFor + <input> sem id -> SR desassociava.
+            AGORA: WAI-ARIA forms pattern + browser autofill correto. */}
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">Nome completo</label>
-          <input required value={form.full_name} onChange={(e) => setForm({...form, full_name: e.target.value})}
+          <label htmlFor="reg-fullname" className="text-sm text-white/70 mb-1.5 block">Nome completo</label>
+          <input id="reg-fullname" required value={form.full_name} onChange={(e) => setForm({...form, full_name: e.target.value})}
+            autoComplete="name" type="text"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
         </div>
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">Email</label>
-          <input type="email" required value={form.email} onChange={(e) => setForm({...form, email: e.target.value})}
+          <label htmlFor="reg-email" className="text-sm text-white/70 mb-1.5 block">Email</label>
+          <input id="reg-email" type="email" required value={form.email} onChange={(e) => setForm({...form, email: e.target.value})}
+            autoComplete="email" inputMode="email"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
         </div>
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">Senha (min 8, com maiuscula e numero)</label>
-          <input type="password" required value={form.password} onChange={(e) => onPass(e.target.value)}
+          <label htmlFor="reg-password" className="text-sm text-white/70 mb-1.5 block">Senha (min 8, com maiuscula e numero)</label>
+          <input id="reg-password" type="password" required value={form.password} onChange={(e) => onPass(e.target.value)}
+            autoComplete="new-password" aria-describedby="reg-pw-strength"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
-          {/* Barra de forca de senha V8 23.11 */}
-          <div className="mt-2 h-1.5 bg-white/5 rounded-full overflow-hidden">
+          {/* Barra de forca de senha V8 23.11
+              FIX-WORKER-1 pass 139: progressbar role + aria-valuenow p/ SR + aria-live */}
+          <div id="reg-pw-strength" className="mt-2 h-1.5 bg-white/5 rounded-full overflow-hidden"
+            role="progressbar" aria-valuemin={0} aria-valuemax={4} aria-valuenow={pwScore}
+            aria-label={form.password.length > 0 ? `Forca da senha: ${pwScore} de 4` : 'Forca da senha (digite a senha)'}>
             <div className="h-full transition-all" style={{
               width: form.password.length > 0 ? (pwWidths[pwScore-1] || '10%') : '0',
               background: form.password.length > 0 ? (pwColors[pwScore-1] || '#ef4444') : 'transparent',
@@ -104,13 +114,16 @@ function RegisterInner() {
           </div>
         </div>
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">CPF/CNPJ {role==='buyer' && <span className="text-white/40">(opcional)</span>}</label>
-          <input value={form.cpf_cnpj} onChange={(e) => setForm({...form, cpf_cnpj: e.target.value})}
+          <label htmlFor="reg-cpfcnpj" className="text-sm text-white/70 mb-1.5 block">CPF/CNPJ {role==='buyer' && <span className="text-white/40">(opcional)</span>}</label>
+          <input id="reg-cpfcnpj" value={form.cpf_cnpj} onChange={(e) => setForm({...form, cpf_cnpj: e.target.value})}
+            autoComplete="off" inputMode="numeric"
+            placeholder="000.000.000-00 ou 00.000.000/0000-00"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
         </div>
         <div>
-          <label className="text-sm text-white/70 mb-1.5 block">Telefone E.164 (+5511...)</label>
-          <input value={form.phone_e164} onChange={(e) => setForm({...form, phone_e164: e.target.value})}
+          <label htmlFor="reg-phone" className="text-sm text-white/70 mb-1.5 block">Telefone E.164 (+5511...)</label>
+          <input id="reg-phone" type="tel" value={form.phone_e164} onChange={(e) => setForm({...form, phone_e164: e.target.value})}
+            autoComplete="tel" inputMode="tel"
             placeholder="+5511999999999"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
         </div>
