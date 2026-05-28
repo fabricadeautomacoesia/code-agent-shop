@@ -23857,3 +23857,73 @@ PROXIMA ITER:
 - W4 admin: vault-svc filter seller_id UI
 - W18: cache /api/orders/admin/disputes/:id detalhe
 - 🚨 VPS SSH unblock URGENTE (60 ciclos = 20h sem deploy! MILESTONE)
+
+PASS 228 (W1 frontend /conta/notificacoes - consume W13 pass 227) - 2026-05-28:
+- W1 frontend storefront /conta/notificacoes page consumindo pass 227 endpoints
+
+ARQUIVOS CRIADOS (3 files, +244/-1):
+- apps/storefront/src/app/conta/notificacoes/layout.tsx (Metadata + noindex)
+- apps/storefront/src/app/conta/notificacoes/page.tsx (244 lines)
+- apps/storefront/src/app/conta/page.tsx (+ Bell icon + Nav entry)
+
+UI FEATURES:
+
+1. Lista templates por CATEGORIA (5 grupos):
+   - orders: order_paid, order_refunded
+   - reviews_qna: review_replied, qna_answered, report_resolved
+   - loyalty: loyalty_tier_up
+   - product_updates: product_new_version
+   - marketing: welcome
+
+2. Toggle (template, channel) per row:
+   - 3 channels: in_app, email, telegram
+   - aria-pressed dinamico (toggle pattern WAI-ARIA)
+   - aria-label contextual
+   - Optimistic update (instant feedback)
+   - Rollback em erro (load() refresh)
+   - PATCH /notifications/prefs per click (auto-save)
+
+3. CRITICAL templates DISPLAY ONLY (sempre ativos):
+   - password_reset, 2fa_disabled, security_refresh_reuse, asaas_refund_failed
+   - Badge yellow 'Sempre ativo'
+   - Shield icon yellow-400
+   - Tooltip: 'LGPD/PCI-DSS regulatorio'
+
+4. Banners feedback:
+   - role='status' aria-live=polite (success 3s flash)
+   - role='alert' (error persistent ate user fechar)
+
+NAV /conta page agora 7 entries:
+- Meus pedidos / Downloads / CAS Pontos
+- Editar perfil / Seguranca + 2FA
+- Notificacoes (NEW pass 228)
+- Sair
+
+PATTERN V8 LGPD COMPLIANCE end-to-end:
+- pass 227 backend: user_notification_prefs ativa + 2 endpoints
+- pass 228 frontend: /conta/notificacoes UI - NEW
+- Total: 5 files (1 backend + 4 frontend)
+
+Commit f047891 pushed origin/main (+244/-1)
+VPS SSH ainda bloqueado (61 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (61 ciclos):
+- 168-227: documentados
+- 228: storefront /conta/notificacoes page frontend
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_notification-svc --force
+- Acessar: https://shop.inovareinteligenciaartificial.com/conta/notificacoes
+  Login: teste1@cas.io / Teste123
+- Test opt-out:
+  Click toggle 'order_paid' email -> ativa/desativa
+  Verificar resposta savedMsg flash 3s
+- Test critical block:
+  Sec alerts section read-only badge 'Sempre ativo'
+  Tooltip explicativo regulatorio
+
+PROXIMA ITER:
+- W4 admin: vault-svc filter seller_id UI
+- W18: cache /api/orders/admin/disputes/:id detalhe
+- W13: notification-svc digest weekly endpoint
+- 🚨 VPS SSH unblock URGENTE (61 ciclos - 20.3h sem deploy!)
