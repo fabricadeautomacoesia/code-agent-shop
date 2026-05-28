@@ -4,7 +4,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../../.env'
 
 const express = require('express');
 const path = require('node:path');
-const { logger, sanitize, errorHandler } = require('@cas/shared');
+const { logger, sanitize, errorHandler, mask } = require('@cas/shared');
 const { healthcheck } = require('@cas/db-client');
 
 const log = logger.child({ svc: 'product-svc' });
@@ -87,7 +87,7 @@ async function rotateProductViewsRollingIdx() {
       await query(`ALTER INDEX IF EXISTS ${idxNew} RENAME TO ${idxOld}`);
       log.info({ idx: idxOld, threshold }, '[w18.pviews.rolling_rotated]');
     } catch (e) {
-      log.warn({ err: e.message, idx: idxOld }, '[w18.pviews.rolling_rotate_fail]');
+      log.warn({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), idx: idxOld }, '[w18.pviews.rolling_rotate_fail]');
     }
   }
 }

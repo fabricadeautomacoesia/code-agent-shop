@@ -6,7 +6,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { query } = require('@cas/db-client');
-const { jwt, asyncHandler, errorHandler, logger, rateLimiter } = require('@cas/shared');
+const { jwt, asyncHandler, errorHandler, logger, rateLimiter, mask } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 87: rate-limit + quota.
 //
@@ -77,7 +77,7 @@ async function checkSellerQuota(userId, incomingSize) {
     };
   } catch (e) {
     // Schema sem file_size_bytes - skip check defensive
-    log.warn({ err: e.message }, '[upload.quota_check_skipped]');
+    log.warn({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[upload.quota_check_skipped]');
     return { current_bytes: 0, would_exceed: false, max_bytes: MAX_SELLER_STORAGE_BYTES };
   }
 }
@@ -124,7 +124,7 @@ router.post('/package', upload.single('file'), asyncHandler(async (req, res, nex
     sha = hash.digest('hex');
   } catch (e) {
     cleanupFile(req.file.path);
-    log.error({ err: e.message }, '[upload.hash_failed]');
+    log.error({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[upload.hash_failed]');
     return next(errorHandler.badRequest('hash_failed', 'Falha ao processar arquivo. Tente novamente.'));
   }
 
@@ -154,7 +154,7 @@ router.post('/package', upload.single('file'), asyncHandler(async (req, res, nex
        })]
     );
   } catch (e) {
-    log.warn({ err: e.message }, '[upload.audit_failed]');
+    log.warn({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[upload.audit_failed]');
   }
 
   log.info({ user: req.user.sub, size: req.file.size, sha }, '[upload.package]');

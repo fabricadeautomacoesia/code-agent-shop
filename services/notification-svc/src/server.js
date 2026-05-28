@@ -674,7 +674,7 @@ app.post('/test',
       );
     } catch (e) {
       auditOk = false;
-      log.error({ err: e.message, admin_id: req.user.sub, message_id: info.messageId },
+      log.error({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), admin_id: req.user.sub, message_id: info.messageId },
         '[notif.test.audit_fail] email sent but audit_log INSERT failed - investigar subsystem');
     }
     res.json({
@@ -978,9 +978,9 @@ async function processOutbox() {
 }
 
 // Cron: a cada 30s processa outbox
-cron.schedule('*/30 * * * * *', () => processOutbox().catch((e) => log.error({ err: e.message }, '[outbox.err]')));
+cron.schedule('*/30 * * * * *', () => processOutbox().catch((e) => log.error({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[outbox.err]')));
 // Cron: a cada minuto recupera locks orfaos
-cron.schedule('* * * * *', () => reclaimOrphanLocks().catch((e) => log.error({ err: e.message }, '[outbox.reclaim_err]')));
+cron.schedule('* * * * *', () => reclaimOrphanLocks().catch((e) => log.error({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[outbox.reclaim_err]')));
 
 // Cron diario: limpeza de notifications antigas
 // FIX-WORKER-14 pass 276 (security notifs retention 1y vs regular 60d):
@@ -1060,7 +1060,7 @@ cron.schedule('0 4 * * *', async () => {
       await query(`SELECT pg_advisory_unlock(hashtext('notif_cleanup_daily')::bigint)`);
     }
   } catch (e) {
-    log.error({ err: e.message }, '[notif.cleanup.failed]');
+    log.error({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[notif.cleanup.failed]');
   }
 });
 

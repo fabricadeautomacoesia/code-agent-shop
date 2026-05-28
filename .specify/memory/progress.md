@@ -30761,3 +30761,47 @@ LINKS PARA TESTE (apos VPS unblock):
 PROXIMA ITER:
 - Verify final coverage - grep cross-svc deve retornar 0 raw e.message
 - VPS SSH unblock URGENTISSIMO (176 ciclos - 58.7h)
+
+
+============================================================
+PASS 344 - 2026-05-28 - MARCO CROSS-SVC DLP err.message 100% COMPLETE
+============================================================
+Files: 4 modificados
+  - services/product-svc/src/routes/upload.js (3 paths + import mask)
+  - services/order-svc/src/routes/orders.js (1 path)
+  - services/notification-svc/src/server.js (4 paths via replace_all)
+  - services/product-svc/src/server.js (1 path + import mask)
+Lines: ~12 changed
+
+W4/W13 (final DLP sweep):
+- product-svc/upload: quota_check_skipped + hash_failed + audit_failed
+- order-svc/orders: cache.invalidate_fail.checkout
+- notification-svc: test_email_audit + outbox.err + outbox.reclaim_err + notif.cleanup.failed
+- product-svc/server: w18.pviews.rolling_rotate_fail
+
+MARCO DLP CROSS-SVC `err: e.message` 100% COMPLETE:
+Final grep verify: grep -rn "err: e.message" services/ | grep -v mask -> 0 ocorrencias
+TODOS log paths cross-svc agora com mask.text() DLP
+
+Total cross-svc DLP coverage absolute:
+- 11 services (auth, order, payment, vault, qa, seller, product, notification, aiops, review, qa-worker)
+- ~83 paths com DLP error mask aplicado
+
+Pattern V8 Universal:
+  err: mask.text(String(e.message || '').slice(0, 300))
+
+VPS SSH BLOQUEADO (177 ciclos - 59h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc cas_order-svc cas_notification-svc --force
+- Final verify cross-svc DLP:
+  for svc in auth product vault qa payment seller order notification aiops review; do
+    docker service logs cas_${svc}-svc 2>&1 | grep -oE 'err:.*' | grep -v '\*\*\*\*' | head -1
+  done
+  Esperado: TODOS logs com '****' patterns - 0 raw stack traces
+
+PROXIMA ITER:
+- W4 admin dashboard DLP audit log viewer
+- W18 perf consolidation final
+- VPS SSH unblock URGENTISSIMO (177 ciclos - 59h)

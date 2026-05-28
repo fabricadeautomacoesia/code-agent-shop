@@ -243,7 +243,7 @@ router.post('/checkout',
       }
       await Promise.all(tasks);
     } catch (e) {
-      log.warn({ err: e.message, user: req.user.sub }, '[cache.invalidate_fail.checkout]');
+      log.warn({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), user: req.user.sub }, '[cache.invalidate_fail.checkout]');
     }
 
     // Dispara payment-svc para criar cobranca Asaas (assincrono)
