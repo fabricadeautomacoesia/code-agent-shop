@@ -32103,3 +32103,33 @@ UX MLB clear single vs multi-purchase
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W18 perf optimization
+
+## PASS 390 W17 VAULT: /usage key existence + is_active guard
+commit 5b1aed0
+BUG defensive gaps em /usage
+PRE-FIX:
+- INSERT usage + UPDATE counter sem validate key
+- FK valida row exists (nao is_active)
+- Key revogada acumula counter morto
+- UPDATE rowCount=0 silent = consistency gap
+- Atacante svc pode passar key_id arbitrario
+
+POST-FIX:
+- SELECT FOR UPDATE upfront (lock + check is_active)
+- is_active=FALSE -> 410 Gone
+- not found -> 404
+- UPDATE com AND is_active=TRUE defense-in-depth
+- rowCount check + log.warn defensive
+
+W17 vault /usage hardening series:
+  pass 261 atomicity tx()
+  pass 298 DLP mask error_message
+  pass 390 key existence guard <- ESTE
+
+123 passes acumulados (268->390) sem deploy VPS
+5 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W18 perf optimization
+- W4 admin remaining audits
