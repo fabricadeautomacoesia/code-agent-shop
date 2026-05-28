@@ -31528,3 +31528,35 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (100+ passes!)
 - TRANSFER_DONE/FAILED webhook handler
 - W4 admin audit-log viewer
+
+## PASS 370 W4 ADMIN: botao Aprovar KYC (endpoint sem UI counterpart)
+commit 36a5039
+BUG endpoint backend implementado MAS sem UI
+PRE-FIX: /sellers/admin/:id/kyc/approve existia desde pass 42
+  Frontend dashboard-admin/sellers so tinha:
+  - Suspender
+  - Promover Classe B
+  FALTAVA Aprovar KYC
+  Admin acessava via curl manual ou Postman
+
+IMPACTO:
+- KYC aprovacao inacessivel via dashboard
+- Seller rejeitado nao podia ser reaprovado sem dev intervention
+
+POST-FIX:
+- approveKyc(id) com confirmDialog
+- POST /sellers/admin/:id/kyc/approve
+- Botao verde ShieldCheck icon
+- aria-label dinamico (pattern V8 R23)
+- busyKey 'approve-X' coordenado
+
+Pattern V8 W4: backend endpoints SEMPRE precisam UI counterpart
+Frontend coverage gap pass 42 -> 370
+
+103 passes acumulados (268->370) sem deploy VPS
+4 CRITICAL + 19 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- TRANSFER webhook handler
+- W4 admin audit-log viewer
