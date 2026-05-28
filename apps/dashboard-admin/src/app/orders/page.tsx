@@ -116,10 +116,35 @@ export default function AdminOrdersPage() {
             <tbody>
               {orders.map((o) => (
                 <tr key={o.id} className="border-b border-white/5 hover:bg-white/5">
-                  <td className="py-3 font-mono text-xs">{o.order_number}</td>
+                  {/* FIX-WORKER-4 pass 401 (order_number + buyer_email actionable):
+                      PRE-FIX: tabela read-only - admin nao podia investigar incident
+                      - order_number plain text (sem hint que era copyable/searchable)
+                      - buyer_email plain text (sem mailto p/ contato admin)
+                      POST-FIX:
+                      - order_number monospace + cursor-pointer + onClick copy clipboard
+                        + title=Copy attribute (UX MLB: order# eh searchable/audit-key)
+                      - buyer_email -> <a mailto:> (admin pode contactar buyer direto)
+                      - rel=noopener noreferrer defensive
+                  */}
+                  <td className="py-3">
+                    <button type="button"
+                      onClick={() => navigator.clipboard?.writeText(o.order_number).catch(() => {})}
+                      aria-label={`Copiar numero do pedido ${o.order_number}`}
+                      title="Click para copiar"
+                      className="font-mono text-xs hover:text-magenta-glow cursor-pointer focus-visible:outline-2 focus-visible:outline-magenta rounded px-1 -mx-1">
+                      {o.order_number}
+                    </button>
+                  </td>
                   <td>
                     <div>{o.buyer_name || '-'}</div>
-                    <div className="text-xs text-white/40">{o.buyer_email}</div>
+                    {o.buyer_email ? (
+                      <a href={`mailto:${o.buyer_email}`}
+                        rel="noopener noreferrer"
+                        className="text-xs text-white/40 hover:text-magenta-glow underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded"
+                        aria-label={`Enviar email para ${o.buyer_email}`}>
+                        {o.buyer_email}
+                      </a>
+                    ) : <span className="text-xs text-white/40">-</span>}
                   </td>
                   <td className="font-display font-bold text-magenta-glow">{fmtBRL(o.total_cents)}</td>
                   <td className="text-xs">
