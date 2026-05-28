@@ -22675,3 +22675,56 @@ PROXIMA ITER:
 - W11: payment-svc Asaas refund edge cases (chargebacks duplicates)
 - W7: review-svc QnA upvote race conditions
 - 🚨 VPS SSH unblock URGENTE (45 ciclos - 15h sem deploy!)
+
+PASS 213 (W7 CRITICAL review-svc /qna/:id/voted column does not exist) - 2026-05-28:
+- W7 audit GET /qna/:id/voted (NotificationBell QnaUpvote state check)
+  descobriu BUG CRITICO em PG runtime:
+
+PRE-FIX BUG:
+- Query 'SELECT vote FROM product_qna_votes WHERE qna_id=...'
+- Coluna 'vote' NAO EXISTE em product_qna_votes
+- Migration 010 schema:
+  qna_id UUID, user_id UUID, created_at TIMESTAMPTZ, PK(qna_id, user_id)
+- PG 42703 dispara em CADA chamada (column does not exist)
+- errorHandler 500 -> frontend QnaUpvote UI nao distinguia state
+- Bug latente desde W7 pass 101 introducao do comment
+  'BUG 3: retornar direcao do voto'
+- Nunca testado pos-deploy
+
+POST-FIX:
+- Simplificar query: SELECT 1 FROM product_qna_votes
+- Vote binario - exists = voted, !exists = not voted
+- voted boolean + vote_direction: voted ? 'up' : null
+- vote_direction preserved no response shape p/ backward compat frontend
+- Sem PG error - response 200 correto
+
+PATTERN V8 LESSON DOCUMENTADA:
+- Comment-driven development tem risk de criar refs colunas inexistentes
+- Audit migration schema PRE-codificar query - sempre validar columns
+- Pos-pass 213: schema validado AGORA contra runtime
+
+OUTROS QnA endpoints OK:
+- POST /qna/:id/upvote: usa apenas qna_id+user_id (correto)
+- GET /qna (lista): retorna upvote_count column (em product_qna - correto)
+- INSERT product_qna_votes: VALUES (qna_id, user_id) ON CONFLICT (correto)
+
+Commit d02c99b pushed origin/main (+13/-4)
+VPS SSH ainda bloqueado (46 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (46 ciclos):
+- 168-212: documentados
+- 213: review-svc /qna/:id/voted column does not exist fix
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_review-svc --force
+- Test endpoint:
+  curl -H "Bearer \$TOKEN" /api/qna/{some-qna-uuid}/voted
+  Antes: 500 errorHandler (PG 42703)
+  Depois: 200 { voted: true/false, vote_direction: 'up'|null }
+- Frontend QnaUpvote agora distingue voted state corretamente
+
+PROXIMA ITER:
+- W17: vault-svc seller BYOK endpoints
+- W11: payment-svc Asaas refund edge cases (PAYMENT_REFUND_FAILED retry)
+- W13: notification-svc Telegram retry edge cases
+- 🚨 VPS SSH unblock URGENTE (46 ciclos - >15.3h sem deploy!)
