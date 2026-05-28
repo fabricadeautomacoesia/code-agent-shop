@@ -217,7 +217,18 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 91 BUG 4 DLP:
   //   - ip_address NULL (LGPD - IP eh PII Art 5° II)
   //   - query: mask.text() defensive (user pode colar Bearer/sk-API key)
-  if (q || category || kind) {
+  // FIX-WORKER-10 pass 374 (analytics filter tracking gap):
+  //   PRE-FIX: if (q || category || kind) - 3 filters apenas
+  //   User busca SO com tier=platinum OR tag=ia OR recently_sold OR free OR
+  //   min_price OR max_price -> search_log NAO registra.
+  //   Resultado: analytics MLB-style "filter tier mais usado" zero data,
+  //   trending por categoria sub-agg sem visibilidade real de comportamento user.
+  //   POST-FIX: log se QUALQUER filter aplicado (incluindo tier/tag/recently_sold/free/price).
+  //   Mantem skip se requisicao 0-filtros (page load inicial sem filter).
+  const hasAnyFilter = q || category || kind || tier || tag ||
+    min_price !== null || max_price !== null || free ||
+    req.query.recently_sold === '1' || req.query.recently_sold === 'true';
+  if (hasAnyFilter) {
     const safeQ = q ? mask.text(q) : '';
     query(
       `INSERT INTO search_log (user_id, query, query_normalized, filters, result_count, duration_ms, ip_address)
@@ -228,7 +239,8 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
       // ̀-ͯ (Combining Diacritical Marks block) - imune a copy/paste,
       // git diff, editor encoding issues.
       [null, safeQ, safeQ.toLowerCase().normalize('NFD').replace(/\p{M}/gu, ''),
-       JSON.stringify({ category, kind, min_price, max_price, free, tier, tag, sort: req.query.sort }),
+       JSON.stringify({ category, kind, min_price, max_price, free, tier, tag, sort: req.query.sort,
+         recently_sold: req.query.recently_sold === '1' || req.query.recently_sold === 'true' }),
        t.rows[0].total, dur, null]
     ).catch(() => {});
   }
