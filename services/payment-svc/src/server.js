@@ -251,6 +251,19 @@ app.post('/payments/asaas/create',
         externalReference: order.buyer_user_id,
       });
       customerId = cust.id;
+      // FIX-WORKER-11 pass 221: defensive check createCustomer return.
+      // Edge case: Asaas pode retornar 200 com body anormal (rate-limit
+      // gracefully degrade returning {ok:false} sem id) ou timeout pos-create
+      // (created on Asaas but response truncated).
+      // PRE-FIX: customerId undefined -> UPDATE metadata grava undefined ->
+      //   line 284 createPayment com customer=undefined -> 400 Asaas.
+      // POST-FIX: explicit check + clear error message.
+      if (!customerId || typeof customerId !== 'string') {
+        log.error({ order_id: order.id, asaas_response: cust },
+          '[payment.create.customer_no_id] Asaas createCustomer sem id valido');
+        return next(errorHandler.badRequest('asaas_customer_invalid',
+          'Falha ao criar customer Asaas. Tente novamente em alguns segundos.'));
+      }
       await query(
         `UPDATE users SET metadata = metadata || $1::JSONB WHERE id = $2`,
         [JSON.stringify({ asaas_customer_id: customerId }), order.buyer_user_id]
@@ -269,7 +282,21 @@ app.post('/payments/asaas/create',
 
     // 3. mapear billing type
     const billingMap = { pix: 'PIX', credit_card: 'CREDIT_CARD', boleto: 'BOLETO' };
-    const dueDate = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
+    // FIX-WORKER-11 pass 221: dueDate por billingType (era 24h fixo p/ todos).
+    // PRE-FIX: dueDate = NOW() + 24h uniformemente
+    //   - PIX: ok (pagamento instantaneo, due 24h flexivel)
+    //   - CREDIT_CARD: ok (cobranca imediata, due cosmetico)
+    //   - BOLETO: PROBLEMA - bancos exigem typically 3+ dias para boleto:
+    //     * Geracao boleto via Asaas leva minutos
+    //     * Compensacao bancaria ate D+1
+    //     * User pode pagar em ate 3 dias uteis tipico
+    //     * 24h era too short - muitos boletos venciam antes user pagar
+    // POST-FIX: dueDate adaptativo:
+    //   - PIX: 24h (instantaneo)
+    //   - CREDIT_CARD: 24h (cosmetico)
+    //   - BOLETO: 3 dias (compensacao + window pagamento)
+    const dueDays = order.payment_method === 'boleto' ? 3 : 1;
+    const dueDate = new Date(Date.now() + dueDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
 
     // MLB-5: parcelamento (somente cartao) - calcula valor da parcela com a mesma politica do preview
     const inst = req.body.installment_count && order.payment_method === 'credit_card' ? req.body.installment_count : 1;
