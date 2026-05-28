@@ -17376,7 +17376,29 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Storefront nav buttons type=button + focus-visible (pass 156)
 - ✅ Cart-drawer 4 buttons a11y rico (pass 157)
 - ✅ Compare-drawer + add-to-cart 6 buttons (pass 158)
-- ✅ Wishlist + price-alert + ask-quick 5 buttons (pass 159 esta iter)
+- ✅ Wishlist + price-alert + ask-quick 5 buttons (pass 159)
+- ✅ notification-bell 3 buttons + role=menu (pass 160 esta iter)
+
+W7 PASS 160 RESUMO - W1 NOTIFICATION-BELL A11Y ROLE=MENU:
+- AUDIT notification-bell.tsx: 3 buttons sem type='button' + backdrop sem semantica
+- BUGS encontrados:
+  * Bell trigger button: sem type=button (default submit, defensive V8 Regra 23)
+  * 'Marcar todas' button: sem type=button + aria-label generico
+  * X fechar dropdown: sem type=button + sem aria-label
+  * Backdrop div onClick={close}: SEM keyboard a11y (so click)
+  * Dropdown container: sem role=menu (era div generico ate listagem notifs)
+  * CheckCheck/X icons sem aria-hidden (decorativos)
+- FIXES:
+  * 3 buttons: type='button' explicito
+  * Backdrop: convertido p/ <button> aria-label='Fechar notificacoes' + cursor-default
+    -> click ainda fecha (semantica preservada) + keyboard nav ESC funciona
+  * Dropdown: role='menu' + aria-label='Notificacoes' (era div generico)
+  * Marcar todas: aria-label dinamico 'Marcar todas as N notificacoes como lidas'
+  * X fechar: aria-label='Fechar painel de notificacoes'
+  * 3 icones aria-hidden=true
+  * 3 buttons focus-visible:outline-magenta
+- BUILD storefront OK + service converged
+- COMMIT 69955f1 pushed GitHub main + deployed prod
 
 W7 PASS 159 RESUMO - W3 PDP TOGGLES + ASK MODAL A11Y:
 - AUDIT 3 components PDP secundarios sem type='button' (V8 Regra 23)
