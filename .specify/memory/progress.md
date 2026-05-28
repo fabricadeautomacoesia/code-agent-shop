@@ -20155,3 +20155,49 @@ PROXIMA ITER:
 - W7 pass 58: extract @cas/shared.maskPII
 - W18: query performance
 - 🚨 VPS SSH unblock URGENTE (4 ciclos sem deploy, fail2ban likely + pw rotation suspeita)
+
+PASS 172 (W4+W5 a11y V8 R23 FINAL SWEEP) - 2026-05-28:
+- dashboard-admin sweep continuation: vault + webhooks
+  * vault: 6 fixes (Provisionar header + retry + 2 banners + rotate + revoke)
+  * webhooks: 5 fixes (Atualizar header + retry + 2 banners + Reset)
+- dashboard-seller sweep complete: 6 paginas
+  * financeiro: 2 banner buttons
+  * loja: 2 banner buttons
+  * qna: 2 banner buttons
+  * products: 3 (2 banners + submitQA action)
+  * products/[id]: 3 (submit principal + 2 banners)
+  * reviews: 4 (retry + 2 banners + reply action)
+- Total nesta iter: 27 buttons consertados
+- Pattern aplicado consistente:
+  * type='button' (V8 R23)
+  * aria-label dinamico contextual (product.title, store_name, etc)
+  * role='alert' / role='status' aria-live='polite'
+  * focus-visible:outline-2 cor contextual
+  * aria-hidden='true' icons Lucide
+- VERIFICACAO FINAL:
+  $ grep -rn '<button onClick' apps/dashboard-{admin,seller}/src/app/ | grep -v type | wc -l
+  -> 0 (ZERO buttons sem type='button' restantes em ambos dashboards!)
+- Commit 01f9e81 pushed origin/main
+- VPS SSH ainda bloqueado (5 ciclos consecutivos)
+
+CONTAGEM CONSOLIDADA V8 R23 (passes 137-172):
+- dashboard-admin: 100% V8 R23 compliant (8 paginas)
+- dashboard-seller: 100% V8 R23 compliant (6 paginas)
+- storefront: 100% V8 R23 compliant (pass 163)
+- TOTAL: 90+ botoes corrigidos ao longo das 35 iters
+
+LINKS PARA TESTE (apos VPS desbloquear):
+- https://admin.inovareinteligenciaartificial.com/vault
+- https://admin.inovareinteligenciaartificial.com/webhooks
+- https://seller.inovareinteligenciaartificial.com/financeiro
+- https://seller.inovareinteligenciaartificial.com/loja
+- https://seller.inovareinteligenciaartificial.com/qna
+- https://seller.inovareinteligenciaartificial.com/products
+- https://seller.inovareinteligenciaartificial.com/reviews
+
+PROXIMA ITER (sem mais a11y V8 R23 pendentes!):
+- W7 pass 58: extract @cas/shared.maskPII (DRY 3+ svcs)
+- W18 query performance: EXPLAIN ANALYZE
+- W14 db audit: identificar indices ausentes
+- W6 auth-svc endpoints audit
+- 🚨 VPS SSH unblock URGENTE (5 ciclos sem deploy)
