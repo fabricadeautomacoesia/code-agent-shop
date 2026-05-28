@@ -383,24 +383,35 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'invalid_payload', message: 'event field required' });
   }
 
-  // Idempotencia (so se tiver event_id)
-  if (data.id) {
-    const exists = await query('SELECT 1 FROM asaas_webhook_events WHERE asaas_event_id = $1', [data.id]);
-    if (exists.rows.length) return res.json({ ok: true, duplicate: true });
-  }
-
+  // FIX-WORKER-11 pass 184 (CRITICAL race fix): idempotency atomica via ON CONFLICT.
+  //
+  // PRE-FIX bug racing:
+  //   1. Webhook A com data.id='X' chega - SELECT WHERE asaas_event_id='X' empty
+  //   2. Webhook A' (Asaas retry concurrent) chega - SELECT tambem empty
+  //   3. Ambos INSERT - segundo dispara PG 23505 (UNIQUE asaas_event_id violation)
+  //   4. 23505 -> errorHandler 500 -> Asaas retry loop -> Lambda spam
+  //
+  // POST-FIX:
+  //   - INSERT ... ON CONFLICT (asaas_event_id) DO NOTHING RETURNING id
+  //   - Se conflict: insertResult.rows[] empty -> retorna duplicate
+  //   - Atomic single query (vs pre-check SELECT + INSERT)
+  //   - Performance: 1 query vs 2 (50% reducao DB roundtrip)
+  //   - data.id=NULL caso: ainda permite duplicates (multiple inserts) p/ events
+  //     sem event_id (rare). Acceptable - retry_count tracks reprocessing.
+  //
   // FIX-WORKER-11 pass 6: capturar event_row_id p/ poder atualizar processed_at/processing_error
-  // depois do setImmediate. Antes: rows da tabela ficavam SEMPRE com processed_at=NULL
-  // (campo presente no schema mas nunca populado). Auditoria/reconciliacao impossivel:
-  // - SELECT * FROM asaas_webhook_events WHERE processed_at IS NULL = sempre TODOS
-  // - SELECT * WHERE processing_error IS NOT NULL = sempre vazio (mesmo com fails)
-  // - retry_count sempre 0 mesmo com webhooks reprocessados
+  // depois do setImmediate.
   const insertResult = await query(
     `INSERT INTO asaas_webhook_events (event_type, asaas_event_id, asaas_payment_id, payload, signature_valid)
      VALUES ($1, $2, $3, $4::JSONB, $5)
+     ON CONFLICT (asaas_event_id) DO NOTHING
      RETURNING id`,
     [data.event, data.id || null, data.payment?.id || null, JSON.stringify(data), valid]
   );
+  // Se ON CONFLICT triggered (duplicate event), rows[] empty -> duplicate ack
+  if (data.id && !insertResult.rows.length) {
+    return res.json({ ok: true, duplicate: true });
+  }
   const eventRowId = insertResult.rows[0]?.id;
 
   // Se invalido, NUNCA processa - retorna 401
