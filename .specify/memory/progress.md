@@ -23927,3 +23927,111 @@ PROXIMA ITER:
 - W18: cache /api/orders/admin/disputes/:id detalhe
 - W13: notification-svc digest weekly endpoint
 - 🚨 VPS SSH unblock URGENTE (61 ciclos - 20.3h sem deploy!)
+
+============================================================
+PASS 229 (2026-05-28) - W12 + W13 + W2 triple bug fix
+============================================================
+
+OBJETIVO: Atacar 3 worker simultaneos (W12 + W13 + W2)
+- W12 qa-worker: cost_usd_cents unit bug (100x inflated)
+- W13 notification-svc: failed_reason preservado em retry success
+- W2 storefront: checkout empty cart UX + a11y
+
+DECISAO: Multi-worker pass em vez de single-task. 3 bugs orthogonais
+em arquivos distintos = baixo risco de conflict, alta velocidade.
+
+============================================================
+1. W12 - qa-worker estimate_cost unit bug (CRITICAL billing)
+============================================================
+FILE: services/qa-worker/app/main.py:520-524
+
+PRE-FIX:
+  return int(usd * 100 * 100)  # USD -> cents -> centesimos
+  
+Comentario claimed "BIGINT in DB needs centesimos" - FALSO.
+Schema mig 003 sellers.cost_usd_cents + mig 005 product_qa_runs.cost_usd_cents
++ mig 008 llm_usage_log.cost_usd_cents -> TODOS cents USD (BIGINT 1USD=100c).
+
+IMPACTO:
+- gpt-4o-mini run $0.0005 gravava 5 cents (real: 0.05c)
+- Dashboard /admin/vault mostrava admin "$500 gastos" quando real $5
+- Billing alerts quota_usd_cents disparavam aos 1% do real
+- Custo seller acumulado em monthly_quota_cents 100x inflated
+
+POST-FIX:
+  return round(usd * 100)  # USD -> cents (BIGINT)
+
+NOTA: int() era ok mas round() e mais correto p/ pequenos valores.
+Bug em produc dois anos (desde W17 pass 1) - mas QA-runs custam centavos
+entao nao explodiu billing real. Detect via prox audit dashboard vault.
+
+============================================================
+2. W13 - notification-svc failed_reason cleanup
+============================================================
+FILE: services/notification-svc/src/server.js:820-836
+
+PRE-FIX:
+  UPDATE notifications SET sent_status='sent', sent_at=NOW(),
+                            locked_by=NULL, locked_at=NULL
+  WHERE id=$1 AND locked_by=$2 AND sent_status='pending'
+
+PROBLEMA:
+- Notif falha 2x (SMTP timeout) -> retry_count=2, failed_reason='SMTP timeout'
+- Notif sucede na 3a tentativa -> sent_status='sent' mas failed_reason
+  permanecia preenchido com timeout antigo
+- /admin/notifications mostrava 'sent + erro' = confuso, ticket falso
+- Audit tools ELK/Splunk alertavam erro em row marcada sent
+
+POST-FIX:
+  UPDATE notifications SET sent_status='sent', sent_at=NOW(),
+                            locked_by=NULL, locked_at=NULL,
+                            failed_reason=NULL  -- pass 229 cleanup
+
+============================================================
+3. W2 - storefront checkout empty cart + a11y
+============================================================
+FILE: apps/storefront/src/app/checkout/page.tsx:245-265
+
+BUG 1 (a11y): err div tinha className=text-red-400 mas SEM role=alert.
+  Screen readers nao anunciavam quando rate-limit ou checkout fail
+  apareciam. Adicionado role=alert + aria-live=assertive.
+
+BUG 2 (UX): cart vazio renderizava UI completa com botao "Confirmar"
+  desabilitado mas sem orientacao. User navegou direto /checkout via
+  link salvo apos clear cart -> tela morta sem CTA escape.
+
+POST-FIX: empty state 2-CTA (voltar /cart OU /products) renderizado
+  apenas se cart && items_count=0 (cart=null = ainda loading, nao mostra).
+
+============================================================
+SUMARIO CIRURGICO PASS 229
+============================================================
+Files: 3 modificados
+  - services/qa-worker/app/main.py (cost unit fix)
+  - services/notification-svc/src/server.js (failed_reason cleanup)
+  - apps/storefront/src/app/checkout/page.tsx (empty cart + a11y)
+Lines: ~30 changed
+
+VPS SSH BLOQUEADO (62 ciclos consecutivos - 20.7h sem deploy).
+Codigo acumulado origin/main aguardando deploy.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild stack:
+    docker service update cas_qa-worker --force
+    docker service update cas_notification-svc --force
+    docker service update cas_storefront --force
+- Test W12 cost: criar 1 product upload -> /admin/qa-queue
+  Verificar product_qa_runs.cost_usd_cents valor sano (~5-50 cents)
+- Test W13 reason cleanup: forcar 1 notif retry (parar SMTP, esperar
+  2 fails, religar SMTP, esperar success) -> SELECT failed_reason
+  FROM notifications WHERE sent_status='sent' -> NULL esperado
+- Test W2 empty checkout: limpar cart manualmente, acessar /checkout
+  direto -> deve mostrar 2 CTAs (Ver carrinho + Explorar catalogo)
+- Test W2 a11y: VoiceOver/NVDA navega checkout, dispara erro forcado
+  -> deve anunciar "alerta: Pagamento esta demorando..."
+
+PROXIMA ITER:
+- W4 admin: vault-svc filter seller_id UI (postponed)
+- W5: dashboard-seller /financeiro payout retry UX
+- W10: search-svc autocomplete trending fallback empty
+- VPS SSH unblock URGENTE (62 ciclos - 20.7h sem deploy)

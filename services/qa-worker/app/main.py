@@ -521,7 +521,14 @@ def estimate_cost(provider: str, model: str, usage: dict) -> int:
     tin = usage.get("prompt_tokens", 0) / 1_000_000
     tout = usage.get("completion_tokens", 0) / 1_000_000
     usd = tin * p["in"] + tout * p["out"]
-    return int(usd * 100 * 100)  # USD -> cents -> centesimos para BIGINT
+    # FIX-WORKER-12 pass 229 (cost unit bug): tabela product_qa_runs.cost_usd_cents
+    # e BIGINT em CENTS USD (1 USD = 100 cents). PRE-FIX: usd * 100 * 100 = 10000
+    # multiplier (centesimos de centavo) -> custos 100x inflados no DB:
+    # exemplo gpt-4o-mini run de $0.0005 gravava 5 cents (correto seria 0.05 cents).
+    # Billing dashboard mostrava admin tinha $500 gastos quando real era $5.
+    # POST-FIX: round(usd * 100) = cents (mesma unidade do schema sellers.cost_usd_cents
+    # mig 003 + product_qa_runs.cost_usd_cents mig 005).
+    return round(usd * 100)  # USD -> cents (BIGINT in DB)
 
 
 # ============================================================

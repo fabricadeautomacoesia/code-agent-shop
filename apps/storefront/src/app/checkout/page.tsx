@@ -242,7 +242,28 @@ export default function CheckoutPage() {
         className="btn-primary w-full text-base disabled:opacity-50">
         {loading ? 'Processando...' : (hasCpf === false ? 'Complete cadastro para pagar' : 'Confirmar e pagar')}
       </button>
-      {err && <div className="text-sm text-red-400 mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">{err}</div>}
+      {err && (
+        <div role="alert" aria-live="assertive"
+          className="text-sm text-red-400 mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+          {err}
+        </div>
+      )}
+
+      {/* FIX-WORKER-2 pass 229 (empty cart UX): se cart carregou mas items_count=0,
+          UI antes mostrava resumo zerado + botao desabilitado sem orientacao.
+          Usuario navegou direto p/ /checkout (link salvo, refresh apos clear) e
+          ficava preso. POST-FIX: empty state com 2 CTAs - voltar carrinho ou
+          explorar catalogo. cart=null = ainda carregando (nao mostrar). */}
+      {cart && (!cart.items_count || cart.items_count === 0) && (
+        <div className="mt-4 p-4 rounded-lg bg-white/5 border border-white/10 text-sm text-center">
+          <div className="text-white/70 mb-3">Seu carrinho esta vazio. Adicione produtos antes do checkout.</div>
+          <div className="flex gap-2 justify-center">
+            <Link href="/cart" className="text-magenta hover:underline">Ver carrinho</Link>
+            <span className="text-white/30">|</span>
+            <Link href="/products" className="text-magenta hover:underline">Explorar catalogo</Link>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

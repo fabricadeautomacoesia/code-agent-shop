@@ -817,9 +817,15 @@ async function processOutbox() {
       //     pode demorar -> impede paralelismo. Pragmatic: post-send guard
       //     loga warn p/ admin investigar duplicates.
       const upd = await query(
+        // FIX-WORKER-13 pass 229 (failed_reason cleanup): se notif sucede apos
+        // retries, failed_reason permanecia preenchido com mensagem da tentativa
+        // anterior. Admin auditor via na UI /admin/notifications uma notif "sent"
+        // com failed_reason="SMTP timeout" - confuso e gerava ticket falso.
+        // POST-FIX: limpar failed_reason ao marcar sent (success final).
         `UPDATE notifications
             SET sent_status = 'sent', sent_at = NOW(),
-                locked_by = NULL, locked_at = NULL
+                locked_by = NULL, locked_at = NULL,
+                failed_reason = NULL
           WHERE id = $1 AND locked_by = $2 AND sent_status = 'pending'
           RETURNING id`,
         [n.id, WORKER_ID]
