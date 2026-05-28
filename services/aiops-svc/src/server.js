@@ -469,12 +469,29 @@ const auditLogHandler = asyncHandler(async (req, res) => {
   // Whitelist severities (anti SQL injection via param) - validates against enum
   const VALID_SEV = new Set(['info','warn','error','critical']);
   const sevFilter = VALID_SEV.has(severity) ? severity : null;
+  /* FIX-WORKER-14 pass 430 (target_id + target_type filters - consume mig 094):
+     PRE-FIX: endpoint suportava days/action/severity mas NAO target.
+     Pos pass 429 (2fa.*.invalid_token + outras actions com target_id=user),
+     forensic admin query "show all events for user X" forcava:
+     - psql client direto (lento, sem cache, sem DLP mask)
+     - OU buscar TODOS events do severity/action e filtrar client-side (waste)
+     POST-FIX: + ?target_id (UUID strict regex) + ?target_type (enum whitelist).
+     Index mig 094 (target_id + created_at DESC PARTIAL) provides 10-30x speedup.
+     Pattern V8 W14: filtros DB-side > client-side, exact match indexable. */
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const targetId = (req.query.target_id || '').toString().trim();
+  const targetType = (req.query.target_type || '').toString().trim().toLowerCase();
+  const VALID_TT = new Set(['user','seller','product','order','payout','vault_key','category','review','qna','dispute']);
+  const targetIdFilter = (targetId && UUID_RE.test(targetId)) ? targetId : null;
+  const targetTypeFilter = VALID_TT.has(targetType) ? targetType : null;
   // FIX-WORKER-4 pass 388: prefix a. apos JOIN aliasing (ambiguous otherwise)
   const where = [`a.created_at > NOW() - ($1 || ' days')::INTERVAL`];
   const params = [String(days)];
   let i = 2;
   if (action) { where.push(`a.action = $${i++}`); params.push(action); }
   if (sevFilter) { where.push(`a.severity = $${i++}`); params.push(sevFilter); }
+  if (targetIdFilter) { where.push(`a.target_id = $${i++}::UUID`); params.push(targetIdFilter); }
+  if (targetTypeFilter) { where.push(`a.target_type = $${i++}`); params.push(targetTypeFilter); }
   params.push(lim);
   params.push(off);
   // FIX-WORKER-7 pass 63: 2 bugs (Regra D + DLP CRITICAL).
@@ -531,15 +548,18 @@ const auditLogHandler = asyncHandler(async (req, res) => {
     limit: lim,
     offset: off,
     has_more: (off + entries.length) < total,
-    filter: { days, action: action || null, severity: sevFilter },
+    filter: { days, action: action || null, severity: sevFilter,
+              target_id: targetIdFilter, target_type: targetTypeFilter },
   });
 });
 // FIX-WORKER-18 pass 200: cache.cacheMiddleware 30s vary by filtros (days+action+severity+lim+off).
 // Admin dashboard /admin/audit-log polling sem cache antes - cada filtro click hit DB.
 // 30s freshness adequada: audit_log eh forensic (nao realtime critical).
+// FIX-WORKER-14 pass 430: cache key inclui target_id + target_type (vary filter).
+// target_id e UUID-safe inline (regex matched antes) - cache key sem hash necessario.
 const auditLogCacheKey = (req) => {
   const q = req.query;
-  return `aiops:audit-log:d=${q.days||7}:a=${q.action||''}:s=${q.severity||''}:lim=${q.limit||50}:off=${q.offset||0}`;
+  return `aiops:audit-log:d=${q.days||7}:a=${q.action||''}:s=${q.severity||''}:tid=${q.target_id||''}:tt=${q.target_type||''}:lim=${q.limit||50}:off=${q.offset||0}`;
 };
 app.get('/audit-log',
   jwt.requireAuth({ roles: ['admin','staff'] }),

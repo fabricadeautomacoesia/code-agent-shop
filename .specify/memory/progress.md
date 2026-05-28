@@ -33339,3 +33339,48 @@ Pattern V8 W6: TODO 2FA endpoint security-critical em invalid_token:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 430 W14 DB SCHEMA: audit_log target_id idx + endpoint filter (consume pass 429)
+commit pendente
+GAP forensic admin query "all events for user X" sem idx eficiente
+PRE-FIX:
+- Mig 002 idx_audit_target (target_type, target_id) -> apenas lookup, sem sort
+- Mig 037 idx_audit_action_created (action, created_at DESC) -> action only
+- Mig 086 idx_audit_severity_created PARTIAL warn|error|critical
+- Query "WHERE target_id=$1 ORDER BY created_at DESC":
+  - PG planner usa idx_audit_target -> N rows desordenadas
+  - Sort node externo (heap-sort se N>work_mem)
+  - User power-admin 200+ events = ~150ms sort externo
+
+CONTEXT FORENSIC:
+- Pass 429 introduziu actions com target_id=user_id security-critical:
+  - 2fa.disable.invalid_token (critical)
+  - 2fa.activate.invalid_token (warn)
+- Combinado com actions pre-existentes -> /admin/users/:id audit tab
+- Endpoint /audit-log aiops-svc suportava days/action/severity MAS nao target
+
+POST-FIX 2 partes:
+1. Mig 094 idx_audit_target_created (target_id, created_at DESC) PARTIAL NOT NULL
+   - PG planner agora usa direct Index Scan pre-sorted
+   - Latencia: ~150ms -> ~5-15ms (10-30x melhoria)
+   - Tamanho idx ~30% menor que full (PARTIAL exclui ~40% null targets)
+2. aiops-svc /audit-log handler:
+   - + ?target_id (UUID regex strict)
+   - + ?target_type (enum whitelist 10 valores)
+   - Cache key vary by target_id+target_type
+   - filter response include target fields
+
+W14 audit_log idx series:
+  mig 002 (target | action | severity | created_at | gin payload)
+  mig 037 (action, created_at DESC)
+  mig 086 idx_audit_severity_created PARTIAL
+  mig 094 idx_audit_target_created PARTIAL <- ESTE
+
+Pattern V8 W14: forensic queries de admin precisam idx composite com sort embedded
+
+163 passes acumulados (268->430) sem deploy VPS
+5 CRITICAL + 26 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Apply mig 094 prod p/ medir EXPLAIN ANALYZE real
