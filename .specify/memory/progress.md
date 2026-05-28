@@ -17358,7 +17358,25 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ ReviewForm a11y radiogroup + WCAG 1.3.1 (pass 138)
 - ✅ Register form a11y + autoComplete (pass 139)
 - ✅ Checkout payment + installments radiogroup (pass 140)
-- ✅ Seller dashboard 6 titles especificos (pass 141 esta iter)
+- ✅ Seller dashboard 6 titles especificos (pass 141)
+- ✅ /conta/downloads/[token] generateMetadata dinamico + DLP (pass 142 esta iter)
+
+W7 PASS 142 RESUMO - W9 SEO DINAMICO /conta/downloads/[token] + DLP:
+- AUDIT: /conta/downloads/[token]/layout.tsx tinha metadata ESTATICA
+  -> user com varios downloads em tabs paralelas via mesmo title 'Download - ...'
+- DLP/Security risk: title estatico OK mas perdeu oportunidade de identificacao visual
+- FIX em apps/storefront/src/app/conta/downloads/[token]/layout.tsx:
+  * Convertido export const metadata para export async generateMetadata
+  * shortHash = token.slice(0, 6).toUpperCase() (identificavel mas nao reconstruivel)
+  * title: 'Download #ABC123 - Code & Agent Shop'
+  * Mantido robots: noindex+follow:false+nocache (PII protected)
+- DLP/Security:
+  * 6 chars insuficiente p/ reconstruir/brute-force UUID original token
+  * Defense-in-depth: tab title nao vaza em screenshot/screenshare
+  * window.title 100% sanitizado p/ logs/analytics
+- /conta/pedidos/[id] (audited): JA tinha generateMetadata dinamico
+- BUILD storefront OK + service converged
+- COMMIT 7ea3ebb pushed GitHub main + deployed prod
 
 W7 PASS 141 RESUMO - W5+W9 SELLER PAGES TITLES ESPECIFICOS:
 - AUDIT seller pages serving via curl: TODAS retornavam 'Painel do Vendedor - ...'
