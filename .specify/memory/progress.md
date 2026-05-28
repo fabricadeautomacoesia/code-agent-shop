@@ -33024,3 +33024,34 @@ W12 qa-worker defensive series:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 422 W13 NOTIFICATION: /read-all invalida notifs:list (paridade pass 404)
+commit 3337b17
+BUG /read-all invalidation incompleto
+PRE-FIX:
+- /read-all so cache.del notifs:unread-count
+- /:id/read (471+473) ja invalida ambos
+- /read-all paridade lagged
+
+CENARIO:
+- User abre NotificationBell -> popula list 20s
+- Click 'Marcar todas' -> /read-all 200 OK
+- Badge zera (count invalidated)
+- Reabre dropdown -> is_read=false stale 20s
+- UX confuso
+
+POST-FIX:
+- + cache.del notifs:list:USER:* wildcard
+- Paridade /:id/read pass 404
+
+Pattern V8 W13: mutation lista = invalidate sempre
+
+W13 cache invalidation:
+  /:id/read (404)
+  /read-all (422 bulk) <- ESTE
+
+155 passes acumulados (268->422) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
