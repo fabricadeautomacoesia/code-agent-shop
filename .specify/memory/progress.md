@@ -17368,7 +17368,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Storefront /conta/perfil edit form a11y (pass 148)
 - ✅ Admin PromptDialog substitui window.prompt (pass 149)
 - ✅ Admin confirmDialog substitui 7 window.confirm (pass 150)
-- ✅ Seller PromptDialog/confirmDialog 2 callsites (pass 151 esta iter)
+- ✅ Seller PromptDialog/confirmDialog 2 callsites (pass 151)
+- ✅ qna-upvote alert -> inline error + aria-pressed (pass 152 esta iter)
+
+W7 PASS 152 RESUMO - W3 QNA-UPVOTE A11Y INLINE ERROR:
+- AUDIT qna-upvote.tsx (MLB-2 upvote botao): 4 violacoes a11y
+- BUGS:
+  * alert('Erro: ...') nativo - mau UX + a11y (sem focus + i18n)
+  * Button SEM aria-pressed (toggle state nao anunciado SR)
+  * ChevronUp icon SEM aria-hidden (decorativo, ruido SR)
+  * SEM aria-label rich (SR anunciava apenas contagem sem contexto)
+- FIXES:
+  * alert() -> setErr inline state + role='alert' tooltip 5s auto-clear
+  * aria-pressed={voted} semantica toggle button
+  * aria-label dinamico:
+    - Votado: 'Remover voto. X votos total.'
+    - Nao votado: 'Votar como util. X votos total.'
+    - Plural correto i18n PT-BR (1 voto vs N votos)
+  * ChevronUp aria-hidden=true (decorativo)
+  * type='button' explicito (anti form submit)
+  * focus-visible:outline-magenta
+- Wrapping div inline-flex column p/ acomodar tooltip abaixo
+- 0 alert/prompt/confirm nativos restantes em qna-upvote
+- BUILD storefront OK + service converged
+- COMMIT 9ec8fa2 pushed GitHub main + deployed prod
 
 W7 PASS 151 RESUMO - W5 SELLER DIALOG A11Y:
 - AUDIT seller dashboard: 2 callsites window.confirm() restantes
