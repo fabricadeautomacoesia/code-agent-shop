@@ -322,11 +322,14 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
       secret = decrypt({ encrypted: user.secret_encrypted, iv: user.twofa_iv, tag: user.twofa_tag });
     } catch (e) {
       req.fail2ban?.reportFailure();  // FIX bug 2
-      log.error({ userId: user.id, err: e.message }, '[2fa.decrypt_fail]');
+      /* FIX-WORKER-6 pass 341: DLP mask 2fa.decrypt_fail err - crypto decrypt
+         exception pode conter secret material em corner cases. */
+      const safeErr = mask.text(String(e.message || '').slice(0, 200));
+      log.error({ userId: user.id, err: safeErr }, '[2fa.decrypt_fail]');
       query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, 'system', '2fa.decrypt_fail', 'user', $1, 'critical', $2::JSONB)`,
-        [user.id, JSON.stringify({ err: String(e.message).slice(0, 200), ip: req.ip })]
+        [user.id, JSON.stringify({ err: safeErr, ip: req.ip })]
       ).catch(() => {});
       return next(errorHandler.unauthorized('twofa_corrupt', 'Reconfigure 2FA'));
     }
@@ -371,7 +374,7 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
     query(
       `UPDATE user_two_factor SET last_totp_hash = $1, last_totp_used_at = NOW() WHERE user_id = $2`,
       [totpHash, user.id]
-    ).catch((e) => log.warn({ err: e.message, userId: user.id }, '[2fa.replay_track_fail]'));
+    ).catch((e) => log.warn({ err: mask.text(String(e.message || '').slice(0, 200)), userId: user.id }, '[2fa.replay_track_fail]'));
   }
 
   req.fail2ban?.reportSuccess();
@@ -669,7 +672,8 @@ router.post('/logout',
       );
     } catch (e) {
       auditOk = false;
-      log.error({ err: e.message, user_id: revokedRows[0].user_id }, '[logout.audit.fail]');
+      /* FIX-WORKER-6 pass 341: DLP mask logout audit failure */
+      log.error({ err: mask.text(String(e.message || '').slice(0, 200)), user_id: revokedRows[0].user_id }, '[logout.audit.fail]');
     }
 
     res.json({

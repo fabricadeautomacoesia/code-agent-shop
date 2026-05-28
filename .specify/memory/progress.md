@@ -30633,3 +30633,38 @@ PROXIMA ITER:
 - W11 audit additional payment dispatch flows
 - W13 notif outbox audit similar
 - VPS SSH unblock URGENTISSIMO (173 ciclos - 57.7h)
+
+
+============================================================
+PASS 341 - 2026-05-28 - W6 auth-svc 3 log paths DLP mask e.message
+============================================================
+Files: 1 modificado
+  - services/auth-svc/src/routes/auth.js (3 log paths + 1 audit_log e.message mask)
+Lines: ~10 changed
+
+W6 (auth-svc log e.message raw - gaps descobertos):
+- 3 paths em log.error/warn com e.message raw:
+  - 2fa.decrypt_fail (linha 325) + audit_log payload (linha 329)
+  - 2fa.replay_track_fail (linha 374)
+  - logout.audit.fail (linha 675)
+- PRE-FIX: e.message raw em Pino logs - PG_PASS/secret/Bearer leak via stack traces
+- POST-FIX: mask.text() em todos 4 locais
+  - 2fa.decrypt_fail audit_log JSON tambem masked (compliance gap)
+
+Total DLP error logging cumulative auth-svc:
+- audit_log paths 15 (passes 282-322 ua_prefix)
+- log.error/warn e.message 3 (pass 341)
+
+VPS SSH BLOQUEADO (174 ciclos - 58h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_auth-svc --force
+- W6 verify Pino logs sem raw errors:
+  docker service logs cas_auth-svc | grep -i '2fa.decrypt_fail\|logout.audit.fail'
+  Esperado: err masked
+
+PROXIMA ITER:
+- W4 audit other svcs log paths (aiops/order/notif)
+- W11 payment-svc audit additional
+- VPS SSH unblock URGENTISSIMO (174 ciclos - 58h)
