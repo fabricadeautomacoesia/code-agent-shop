@@ -32510,3 +32510,31 @@ W6 DLP mask user_agent cross-svc:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 404 W18 NOTIFICATION: cache GET / list (NotificationBell hot path)
+commit 6f8b7d7
+BUG GET / notifications sem cache
+PRE-FIX:
+- NotificationBell dropdown -> query DB per click
+- 100 users x 5 clicks = 500 q/session
+- /unread-count JA cached 20s (pass 175)
+- GET / ficou lagged
+
+POST-FIX:
+- cacheMiddleware 20s + notifListCacheKey
+  * Per-user + vary limit/offset/unread_only
+- Invalidation cross-mutation:
+  * /:id/read
+  * /mark-all-read
+  * cache.del wildcard list:USER:*
+
+W18 hot path cache cross-svc:
+  pass 361 qna/seller/pending
+  pass 386 products/me
+  pass 404 notifications GET / <- ESTE
+
+137 passes acumulados (268->404) sem deploy VPS
+5 CRITICAL + 23 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
