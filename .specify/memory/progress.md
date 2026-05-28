@@ -31423,3 +31423,27 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
 - W2 checkout E2E
+
+## PASS 366 W12 QA: env QA_CONFIDENCE_THRESHOLD validation
+commit 26336d7
+BUG silent fail QA threshold parse
+PRE-FIX: parseFloat(env || '0.80') sem validate
+  - 'high' (typo) -> NaN -> score >= NaN sempre FALSE -> tudo rejeitado
+  - '1.5' (typo) -> nada aprova
+  - '-0.1' -> tudo aprova
+  - Silent fail - so observavel apos N rejects confusos
+
+POST-FIX:
+- parseQaThreshold():
+  * parseFloat + isFinite + range [0..1]
+  * fallback 0.80 + console.warn (boot-time alert)
+- Pattern V8: env critical config validate + safe default
+
+99 passes acumulados (268->366) sem deploy VPS
+4 CRITICAL + 18 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W2 checkout E2E
+- Marco 100 passes proxima iter
