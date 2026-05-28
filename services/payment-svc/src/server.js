@@ -271,13 +271,22 @@ app.post('/payments/asaas/create',
     }
 
     // 2. carrega splits
+    // FIX-WORKER-11 pass 249 (split float precision parity):
+    //   PRE-FIX: fixedValue: Math.round(s.fixed_value_cents) / 100
+    //   s.fixed_value_cents e BIGINT - PG pode retornar como string em alguns
+    //   drivers. Math.round("12345") = 12345 OK, mas Number() defensive evita
+    //   edge case driver behavior. Sequence depois /100 = float possivel IEEE
+    //   drift se valor exato como 333333 cents -> 3333.33 OK mas 333334 ->
+    //   3333.34 -> Asaas pode rejeitar split com 3 decimais residual.
+    //   Pass 235 aplicou Number() + Math.round em createTransfer mas split
+    //   ficou sem o mesmo defensive pattern. POST-FIX paridade.
     const splitRows = await query(
       `SELECT wallet_id, fixed_value_cents FROM asaas_splits WHERE order_id = $1`,
       [order.id]
     );
     const split = splitRows.rows.map((s) => ({
       walletId: s.wallet_id,
-      fixedValue: Math.round(s.fixed_value_cents) / 100,
+      fixedValue: Math.round(Number(s.fixed_value_cents)) / 100,
     }));
 
     // 3. mapear billing type

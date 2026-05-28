@@ -20,6 +20,8 @@ export default function CartPage() {
   const [err, setErr] = useState('');
   const [couponPreview, setCouponPreview] = useState<any>(null);
   const [loyalty, setLoyalty] = useState<any>(null);
+  // FIX-WORKER-2 pass 249: redeem busy guard p/ anti-double-click race
+  const [redeemBusy, setRedeemBusy] = useState(false);
 
   async function load() {
     if (!token) return;
@@ -39,19 +41,40 @@ export default function CartPage() {
       .catch(() => {});
   }, [token, cart?.total_cents]);
 
+  // FIX-WORKER-2 pass 249 (double-redeem race):
+  //   PRE-FIX applyRedeem sem loading guard. POST /loyalty/redeem demora 200-500ms.
+  //   User clica botao "Resgatar 100 pts" -> espera -> clica de novo durante delay
+  //   -> 2 requests simultaneos -> double-decrement no points_balance.
+  //   Backend tem idempotency partial (recalcCart re-soma), mas redeem usa
+  //   subtract direto. Race resulta em pontos perdidos.
+  //   POST-FIX: redeemBusy state + guard early-return.
+  //   clearRedeem tambem ganha catch -> setErr (era silent swallow).
   async function applyRedeem(points: number) {
-    if (!token) return;
+    if (!token || redeemBusy) return;
+    setRedeemBusy(true);
     setErr('');
     try {
       await Api.cartLoyaltyRedeem(token, points);
       load();
     } catch (e: any) {
       setErr(e.data?.message || e.message || 'Erro ao resgatar pontos');
+    } finally {
+      setRedeemBusy(false);
     }
   }
   async function clearRedeem() {
-    if (!token) return;
-    try { await Api.cartLoyaltyClear(token); load(); } catch {}
+    if (!token || redeemBusy) return;
+    setRedeemBusy(true);
+    setErr('');
+    try {
+      await Api.cartLoyaltyClear(token);
+      load();
+    } catch (e: any) {
+      // FIX-WORKER-2 pass 249: era catch{} silent - user nao via erro
+      setErr(e.data?.message || e.message || 'Erro ao remover pontos do carrinho');
+    } finally {
+      setRedeemBusy(false);
+    }
   }
 
   // MLB-11: fetch progressive tiers preview quando ha cupom aplicado
@@ -251,8 +274,9 @@ export default function CartPage() {
                     </div>
                     {/* FIX-WORKER-2 pass 161 (a11y): type='button' + aria-label */}
                     <button type="button" onClick={clearRedeem}
+                      disabled={redeemBusy}
                       aria-label="Remover pontos de fidelidade aplicados"
-                      className="text-[11px] text-white/60 hover:text-white underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                      className="text-[11px] text-white/60 hover:text-white underline focus-visible:outline-2 focus-visible:outline-magenta rounded disabled:opacity-50 disabled:cursor-wait">
                       Remover
                     </button>
                   </div>
@@ -260,8 +284,9 @@ export default function CartPage() {
                   <div className="flex gap-1.5">
                     {[500, 1000, 5000].filter((p) => p <= Number(loyalty.points_balance)).map((p) => (
                       <button type="button" key={p} onClick={() => applyRedeem(p)}
+                        disabled={redeemBusy}
                         aria-label={`Aplicar ${p} pontos (desconto ${Api.formatBRL(p)})`}
-                        className="flex-1 px-2 py-1.5 rounded text-[11px] bg-white/5 hover:bg-magenta/20 border border-white/10 hover:border-magenta/50 transition-colors focus-visible:outline-2 focus-visible:outline-magenta">
+                        className="flex-1 px-2 py-1.5 rounded text-[11px] bg-white/5 hover:bg-magenta/20 border border-white/10 hover:border-magenta/50 transition-colors focus-visible:outline-2 focus-visible:outline-magenta disabled:opacity-50 disabled:cursor-wait">
                         {p}pts<br /><span className="text-magenta-glow">-{Api.formatBRL(p)}</span>
                       </button>
                     ))}

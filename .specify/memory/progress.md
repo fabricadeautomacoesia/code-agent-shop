@@ -25755,3 +25755,98 @@ PROXIMA ITER:
 - W4 admin: bulk select pending payouts
 - W11 payment: dispute auto-open trigger
 - VPS SSH unblock URGENTISSIMO (81 ciclos - 27h!!!)
+
+============================================================
+PASS 249 (2026-05-28) - W2 + W11 + W18
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W2 storefront: cart redeem double-click race
+- W11 payment-svc: split fixedValue float precision parity
+- W18 qa-svc: COUNT window consolidation /admin/qa/runs
+
+============================================================
+1. W2 - cart loyalty redeem double-click race
+============================================================
+FILE: apps/storefront/src/app/cart/page.tsx:42-83
+
+PROBLEMA:
+- applyRedeem(points) async sem loading guard
+- POST /loyalty/redeem demora 200-500ms
+- User clica botao "Resgatar 100 pts" -> espera -> clica novamente
+- 2 requests simultaneos -> double-decrement points_balance
+- Backend redeem usa subtract direto (nao idempotent como recalcCart)
+- clearRedeem: catch {} silent - user nao via erro
+
+POST-FIX:
+- redeemBusy state + early-return guard
+- try/finally para reset sempre
+- clearRedeem agora setErr no catch (era silent swallow)
+- disabled={redeemBusy} nos 3 botoes (quick presets + max + remove)
+- aria patterns + cursor-wait visual feedback
+
+============================================================
+2. W11 - split fixedValue float precision parity
+============================================================
+FILE: services/payment-svc/src/server.js:273-285
+
+PROBLEMA (parity gap pass 235):
+- Pass 230 fixed Math.round em installmentValue
+- Pass 235 fixed Math.round em createTransfer value
+- Pass 249: split fixedValue MISSING o mesmo defensive pattern
+- s.fixed_value_cents BIGINT - PG driver pode retornar como string
+- Math.round("12345") = 12345 OK, mas /100 produz float IEEE drift
+  em valores residuais (split com remainder)
+- Asaas pode rejeitar split com 3+ decimais
+
+POST-FIX:
+- Math.round(Number(s.fixed_value_cents)) / 100
+- Number() defensive (driver edge case)
+- Math.round garante 2 casas decimais exatas
+- Paridade com createTransfer (pass 235)
+
+============================================================
+3. W18 - qa-svc /admin/qa/runs COUNT window consolidation
+============================================================
+FILE: services/qa-svc/src/server.js:669-687
+
+PROBLEMA:
+- Endpoint /admin/qa/runs (admin polling page lista) executava:
+  1. SELECT rows + filtros + LIMIT OFFSET
+  2. SELECT COUNT(*) replicating same WHERE
+- 2 DB roundtrips per request = 100% overhead em quaring pesado
+- Admin pagina /admin/qa-queue polling 30s = 2 round-trips DB/30s
+- Pattern W18 ja consolidado em 12+ endpoints (passes 178-202+)
+  via COUNT(*) OVER() window function
+
+POST-FIX:
+- COUNT(*) OVER()::INT AS _total dentro da query principal
+- Total agregado mesma query - 1 DB roundtrip
+- map strip _total antes de retornar (nao vaza window meta)
+- Same WHERE plan reuse pelo PG planner
+
+============================================================
+SUMARIO PASS 249
+============================================================
+Files: 3 modificados
+  - apps/storefront/src/app/cart/page.tsx (redeem race)
+  - services/payment-svc/src/server.js (split precision)
+  - services/qa-svc/src/server.js (COUNT window)
+Lines: ~80 added
+
+VPS SSH BLOQUEADO (82 ciclos - 27.3h sem deploy).
+Migs 069+070+071+072+073 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_payment-svc cas_qa-svc --force
+- W2 test: /cart -> click resgate rapido 5x -> apenas 1 POST executa,
+  outros disabled. SELECT loyalty_points_redeemed FROM carts WHERE user_id=X
+  Deve refletir EXATO o ultimo valor solicitado
+- W11 test: order com split BIGINT fixed_value_cents='12345' (string driver)
+  Asaas createPayment success (era reject por precision)
+- W18 test: EXPLAIN ANALYZE /admin/qa/runs - 1 query unica em vez de 2
+
+PROXIMA ITER:
+- W4 admin: bulk select multiplos payouts
+- W13 notification: digest email aggregation
+- VPS SSH unblock URGENTISSIMO (82 ciclos - 27.3h)

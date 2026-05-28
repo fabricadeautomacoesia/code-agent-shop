@@ -666,11 +666,19 @@ app.get('/qa/runs/:product_id', jwt.requireAuth(), asyncHandler(async (req, res,
   const limIdx = i++;
   const offIdx = i++;
 
+  // FIX-WORKER-18 pass 249 (COUNT window consolidation):
+  //   PRE-FIX: 2 queries separadas (SELECT rows + SELECT COUNT). Admin lista
+  //   /admin/qa/runs por verdict era 2 DB roundtrips per request, com mesma
+  //   condicao WHERE replicada. Cada admin polling page disparava 2 hits DB.
+  //   POST-FIX: Pattern W18 consolidado em 12+ endpoints (passes 178-202+).
+  //   COUNT(*) OVER() window agrega contagem na MESMA query - 50% reducao
+  //   roundtrip DB + same WHERE plan reuse pelo PG.
   const r = await query(
     `SELECT id, product_id, product_version_id, verdict, confidence_score,
             sintaxe_ok, resolves_problem, is_functional, reasons, suggestions,
             llm_provider, llm_model, tokens_input, tokens_output, cost_usd_cents,
-            duration_ms, started_at, finished_at
+            duration_ms, started_at, finished_at,
+            COUNT(*) OVER()::INT AS _total
        FROM product_qa_runs
       WHERE ${whereParts.join(' AND ')}
       ORDER BY started_at DESC, id DESC
@@ -678,29 +686,26 @@ app.get('/qa/runs/:product_id', jwt.requireAuth(), asyncHandler(async (req, res,
     params
   );
 
-  // BUG 7: total count UX
-  const countParams = params.slice(0, -2);
-  const totalRes = await query(
-    `SELECT COUNT(*)::INT AS total FROM product_qa_runs WHERE ${whereParts.join(' AND ')}`,
-    countParams
-  );
-  const total = totalRes.rows[0].total;
+  const total = r.rows[0]?._total ?? 0;
 
   // BUG 3+4: DLP tier-split (admin=full, seller=masked)
+  // FIX-WORKER-18 pass 249: strip _total (window function aggregate) p/ nao vazar
+  // ao cliente final - eh metadata interno usado linha 689 acima
   const runs = r.rows.map((row) => {
+    const { _total, ...rest } = row;
     if (isAdmin) {
-      return row;
+      return rest;
     }
     // Seller: mask DLP fields + remove operational fingerprint
     return {
-      ...row,
+      ...rest,
       // BUG 3: mask.text() em reasons/suggestions (LLM error concat may have secrets)
-      reasons: Array.isArray(row.reasons)
-        ? row.reasons.map((r) => typeof r === 'string' ? mask.text(r) : r)
-        : row.reasons,
-      suggestions: Array.isArray(row.suggestions)
-        ? row.suggestions.map((s) => typeof s === 'string' ? mask.text(s) : s)
-        : row.suggestions,
+      reasons: Array.isArray(rest.reasons)
+        ? rest.reasons.map((r) => typeof r === 'string' ? mask.text(r) : r)
+        : rest.reasons,
+      suggestions: Array.isArray(rest.suggestions)
+        ? rest.suggestions.map((s) => typeof s === 'string' ? mask.text(s) : s)
+        : rest.suggestions,
       // BUG 4: remove operational fingerprint p/ seller
       llm_provider: null,
       llm_model: null,
