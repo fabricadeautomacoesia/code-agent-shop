@@ -182,6 +182,19 @@ router.post('/activate',
     const recovery = Array.from({ length: 10 }, () => crypto.randomBytes(5).toString('hex'));
     const hashed = await Promise.all(recovery.map((r) => bcrypt.hash(r, 10)));
     // FIX bug 2: tx() atomic UPDATE + audit_log
+    // FIX-WORKER-6 pass 372 (notification gap - paridade /recovery pass 220):
+    //   PRE-FIX: /activate so audit_log, sem notification cross-device.
+    //   /recovery (pass 220) JA notificava priority 2 anti-takeover signal.
+    //   /disable (pass 286) JA notificava priority 3.
+    //   /activate ficou lagged - sec event "2FA ativado em sua conta" NUNCA enviado.
+    //   Cenario fraude (account takeover incompleto):
+    //   1. Atacante captura sessao (XSS/MITM)
+    //   2. User sem 2FA pre-ativo
+    //   3. Atacante setup + activate 2FA com seu app
+    //   4. User proximo login -> 2FA ativo (nao configurado por ele!)
+    //   5. User perde acesso sem warning + recovery codes nas maos atacante
+    //   POST-FIX: notification priority 2 (alta - mudou setting seguranca).
+    //   Paridade industry GitHub/AWS: TODA mudanca 2FA notifica todos devices.
     await tx(async (c) => {
       await c.query(
         `UPDATE user_two_factor SET is_enabled = TRUE, enabled_at = NOW(), recovery_codes_hash = $1::JSONB WHERE user_id = $2`,
@@ -192,6 +205,15 @@ router.post('/activate',
          VALUES ($1, 'user', '2fa.activate', 'user', $1, 'warn', $2::JSONB)`,
         [req.user.sub, JSON.stringify({ ip: req.ip, /* FIX-WORKER-6 pass 296: ua_prefix mask.text() paridade pass 282/292 cross-svc DLP */
           ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)), recovery_codes_count: 10 })]
+      );
+      // FIX pass 372: notification cross-device anti-takeover (paridade /recovery pass 220)
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
+         VALUES ($1, 'in_app', '2fa_activated',
+                 'Autenticacao em 2 fatores ativada',
+                 'A autenticacao 2FA foi ativada em sua conta. Se nao foi voce, troque sua senha imediatamente e desative 2FA via codigos de recuperacao.',
+                 2)`,
+        [req.user.sub]
       );
     });
     // FIX-WORKER-18 pass 211: invalida cache auth:me (twofa_enabled mudou)
