@@ -32422,3 +32422,30 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (5 CRITICAL + 22 migrations + 133 passes!)
 - W4 admin remaining audits
 - W18 perf optimization
+
+## PASS 401 W4 ADMIN: orders table actionable
+commit 403bd0f
+BUG admin orders read-only - sem actions investigation
+PRE-FIX:
+- order_number plain text (admin nao copia search-key)
+- buyer_email plain text (sem mailto)
+- Investigation forcada a copy-paste manual
+
+POST-FIX:
+- order_number -> button copy clipboard
+  + title hint visual
+  + hover:text-magenta-glow + cursor-pointer
+  + aria-label dinamico
+- buyer_email -> <a mailto:> link direto
+  + rel=noopener noreferrer
+- Fallback '-' se null
+
+Pattern V8: admin tables actionable em chaves pesquisa
+MLB pattern: order# = search-key universal
+
+134 passes acumulados (268->401) sem deploy VPS
+5 CRITICAL + 22 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W18 perf optimization
