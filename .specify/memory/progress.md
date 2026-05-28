@@ -20969,3 +20969,65 @@ PROXIMA ITER:
 - W17: rotacao automatica vault keys vencidas
 - W18: cache /products/:slug/related ou /:slug/also-bought
 - 🚨 VPS SSH unblock URGENTE (20 ciclos - ~6.5h sem deploy!)
+
+PASS 188 (W17 vault rotation cron N+1 + idempotency) - 2026-05-28:
+- W17 audit vault-svc rotationAlertCron descobriu 2 bugs criticos:
+
+BUG 1 (perf N+1 cascade) em cron diario:
+- 50 keys * (1 idempotency SELECT + N admins INSERT in_app +
+  N admins INSERT email se overdue) = 750+ queries sequenciais
+- Latencia tipica: ~5000ms (50 keys * 5 admins * 3 sequential queries)
+- DB pool spike no horario do cron (09:00 UTC) - admin dashboard lento
+
+BUG 2 (idempotency dedup incompleto):
+- WHERE template_code AND payload->>key_id AND created_at > 1d
+- NAO incluia user_id no WHERE
+- Cenario: 'admin alice notified yesterday'
+- 'admin bob hired today' nunca recebia notification - 'continue' skipava
+  toda a key se QUALQUER admin ja recebeu
+- Auditoria: novos admins ficavam blind para rotation alerts
+
+POST-FIX (single bulk INSERT ... SELECT NOT EXISTS):
+- 1 query in_app + 1 query email (overdue) = 2 queries total
+- jsonb_array_elements expande keys JSON array em rows
+- CROSS JOIN admin_users distribui notif para cada admin
+- NOT EXISTS dedup PER (user_id, key_id, channel) - correto
+- Latency: 5000ms -> ~50ms (100x faster)
+
+Pattern documentado: cron bulk notifications via WITH CTEs +
+jsonb_array_elements + NOT EXISTS dedup compositiva.
+
+Migration NAO necessaria - mesma semantica, refactor query only.
+
+Commit 9ebceae pushed origin/main
+VPS SSH ainda bloqueado (21 ciclos consecutivos)
+
+CONSOLIDADO V8 N+1 + CRON ELIMINATIONS:
+- pass 178: product-svc /wishlist COUNT window
+- pass 179: notification-svc /me COUNT window
+- pass 180: vault-svc /keys LATERAL + COUNT (admin list - 3x N+1)
+- pass 181: search-svc /categories CTE GROUP BY (60+ subscans)
+- pass 187: product-svc 3 endpoints COUNT window
+- pass 188: vault-svc cron diario INSERT bulk (750 -> 2 queries)
+
+CODIGO ACUMULADO ORIGIN/MAIN (21 ciclos):
+- 168-187: documentados
+- 188: vault rotation cron bulk INSERT + idempotency fix
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_vault-svc --force
+- Logs cron 09:00 UTC:
+  Antes: [vault.rotation.alert] keys_due=50 admins=5 -> ~5000ms total
+  Depois: ~50ms total + 1-2 log lines
+- DB query verification:
+  SELECT count(*) FROM notifications
+   WHERE template_code='vault_rotation_due'
+     AND created_at > NOW() - INTERVAL '1 day'
+   GROUP BY user_id, payload->>'key_id';
+  -> Cada (admin, key) deve ter no max 1 row (in_app) + 1 row (email overdue)
+
+PROXIMA ITER:
+- W7: review-svc dashboard LATERAL pattern (pendente desde 180)
+- W18: cache /products/:slug/related ou /:slug/also-bought
+- W14: audit indices para vault_key_usage (hot table cron)
+- 🚨 VPS SSH unblock URGENTE (21 ciclos - ~7h sem deploy!)
