@@ -70,8 +70,17 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
   // tsquery em 1-2 chars retorna 0 rows mas executa Seq Scan no search_tsv -> waste.
   // Se ha filtros (category/kind/etc), q curto e OK (filtros restringem search).
   // Tambem nao loga em search_log -> evita bloat (matches trigger sanitize mig 027).
+  // FIX-WORKER-10 pass 243 (response shape consistency):
+  //   PRE-FIX: early-return curto retornava limit:0 + page:1 enquanto outras
+  //   responses normais retornavam limit=24 (default ou ?limit param).
+  //   Frontend SearchResults assumia limit constante e dividia total/limit
+  //   para paginar -> divide by zero (limit=0) -> NaN pages.
+  //   POST-FIX: usar limit/page consistentes (parseado mesmo se early-return).
+  //   Hint preservado.
   if (q && q.length < 3 && !req.query.category && !req.query.kind && !req.query.tag) {
-    return res.json({ results: [], page: 1, limit: 0, total: 0, pages: 0, duration_ms: Date.now() - t0, hint: 'query too short - min 3 chars' });
+    const _earlyLim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 24, 60));
+    const _earlyPage = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    return res.json({ results: [], page: _earlyPage, limit: _earlyLim, total: 0, pages: 0, duration_ms: Date.now() - t0, hint: 'query too short - min 3 chars' });
   }
   const category = req.query.category;
   const kind = req.query.kind;

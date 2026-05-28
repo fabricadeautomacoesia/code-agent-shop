@@ -25234,3 +25234,96 @@ PROXIMA ITER:
 - W13 notification: digest weekly cron
 - W17 vault: rotate endpoint state machine
 - VPS SSH unblock CRITICAL (75 ciclos - 25h!!!)
+
+============================================================
+PASS 243 (2026-05-28) - W17 + W12 + W10 vault/qa/search
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W17 vault-svc: revoked_reason VARCHAR(200) overflow no rotate
+- W12 qa-worker: sintaxe_ok static vs LLM mismatch (perda de verdict)
+- W10 search-svc: early-return response shape inconsistency
+
+============================================================
+1. W17 - vault rotate revoked_reason overflow
+============================================================
+FILE: services/vault-svc/src/server.js:762-766
+
+PROBLEMA (silent rotate failure):
+- Schema vault_api_keys.revoked_reason VARCHAR(200)
+- Rotate concatena: `rotated: ${reason} (-> ${newKey.id})`
+  = "rotated: " (9) + reason (max 200) + " (-> " (5) + uuid (36) + ")" (1)
+  = 251 chars total
+- reason validate max(200) passa no Zod, mas PG rejeita 22001
+- tx rollback -> rotate FALHA silently (errorHandler 500)
+- Admin confuso: validation passed mas DB rejected
+
+POST-FIX:
+- rotateSchema reason max(140) - cabe c/ overhead "rotated: ... (-> uuid)"
+- 140 + 51 = 191 chars (safe under 200)
+
+============================================================
+2. W12 - qa-worker sintaxe_ok merge static vs LLM
+============================================================
+FILE: services/qa-worker/app/main.py:147
+
+PROBLEMA (QA false-positive risk):
+- Linha 137: payload_callback["sintaxe_ok"] = static_findings["sintaxe_ok"]
+- Linha 147-155: update do payload NAO incluia sintaxe_ok
+- Cenario:
+  * static_analysis nao detecta erro complexo (passa sintaxe_ok=True)
+  * LLM detecta logic error semantico (retorna sintaxe_ok=False)
+  * Payload final mantem sintaxe_ok=True (perde LLM verdict)
+  * QA pipeline approve produto com erro real
+- Defensive QA: melhor false-negative que false-positive
+
+POST-FIX: AND logical merge
+- sintaxe_ok=True so se AMBOS static AND LLM concordam
+- Linha update inclui:
+  "sintaxe_ok": bool(payload_callback["sintaxe_ok"]) and bool(score.get("sintaxe_ok", True))
+- Default LLM=True (se LLM omite, static decide)
+- Resultado: any veto bloqueia approval
+
+============================================================
+3. W10 - search-svc early-return response shape
+============================================================
+FILE: services/search-svc/src/server.js:73-75
+
+PROBLEMA:
+- Early-return q<3 sem filtros retornava { limit: 0, page: 1, ... }
+- Outras responses normais: { limit: 24 (default ou ?limit), page: N }
+- Frontend SearchResults dividia total/limit para paginar:
+  * limit=0 -> NaN/Infinity pages
+  * pagination UI broken
+- Inconsistencia shape entre early-return e success path
+
+POST-FIX:
+- Parse limit + page consistentes (mesmo no early-return)
+- Math.max(1, Math.min(parseInt || 24, 60)) - mesmo cap success path
+- hint preservado p/ UX explicar "query too short"
+
+============================================================
+SUMARIO PASS 243
+============================================================
+Files: 3 modificados
+  - services/vault-svc/src/server.js (rotate reason 140 max)
+  - services/qa-worker/app/main.py (sintaxe AND merge)
+  - services/search-svc/src/server.js (early-return shape)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (76 ciclos - 25.3h sem deploy).
+Migs 069+070+071+072 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_vault-svc cas_qa-worker cas_search-svc --force
+- W17 test: POST /api/vault/keys/:id/rotate com reason 200 chars -> 200 OK
+  (era 500 anteriormente)
+- W12 test: criar produto codigo perfeito static mas LLM retorna sintaxe_ok=false
+  Callback sintaxe_ok=false (era true) -> QA reject correto
+- W10 test: GET /api/search?q=ab -> { limit: 24, page: 1, total: 0, pages: 0 }
+  Frontend pagination NaN gone
+
+PROXIMA ITER:
+- W13 notification: digest weekly cron
+- W4 admin: KPI freshness indicator
+- VPS SSH unblock URGENTISSIMO (76 ciclos - 25.3h)

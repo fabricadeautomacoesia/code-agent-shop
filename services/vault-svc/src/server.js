@@ -759,9 +759,16 @@ app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
 // - Token expirando em 1d -> rotate antes do upstream revogar
 // - Suspeita de leak (logs, ex-funcionario) -> rotate imediato
 // - PCI rotation schedule -> rotate trimestral programado
+// FIX-WORKER-17 pass 243 (revoked_reason overflow):
+//   Schema vault_api_keys.revoked_reason VARCHAR(200). Rotate concatena
+//   "rotated: ${reason} (-> ${uuid})" -> 9 + reason + 5 + 36 + 1 = 51+reason.
+//   Reason max(200) -> total ate 251 chars -> PG 22001 string_too_long ->
+//   tx rollback -> rotate FALHA + admin perplexo "validacao 200 chars passou
+//   mas PG rejeita?". POST-FIX: reason max=140 garante total <=200 com
+//   overhead "rotated: ... (-> uuid)".
 const rotateSchema = z.object({
   plain_key: z.string().min(10),  // nova chave
-  reason: z.string().min(3).max(200),  // motivo (audit)
+  reason: z.string().min(3).max(140),  // motivo audit - 140 cabe c/ overhead em revoked_reason VARCHAR(200)
   rotation_days: z.number().int().min(1).max(365).optional(),  // novo prazo
 });
 

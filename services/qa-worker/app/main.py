@@ -144,8 +144,18 @@ async def process_async(req: AnalyzeRequest):
 
         # 4. Parse score JSON
         score = parse_score_response(llm_out)
+        # FIX-WORKER-12 pass 243 (sintaxe_ok AND merge):
+        #   PRE-FIX: payload_callback["sintaxe_ok"] setado pela analise estatica
+        #   linha 137 e NUNCA sobrescrito pelo LLM update. Cenario:
+        #   - static_analysis nao detecta erro complexo (passa sintaxe_ok=True)
+        #   - LLM detecta logic error semantico (retorna sintaxe_ok=False)
+        #   - Payload final mantem sintaxe_ok=True (perde LLM verdict)
+        #   - QA approve produto com erro real
+        #   POST-FIX: AND logical merge - sintaxe_ok=True so se AMBOS concordam
+        #   (defensive overhaul - melhor false-negative que false-positive QA)
         payload_callback.update({
             "confidence_score": score["confidence_score"],
+            "sintaxe_ok": bool(payload_callback["sintaxe_ok"]) and bool(score.get("sintaxe_ok", True)),
             "resolves_problem": score.get("resolves_problem", False),
             "is_functional": score.get("is_functional", False),
             "llm_provider": provider,
