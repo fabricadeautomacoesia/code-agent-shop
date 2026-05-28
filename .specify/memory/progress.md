@@ -21604,3 +21604,76 @@ PROXIMA ITER:
 - W18: cache /sellers/admin/payouts/pending
 - W18: cache /sellers/admin/pending-kyc
 - 🚨 VPS SSH unblock URGENTE (30 ciclos - ~10h sem deploy!)
+
+PASS 198 (W18 seller-svc admin /payouts/pending 6 fixes) - 2026-05-28:
+- W18 audit /sellers/admin/payouts/pending descobriu 6 bugs compostos:
+
+1. Regra I SELECT p.* leak (asaas_transfer_id + rejected_reason raw)
+2. Hardcoded LIMIT 100 sem ?limit/?offset paginacao
+3. ORDER BY requested_at ASC sem tiebreaker (Regra D)
+4. NO COUNT total (UI 'X de Y' impossivel)
+5. NO cache (admin polling sem rate proteção)
+6. String interpolation status (whitelist mas inelegante)
+
+POST-FIX (6 melhorias):
+
+1. Explicit SELECT fields whitelist positiva
+2. ?limit (1-200) + ?offset (>=0) pagination V8 Regra E
+3. + p.id ASC tiebreaker (Regra D)
+4. COUNT(*) OVER()::INT window total + has_more (pattern W18 178-197)
+5. cache.cacheMiddleware 20s vary by status+limit+offset
+   Curto pq mutations frequentes (approve/reject/transfer)
+6. Parameterized status \$1 (em vez string interpolation)
+
+DLP DEFENSIVE preserved:
+- rejected_reason mask.text() (admin pode escrever CPF/Bearer accidentalmente)
+- Pattern V8 cross-svc DLP
+
+INVALIDATION COHERENCY:
+- invalidateSellerPayoutsCache helper estendido:
+  + seller:admin:payouts-pending:* (W18 pass 198 dashboard admin)
+  + seller:payouts:{userId}:* (W18 pass 175 seller view)
+- Promise.all bulk delete
+
+Commit 3960b4a pushed origin/main (80 insert, 15 delete - +65 NET)
+VPS SSH ainda bloqueado (31 ciclos consecutivos)
+
+CACHE COVERAGE seller-svc FINAL atualizado:
+- /sellers (public list): 60s
+- /sellers/:slug + /stats + /products: 60-180s
+- /sellers/admin/all: 30s (pass 197)
+- /sellers/admin/payouts/pending: 20s (pass 198 NEW)
+- /sellers/me/kpi: 300s
+- /sellers/me/sla-status: 60s (pass 174)
+- /sellers/me/payouts: 30s (pass 175)
+- /loyalty/me: 30s (pass 176)
+
+PADRAO V8 PAGINATION + WINDOW COUNT consolidado em 8 endpoints:
+- product-svc: /wishlist (178), /products + /reviews + /qna (187)
+- notification-svc: /me (179)
+- vault-svc: /keys admin list (180), /rotation cron (188)
+- search-svc: /categories (181)
+- review-svc: /admin/reports + /qna/seller/pending (189)
+- seller-svc: /admin/all (197), /admin/payouts/pending (198)
+
+CODIGO ACUMULADO ORIGIN/MAIN (31 ciclos):
+- 168-197: documentados
+- 198: seller-svc admin /payouts/pending 6 fixes
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc --force
+- Test cache:
+  time curl -H "Bearer \$ADMIN" "/api/sellers/admin/payouts/pending?status=all"
+  1a: ~15ms (PG window query)
+  2a: <5ms (Redis hit)
+- Test pagination:
+  curl "?status=pending&limit=10&offset=0" -> total + has_more
+- Test coherency:
+  POST /sellers/admin/payouts/{id}/approve
+  GET /payouts/pending - deve mostrar status atualizado imediato
+
+PROXIMA ITER:
+- W18: cache /sellers/admin/pending-kyc (mesmo pattern)
+- W17: vault-svc seller endpoints BYOK self-management
+- W11: payment-svc payout dispute resolution flow
+- 🚨 VPS SSH unblock URGENTE (31 ciclos - >10h sem deploy!)
