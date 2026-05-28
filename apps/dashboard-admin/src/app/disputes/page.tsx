@@ -71,9 +71,14 @@ export default function DisputesPage() {
         : 'dismissed';
     if (!resolution_action) return;
 
-    const admin_notes = prompt('Notas administrativas (min 10 chars):');
+    // FIX-WORKER-4 pass 153: substitui prompt() + alert() nativos por PromptDialog
+    const { promptDialog, alertDialog } = await import('@/components/prompt-dialog');
+    const admin_notes = await promptDialog(
+      'Notas administrativas (min 10 chars):',
+      'Ex: vendedor entregou produto incorreto, comprador comprovou via anexos'
+    );
     if (!admin_notes || admin_notes.length < 10) {
-      alert('Notas obrigatorias (min 10 caracteres)');
+      await alertDialog('Notas obrigatorias', 'Minimo 10 caracteres para auditoria.');
       return;
     }
 
@@ -84,9 +89,15 @@ export default function DisputesPage() {
 
     let refund_amount_cents: number | undefined;
     if (resolution_action === 'partial_refund') {
-      const amount = prompt('Valor do reembolso parcial (em centavos):');
+      const amount = await promptDialog(
+        'Valor do reembolso parcial (em centavos):',
+        'Ex: 5000 = R\$ 50,00'
+      );
       const n = parseInt(amount || '0', 10);
-      if (!Number.isFinite(n) || n <= 0) { alert('Valor invalido'); return; }
+      if (!Number.isFinite(n) || n <= 0) {
+        await alertDialog('Valor invalido', 'Use apenas digitos. Ex: 5000 para R\$ 50,00');
+        return;
+      }
       refund_amount_cents = n;
     }
 

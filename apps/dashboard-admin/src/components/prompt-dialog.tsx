@@ -33,6 +33,7 @@ interface PromptState {
   defaultValue?: string;
   confirmLabel?: string;
   confirmVariant?: 'primary' | 'danger';
+  hideCancel?: boolean; // FIX-WORKER-4 pass 153: alertDialog so tem OK button
   resolver: Resolver | null;
   confirmResolver: ConfirmResolver | null;
 }
@@ -61,6 +62,35 @@ export function promptDialog(title: string, placeholder?: string, defaultValue?:
       defaultValue,
       resolver: resolve,
       confirmResolver: null,
+    });
+  });
+}
+
+/**
+ * FIX-WORKER-4 pass 153: alertDialog substitui window.alert() nativo.
+ * Info-only modal (sem cancelar - apenas OK).
+ *
+ * @param title - mensagem principal (ex: 'Valor invalido')
+ * @param body - descricao opcional
+ */
+export function alertDialog(title: string, body?: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (!setStateExternal) {
+      window.alert(body ? `${title}\n\n${body}` : title);
+      resolve();
+      return;
+    }
+    setStateExternal({
+      open: true,
+      mode: 'confirm',
+      title,
+      body,
+      confirmLabel: 'OK',
+      confirmVariant: 'primary',
+      hideCancel: true, // FIX-WORKER-4 pass 153: alert nao tem cancelar
+      resolver: null,
+      // alertDialog usa confirmResolver mas ignora valor (resolve void)
+      confirmResolver: () => resolve(),
     });
   });
 }
@@ -153,7 +183,9 @@ export function PromptDialogProvider() {
 
   function cancel() {
     if (state.mode === 'confirm') {
-      state.confirmResolver?.(false);
+      // FIX-WORKER-4 pass 153: alertDialog (hideCancel) resolve true em Esc/close
+      // p/ continuar flow (semantica window.alert sempre resolve)
+      state.confirmResolver?.(state.hideCancel ? true : false);
     } else {
       state.resolver?.(null);
     }
@@ -208,13 +240,16 @@ export function PromptDialogProvider() {
             </div>
           )}
           <div className="flex items-center gap-2 justify-end">
-            <button
-              type="button"
-              onClick={cancel}
-              className="px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors focus-visible:outline-2 focus-visible:outline-magenta"
-            >
-              Cancelar
-            </button>
+            {/* FIX-WORKER-4 pass 153: hideCancel p/ alertDialog (info-only, sem Cancelar) */}
+            {!state.hideCancel && (
+              <button
+                type="button"
+                onClick={cancel}
+                className="px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors focus-visible:outline-2 focus-visible:outline-magenta"
+              >
+                Cancelar
+              </button>
+            )}
             <button
               ref={confirmBtnRef}
               type="submit"
