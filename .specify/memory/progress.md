@@ -17327,7 +17327,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ product-svc /:id/force-approve (pass 107) - 7 bugs admin override
 - ✅ DEPLOY VPS PROD EXECUTADO via SSH (pass 108) - 107 W7 passes LIVE
 - ✅ Fix /sla-history + /kpi schema mismatch (pass 109) - 2 bugs prod
-- ✅ Audit admin endpoints + 5 schema fixes (pass 110 esta iter)
+- ✅ Audit admin endpoints + 5 schema fixes (pass 110)
+- ✅ Audit storefront SSR + 3 fixes deploy infra (pass 111 esta iter)
+
+W7 PASS 111 RESUMO - SSR AUDIT + INFRA FIXES:
+- Audit 18 paginas SSR storefront via curl, identificou 2 URLs PT-BR 404:
+  * /produtos -> 404 (Next.js so tem /products)
+  * /buscar?q=automation -> 404 (sem rota)
+- FIX 1: rewrites Next.js PT-BR friendly (sem 301 - URL PT na browser):
+  * /produtos -> /products
+  * /produtos/:path* -> /products/:path*
+  * /buscar -> /products
+- FIX 2: Dockerfile.next monorepo aware com APP build-arg
+  * PRE-FIX: npm run build na raiz (sem script "build" - workspaces)
+  * POS-FIX: WORKDIR /app/apps/\$APP + ENV antes do build
+  * Reaplicavel: --build-arg APP=dashboard-admin / dashboard-seller
+- FIX 3: auth-errors.ts syntax (if validation_error nunca abriu)
+  * Error: Return statement is not allowed here (line 105, 108)
+  * Refactor anterior removeu if header mas manteve body + } extra
+  * Build storefront falhava ha varios passes (silenciado por imagem cached)
+- VALIDATION POS-FIX:
+  * /produtos -> HTTP 200 "Catalogo Completo"
+  * /buscar?q=automation -> HTTP 200
+  * /products sanity -> HTTP 200 (sem regressao)
+- Pattern W7 em 125 endpoints/pages LIVE em prod - 111 micro-iters
 
 W7 PASS 110 RESUMO - AUDIT ADMIN + 5 FIXES:
 - Reset senha admin (AdminTeste123) + login + audit 12 endpoints admin
