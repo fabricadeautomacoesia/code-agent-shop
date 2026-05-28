@@ -154,23 +154,59 @@ router.post('/earn',
     let outcome;
     let result;
     await tx(async (c) => {
-      // FIX bug 2 (idempotency): check existing tx (user_id+reason+reference_id)
-      // SO se reference_id presente (manual admin_adjust sem ref OK duplicar)
+      // FIX-WORKER-7 pass 191 (race-safe idempotency): INSERT loyalty_transactions
+      // FIRST com ON CONFLICT DO NOTHING. Consume migration 061 partial UNIQUE
+      // idx_loyalty_idempotency (user_id, reason, reference_id) WHERE reference_id IS NOT NULL.
+      //
+      // PRE-FIX (race-prone):
+      //   Same bug do Asaas webhook pre-pass-184:
+      //   - SELECT WHERE (user_id, reason, ref) -> empty
+      //   - Concurrent retry SELECT tambem empty (race window)
+      //   - Ambos INSERT -> segundo dispara 23505 (post-migration-061 UNIQUE)
+      //   - errorHandler 500 -> order-svc retry loop
+      //
+      // POST-FIX:
+      //   - INSERT ... ON CONFLICT (user_id, reason, reference_id) DO NOTHING
+      //     RETURNING id, created_at
+      //   - Se conflict: rows[] empty -> duplicate outcome (200 noop)
+      //   - Race-safe atomic via UNIQUE constraint
+      //   - PERF: substitui 2 queries (SELECT + INSERT) por 1 (PG single)
+      //
+      // EDGE CASE: reference_id NULL (admin_adjust manual sem ref).
+      //   Partial UNIQUE NAO cobre NULL -> permite duplicate (semantica preservada).
+      //   Skip ON CONFLICT branch quando reference_id NULL.
+      let txInsertResult;
       if (reference_id) {
-        const dup = await c.query(
-          `SELECT id, created_at FROM loyalty_transactions
-            WHERE user_id = $1::UUID AND reason = $2 AND reference_id = $3
-            LIMIT 1`,
-          [user_id, reason, reference_id]
+        txInsertResult = await c.query(
+          `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
+           VALUES ($1::UUID, $2::INT, $3, $4, $5)
+           ON CONFLICT (user_id, reason, reference_id) WHERE reference_id IS NOT NULL DO NOTHING
+           RETURNING id, created_at`,
+          [user_id, points, reason, reference_type || null, reference_id]
         );
-        if (dup.rows.length) {
+        if (!txInsertResult.rows.length) {
+          // Conflict: fetch existing row p/ retornar info ao caller
+          const existing = await c.query(
+            `SELECT id, created_at FROM loyalty_transactions
+              WHERE user_id = $1::UUID AND reason = $2 AND reference_id = $3
+              LIMIT 1`,
+            [user_id, reason, reference_id]
+          );
           outcome = {
             duplicate: true,
-            existing_tx_id: dup.rows[0].id,
-            processed_at: dup.rows[0].created_at,
+            existing_tx_id: existing.rows[0]?.id,
+            processed_at: existing.rows[0]?.created_at,
           };
           return;
         }
+      } else {
+        // reference_id NULL: INSERT direto (sem idempotency check)
+        txInsertResult = await c.query(
+          `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
+           VALUES ($1::UUID, $2::INT, $3, $4, NULL)
+           RETURNING id, created_at`,
+          [user_id, points, reason, reference_type || null]
+        );
       }
 
       // FIX bug 1+2 (FOR UPDATE serializa): ler tier ANTES UPDATE p/ detectar promo
@@ -190,13 +226,6 @@ router.post('/earn',
            points_lifetime = user_loyalty.points_lifetime + $2::INT,
            updated_at = NOW()`,
         [user_id, points]
-      );
-
-      // INSERT transaction (idempotency guard - se reference_id duplicate retorna noop acima)
-      await c.query(
-        `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
-         VALUES ($1::UUID, $2::INT, $3, $4, $5)`,
-        [user_id, points, reason, reference_type || null, reference_id || null]
       );
 
       // Calc novo tier + update se mudou
