@@ -31737,3 +31737,27 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
 - W18 perf optimization
+
+## PASS 377 W14: cleanup product_qna_votes idx (drop redundant + add user)
+commit 936676a
+CONTEXTO PK (qna_id, user_id) composto + idx_qna_votes_qna REDUNDANTE
+- PK left-prefix domina queries qna_id-first
+- idx_qna_votes_qna NUNCA usado pelo planner
+- Slow write em CADA upvote (idx desnecessario)
+
+LACUNA: WHERE user_id alone sem idx (PK trailing column)
+
+POST-FIX mig 089:
+- DROP idx_qna_votes_qna
+- CREATE idx_qna_votes_user (user_id, created_at DESC)
+- Net zero writes (1:1 swap)
+- Habilita: admin historico user, LGPD direito-acesso, analytics
+
+W14 idx series passes 086, 087, 089
+110 passes acumulados (268->377) sem deploy VPS
+21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W18 perf optimization
