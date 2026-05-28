@@ -21977,3 +21977,68 @@ PROXIMA ITER:
 - W18: cache /sellers/admin/sla-risk (seller admin dashboard)
 - W11: payment-svc refund flow audit
 - 🚨 VPS SSH unblock URGENTE (35 ciclos - >11.7h sem deploy!)
+
+PASS 203 (W18 seller-svc admin /sla-risk 4 fixes) - 2026-05-28:
+- W18 audit /sellers/admin/sla-risk descobriu 4 bugs compostos:
+
+1. Hardcoded LIMIT 100 sem pagination - backlog SLA 200+ invisivel
+2. 'count: r.rows.length' paginated_total bug (same pass 189/201)
+3. ORDER BY sla_next_deadline_at ASC sem tiebreaker (Regra D)
+   Bulk migration -> 2 sellers deadline identico -> ordem indefinida
+4. NO cache - admin polling /admin/sla-risk sem proteção
+
+POST-FIX (4 melhorias):
+
+1. ?limit (1-200) + ?offset Regra E pagination
+2. COUNT(*) OVER()::INT window + has_more (pattern V8 13o endpoint)
+3. + s.id ASC tiebreaker determinismo
+4. cache 60s vary by days+limit+offset
+   60s OK: SLA deadline atualiza por upload/cron horas-em-horas
+   (vs alerts 10s urgent - SLA admin tem tempo)
+
+LGPD MASK preserved via maskSellersForStaff helper.
+
+INVALIDATION COHERENCY estendida:
+- invalidateSellerCache helper agora invalida 4 admin caches:
+  + seller:admin:sla-risk:* (pass 203 NEW)
+  + seller:admin:pending-kyc:* (pass 199)
+  + seller:admin:all:* (pass 197)
+  + sellers:list/detail/stats/products (base)
+
+PATTERN V8 COUNT WINDOW agora em 13 ENDPOINTS / 7 microsservices:
+- product-svc (4): wishlist, products list, reviews, qna
+- notification-svc (1): /me
+- vault-svc (2): keys admin, rotation cron
+- search-svc (1): categories
+- review-svc (2): admin/reports, qna/seller/pending
+- seller-svc (4): admin/all (197), admin/payouts/pending (198),
+                  admin/pending-kyc (199), admin/sla-risk (203 NEW)
+- aiops-svc (3): /audit-log, /metrics + /metrics/latest, /alerts + /alerts/recent
+
+Commit 7d64485 pushed origin/main (+59/-22)
+VPS SSH ainda bloqueado (36 ciclos consecutivos)
+
+CACHE COVERAGE seller-svc admin FINAL (4 endpoints):
+- /sellers/admin/all: 30s
+- /sellers/admin/payouts/pending: 20s
+- /sellers/admin/pending-kyc: 30s
+- /sellers/admin/sla-risk: 60s (pass 203 NEW)
+
+CODIGO ACUMULADO ORIGIN/MAIN (36 ciclos):
+- 168-202: documentados
+- 203: seller-svc /sla-risk cache + window + tiebreaker
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc --force
+- Cache hit benchmark:
+  time curl -H "Bearer \$ADMIN" "/api/sellers/admin/sla-risk?days=3"
+  1a: ~15ms (PG window query)
+  2a: <5ms (Redis hit)
+- Pagination validar:
+  curl "?days=3&limit=20" -> total absoluto + count=20 + has_more
+
+PROXIMA ITER:
+- W17: vault-svc seller endpoints (BYOK self-management)
+- W18: cache aiops /db/dead-indexes ja existe (60s) - audit completo
+- W11: payment-svc refund flow validation
+- 🚨 VPS SSH unblock URGENTE (36 ciclos - >12h sem deploy!)
