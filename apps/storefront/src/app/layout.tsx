@@ -11,8 +11,18 @@ import { JsonLd, organizationLd, webSiteLd } from '@/components/json-ld';
 // para URLs absolutas (https). Sem isso, og:image saia como http://localhost:3000/... e
 // quebrava em todos os crawlers (WhatsApp, Twitter, FB, LinkedIn, Slack).
 // NEXT_PUBLIC_SITE_URL precisa estar no .env Swarm com https://cas.inovareinteligenciaartificial.com
+//
+// FIX-WORKER-9 pass 357 (env-driven openGraph.url paridade pass 355):
+//   PRE-FIX: metadataBase env-driven MAS openGraph.url HARDCODED no mesmo Metadata.
+//   Drift entre tags renderizadas: <link rel="canonical"> env-driven via
+//   metadataBase mas <meta property="og:url"> apontava p/ host hardcoded.
+//   Stack.yml alternativo (code-agent-shop.com.br) sofria - 2 hosts diferentes no HTML.
+//   Crawlers (WhatsApp, Slack, Twitter, LinkedIn) usam og:url p/ preview link ->
+//   apareceria host antigo mesmo apos deploy renovado.
+//   POST-FIX: const SITE_URL DRY + paridade env-driven em ambas tags.
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://cas.inovareinteligenciaartificial.com';
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'https://cas.inovareinteligenciaartificial.com'),
+  metadataBase: new URL(SITE_URL),
   title: 'Code & Agent Shop - O Marketplace de Automacoes e IA',
   description: 'Compre e venda automacoes, scripts, workflows n8n e agentes de IA prontos para producao.',
   keywords: ['marketplace', 'automacao', 'agentes IA', 'n8n', 'workflows', 'scripts'],
@@ -26,7 +36,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     locale: 'pt_BR',
-    url: 'https://cas.inovareinteligenciaartificial.com',
+    url: SITE_URL, // FIX pass 357: env-driven (paridade metadataBase)
     title: 'Code & Agent Shop - Marketplace de Automacoes e IA',
     description: 'Marketplace B2B/B2C de automacoes, agentes IA, workflows n8n, scripts Node/Python/PHP, prompts e templates testados. Compre direto de desenvolvedores ou da plataforma.',
     siteName: 'Code & Agent Shop',
