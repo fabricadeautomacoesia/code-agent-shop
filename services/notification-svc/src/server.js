@@ -629,7 +629,7 @@ const ALLOWED_TEST_EMAIL_DOMAINS = (process.env.TEST_EMAIL_DOMAINS || 'cas.io,in
 // RFC 5322 anti header-injection: rejeita CR e LF (chars permitem inject Bcc/CC headers)
 // Construido via new RegExp() para evitar control chars literais no source file
 const SUBJECT_REJECT_CHARS_RE = new RegExp('[\\r\\n]');
-const SUBJECT_REJECT_CHARS = /[\r\n -]/;  // newlines + control chars
+const SUBJECT_REJECT_CHARS = /[\r\n-]/;  // newlines + control chars
 
 app.post('/test',
   jwt.requireAuth({ roles: ['admin'] }),
@@ -714,9 +714,23 @@ async function reclaimOrphanLocks() {
   //   Tambem nao incrementa retry_count: pre-fix considera 0 tentativa
   //   pois pode ser worker rebootado normalmente; pos-fix manda warn p/ aiops
   //   se reclaim > 10 em 1 ciclo (deteccao incidente infra).
+  // FIX-WORKER-13 pass 367 (reclaim guard sent_status):
+  //   PRE-FIX: WHERE locked_at IS NOT NULL AND locked_at < 5min ago
+  //   Sem filter sent_status -> reclamava locks de notifs ja 'sent'/'failed'.
+  //   Cenario edge: UPDATE final (linha 921) sucedeu com sent_status='sent' MAS
+  //   se algum exit-cleanup falhar mid-write, lock pode persistir.
+  //   Reclaim "limpa" mas eh trabalho desnecessario - notifs finalizadas
+  //   nao precisam unlock.
+  //   Cenario pior: notif marcada 'failed' (retry_count=5) com lock persistente
+  //   -> reclaim libera lock mas processOutbox filtra retry_count<5 -> dead notif
+  //   nao re-locked. Logs warn enganadores ('worker crash suspected').
+  //   POST-FIX: + sent_status='pending' filter - reclaim apenas em pending real.
+  //   Defensive: rare mas observavel via logs.
   const r = await query(
     `UPDATE notifications SET locked_by = NULL, locked_at = NULL
-      WHERE locked_at IS NOT NULL AND locked_at < NOW() - INTERVAL '5 minutes'
+      WHERE locked_at IS NOT NULL
+        AND locked_at < NOW() - INTERVAL '5 minutes'
+        AND sent_status = 'pending'
       RETURNING id, locked_by, channel, template_code`
   );
   if (r.rows.length) {
