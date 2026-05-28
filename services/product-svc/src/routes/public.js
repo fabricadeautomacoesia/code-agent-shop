@@ -473,7 +473,7 @@ router.get('/compare',
             c.name AS category_name
        FROM products p
        LEFT JOIN sellers s ON s.id = p.seller_id
-       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN categories c ON c.id = p.category_id AND c.is_active = TRUE
       WHERE p.id = ANY($1::UUID[])
         AND p.status IN ('approved','platform_owned')
         AND p.deleted_at IS NULL`,
@@ -710,11 +710,21 @@ router.get('/',
             s.store_slug AS seller_slug,
             s.store_name AS seller_name,
             c.slug AS category_slug${wantTotal ? ',\n            COUNT(*) OVER()::INT AS _total' : ''}`;
+  // FIX-WORKER-7 pass 406 (LEFT JOIN categories is_active filter):
+  //   PRE-FIX: LEFT JOIN categories sem filter is_active
+  //   - Admin desativa categoria (is_active=FALSE) mas products referenciam
+  //   - Listagem retorna category_slug de cat inativa
+  //   - Frontend chip "ai-agents" -> Link /categoria/ai-agents -> 404
+  //   - UX broken silent (catalog -> click category -> 404 page)
+  //   POST-FIX: LEFT JOIN ... AND c.is_active = TRUE
+  //   - Categoria inativa = category_slug retornado NULL (LEFT JOIN no match)
+  //   - Frontend renderiza sem chip categoria (graceful fallback)
+  //   - Paridade /:slug detail + /:slug/qna (linha proxima)
   const r = await query(
     `SELECT ${selectFields}
        FROM products p
        LEFT JOIN sellers s ON s.id = p.seller_id
-       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN categories c ON c.id = p.category_id AND c.is_active = TRUE
       WHERE ${where.join(' AND ')}
       ORDER BY ${order}
       LIMIT $${i++} OFFSET $${i++}`,
@@ -833,7 +843,7 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
               )) AS is_top_seller
          FROM products p
          LEFT JOIN sellers s ON s.id = p.seller_id
-         LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN categories c ON c.id = p.category_id AND c.is_active = TRUE
         WHERE p.slug = $1
           AND p.status IN ('approved','platform_owned')
           AND p.deleted_at IS NULL`,
