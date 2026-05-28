@@ -29564,3 +29564,37 @@ PROXIMA ITER:
 - W11 payment audit refundPayment tx withRetry coverage
 - W4 admin /admin/price-alerts dashboard (admin overview)
 - VPS SSH unblock URGENTISSIMO (145 ciclos - 48.3h)
+
+
+============================================================
+PASS 313 - 2026-05-28 - W4 review seller/received hardening
+============================================================
+Files: 1 modificado
+  - services/review-svc/src/server.js (UUID + COUNT OVER + offset)
+Lines: ~50 changed
+
+W4 (review /seller/received 3 BUGS):
+1. ?seller_id raw passa direto p/ PG cast UUID 22P02 -> 500 leak
+   POST-FIX: UUID_RE validate + 400 invalid response
+2. Hardcoded LIMIT 100 sem ?offset paginacao V8 Regra E
+   POST-FIX: + ?offset (>=0, default 0)
+3. Sem COUNT total - pagination drift (UX 'X de Y' impossivel)
+   POST-FIX: COUNT(*) OVER()::INT window aggregate + has_more
+- Cache key atualizado include offset + seller_id normalize lowercase
+- Pattern V8 17+ endpoints com COUNT OVER consolidated
+
+VPS SSH BLOQUEADO (146 ciclos - 48.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+COUNT OVER Consolidation - 17 endpoints (passes 178-313)
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_review-svc --force
+- W4 verify:
+  - curl admin /reviews/seller/received?seller_id=invalid -> 400 invalid_seller_id
+  - curl /reviews/seller/received -> response inclui {total, has_more, offset}
+
+PROXIMA ITER:
+- W4 admin /admin/reports endpoint similar audit
+- W17 vault audit /usage tx withRetry
+- VPS SSH unblock URGENTISSIMO (146 ciclos - 48.7h)

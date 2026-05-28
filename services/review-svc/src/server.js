@@ -1076,8 +1076,9 @@ app.post('/reports',
 const sellerReceivedCacheKey = (req) => {
   const isAdmin = ['admin','staff'].includes(req.user?.role);
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
-  const sellerFilter = isAdmin && req.query.seller_id ? req.query.seller_id : '';
-  return `reviews:seller_received:${req.user?.sub || 'anon'}:adm=${isAdmin}:sf=${sellerFilter}:lim=${lim}`;
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const sellerFilter = isAdmin && req.query.seller_id ? String(req.query.seller_id).toLowerCase() : '';
+  return `reviews:seller_received:${req.user?.sub || 'anon'}:adm=${isAdmin}:sf=${sellerFilter}:lim=${lim}:off=${off}`;
 };
 
 app.get('/seller/received',
@@ -1086,57 +1087,70 @@ app.get('/seller/received',
   asyncHandler(async (req, res) => {
     const isAdmin = ['admin','staff'].includes(req.user.role);
     const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
+    const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    /* FIX-WORKER-4 pass 313 hardening:
+       BUG 1: ?seller_id raw sem UUID validation - PG cast erro 500 leak
+       BUG 2: hardcoded LIMIT sem ?offset paginacao
+       BUG 3: sem COUNT total (pattern V8 14+ endpoints consolidados)
+       POST-FIX:
+       - UUID_RE validate p/ ?seller_id (400 invalid)
+       - + ?offset paginacao V8 Regra E
+       - + COUNT(*) OVER() window aggregate + strip _total */
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (isAdmin && req.query.seller_id && !UUID_RE.test(String(req.query.seller_id))) {
+      return res.status(400).json({ error: 'invalid_seller_id', expected: 'UUID v4 format' });
+    }
     const sellerFilter = isAdmin && req.query.seller_id ? req.query.seller_id : null;
 
-    // BUG 1 FIX: query construida condicional admin vs seller
-    // Admin path: SEM JOIN sellers + WHERE s.user_id (ve todas reviews)
-    //   + optional filter ?seller_id (admin investiga seller especifico)
-    // Seller path: JOIN sellers + WHERE s.user_id = req.user.sub (ownership)
     const sql = isAdmin
       ? `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase,
                 r.helpful_count, r.unhelpful_count, r.reply_from_seller, r.reply_at,
                 r.created_at, r.seller_id,
                 p.id AS product_id, p.slug AS product_slug, p.title AS product_title, p.cover_image_url,
-                u.display_name AS buyer_name, u.email AS buyer_email
+                u.display_name AS buyer_name, u.email AS buyer_email,
+                COUNT(*) OVER()::INT AS _total
            FROM product_reviews r
            JOIN products p ON p.id = r.product_id
            LEFT JOIN users u ON u.id = r.buyer_user_id
           WHERE r.is_hidden = FALSE
             AND ($1::UUID IS NULL OR r.seller_id = $1::UUID)
           ORDER BY r.created_at DESC, r.id DESC
-          LIMIT $2`
+          LIMIT $2 OFFSET $3`
       : `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase,
                 r.helpful_count, r.unhelpful_count, r.reply_from_seller, r.reply_at,
                 r.created_at,
                 p.id AS product_id, p.slug AS product_slug, p.title AS product_title, p.cover_image_url,
-                u.display_name AS buyer_name, u.email AS buyer_email
+                u.display_name AS buyer_name, u.email AS buyer_email,
+                COUNT(*) OVER()::INT AS _total
            FROM product_reviews r
            JOIN products p ON p.id = r.product_id
            JOIN sellers s ON s.id = r.seller_id
            LEFT JOIN users u ON u.id = r.buyer_user_id
           WHERE s.user_id = $1 AND r.is_hidden = FALSE
           ORDER BY r.created_at DESC, r.id DESC
-          LIMIT $2`;
+          LIMIT $2 OFFSET $3`;
     const params = isAdmin
-      ? [sellerFilter, lim]
-      : [req.user.sub, lim];
+      ? [sellerFilter, lim, off]
+      : [req.user.sub, lim, off];
 
     const r = await query(sql, params);
+    const total = r.rows[0]?._total ?? 0;
 
-    // BUG 2 FIX: PII masking buyer_email (LGPD minimization)
-    // FIX-WORKER-7 pass 58: inline mask refactored -> @cas/shared.maskPII.email
-    // (DRY cross-svc + null-safe + format consistente 'jo***@email.com')
     const reviews = r.rows.map((row) => {
-      if (!isAdmin && row.buyer_email) {
-        row.buyer_email = maskPII.email(row.buyer_email);
+      const { _total, ...rest } = row;
+      if (!isAdmin && rest.buyer_email) {
+        rest.buyer_email = maskPII.email(rest.buyer_email);
       }
-      return row;
+      return rest;
     });
 
     res.json({
       reviews,
       count: reviews.length,
+      total,
       limit: lim,
+      offset: off,
+      has_more: (off + reviews.length) < total,
       is_admin_view: isAdmin,
       ...(sellerFilter ? { seller_filter: sellerFilter } : {}),
     });
