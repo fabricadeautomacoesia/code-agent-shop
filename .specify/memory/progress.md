@@ -31871,3 +31871,33 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 disputes/vault prompt() migration
 - W18 perf optimization
+
+## PASS 382 W4+W17: vault prompt() -> promptDialog + inputType=password
+commit b6f7f9e
+BUG 1: vault revoke prompt() nativo
+  - Sec critical action sem confirmDialog danger
+POST-FIX: confirmDialog + promptDialog + 2-step pattern
+
+BUG 2 CRITICAL: rotateKey plain_key via prompt() nativo
+  - Chave AES-256-GCM SEM mask
+  - Browser history expone
+  - Shoulder-surfing attack vector
+POST-FIX:
+- prompt-dialog.tsx estendido com inputType='password'
+- PromptState + opts.inputType + JSX render type=password
+- autoComplete='new-password' adaptativo
+- Vault rotateKey usa { inputType: 'password' }
+- Sequence reordenada (confirm intent first)
+
+W4+W17 UX consistency progress:
+  - qa-queue forceApprove (pass 381)
+  - vault revoke (pass 382)
+  - vault rotateKey password mask (pass 382)
+GAP REMANESCENTE: disputes/page.tsx prompt()
+
+115 passes acumulados (268->382) sem deploy VPS
+4 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- disputes prompt() migration
