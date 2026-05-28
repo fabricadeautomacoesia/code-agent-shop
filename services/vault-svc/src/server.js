@@ -903,19 +903,31 @@ app.post('/usage', vaultUseGuard,
   })}),
   asyncHandler(async (req, res) => {
     const b = req.body;
-    await query(
-      `INSERT INTO vault_key_usage
-        (vault_key_id, seller_id, product_id, operation, model, tokens_input, tokens_output,
-         cost_usd_cents, duration_ms, success, error_message, ip_address)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [b.key_id, b.seller_id||null, b.product_id||null, b.operation, b.model||null,
-       b.tokens_input||null, b.tokens_output||null, b.cost_usd_cents, b.duration_ms||null,
-       b.success, b.error_message||null, req.ip]
-    );
-    await query(
-      `UPDATE vault_api_keys SET usage_this_month_cents = usage_this_month_cents + $1 WHERE id = $2`,
-      [b.cost_usd_cents, b.key_id]
-    );
+    // FIX-WORKER-17 pass 261 (atomicity INSERT + UPDATE usage counter):
+    //   PRE-FIX: 2 queries separadas SEM tx(). Se INSERT vault_key_usage
+    //   commit mas UPDATE vault_api_keys.usage_this_month_cents falha
+    //   (lock, deadlock 40P01, conexao morre mid-batch):
+    //   - vault_key_usage tem row de uso
+    //   - vault_api_keys.usage_this_month_cents NAO incrementa
+    //   Billing dashboard mostra usage menor que real -> seller paga menos
+    //   Auto-disable logic baseado em quota nunca dispara (quota stuck)
+    //   POST-FIX: tx() wrap atomic - all-or-nothing
+    //   Mesmo pattern de pass 247 W11 outras tx-wrapped writes vault.
+    await tx(async (c) => {
+      await c.query(
+        `INSERT INTO vault_key_usage
+          (vault_key_id, seller_id, product_id, operation, model, tokens_input, tokens_output,
+           cost_usd_cents, duration_ms, success, error_message, ip_address)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [b.key_id, b.seller_id||null, b.product_id||null, b.operation, b.model||null,
+         b.tokens_input||null, b.tokens_output||null, b.cost_usd_cents, b.duration_ms||null,
+         b.success, b.error_message||null, req.ip]
+      );
+      await c.query(
+        `UPDATE vault_api_keys SET usage_this_month_cents = usage_this_month_cents + $1 WHERE id = $2`,
+        [b.cost_usd_cents, b.key_id]
+      );
+    });
     res.json({ ok: true });
   })
 );

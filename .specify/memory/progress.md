@@ -26783,3 +26783,95 @@ PROXIMA ITER:
 - W4 admin: dispute resolution UI
 - W17 vault: rotate audit dedup
 - VPS SSH unblock CRITICAL (93 ciclos - 31h)
+
+============================================================
+PASS 261 (2026-05-28) - W4 + W17 + W18
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W4 order-svc: dispute_resolve notifications gap (buyer + seller)
+- W17 vault-svc: /usage 2-query atomicity gap
+- W18 product-svc: /recently-viewed ORDER BY direction parity
+
+============================================================
+1. W4 - dispute_resolve sem notifications
+============================================================
+FILE: services/order-svc/src/routes/orders.js:842-895
+
+PROBLEMA:
+- /admin/disputes/:id/resolve fazia UPDATE + audit_log mas NAO notificava
+- Buyer (opened_by_user_id) silent UX - sem feedback resolution
+- Seller (against_seller_id) sem nocao se foi penalizado
+- High-impact admin decision (refund $) - pattern V8 cross-svc requer notif
+
+POST-FIX (dentro do tx):
+- INSERT notification buyer template='dispute_resolved' priority=2
+  - body customizado conforme resolution_action label
+  - payload {dispute_id, resolution_action, order_id} p/ deep-link
+- INSERT notification seller template='dispute_resolved_seller' priority=2
+  - so se against_seller_id != null (algumas disputes buyer-only)
+  - LEFT JOIN sellers p/ user_id
+- actionLabels mapping (refund_approved/denied/replacement_sent/etc)
+
+============================================================
+2. W17 - /usage INSERT + UPDATE sem atomicity
+============================================================
+FILE: services/vault-svc/src/server.js:904-921
+
+PROBLEMA (billing integrity):
+- INSERT vault_key_usage + UPDATE vault_api_keys.usage_this_month_cents
+  em 2 queries separadas SEM tx() wrapper
+- INSERT commit -> UPDATE falha (deadlock 40P01, conexao morre):
+  * vault_key_usage tem row de uso real
+  * vault_api_keys.usage_this_month_cents NAO incrementa
+- Billing dashboard mostra usage < real -> seller paga menos
+- Quota auto-disable nunca dispara (counter stuck)
+
+POST-FIX:
+- tx() wrap atomic - all-or-nothing
+- Mesmo pattern de outras writes vault (pass 247)
+- Cost_usd_cents += INSERT + UPDATE atomicos
+
+============================================================
+3. W18 - /recently-viewed ORDER BY direction parity
+============================================================
+FILE: services/product-svc/src/routes/public.js:201, 213
+
+PROBLEMA (cache eviction drift):
+- 2 ORDER BY mixed direction (DESC + ASC default tiebreaker):
+  * CTE: MAX(created_at) DESC, product_id ASC
+  * SELECT final: last_view_at DESC, p.id ASC
+- Pattern V8 consolidado passes 251/256/259 - parity DESC
+- Mass-view burst (user navegando rapidos): mesmo timestamp = ordering shifts
+- Cache 30s evict -> pages reorderam
+
+POST-FIX:
+- product_id DESC + p.id DESC parity
+- Deterministic per-snapshot
+
+============================================================
+SUMARIO PASS 261
+============================================================
+Files: 3 modificados
+  - services/order-svc/src/routes/orders.js (dispute notifs)
+  - services/vault-svc/src/server.js (usage tx wrap)
+  - services/product-svc/src/routes/public.js (ORDER direction)
+Lines: ~60 added
+
+VPS SSH BLOQUEADO (94 ciclos - 31.3h sem deploy).
+Migs 069-076 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_order-svc cas_vault-svc cas_product-svc --force
+- W4: resolve dispute -> SELECT FROM notifications WHERE template_code
+  IN ('dispute_resolved','dispute_resolved_seller') ORDER BY created_at DESC LIMIT 2
+  Both inseridos com priority=2
+- W17: simular INSERT vault_key_usage + force fail UPDATE -> tx rollback total
+  vault_key_usage SEM row (nao commit parcial)
+- W18: mass-view 10 produtos mesmo timestamp + GET /recently-viewed 2x
+  Ordering identico (era variavel)
+
+PROXIMA ITER:
+- W3 PDP review helpful click
+- W11 payment chargeback timeline
+- VPS SSH unblock CRITICAL (94 ciclos - 31.3h!!!)

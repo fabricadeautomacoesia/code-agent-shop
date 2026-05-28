@@ -854,6 +854,47 @@ router.post('/admin/disputes/:id/resolve',
            ip: req.ip,
          })]
       );
+
+      // FIX-WORKER-4 pass 261 (notif gap dispute_resolve):
+      //   PRE-FIX: admin resolvia dispute mas buyer e seller NAO eram notificados
+      //   Buyer espera resultado (refund_approved/denied/replacement) - silent UX
+      //   Seller queria saber se penalizado (refund_approved = revenue loss)
+      //   Pattern V8 cross-svc: high-impact admin decisions sempre notify affected
+      //   Comparar pass 258 seller_suspended (priority=3 critical)
+      //   POST-FIX: 2 notifs in_app priority=2 (medium-high, financial impact)
+      //   Body customizado conforme resolution_action.
+      const actionLabels = {
+        refund_approved: 'Refund aprovado',
+        refund_denied: 'Refund negado',
+        replacement_sent: 'Substituicao enviada',
+        partial_refund: 'Refund parcial',
+        dismissed: 'Disputa encerrada',
+      };
+      const actionLabel = actionLabels[req.body.resolution_action] || req.body.resolution_action;
+      // Notify buyer
+      await c.query(
+        `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+         VALUES ($1::UUID, 'in_app', 'dispute_resolved', $2, $3, 2, $4::JSONB)`,
+        [d.opened_by_user_id,
+         `Sua disputa foi resolvida: ${actionLabel}`,
+         `O administrador analisou sua disputa e tomou a seguinte acao: ${actionLabel}. ${req.body.refund_amount_cents ? 'Valor reembolsado: R$ ' + (req.body.refund_amount_cents / 100).toFixed(2) : ''}`,
+         JSON.stringify({ dispute_id: req.params.id, resolution_action: req.body.resolution_action, order_id: d.order_id })]
+      );
+      // Notify seller (so se ha against_seller_id - some disputes sao buyer-only)
+      if (d.against_seller_id) {
+        const sellerR = await c.query('SELECT user_id FROM sellers WHERE id = $1::UUID', [d.against_seller_id]);
+        if (sellerR.rows.length) {
+          await c.query(
+            `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+             VALUES ($1::UUID, 'in_app', 'dispute_resolved_seller', $2, $3, 2, $4::JSONB)`,
+            [sellerR.rows[0].user_id,
+             `Disputa contra voce: ${actionLabel}`,
+             `Uma disputa contra voce foi resolvida pelo administrador. Acao tomada: ${actionLabel}. Veja detalhes em /dashboard/disputes.`,
+             JSON.stringify({ dispute_id: req.params.id, resolution_action: req.body.resolution_action })]
+          );
+        }
+      }
+
       outcome = { ok: true, dispute_id: req.params.id, new_status: req.body.next_status };
     });
 

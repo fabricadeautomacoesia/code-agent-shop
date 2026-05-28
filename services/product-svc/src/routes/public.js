@@ -189,6 +189,9 @@ router.get('/recently-viewed',
   asyncHandler(async (req, res) => {
     const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 30));
     const r = await query(
+      // FIX-WORKER-18 pass 261 (ORDER BY direction parity):
+      //   Pattern V8 pass 251/256/259 - all tiebreakers SAME direction (DESC)
+      //   Mixed direction causa pagination drift entre cache evictions
       `WITH last_views AS (
          SELECT pv.product_id, MAX(pv.created_at) AS last_view_at
            FROM product_views pv
@@ -198,7 +201,7 @@ router.get('/recently-viewed',
             AND p.status IN ('approved','platform_owned')
             AND p.deleted_at IS NULL
           GROUP BY pv.product_id
-          ORDER BY MAX(pv.created_at) DESC, pv.product_id ASC
+          ORDER BY MAX(pv.created_at) DESC, pv.product_id DESC
           LIMIT $2::INT
        )
        SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
@@ -210,7 +213,7 @@ router.get('/recently-viewed',
          FROM last_views lv
          JOIN products p ON p.id = lv.product_id
          LEFT JOIN sellers s ON s.id = p.seller_id
-        ORDER BY lv.last_view_at DESC, p.id ASC`,
+        ORDER BY lv.last_view_at DESC, p.id DESC`,
       [req.user.sub, lim]
     );
     res.json({ products: r.rows, count: r.rows.length, limit: lim });
