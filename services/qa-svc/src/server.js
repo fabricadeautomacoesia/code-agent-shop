@@ -374,20 +374,34 @@ function qaCallbackGuard(req, res, next) {
 
 app.post('/qa/callback',
   qaCallbackGuard,
+  /* FIX-WORKER-12 pass 335: callback schema anti-DoS hardening paridade pass 332-334.
+     PRE-FIX gaps:
+     - reasons/suggestions array sem max() + item sem max
+     - llm_provider/llm_model string sem max
+     - tokens/cost/duration int sem nonnegative ou upper bound
+     - raw_response z.any() = unlimited payload
+     POST-FIX:
+     - reasons/suggestions: array.max(50) + item.max(2000)
+     - llm_provider: max(40) ('openai', 'anthropic', 'gemini', etc)
+     - llm_model: max(100) ('gpt-4o-2024-08-06' etc)
+     - tokens: nonnegative + max 10M
+     - cost_usd_cents: nonnegative + max 1B (10M USD ceiling)
+     - duration_ms: nonnegative + max 1h (3600000)
+     - raw_response: z.record/z.string limit 50kb stringify (express.json default 5mb mas ainda) */
   validate({ body: z.object({
     run_id: z.string().uuid(),
     confidence_score: z.number().min(0).max(1),
     sintaxe_ok: z.boolean().optional(),
     resolves_problem: z.boolean().optional(),
     is_functional: z.boolean().optional(),
-    reasons: z.array(z.string()).optional(),
-    suggestions: z.array(z.string()).optional(),
-    llm_provider: z.string().optional(),
-    llm_model: z.string().optional(),
-    tokens_input: z.number().int().optional(),
-    tokens_output: z.number().int().optional(),
-    cost_usd_cents: z.number().int().optional(),
-    duration_ms: z.number().int().optional(),
+    reasons: z.array(z.string().max(2000)).max(50).optional(),
+    suggestions: z.array(z.string().max(2000)).max(50).optional(),
+    llm_provider: z.string().max(40).optional(),
+    llm_model: z.string().max(100).optional(),
+    tokens_input: z.number().int().nonnegative().max(10_000_000).optional(),
+    tokens_output: z.number().int().nonnegative().max(10_000_000).optional(),
+    cost_usd_cents: z.number().int().nonnegative().max(1_000_000_000).optional(),
+    duration_ms: z.number().int().nonnegative().max(3_600_000).optional(),
     raw_response: z.any().optional(),
   })}),
   asyncHandler(async (req, res) => {

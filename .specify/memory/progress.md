@@ -30391,3 +30391,49 @@ PROXIMA ITER:
 - W7 audit qa-svc Zod schemas additional
 - W4 admin schemas validation
 - VPS SSH unblock URGENTISSIMO (167 ciclos - 55.7h)
+
+
+============================================================
+PASS 335 - 2026-05-28 - W12 qa-svc callback schema anti-DoS max() hardening
+============================================================
+Files: 1 modificado
+  - services/qa-svc/src/server.js (callback Zod schema 9 fields max)
+Lines: ~20 added
+
+W12 (qa-svc /qa/callback Zod hardening):
+- PRE-FIX gaps (9 campos sem max):
+  - reasons/suggestions: array sem max() + item sem max
+    Atacante n8n compromised pode enviar 10000 reasons * 1MB = 10GB payload
+  - llm_provider/llm_model: string sem max - 10kb provider name
+  - tokens_input/output: int sem nonnegative ou upper - negativos ou trilhao
+  - cost_usd_cents: idem - poderia inflar billing
+  - duration_ms: idem - cron timeout 10min so detecta 4xx
+  - raw_response: z.any() - unlimited payload
+- POST-FIX paridade pass 332-334:
+  - reasons/suggestions: array.max(50) + item.max(2000)
+  - llm_provider: max(40)
+  - llm_model: max(100)
+  - tokens: nonnegative + max(10M)
+  - cost_usd_cents: nonnegative + max(1B = 10M USD)
+  - duration_ms: nonnegative + max(3.6M = 1h ceiling)
+- Pattern V8 anti-DoS schema cross-svc consolidacao continua
+
+VPS SSH BLOQUEADO (168 ciclos - 56h sem deploy).
+Migs 069-084 pendentes apply.
+
+Schema Hardening cross-svc TOTAL atualizado:
+- product-svc seller-mgmt 7 fields (pass 332)
+- product-svc versions 2 fields (pass 333)
+- seller-svc updateSchema 2 URLs (pass 333)
+- review-svc /reports evidence_urls (pass 334)
+- qa-svc /qa/callback 9 fields (pass 335) - LARGEST contribution
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-svc --force
+- W12 verify n8n callback com reasons[51] -> 400 Zod 'max 50 elements'
+- tokens_input=-1 -> 400 'Number must be greater than or equal to 0'
+
+PROXIMA ITER:
+- W11 payment-svc audit additional schemas
+- W7 product-svc upload routes schema
+- VPS SSH unblock URGENTISSIMO (168 ciclos - 56h)
