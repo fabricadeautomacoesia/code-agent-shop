@@ -494,8 +494,10 @@ async function processWebhookEvent(evt) {
   }
 
   // FIX-WORKER-11 pass 204: capture user_ids p/ invalidate loyalty:me cache cross-svc pos-tx
-  // (PAYMENT_REFUNDED/CHARGEBACK estornam loyalty - seller-svc cache stale sem isso)
   const loyaltyUsersToInvalidate = new Set();
+  // FIX-WORKER-18 pass 216: capture order.id p/ invalidate order:detail cache cross-svc
+  // (webhook PAYMENT_RECEIVED muda paid_at + status - buyer /conta/pedidos/[id] ve stale)
+  let orderIdToInvalidate = null;
 
   await tx(async (c) => {
     // FIX-WORKER-7 pass 22 (bug 1 RACE Regra K): SELECT FOR UPDATE.
@@ -513,6 +515,8 @@ async function processWebhookEvent(evt) {
     );
     if (!r.rows.length) return;
     const order = r.rows[0];
+    // FIX-WORKER-18 pass 216: capture order id p/ invalidate cross-svc cache pos-tx
+    orderIdToInvalidate = order.id;
 
     // FIX-WORKER-7 pass 22 (bug 2): state machine validation
     // Pre-fix: PAYMENT_RECEIVED em order ja 'captured' (Asaas retry)
@@ -793,7 +797,23 @@ async function processWebhookEvent(evt) {
     }
   }
 
-  log.info({ event: evt.event, order_id: order.id }, '[webhook.processed]');
+  // FIX-WORKER-18 pass 216: invalida order:detail cache cross-svc (paid_at/status mudou)
+  // Buyer /conta/pedidos/[id] page deve refletir transicao paid imediato
+  // + admin /admin/recent + /admin/disputes podem mostrar status mudou
+  if (orderIdToInvalidate) {
+    try {
+      await Promise.all([
+        cache.del(`order:detail:${orderIdToInvalidate}:*`),
+        cache.del('order:admin:recent:*'),
+        cache.del('order:admin:disputes:*'),
+      ]);
+    } catch (e) {
+      log.warn({ err: e.message, order_id: orderIdToInvalidate },
+        '[cache.invalidate_fail.webhook]');
+    }
+  }
+
+  log.info({ event: evt.event, order_id: orderIdToInvalidate }, '[webhook.processed]');
 }
 
 // POST /payments/payouts/:id/process - admin manda processar transfer

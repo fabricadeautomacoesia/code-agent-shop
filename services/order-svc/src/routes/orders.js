@@ -452,7 +452,20 @@ router.get('/admin/recent',
 // Antes: GET /orders/admin (ou qualquer slug) caia aqui e o param 'admin' era passado
 // como UUID ao Postgres, gerando 500 generico. Agora retorna 404 limpo.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-router.get('/:id', asyncHandler(async (req, res, next) => {
+
+// FIX-WORKER-18 pass 216: cache /:id detail 30s vary by user+order.
+// /conta/pedidos/[id] page consume - user pode polling apos checkout
+// para ver status atualizar paid->fulfilled.
+// PRE-FIX: SELECT + json_agg subquery per request (~15ms PG)
+// POST-FIX: cache hit <2ms apos warmup
+// IMPORTANT: vary key incluir user.sub para isolation - admin nao ve
+// cache buyer (diferente row.buyer_user_id check).
+// Invalidation: webhook PAYMENT_RECEIVED, dispute open, refund processed
+const orderDetailCacheKey = (req) => `order:detail:${req.params.id}:u=${req.user?.sub || 'anon'}`;
+
+router.get('/:id',
+  cache.cacheMiddleware(orderDetailCacheKey, 30),
+  asyncHandler(async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) return next(errorHandler.notFound('order_not_found'));
   // FIX-WORKER-7 pass 18: 2 bugs (Regra I + Regra H):
   // 1. SELECT o.* expoe colunas internas: idempotency_key (replay attack vector
@@ -642,6 +655,15 @@ router.post('/:id/dispute',
         opened_at: outcome.opened_at,
       });
     }
+    // FIX-WORKER-18 pass 216: invalida caches afetados por nova disputa
+    // - order:detail:{id}:* (TODOS users que cacheram esta order ven status mudar)
+    // - order:admin:disputes:* (admin dashboard ve nova dispute imediato)
+    try {
+      await Promise.all([
+        cache.del(`order:detail:${req.params.id}:*`),
+        cache.del('order:admin:disputes:*'),
+      ]);
+    } catch (_) { /* best-effort */ }
     res.status(201).json({ dispute });
   })
 );
