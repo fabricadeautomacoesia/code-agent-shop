@@ -17379,7 +17379,29 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Wishlist + price-alert + ask-quick 5 buttons (pass 159)
 - ✅ notification-bell 3 buttons + role=menu (pass 160)
 - ✅ /cart + /checkout 9 buttons a11y rico (pass 161)
-- ✅ /conta/seguranca 2FA flow a11y MASSIVE (pass 162 esta iter)
+- ✅ /conta/seguranca 2FA flow a11y MASSIVE (pass 162)
+- ✅ conta pages 3 buttons + PII protection (pass 163 esta iter)
+
+W7 PASS 163 RESUMO - W1+W2 CONTA PAGES BUTTONS + PII A11Y:
+- AUDIT 3 conta pages restantes c/ buttons sem type=button:
+  * /conta logout button
+  * /conta/pedidos/[id] PIX copy button
+  * /conta/downloads/[token] license key copy button
+- FIXES:
+  * /conta logout: type=button + aria-label 'Sair da conta (logout)'
+    + LogOut icon aria-hidden + focus-visible
+  * /conta/pedidos/[id] PIX:
+    - htmlFor='pix-copy' + id (WCAG 1.3.1)
+    - autoComplete=off (PII pix code)
+    - aria-describedby='pix-copy-help' (sr-only hint)
+    - Button: type=button + 'Copiar codigo PIX para area de transferencia'
+  * /conta/downloads/[token] license:
+    - <code aria-label='Sua license key (confidencial)'> (sensitive data)
+    - Button: type=button + 'Copiar license key' + Copy aria-hidden
+    - Label simplificada (era nested label sem htmlFor)
+- 100% buttons storefront agora com type=button defensive (V8 Regra 23 COMPLETO)
+- BUILD storefront OK + service converged
+- COMMIT 8d8c0e5 pushed GitHub main + deployed prod
 
 W7 PASS 162 RESUMO - W1+W17 /conta/seguranca 2FA FLOW A11Y:
 - AUDIT page critical security 2FA: 5 buttons + 4 inputs + 1 label sem a11y
