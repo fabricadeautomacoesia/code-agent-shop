@@ -966,9 +966,19 @@ async function processWebhookEvent(evt) {
                  updated_at = NOW()`,
               [order.buyer_user_id, pts]
             );
+            // FIX-WORKER-11 pass 418 (UUID cast inconsistency pass 257 partial fix):
+            //   PRE-FIX: SELECT (linha 937) usava $2::UUID mas INSERT $3::text
+            //   - Pass 257 corrigiu SELECT idempotency check
+            //   - INSERT ficou lagged com cast TEXT (inconsistencia)
+            //   - PG implicit cast TEXT->UUID funciona mas:
+            //     * Schema mig 010 column reference_id UUID type
+            //     * idx_loyalty_tx_reference (mig 072) eh em (reference_type, reference_id UUID)
+            //     * INSERT via TEXT cast pode skip idx em alguns query plans
+            //     * Audit forensico cross-type comparison confuso
+            //   POST-FIX: $3::UUID paridade SELECT (consistent schema-type)
             await c.query(
               `INSERT INTO loyalty_transactions (user_id, points_delta, reason, reference_type, reference_id)
-               VALUES ($1, $2, 'order_paid', 'order', $3::text)`,
+               VALUES ($1, $2, 'order_paid', 'order', $3::UUID)`,
               [order.buyer_user_id, pts, order.id]
             );
             // Calc novo tier (dentro mesmo tx - serializado por FOR UPDATE acima)
