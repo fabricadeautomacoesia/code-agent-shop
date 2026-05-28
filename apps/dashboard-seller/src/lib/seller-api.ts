@@ -16,8 +16,14 @@ export async function sellerFetch<T = any>(path: string, init: RequestInit = {})
     let data: any = null;
     try { data = await r.json(); } catch {}
     // FIX-WORKER-8 pass 1: anexar status no Error p/ caller distinguir 401/403/404/500
+    // FIX-WORKER-5 pass 287: expose data structured (error/action_url/etc) p/ caller
+    //   PRE-FIX: somente message + status. Backend retorna { error,action_url,extra }
+    //   mas caller perdia fields p/ render UX rico (botoes inline, redirects).
+    //   POST-FIX: e.data = data full payload. Caller pode acessar e.data.action_url
+    //   e.data.error code etc. Pattern paridade adminFetch (dashboard-admin).
     const e: any = new Error(data?.message || data?.error || `http_${r.status}`);
     e.status = r.status;
+    e.data = data;
     throw e;
   }
   // FIX-WORKER-8 pass 1: await explicito (Regra B padronizada cross-files)

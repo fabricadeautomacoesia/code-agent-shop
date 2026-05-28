@@ -28511,3 +28511,44 @@ PROXIMA ITER:
 - W5 dashboard-seller /financeiro consume wallet_not_configured UI
 - W4 admin payouts list filter wallet_configured flag
 - VPS SSH unblock URGENTISSIMO (119 ciclos - 39.7h)
+
+
+============================================================
+PASS 287 - 2026-05-28 - W5 financeiro wallet alert UI + W9 home metadata
+============================================================
+Files: 3 modificados
+  - apps/dashboard-seller/src/lib/seller-api.ts (expose e.data)
+  - apps/dashboard-seller/src/app/financeiro/page.tsx (orange wallet alert)
+  - apps/storefront/src/app/page.tsx (explicit home metadata)
+Lines: ~60 added
+
+W5 (dashboard-seller financeiro consume backend pass 286):
+- sellerFetch: error agora expoe e.data full payload (paridade adminFetch)
+- financeiro requestPayout: catch e.status===403 + e.data.error==='wallet_not_configured'
+  -> setWalletAlert state inline com action_url
+- UI: banner orange role=alert + Link CTA 'Configurar carteira' -> /seller/loja
+- UX completo: seller solicita saque sem wallet -> banner clean com botao linkado
+- Paridade pass 278/279/280 wallet UX cross-stack final
+
+W9 (home page explicit metadata):
+- PRE-FIX: home herdava root layout (generic title duplicado vs root)
+- POST-FIX: title PT-BR especifico + description rich + canonical absoluto '/'
+  + openGraph site_name+locale + twitter summary_large_image
+- Paridade pass 232 seller [slug] + pass 284 categoria [slug]
+- SEO: Google indexa home com title proprio (vs duplicate)
+- Social: share WhatsApp/FB/X mostra preview rico do marketplace
+
+VPS SSH BLOQUEADO (120 ciclos - 40h sem deploy).
+Migs 069-082 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-seller cas_storefront --force
+- W5: login vendedor sem wallet -> /seller/financeiro -> solicitar 100 -> banner orange
+  com botao "Configurar carteira" -> /seller/loja
+- W9: curl -s https://cas... | grep -oP '(og:title|twitter:card|og:url)[^"]*"[^"]*"'
+  Esperado: og:title='Code & Agent Shop - Marketplace...' + canonical='/' + twitter:card=summary_large_image
+
+PROXIMA ITER:
+- W4 admin /admin/payouts column 'wallet_configured' (consume pass 278 flag)
+- W2 checkout payment_method labels (PIX 5% destaque vs CC parcelamento)
+- VPS SSH unblock URGENTISSIMO (120 ciclos - 40h)

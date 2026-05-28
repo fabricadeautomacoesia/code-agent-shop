@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { sellerFetch, fmtBRL, fmtDate } from '@/lib/seller-api';
 import { useSellerAction } from '@/lib/use-seller-action';
-import { TrendingUp, Wallet, ArrowDownToLine, Clock, CheckCircle2, XCircle, Banknote } from 'lucide-react';
+import { TrendingUp, Wallet, ArrowDownToLine, Clock, CheckCircle2, XCircle, Banknote, AlertTriangle } from 'lucide-react';
 
 // FIX-WORKER-5: mapa visual para status de payouts (estilo MLB extrato)
 const PAYOUT_STATUS: Record<string, { label: string; icon: any; color: string }> = {
@@ -38,8 +39,14 @@ export default function FinanceiroPage() {
   // Cobertura dashboard-seller: 6/6 write pages no hook (100% definitivo).
   const action = useSellerAction(load);
 
+  /* FIX-WORKER-5 pass 287: state inline p/ wallet_not_configured (consome
+     backend pass 286). useSellerAction generic so trata error string; aqui
+     precisamos data.action_url p/ CTA "Configurar carteira". */
+  const [walletAlert, setWalletAlert] = useState<{ msg: string; actionUrl: string } | null>(null);
+
   async function requestPayout(e: React.FormEvent) {
     e.preventDefault();
+    setWalletAlert(null);
     const value = parseFloat(amount);
     if (!value || value < 50) {
       action.run('payout', async () => { throw new Error('Valor minimo R$ 50,00'); });
@@ -48,10 +55,23 @@ export default function FinanceiroPage() {
     action.run('payout', async () => {
       // FIX-WORKER-5 pass 6: Math.round evita floating-point (50.5 * 100 = 5050.0000000000005)
       const amountCents = Math.round(value * 100);
-      await sellerFetch('/sellers/me/payout', {
-        method: 'POST',
-        body: JSON.stringify({ amount_cents: amountCents })
-      });
+      try {
+        await sellerFetch('/sellers/me/payout', {
+          method: 'POST',
+          body: JSON.stringify({ amount_cents: amountCents })
+        });
+      } catch (e: any) {
+        /* FIX-WORKER-5 pass 287: trata 403 wallet_not_configured (pass 286 backend)
+           Mostra banner especifico com CTA /seller/loja em vez de erro generico. */
+        if (e?.status === 403 && e?.data?.error === 'wallet_not_configured') {
+          setWalletAlert({
+            msg: e.data.message || 'Carteira Asaas nao configurada.',
+            actionUrl: e.data.action_url || '/seller/loja',
+          });
+          throw new Error('Carteira nao configurada - configure em /seller/loja');
+        }
+        throw e;
+      }
       setAmount('');
       return `Saque de ${fmtBRL(amountCents)} solicitado. Aguardando aprovacao admin.`;
     });
@@ -71,6 +91,28 @@ export default function FinanceiroPage() {
       {loadError && (
         <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">
           Erro carregando dados: {loadError}
+        </div>
+      )}
+      {/* FIX-WORKER-5 pass 287: wallet_not_configured alert com CTA /seller/loja
+          (consome backend pass 286). Aparece DEPOIS de payout request 403. */}
+      {walletAlert && (
+        <div role="alert" className="bg-orange-500/10 border border-orange-500/30 text-orange-200 p-4 rounded-lg mb-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-orange-300 flex-shrink-0 mt-0.5" aria-hidden="true" />
+          <div className="flex-1">
+            <div className="font-semibold mb-1">Carteira nao configurada</div>
+            <p className="text-sm text-white/70 mb-3">{walletAlert.msg}</p>
+            <div className="flex gap-2">
+              <Link href={walletAlert.actionUrl}
+                className="btn-primary text-xs px-3 py-1.5 inline-flex items-center gap-1">
+                Configurar carteira
+              </Link>
+              <button type="button" onClick={() => setWalletAlert(null)}
+                aria-label="Fechar alerta de carteira"
+                className="text-xs px-3 py-1.5 rounded border border-white/10 hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-orange-400">
+                Fechar
+              </button>
+            </div>
+          </div>
         </div>
       )}
       {/* FIX-WORKER-5 pass 172 (a11y V8 R23): role=alert/status + type=button + aria-label */}

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { ArrowRight, Bot, Workflow, Code2, Sparkles, Shield, Zap, TrendingUp } from 'lucide-react';
 import { api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
@@ -8,6 +9,31 @@ import { ForYou } from '@/components/for-you';
 
 export const revalidate = 60;
 export const dynamic = 'force-dynamic';
+
+/* FIX-WORKER-9 pass 287: metadata explicito home page.
+   PRE-FIX: home herdava root layout metadata (generic). Share no WhatsApp/FB
+   mostrava titulo + description root mas SEM canonical absoluto + SEM OG
+   image especifico do home. Google indexava home com title root tab-padrao.
+   POST-FIX: title + description + canonical absoluto / + OG/Twitter + alternates.
+   Paridade pass 232 seller [slug] e pass 284 categoria [slug]. */
+export const metadata: Metadata = {
+  title: 'Code & Agent Shop - Marketplace de Automacoes IA validadas',
+  description: 'Compre automacoes, agentes IA, fluxos n8n, prompts e scripts validados por QA automatico. Marketplace seguro com pagamento Asaas, parcelamento PIX/CC e curadoria.',
+  alternates: { canonical: '/' },
+  openGraph: {
+    type: 'website',
+    title: 'Code & Agent Shop - Marketplace de Automacoes IA',
+    description: 'Marketplace seguro de automacoes/agentes IA com QA automatico e pagamento Asaas.',
+    url: '/',
+    siteName: 'Code & Agent Shop',
+    locale: 'pt_BR',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Code & Agent Shop',
+    description: 'Automacoes IA validadas por QA - marketplace seguro com Asaas.',
+  },
+};
 
 async function fetchSafe<T>(path: string): Promise<T | null> {
   try {
