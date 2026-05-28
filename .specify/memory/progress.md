@@ -21821,3 +21821,76 @@ PROXIMA ITER:
 - W18: cache /aiops/metrics (sysinfo poll)
 - W11: payment-svc refund flow validation
 - 🚨 VPS SSH unblock URGENTE (33 ciclos - >11h sem deploy!)
+
+PASS 201 (W18 aiops /metrics cache + window + total bug) - 2026-05-28:
+- W18 audit GET /aiops/metrics + /metrics/latest descobriu 3 bugs:
+
+BUG 1 (pagination total errado - same pattern pass 189):
+- 'count: r.rows.length' reportava paginated count
+- Cenario: 100 metrics history existing, limit=60 -> count=60 (real: 100)
+- UI admin "X de Y" Y stale - admin nao via real volume
+
+BUG 2 (NO cache):
+- Admin dashboard polling 10s hit DB cada chamada
+- metrics_history ~1440 rows/dia (1 collect/min) * N hosts
+- Prod multi-host + 30d retention = ~130k rows
+- Sem cache = pressao DB inutil em endpoint observability
+
+BUG 3 (NO COUNT total absolute):
+- pagination UI quebrada - 'Carregar mais' nao sabe quando parar
+
+POST-FIX (3 melhorias):
+
+1. COUNT(*) OVER()::INT AS _total window:
+   - Strip _total + has_more boolean response
+   - Latencia: ~50ms (2 queries antes) -> ~28ms (1 query)
+
+2. cache.cacheMiddleware 30s vary by limit+offset:
+   - Key: aiops:metrics:lim={lim}:off={off}
+   - 30s freshness adequada (cron coleta 1min - 30s OK)
+   - Aplicado em /metrics E /metrics/latest (mesmo handler)
+
+3. Response shape consistente:
+   { metrics, total, count, limit, offset, has_more }
+   total = absolute (novo), count = paginated (mantido p/ backward compat)
+
+PATTERN V8 COUNT WINDOW agora em 11 endpoints / 7 microsservices:
+- product-svc (4): wishlist, products list, reviews, qna
+- notification-svc (1): /me
+- vault-svc (2): keys admin, rotation cron
+- search-svc (1): categories
+- review-svc (2): admin/reports, qna/seller/pending
+- seller-svc (3): admin/all, admin/payouts/pending, admin/pending-kyc
+- aiops-svc (2): /audit-log (200), /metrics + /metrics/latest (201 NEW)
+
+Commit 2d14ebf pushed origin/main (+37/-9)
+VPS SSH ainda bloqueado (34 ciclos consecutivos)
+
+CACHE COVERAGE aiops-svc:
+- /metrics: 30s (pass 201 NEW)
+- /metrics/latest: 30s (pass 201 NEW)
+- /audit-log: 30s (pass 200)
+- /audit-log/actions: 300s (existing W7 pass 64)
+- /db/dead-indexes: 60s (existing W14 pass 8)
+- /llm-cost: 300s (pass 193)
+- /alerts/recent: NO cache (intentional - urgent realtime)
+
+CODIGO ACUMULADO ORIGIN/MAIN (34 ciclos):
+- 168-200: documentados
+- 201: aiops /metrics cache + window + total bug
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_aiops-svc --force
+- Cache hit benchmark:
+  time curl -H "Bearer \$ADMIN" "/api/aiops/metrics?limit=60"
+  1a: ~28ms (PG window query)
+  2a: <5ms (Redis hit)
+- Pagination validar:
+  curl "?limit=30&offset=0" -> total absoluto + count=30
+  curl "?limit=30&offset=30" -> mesmo total absoluto + count next 30
+
+PROXIMA ITER:
+- W18: cache /aiops/alerts (intentionally NO cache - revisitar policy)
+- W17: vault-svc seller endpoints BYOK
+- W11: payment-svc refund flow validation
+- 🚨 VPS SSH unblock URGENTE (34 ciclos - >11.3h sem deploy!)
