@@ -6,6 +6,11 @@ import { sellerFetch, fmtDate } from '@/lib/seller-api';
 import { useSellerAction } from '@/lib/use-seller-action';
 import { MessageCircle, Send, CheckCircle, ExternalLink } from 'lucide-react';
 
+// FIX-WORKER-5 pass 425: storefront URL env-driven (paridade W6 pass 397 auth-svc)
+// Build-time NEXT_PUBLIC_STOREFRONT_URL ou fallback prod cas.inovareinteligenciaartificial.com
+const STOREFRONT_URL = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_STOREFRONT_URL)
+  || 'https://cas.inovareinteligenciaartificial.com';
+
 export default function SellerQnaPage() {
   const [qna, setQna] = useState<any[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -90,16 +95,33 @@ export default function SellerQnaPage() {
             const busy = action.busyKey === `answer-${q.id}`;
             return (
               <div key={q.id} className="glass p-5">
+                {/* FIX-WORKER-5 pass 425: link unico /products/{product_id} so abria
+                    o edit-page seller (UX confuso quando seller quer VER a pergunta no
+                    contexto PDP publico). Backend response (review-svc /qna/seller/pending
+                    linha 813) ja envia product_slug - usar p/ link storefront publico.
+                    PRE-FIX: 1 link interno apenas (edit page)
+                    POST-FIX: 2 links separados:
+                    - Title -> dashboard-seller /products/{id} (edit)
+                    - Botao "Ver no site" -> storefront publico /product/{slug}#qna-{id}
+                    Hash anchor #qna-{id} permite jump direto a pergunta na PDP. */}
                 <div className="flex items-start gap-4 mb-4">
                   {q.cover_image_url && (
                     <img src={q.cover_image_url} alt="" className="w-14 h-14 object-cover rounded" />
                   )}
                   <div className="flex-1">
                     <Link href={`/products/${q.product_id}`} className="text-sm font-display font-semibold hover:text-magenta flex items-center gap-1">
-                      {q.product_title} <ExternalLink className="w-3 h-3" />
+                      {q.product_title} <ExternalLink className="w-3 h-3" aria-hidden="true" />
                     </Link>
-                    <div className="text-xs text-white/40 mt-1">
-                      {q.asker_name || q.asker_email || 'Cliente anonimo'} - {fmtDate(q.asked_at)}
+                    <div className="text-xs text-white/40 mt-1 flex items-center gap-2">
+                      <span>{q.asker_name || q.asker_email || 'Cliente anonimo'} - {fmtDate(q.asked_at)}</span>
+                      {q.product_slug && (
+                        <a href={`${STOREFRONT_URL}/product/${q.product_slug}#qna-${q.id}`}
+                          target="_blank" rel="noopener noreferrer"
+                          aria-label={`Ver pergunta no site publico: ${q.product_title}`}
+                          className="inline-flex items-center gap-1 text-magenta hover:underline">
+                          Ver no site <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                        </a>
+                      )}
                     </div>
                   </div>
                 </div>

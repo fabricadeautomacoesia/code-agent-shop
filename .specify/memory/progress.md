@@ -33135,3 +33135,39 @@ Pattern V8 W1: error banner deve dismiss em sign-of-correction
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 425 W5 SELLER DASH: qna page "Ver no site" link storefront PDP
+commit pendente
+BUG seller QNA page so tinha link interno /products/{id} (edit-page)
+PRE-FIX:
+- Title -> dashboard-seller /products/{id} (edit-page)
+- Seller respondia pergunta sem ver contexto PDP publico
+- Nao havia link para ver pergunta na PDP storefront onde cliente perguntou
+- Backend (review-svc /qna/seller/pending) ja envia product_slug mas NAO usado
+
+CENARIO:
+- Seller recebe Q&A pendente: "O produto tem suporte premium?"
+- Quer ver outras perguntas relacionadas na PDP antes de responder
+- Quer ver como Q&A aparece publicamente apos resposta
+- Unico link disponivel ia para edit-page (escopo errado)
+
+POST-FIX:
+- + STOREFRONT_URL env-driven (NEXT_PUBLIC_STOREFRONT_URL ou fallback prod)
+- + link extra "Ver no site" -> {STOREFRONT_URL}/product/{slug}#qna-{id}
+- target="_blank" + rel noopener (security)
+- Hash anchor #qna-{id} para jump direto a pergunta
+- Link interno preservado p/ edit (2 links - cada caso de uso)
+
+W5 UX series qna:
+  pass 1 baseline busy-key per-row
+  pass 2 useSellerAction hook
+  pass 248 silent input UX feedback
+  pass 425 storefront link Ver no site <- ESTE
+
+Pattern V8 W5: links contextuais dashboard vs storefront separados
+
+158 passes acumulados (268->425) sem deploy VPS
+5 CRITICAL + 25 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
