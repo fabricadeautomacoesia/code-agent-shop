@@ -17378,7 +17378,33 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Compare-drawer + add-to-cart 6 buttons (pass 158)
 - ✅ Wishlist + price-alert + ask-quick 5 buttons (pass 159)
 - ✅ notification-bell 3 buttons + role=menu (pass 160)
-- ✅ /cart + /checkout 9 buttons a11y rico (pass 161 esta iter)
+- ✅ /cart + /checkout 9 buttons a11y rico (pass 161)
+- ✅ /conta/seguranca 2FA flow a11y MASSIVE (pass 162 esta iter)
+
+W7 PASS 162 RESUMO - W1+W17 /conta/seguranca 2FA FLOW A11Y:
+- AUDIT page critical security 2FA: 5 buttons + 4 inputs + 1 label sem a11y
+- 10 violacoes WCAG total (mais critica do storefront):
+  * 5 buttons sem type=button (V8 Regra 23)
+  * 4 inputs sem id/aria-label (4 violacoes WCAG 1.3.1)
+  * 1 label sem htmlFor
+  * Copy icon sem aria-hidden
+  * Faltava autoComplete em inputs sensitive
+- FIXES (5 buttons):
+  * 'Ativar 2FA': type=button + aria-label DINAMICO (Gerando/Iniciar)
+  * Copy manual code: type=button + aria-label + Copy aria-hidden
+  * 'Confirmar e ativar': type=button + aria-label dinamico (Ativando/Confirmar)
+  * 'Gerar novos codigos': type=button + aria-label
+  * 'Confirmar desativacao': type=button + aria-label
+    + focus-visible:outline-RED (acao destrutiva)
+- FIXES (4 inputs + 1 label):
+  * totp-setup input: htmlFor + id + autoComplete='one-time-code' (iOS SMS autofill)
+    + inputMode='numeric' + pattern='[0-9]{6}' + placeholder='000000'
+  * 2 inputs Senha (regenerate/disable): autoComplete='current-password' + aria-label especifico
+  * 2 inputs Codigo 2FA (regenerate/disable): autoComplete='one-time-code' + aria-label especifico
+- Pattern: dynamic aria-label porque inputs aparecem em 2 sections (regenerate vs disable)
+  -> SR distingue 'Senha para regenerar' vs 'Senha para desativar'
+- BUILD storefront OK + service converged
+- COMMIT 541e8e4 pushed GitHub main + deployed prod
 
 W7 PASS 161 RESUMO - W2 /cart + /checkout BUTTONS A11Y:
 - AUDIT pages cart + checkout: 9 buttons sem type='button' (V8 Regra 23)
