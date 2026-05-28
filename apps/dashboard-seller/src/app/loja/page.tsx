@@ -141,10 +141,19 @@ export default function LojaPage() {
                   <option value="cpf">CPF</option><option value="cnpj">CNPJ</option>
                 </select>
               </div>
+              {/* FIX-WORKER-5 pass 379 (maxLength alinhado backend Zod kycSchema):
+                  PRE-FIX: 4 inputs KYC sem maxLength (apenas state com maxLength=2)
+                  Backend Zod limits:
+                  - document_number max(20) | legal_name max(200) | address_line1 max(200)
+                  - address_city max(100) | address_state length(2) | address_zip max(20)
+                  Pre-fix: user digita 5000 chars no endereco -> backend 400 Zod
+                  errorHandler retorna mensagem generica - UX confuso (sem hint cap).
+                  POST-FIX: HTML5 maxLength + minLength paridade backend = fail-fast UX */}
               <div>
                 <label htmlFor="kyc-docnum" className="text-xs text-white/60 uppercase">Documento</label>
                 <input id="kyc-docnum" value={kyc.document_number} onChange={(e) => setKyc({...kyc, document_number: e.target.value})} required
                   autoComplete="off" inputMode="numeric"
+                  maxLength={20} minLength={11}
                   className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
               </div>
             </div>
@@ -152,6 +161,7 @@ export default function LojaPage() {
               <label htmlFor="kyc-legal" className="text-xs text-white/60 uppercase">Razao social / nome completo</label>
               <input id="kyc-legal" value={kyc.legal_name} onChange={(e) => setKyc({...kyc, legal_name: e.target.value})} required
                 autoComplete="name"
+                maxLength={200} minLength={3}
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
             </div>
             <div>
@@ -159,6 +169,7 @@ export default function LojaPage() {
               <input id="kyc-addr1" placeholder="Endereco" value={kyc.address_line1} onChange={(e) => setKyc({...kyc, address_line1: e.target.value})} required
                 autoComplete="street-address"
                 aria-label="Endereco"
+                maxLength={200} minLength={3}
                 className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
             </div>
             <div className="grid grid-cols-3 gap-3">
@@ -166,6 +177,7 @@ export default function LojaPage() {
                 <label htmlFor="kyc-city" className="sr-only">Cidade</label>
                 <input id="kyc-city" placeholder="Cidade" value={kyc.address_city} onChange={(e) => setKyc({...kyc, address_city: e.target.value})} required
                   autoComplete="address-level2" aria-label="Cidade"
+                  maxLength={100} minLength={2}
                   className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
               </div>
               <div>
@@ -178,6 +190,7 @@ export default function LojaPage() {
                 <label htmlFor="kyc-zip" className="sr-only">CEP</label>
                 <input id="kyc-zip" placeholder="CEP" value={kyc.address_zip} onChange={(e) => setKyc({...kyc, address_zip: e.target.value})} required
                   autoComplete="postal-code" inputMode="numeric" aria-label="CEP"
+                  maxLength={20} minLength={5}
                   className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-sm" />
               </div>
             </div>
