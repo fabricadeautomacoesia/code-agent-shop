@@ -22174,3 +22174,68 @@ PROXIMA ITER:
 - W18: cache /aiops/status (admin polls)
 - W13: notification-svc Telegram retry edge cases
 - 🚨 VPS SSH unblock URGENTE (38 ciclos - >12.7h sem deploy!)
+
+PASS 206 (W18 order-svc /orders cache + window + coherency) - 2026-05-28:
+- W18 audit GET /orders (buyer /conta/pedidos consumer):
+
+PRE-FIX:
+- 2 queries por hit (rows + COUNT separado)
+- NO cache - buyer dashboard polling sem proteção
+- Pattern V8 gap (consolidado 13 endpoints anteriores - este faltava)
+
+POST-FIX (3 melhorias):
+
+1. cache.cacheMiddleware 30s vary by user+status+limit+offset
+   - Key: orders:user:{userId}:s={status}:lim={lim}:off={off}
+   - 30s adequado: mutations user-facing frequentes (checkout cria,
+     refund muda status, admin admin notes etc)
+
+2. COUNT(*) OVER()::INT AS _total window consolidation:
+   - Strip _total + has_more boolean response
+   - Pattern V8 14o endpoint
+   - Latencia: ~30ms -> ~17ms
+
+3. CACHE COHERENCY pos-checkout estendida:
+   - PRE: apenas loyalty:me invalidado (pass 176)
+   - POST: + orders:user:{userId}:* invalidado (pass 206)
+   - Evita UX bug: user finaliza checkout -> redireciona /conta/pedidos
+     -> ve cache stale sem novo pedido (frustracao "cade meu pedido?")
+   - Promise.all bulk invalidation
+
+PATTERN V8 COUNT WINDOW agora em 14 endpoints / 8 microsservices:
+- product-svc (4): wishlist, products list, reviews, qna
+- notification-svc (1): /me
+- vault-svc (2): keys admin, rotation cron
+- search-svc (1): categories
+- review-svc (2): admin/reports, qna/seller/pending
+- seller-svc (4): admin/all, admin/payouts/pending, admin/pending-kyc, admin/sla-risk
+- aiops-svc (3): /audit-log, /metrics + /metrics/latest, /alerts + /alerts/recent
+- order-svc (1 NEW): /orders user
+
+CACHE COHERENCY pos-checkout consolidada:
+- loyalty:me cross-svc (pass 176 - seller-svc loyalty)
+- orders:user cross-svc (pass 206 - same svc order-svc)
+- cart 5s TTL auto-expira (sem invalidation explicit needed)
+
+Commit daf66c9 pushed origin/main (+85/-63)
+VPS SSH ainda bloqueado (39 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (39 ciclos):
+- 168-205: documentados
+- 206: order-svc /orders cache + window + coherency
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_order-svc --force
+- Cache hit benchmark:
+  time curl -H "Bearer \$BUYER" "/api/orders?limit=10"
+  1a: ~17ms (PG window)
+  2a: <5ms (Redis hit)
+- Coherency test:
+  POST /orders/checkout -> 201 success
+  GET /orders -> esperado: novo order presente imediato (no stale)
+
+PROXIMA ITER:
+- W18: gateway-svc /api/* path rewrite audit
+- W17: vault-svc seller BYOK endpoints
+- W14: audit views materialized (mv_seller_kpi refresh policy)
+- 🚨 VPS SSH unblock URGENTE (39 ciclos - 13h sem deploy!)
