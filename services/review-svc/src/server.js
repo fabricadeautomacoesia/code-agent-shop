@@ -544,11 +544,20 @@ app.post('/qna/:id/upvote', qnaVoteLimiter, jwt.requireAuth(),
 
     let outcome;
     let result;
+    let productSlug = null; // FIX pass 349: capture slug p/ cache invalidation
     await tx(async (c) => {
       // FIX bug 1+6+7 (Regras K+is_hidden+J): SELECT FOR UPDATE qna + checks
+      // FIX-WORKER-16 pass 349 (MLB-2 cache invalidation):
+      //   PRE-FIX: upvote endpoint NAO invalida cache products:qna:${slug}:*
+      //   Cache TTL=60s entao count desatualizado por 60s na lista publica do PDP.
+      //   User vota -> count++ na response do POST mas GET /:slug/qna mantem stale.
+      //   Reload da pagina mostra count antigo - UX broken (MLB-2 mostra realtime).
+      //   POST-FIX: JOIN products no SELECT inicial p/ capturar slug + cache.del
+      //   wildcard apos commit (paridade pass 327).
       const qna = await c.query(
-        `SELECT id, is_hidden FROM product_qna
-          WHERE id = $1::UUID FOR UPDATE`,
+        `SELECT q.id, q.is_hidden, p.slug FROM product_qna q
+          JOIN products p ON p.id = q.product_id
+          WHERE q.id = $1::UUID FOR UPDATE OF q`,
         [req.params.id]
       );
       if (!qna.rows.length) { outcome = { error: 'qna_not_found' }; return; }
@@ -556,6 +565,7 @@ app.post('/qna/:id/upvote', qnaVoteLimiter, jwt.requireAuth(),
         outcome = { error: 'qna_hidden' };
         return;
       }
+      productSlug = qna.rows[0].slug;
 
       // FIX bug 1+8: toggle atomico DENTRO do tx (lock serializa T0-T3)
       // Req A le exists=empty -> INSERT. Req B aguarda lock release ->
@@ -604,6 +614,16 @@ app.post('/qna/:id/upvote', qnaVoteLimiter, jwt.requireAuth(),
         message: 'Esta pergunta foi moderada e nao aceita votos.',
       });
     }
+
+    // FIX-WORKER-16 pass 349 (MLB-2 cache invalidation post-commit):
+    //   Invalida cache wildcard `products:qna:<slug>:*` (paridade pass 327)
+    //   apos commit do tx. Fora do tx p/ nao bloquear se Redis lento/down.
+    //   Tolera fail (Redis indisponivel != upvote falhar).
+    if (productSlug) {
+      const slugNorm = String(productSlug).trim().toLowerCase();
+      cache.del(`products:qna:${slugNorm}:*`).catch(() => {});
+    }
+
     res.json(result);
   })
 );
@@ -1020,7 +1040,7 @@ app.post('/reports',
       // FIX bug 6: sanitize description antes storage (defense-in-depth)
       // Strip control chars C0/C1 (anti future XSS via alerts.message rendering)
       const sanitizedDesc = req.body.description
-        ? req.body.description.replace(/[ --]/g, '').slice(0, 2000)
+        ? req.body.description.replace(/[--]/g, '').slice(0, 2000)
         : null;
 
       // INSERT report (Regra I: RETURNING explicit)
