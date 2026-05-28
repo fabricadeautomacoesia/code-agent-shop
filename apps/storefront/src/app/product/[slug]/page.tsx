@@ -138,7 +138,13 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
         </div>
 
         <aside className="space-y-6">
-          <div className="glass p-6 sticky top-28">
+          {/* FIX-WORKER-15 pass 129: sticky SO em lg+ (layout 2-col).
+              ANTES: sticky top-28 sempre ativo -> em mobile (single-col)
+              aside tenta ficar 'fixa' durante scroll causando jumps visuais
+              quando user rola pelas tabs longas (review/qna). Mobile UX
+              tipico nao usa sticky em paineis full-width.
+              AGORA: lg:sticky lg:top-28 - sticky so quando layout multi-col. */}
+          <div className="glass p-6 lg:sticky lg:top-28">
             {/* MLB-NEW WORKER 16: combo selo Oficial+TopSeller (substitui badge Oficial standalone) */}
             <OfficialBadge isPlatformOwned={product.is_platform_owned} isTopSeller={product.is_top_seller} variant="pdp" />
             {/* MLB-3/8: destaque de vendas (Mercado Livre style) */}
