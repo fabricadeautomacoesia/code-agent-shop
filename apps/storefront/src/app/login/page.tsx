@@ -34,7 +34,8 @@ function LoginInner() {
     e.preventDefault();
     setLoading(true); setError('');
     try {
-      const r: any = await Api.login(email, password, needs2fa ? totp : undefined);
+      // FIX-WORKER-1 pass 183: normaliza email client-side (espelha backend pass 182)
+      const r: any = await Api.login(email.trim().toLowerCase(), password, needs2fa ? totp : undefined);
       if (r.requires_2fa) { setNeeds2fa(true); setLoading(false); return; }
       setAuth(r.access_token, r.user);
       router.push('/conta');

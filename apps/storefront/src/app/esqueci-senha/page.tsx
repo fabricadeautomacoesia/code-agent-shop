@@ -21,7 +21,8 @@ export default function EsqueciSenhaPage() {
     e.preventDefault();
     setLoading(true); setErr('');
     try {
-      await Api.api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) });
+      // FIX-WORKER-1 pass 183: normaliza email client-side (espelha backend pass 182)
+      await Api.api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email: email.trim().toLowerCase() }) });
       setSent(true);
     } catch (e: any) {
       setErr(friendlyAuthError(e));

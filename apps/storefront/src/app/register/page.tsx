@@ -46,9 +46,13 @@ function RegisterInner() {
     }
     setLoading(true);
     try {
+      // FIX-WORKER-1 pass 183: normaliza email client-side (espelha backend pass 182 transform)
+      // Defensivo - se backend mudar, app continua robusto. Tambem evita duplicate
+      // submissions com case differente parecerem accounts diferentes.
       // CPF/CNPJ: normaliza removendo pontuacao antes de enviar
       const payload = {
         ...form,
+        email: form.email.trim().toLowerCase(),
         role,
         cpf_cnpj: form.cpf_cnpj ? form.cpf_cnpj.replace(/\D/g, '') : '',
       };
@@ -69,13 +73,18 @@ function RegisterInner() {
         {role === 'seller' ? 'Comece a vender suas automacoes e agentes IA' : 'Acesse o maior marketplace de automacoes'}
       </p>
 
-      <div className="flex gap-2 mb-6">
+      {/* FIX-WORKER-1 pass 183 (a11y): role toggle buttons -> aria-pressed (toggle pattern WAI-ARIA).
+          Antes: SR nao indicava qual opcao estava ativa (so visual gradient).
+          AGORA: aria-pressed='true' anuncia 'pressed' state ao SR. */}
+      <div className="flex gap-2 mb-6" role="group" aria-label="Tipo de conta">
         <button onClick={() => setRole('buyer')} type="button"
-          className={`flex-1 py-2 rounded-lg text-sm font-medium ${role==='buyer' ? 'bg-gradient-vibe text-white' : 'glass'}`}>
+          aria-pressed={role==='buyer'}
+          className={`flex-1 py-2 rounded-lg text-sm font-medium focus-visible:outline-2 focus-visible:outline-magenta ${role==='buyer' ? 'bg-gradient-vibe text-white' : 'glass'}`}>
           Comprador
         </button>
         <button onClick={() => setRole('seller')} type="button"
-          className={`flex-1 py-2 rounded-lg text-sm font-medium ${role==='seller' ? 'bg-gradient-vibe text-white' : 'glass'}`}>
+          aria-pressed={role==='seller'}
+          className={`flex-1 py-2 rounded-lg text-sm font-medium focus-visible:outline-2 focus-visible:outline-magenta ${role==='seller' ? 'bg-gradient-vibe text-white' : 'glass'}`}>
           Vendedor
         </button>
       </div>
@@ -98,7 +107,10 @@ function RegisterInner() {
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
         </div>
         <div>
-          <label htmlFor="reg-password" className="text-sm text-white/70 mb-1.5 block">Senha (min 8, com maiuscula e numero)</label>
+          {/* FIX-WORKER-1 pass 183: label desatualizado - backend (pass 51 auth.js) requer
+              tambem caractere especial /[^\w\s]/. Sem isso, user envia 'Aaa1aaaa' valido
+              client mas backend rejeita 400 -> UX confuso. */}
+          <label htmlFor="reg-password" className="text-sm text-white/70 mb-1.5 block">Senha (min 8, com maiuscula, numero e simbolo)</label>
           <input id="reg-password" type="password" required value={form.password} onChange={(e) => onPass(e.target.value)}
             autoComplete="new-password" aria-describedby="reg-pw-strength"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
@@ -135,7 +147,15 @@ function RegisterInner() {
           </div>
         )}
 
-        {error && <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-3">{error}</div>}
+        {/* FIX-WORKER-1 pass 183 (a11y): role=alert + close button (pattern login pass 5) */}
+        {error && (
+          <div role="alert" className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center justify-between">
+            <span>{error}</span>
+            <button type="button" onClick={() => setError('')}
+              aria-label="Fechar mensagem de erro"
+              className="text-xs hover:underline ml-2 focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
+          </div>
+        )}
 
         <button type="submit" disabled={loading} className="btn-primary w-full disabled:opacity-50">
           {loading ? 'Criando conta...' : 'Criar conta'}
