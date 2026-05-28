@@ -87,7 +87,7 @@ function qaRunGuard(req, res, next) {
       req._internalAuth = true;
       return next();
     }
-    log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[qa.run.invalid_internal_token]');
+    log.warn({ ip: req.ip, /* FIX pass 323 DLP */ ua: mask.text(req.headers['user-agent'] || '') }, '[qa.run.invalid_internal_token]');
   }
   return jwt.requireAuth({ roles: ['admin', 'staff', 'service'] })(req, res, next);
 }
@@ -360,7 +360,7 @@ function qaCallbackGuard(req, res, next) {
     valid = a.length === b.length && crypto.timingSafeEqual(a, b);
   } catch { valid = false; }
   if (!valid) {
-    log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[qa.callback.invalid_signature]');
+    log.warn({ ip: req.ip, /* FIX pass 323 DLP */ ua: mask.text(req.headers['user-agent'] || '') }, '[qa.callback.invalid_signature]');
     return res.status(401).json({ error: 'invalid_signature' });
   }
   // Apos validar, parseia para o handler downstream

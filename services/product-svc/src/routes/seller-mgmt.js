@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache, rateLimiter } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, rateLimiter, mask } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 82: rate-limit anti-spam drafts.
 // PRE-FIX: POST /products/me SEM rate-limit. Seller pwned/bot pode spawn
@@ -893,6 +893,8 @@ router.post('/:id/qna/:qid/answer',
   asyncHandler(async (req, res) => {
     // FIX-WORKER-7 pass 88: DEPRECATED - returns 410 Gone
     // Audit log de tentativas p/ forense (detectar callers internos legacy)
+    /* FIX-WORKER-7 pass 323: user_agent mask.text() paridade pass 322 auth-svc.
+       Pattern V8 cross-svc DLP audit_log - product-svc estava com gap. */
     try {
       await query(
         `INSERT INTO audit_log
@@ -903,7 +905,7 @@ router.post('/:id/qna/:qid/answer',
            deprecated_path: '/products/me/:id/qna/:qid/answer',
            replacement_path: '/api/qna/:id/answer',
            ip: req.ip,
-           user_agent: (req.headers['user-agent'] || '').slice(0, 200),
+           user_agent: mask.text((req.headers['user-agent'] || '').slice(0, 200)),
          })]
       );
     } catch (_e) { /* audit best-effort */ }

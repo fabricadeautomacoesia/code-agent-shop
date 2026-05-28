@@ -59,7 +59,7 @@ function asaasCreateGuard(req, res, next) {
     }
     // FIX-WORKER-17 pass 3: fail2ban reportFailure - ban after 5 attempts/15min
     if (req.fail2ban) req.fail2ban.reportFailure();
-    log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[payment.create.invalid_internal_token]');
+    log.warn({ ip: req.ip, /* FIX pass 323 DLP */ ua: mask.text(req.headers['user-agent'] || '') }, '[payment.create.invalid_internal_token]');
   }
   return jwt.requireAuth({ roles: ['admin','staff','service'] })(req, res, next);
 }
@@ -434,7 +434,7 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
   // causava INSERT com event_type=NULL -> PG 23502 (not_null_violation) -> 500.
   // Atacantes podiam usar isso para descobrir DB internals via 500 vs 401.
   if (!data || typeof data !== 'object' || !data.event || typeof data.event !== 'string') {
-    log.warn({ ip: req.ip, ua: req.headers['user-agent'] }, '[webhook.invalid_payload]');
+    log.warn({ ip: req.ip, /* FIX pass 323 DLP */ ua: mask.text(req.headers['user-agent'] || '') }, '[webhook.invalid_payload]');
     return res.status(400).json({ error: 'invalid_payload', message: 'event field required' });
   }
   // FIX-WORKER-11 pass 241 (string length defensive):
@@ -494,7 +494,7 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
        ON CONFLICT (asaas_event_id) DO NOTHING`,
       [data.event, data.id || null, data.payment?.id || null, JSON.stringify(data)]
     );
-    log.warn({ event: data.event, ip: req.ip, ua: req.headers['user-agent'] }, '[webhook.invalid_signature]');
+    log.warn({ event: data.event, ip: req.ip, /* FIX pass 323 DLP */ ua: mask.text(req.headers['user-agent'] || '') }, '[webhook.invalid_signature]');
     return res.status(401).json({ error: 'invalid_signature' });
   }
 

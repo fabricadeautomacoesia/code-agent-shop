@@ -29927,3 +29927,41 @@ PROXIMA ITER:
 - W4 audit consolidate other services ua_prefix coverage
 - W7 product-svc force-approve audit DLP
 - VPS SSH unblock URGENTISSIMO (155 ciclos - 51.7h)
+
+
+============================================================
+PASS 323 - 2026-05-28 - MARCO DLP UA mask cross-svc consolidation
+============================================================
+Files: 4 modificados
+  - services/product-svc/src/routes/seller-mgmt.js (mask + 1 ua audit_log)
+  - services/vault-svc/src/server.js (1 log.warn ua mask)
+  - services/qa-svc/src/server.js (2 log.warn ua mask via replace_all)
+  - services/payment-svc/src/server.js (3 log.warn ua mask via replace_all)
+Lines: ~12 changed
+
+W7/W17/W11/W12 (DLP cross-svc UA mask MARCO):
+- product-svc seller-mgmt deprecated_route audit_log: + mask
+- vault-svc invalid_internal_token log: + mask
+- qa-svc invalid_internal_token + invalid_signature logs: + mask (2)
+- payment-svc invalid_internal_token + invalid_payload + invalid_signature: + mask (3)
+- Total UA mask coverage cross-svc agora:
+  * auth-svc 15 audit_log paths (pass 282/292/296/315/318/322)
+  * product-svc seller-mgmt 1 audit_log
+  * vault-svc 1 log.warn (security event log)
+  * qa-svc 2 log.warn (security event log)
+  * payment-svc 3 log.warn (security event log)
+- Total: 22 endpoints/logs com UA masked
+
+VPS SSH BLOQUEADO (156 ciclos - 52h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc cas_vault-svc cas_qa-svc cas_payment-svc --force
+- W17 verify Pino log mask:
+  docker service logs cas_vault-svc | grep '[vault.invalid_internal_token]'
+  Esperado: ua masked (sem User-Agent strings completos)
+
+PROXIMA ITER:
+- W4 audit log filter UA pattern detection
+- W11 webhook log signatures sample
+- VPS SSH unblock URGENTISSIMO (156 ciclos - 52h)

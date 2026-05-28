@@ -76,9 +76,11 @@ function vaultUseGuard(req, res, next) {
     // Com fail2ban + IP rotation, exploit ainda era viavel em horas.
     // Agora: log so registra IP/UA (audit forensics) sem oracle de tamanho.
     // tok_len_match (bool) preserva 1 bit de info util sem revelar comprimento real.
+    /* FIX-WORKER-17 pass 323: ua mask.text() paridade pass 322 auth-svc.
+       Pino log + datadog aggregator captura objeto inteiro -> PII leak. */
     log.warn({
       ip: req.ip,
-      ua: req.headers['user-agent'],
+      ua: mask.text(req.headers['user-agent'] || ''),
       tok_len_match: String(internalTok).length === expected.length,
     }, '[vault.invalid_internal_token]');
   }
