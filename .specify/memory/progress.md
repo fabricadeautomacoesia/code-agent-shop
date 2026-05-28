@@ -32673,3 +32673,34 @@ Pattern V8 paridade pass 21 orders UPDATE guard
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 410 W14: re-apply idxs hot-path EXCEPTION wrap (defensive lessons 391+402)
+commit d4017c3
+CONTEXTO licoes self-correction:
+- Pass 391: mig 088 colunas erradas (silent fail)
+- Pass 402: mig 042 opened_at inexistente (silent fail)
+
+AUDIT migrations 030-066 sem EXCEPTION:
+- 030, 031, 032, 034, 035, 037, 038, 040, 041, 042
+
+POST-FIX mig 092 defensive reapply:
+- 3 idxs criticos hot-path com DO $$ EXCEPTION:
+  * idx_qa_runs_product_started (mig 034)
+  * idx_audit_action_created (mig 037)
+  * idx_seller_payouts_processing_stuck (mig 040)
+- ANALYZE tables planner refresh
+- IF NOT EXISTS idempotent
+- undefined_table/column catch + RAISE NOTICE
+
+Pattern V8 W14: TODA migration nova precisa:
+- DO $$ EXCEPTION wrap
+- ANALYZE table no final
+- IF NOT EXISTS idempotency
+- RAISE NOTICE confirmation
+
+143 passes acumulados (268->410) sem deploy VPS
+24 migrations pendentes apply (069-092)
+5 CRITICAL acumulados
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
