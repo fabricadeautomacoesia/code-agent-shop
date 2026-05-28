@@ -15,13 +15,17 @@ const nextConfig = {
   },
   async rewrites() {
     // FIX-WORKER-7 pass 1: rewrite congelou no fallback 127.0.0.1 (ECONNREFUSED em Swarm).
-    // Next.js avalia rewrites no boot do servidor; se GATEWAY_URL nao chega via env injection,
-    // cai no fallback que e localhost (sem gateway dentro do container).
-    // Defesa: fallback agora aponta para Docker Swarm DNS service alias (gateway:3002),
-    // que existe na mesma rede 'minha_rede'. /api/* via cas.* dominio agora funciona.
+    // FIX-WORKER-7 pass 111: PT-BR friendly URLs (SEO + UX brasileiro).
+    //   /produtos -> /products (listagem)
+    //   /buscar -> /products (com query string)
+    //   Detectado audit prod: /produtos e /buscar?q= retornavam 404.
     const gw = process.env.GATEWAY_URL || 'http://gateway:3002';
     return [
       { source: '/api/:path*', destination: `${gw}/api/:path*` },
+      // PT-BR friendly rewrites (sem 301 redirect - usuario ve URL PT)
+      { source: '/produtos', destination: '/products' },
+      { source: '/produtos/:path*', destination: '/products/:path*' },
+      { source: '/buscar', destination: '/products' },
     ];
   },
   poweredByHeader: false,
