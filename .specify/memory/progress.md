@@ -17372,7 +17372,23 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ qna-upvote alert -> inline error + aria-pressed (pass 152)
 - ✅ alertDialog + /disputes 4 nativos eliminados (pass 153)
 - ✅ Vault admin form a11y + autoComplete PII (pass 154)
-- ✅ Admin reports + payouts filter a11y (pass 155 esta iter)
+- ✅ Admin reports + payouts filter a11y (pass 155)
+- ✅ Storefront nav buttons type=button + focus-visible (pass 156 esta iter)
+
+W7 PASS 156 RESUMO - W1 STOREFRONT NAV BUTTONS A11Y + DEFENSIVE:
+- AUDIT nav.tsx (root global storefront): 4 botoes UI sem type='button'
+- Bug latente: default HTML5 <button> = type='submit'
+  -> Se nav renderizado dentro de form (raro mas possivel), click submita
+- Pattern V8 Regra 23: type='button' explicit em todos botoes nao-submit
+- FIXES nav.tsx (4 botoes):
+  * Search icon button: type='button' + aria-hidden + focus-visible:outline
+  * Cart icon button: type='button' + aria-hidden + focus-visible:outline
+  * Mobile menu hamburger: type='button' + aria-hidden + focus-visible:outline
+  * Drawer close (X): type='button' (X aria-hidden ja existia)
+- 4 icones decorativos com aria-hidden=true (ruido SR resolvido)
+- 3 botoes com focus-visible:outline-magenta (keyboard nav UX)
+- BUILD storefront OK + service converged
+- COMMIT fc09191 pushed GitHub main + deployed prod
 
 W7 PASS 155 RESUMO - W4 ADMIN FILTERS A11Y:
 - AUDIT W18 cache hit ratio + W14 schema:
