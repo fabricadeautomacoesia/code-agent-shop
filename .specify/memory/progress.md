@@ -25409,3 +25409,92 @@ PROXIMA ITER:
 - W13 notification: digest weekly
 - W4 admin: real-time KPI freshness
 - VPS SSH unblock URGENTISSIMO (77 ciclos - 25.7h!!!)
+
+============================================================
+PASS 245 (2026-05-28) - W1 + W7 + W15 UX/REST/mobile
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W1 storefront: login banners persistente dismiss
+- W7 product-svc: /:slug/qna page cap response shape
+- W15 storefront: /conta/pedidos/[id] mobile header overflow
+
+============================================================
+1. W1 - login banners persistente UX
+============================================================
+FILE: apps/storefront/src/app/login/page.tsx:52-69
+
+PROBLEMA:
+- ?registered=1 e ?reset=1 query params persistiam banners verdes
+- User digita credenciais + clica Entrar -> erro vermelho aparece
+- Banner verde sucesso ANTERIOR continua no topo + erro embaixo
+- UX confuso: 2 banners simultaneos (sucesso + erro)
+- Banner verde so dismissa quando user navega fora da page
+
+POST-FIX:
+- Gate {justRegistered && !email && !password && ...}
+- Mesma logica passwordReset
+- User comecou digitar = sinal intent login = success ja foi acknowledged
+- Banner desaparece progressivamente conforme digitacao
+
+============================================================
+2. W7 - /:slug/qna page cap response
+============================================================
+FILE: services/product-svc/src/routes/public.js:975-984
+
+PROBLEMA:
+- User solicita ?page=99999 mas total=10
+- Response: { qna: [], page: 99999, has_more: false }
+- Frontend pagination renderizava "Pagina 99999 de 1" - UX broken
+- Cache 60s ainda armazenava esse response invalido
+
+POST-FIX:
+- requestedPage = parseInt() max(1)
+- maxPage = total>0 ? Math.ceil(total/lim) : 1
+- effectivePage = Math.min(requestedPage, maxPage)
+- Response.page reflete max real, nao solicitado bizarro
+
+============================================================
+3. W15 - /conta/pedidos/[id] mobile header overflow
+============================================================
+FILE: apps/storefront/src/app/conta/pedidos/[id]/page.tsx:69-77
+
+PROBLEMA:
+- Header: flex items-center justify-between (sem flex-wrap)
+- order_number "CAS-2026-001234" text-3xl ~190px
+- Status badge "Aguardando pagto" ~140px
+- Padding container 24px * 2 = 48px
+- Total 378px contra mobile 375px = overflow horizontal scroll
+- Pattern PDP (pass 4) ja usava break-words + sm:text-3xl
+
+POST-FIX:
+- flex-wrap items-start justify-between gap-3
+- min-w-0 flex-1 no <div> esquerdo (permite shrink)
+- text-2xl sm:text-3xl + break-words
+- flex-shrink-0 no badge (mantem visivel sempre)
+- aria-hidden no decorative icon
+
+============================================================
+SUMARIO PASS 245
+============================================================
+Files: 3 modificados
+  - apps/storefront/src/app/login/page.tsx (banners gates)
+  - services/product-svc/src/routes/public.js (qna page cap)
+  - apps/storefront/src/app/conta/pedidos/[id]/page.tsx (mobile header)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (78 ciclos - 26h sem deploy).
+Migs 069+070+071+072+073 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_product-svc --force
+- W1 test: registrar conta -> /login?registered=1 -> digitar email
+  Banner verde desaparece (era persistente)
+- W7 test: curl /api/products/X/qna?page=99999 -> response.page = max real
+- W15 test: iPhone SE 375px /conta/pedidos/CAS-2026-001234
+  Header sem overflow horizontal - badge sempre visivel
+
+PROXIMA ITER:
+- W2 checkout: empty state CTAs (ja feito pass 229)
+- W4 admin: bulk QA action selector
+- VPS SSH unblock URGENTISSIMO (78 ciclos - 26h)

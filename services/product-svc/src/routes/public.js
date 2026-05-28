@@ -974,10 +974,17 @@ router.get('/:slug/qna',
 
   const total = r.rows[0]?._total ?? 0;
   const qna = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
+  // FIX-WORKER-7 pass 245 (page cap response): se user solicita page=99999
+  // mas total=10, response retornava qna=[] + page:99999 + has_more:false.
+  // Frontend renderizava "Pagina 99999 de 1" - UX confuso.
+  // POST-FIX: cap page no total real (max(1, ceil(total/lim))).
+  const requestedPage = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const maxPage = total > 0 ? Math.ceil(total / lim) : 1;
+  const effectivePage = Math.min(requestedPage, maxPage);
 
   res.json({
     qna,
-    total, limit: lim, page: Math.max(parseInt(req.query.page, 10) || 1, 1),
+    total, limit: lim, page: effectivePage,
     has_more: (off + qna.length) < total,
     answered_only: answeredOnly,
   });

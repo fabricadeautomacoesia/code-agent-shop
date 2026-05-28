@@ -50,7 +50,13 @@ function LoginInner() {
       <p className="text-white/60 mb-8">Acesse sua conta no Code & Agent Shop</p>
 
       {/* FIX-WORKER-1: banners de sucesso pos-registro / pos-reset (antes eram silenciosos) */}
-      {justRegistered && (
+      {/* FIX-WORKER-1 pass 245 (banner UX): banners persistiam ate user navegar fora.
+          Apos digitar credenciais + tentar login, banner verde sucesso ficava no
+          topo competindo com error banner inferior. UX confuso (sucesso + erro).
+          POST-FIX: banners desaparecem apos user digitar email ou password (sign
+          of intent to login - sucesso anterior nao precisa mais de visibilidade).
+          Implementacao: && !email && !password gates. */}
+      {justRegistered && !email && !password && (
         <div role="status" className="mb-6 flex items-start gap-3 p-4 rounded-lg bg-green-500/10 border border-green-500/30">
           <CheckCircle className="w-5 h-5 text-green-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
           <div className="text-sm">
@@ -59,7 +65,7 @@ function LoginInner() {
           </div>
         </div>
       )}
-      {passwordReset && (
+      {passwordReset && !email && !password && (
         <div role="status" className="mb-6 flex items-start gap-3 p-4 rounded-lg bg-green-500/10 border border-green-500/30">
           <CheckCircle className="w-5 h-5 text-green-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
           <div className="text-sm">

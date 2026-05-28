@@ -66,13 +66,20 @@ export default function PedidoPage() {
     <div className="container mx-auto px-6 py-8 max-w-3xl">
       <Link href="/conta" className="text-sm text-white/60 hover:text-white">&larr; Voltar para conta</Link>
 
-      <div className="flex items-center justify-between mt-4 mb-8">
-        <div>
-          <h1 className="font-display font-bold text-3xl">Pedido {order.order_number}</h1>
+      {/* FIX-WORKER-15 pass 245 (mobile 375px overflow):
+          Header tinha flex items-center justify-between sem flex-wrap. Em mobile
+          375px com order_number longo "CAS-2026-001234" (~190px text-3xl) +
+          status badge "Aguardando pagto" (~140px) + padding container 24px*2 =
+          ~378px contra viewport 375px = overflow horizontal scroll.
+          POST-FIX: flex-wrap + gap-3 + items-start (alinhar topo) + text-2xl
+          sm:text-3xl (mobile menor) - same pattern do PDP (pass 4 product/[slug]). */}
+      <div className="flex flex-wrap items-start justify-between gap-3 mt-4 mb-8">
+        <div className="min-w-0 flex-1">
+          <h1 className="font-display font-bold text-2xl sm:text-3xl break-words">Pedido {order.order_number}</h1>
           <p className="text-white/60 text-sm">{new Date(order.created_at).toLocaleString('pt-BR')}</p>
         </div>
-        <span className={`px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-2 ${badge.cls}`}>
-          <badge.Icon className="w-4 h-4" /> {badge.label}
+        <span className={`px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-2 flex-shrink-0 ${badge.cls}`}>
+          <badge.Icon className="w-4 h-4" aria-hidden="true" /> {badge.label}
         </span>
       </div>
 
