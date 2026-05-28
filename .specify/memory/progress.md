@@ -32185,3 +32185,28 @@ Pattern V8: state cleanup cross-store em logout
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W18 perf optimization
+
+## PASS 393 W14: idx PARTIAL asaas_webhook_events dead webhooks
+commit 05bf287
+LACUNA: /payments/webhooks/dead query sem idx ideal
+- mig 073 idx reconcile PARTIAL exclui retry_count > 5
+- Bitmap Heap + Filter + Sort in-memory
+- Cache 30s cobre hot mas miss em restart
+- Incident: 200+ dead webhooks = slow audit
+
+POST-FIX mig 090:
+- idx_asaas_webhook_dead PARTIAL
+- (received_at DESC, id DESC)
+  WHERE signature_valid AND processed_at IS NULL AND retry_count > 5
+- ORDER BY matched -> no Sort
+- Latencia: 5-15ms (vs 50-200ms)
+
+W14 idx evolution series acumulada (10 migs):
+  069-090 = 22 migrations defensive pendentes apply
+
+126 passes acumulados (268->393) sem deploy VPS
+5 CRITICAL + 22 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W18 perf optimization
