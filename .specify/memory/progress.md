@@ -32315,3 +32315,36 @@ W6 env-driven URL consolidation:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 398 W7 PRODUCT-SVC: stars_breakdown reviews agg (MLB histogram)
+commit 7e9d15a
+BUG /:slug/reviews sem stars_breakdown
+PRE-FIX:
+- Response so reviews paginated + total
+- Frontend PDP precisa: '70% 5⭐ | 20% 4⭐...'
+- Client reduce so cobre subset pagina (% errado)
+
+POST-FIX:
+- Agg query secondary 5-bucket COUNT FILTER
+- stars_5/4/3/2/1 + avg_rating
+- Filter is_hidden=FALSE paridade lista
+- 1 query extra ~5ms (idx_reviews_product cobre)
+- Response: stars_breakdown + avg_rating cross-page
+
+Pattern V8 paridade pass 373 seller KPI
+Server-side aggregate em listing endpoints
+Frontend calcula percentages = bucket / total * 100
+
+W7 public reviews completo:
+  pass 75 (5 BUGS pattern W7)
+  pass 187 COUNT OVER
+  pass 260 page cap parity
+  pass 298 cache key norm
+  pass 398 stars_breakdown <- ESTE
+
+131 passes acumulados (268->398) sem deploy VPS
+5 CRITICAL + 22 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Frontend PDP usar stars_breakdown (UI histogram)
