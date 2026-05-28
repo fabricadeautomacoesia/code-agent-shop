@@ -17361,7 +17361,25 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Seller dashboard 6 titles especificos (pass 141)
 - ✅ /conta/downloads/[token] generateMetadata dinamico + DLP (pass 142)
 - ✅ Migration 055 idx user_sessions active composite (pass 143)
-- ✅ Migration 056 drop hardcoded rolling indices (pass 144 esta iter)
+- ✅ Migration 056 drop hardcoded rolling indices (pass 144)
+- ✅ Seller upload form a11y 14 inputs (pass 145 esta iter)
+
+W7 PASS 145 RESUMO - W5 SELLER UPLOAD FORM A11Y MASSIVE:
+- AUDIT /upload page (seller dashboard): 14 inputs SEM htmlFor/id (WCAG 1.3.1)
+- Impacto critico: vendedor com screen reader NAO podia identificar campos
+  ao cadastrar novo produto -> exclusao acessibilidade
+- FIXES (14 ids especificos):
+  * Identidade: up-title, up-subtitle, up-category, up-kind, up-shortdesc, up-desc
+  * Tecnico: up-techstack, up-apikeys, up-install, up-installmin
+  * Preco/Licenca: up-price (inputMode='numeric'), up-license
+  * Midia: up-cover, up-pkg (file inputs)
+- BONUS a11y:
+  * 'Enviando...' status com role='status' + aria-live='polite'
+  * ImageIcon aria-hidden (decorativo)
+  * inputMode='numeric' em price + installmin (mobile keyboard adequado)
+- BUILD dashboard-seller OK + service converged
+- 5 forms a11y compliant total: QnaForm+ReviewForm+Register+Checkout+SellerUpload
+- COMMIT 65e08dc pushed GitHub main + deployed prod
 
 W7 PASS 144 RESUMO - W18 DROP product_views HARDCODED indices:
 - AUDIT pg_indexes detectou 2 idx com timestamp LITERAL anti-pattern:
