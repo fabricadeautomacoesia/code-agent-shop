@@ -22373,3 +22373,77 @@ PROXIMA ITER:
 - W17: vault-svc seller BYOK endpoints
 - W14: audit fn_refresh_seller_reputation perf (loop seller eh O(N))
 - 🚨 VPS SSH unblock URGENTE (41 ciclos - ~13.7h sem deploy!)
+
+PASS 209 (W4 admin MV KPI Refresh dashboard) - 2026-05-28:
+- W4 frontend admin page /admin/mv-kpi-refresh consumindo pass 208 endpoint
+
+ARQUIVOS CRIADOS (3 files, +255/-1):
+- apps/dashboard-admin/src/app/mv-kpi-refresh/layout.tsx (Metadata + noindex)
+- apps/dashboard-admin/src/app/mv-kpi-refresh/page.tsx (255 lines)
+- apps/dashboard-admin/src/app/layout.tsx (+ RefreshCw icon + NAV entry)
+
+UI FEATURES:
+
+1. 3 stat cards top (grid md:grid-cols-3):
+   - Sucesso 7d (green-400)
+   - Falhas 7d (red-400)
+   - Ultimo sucesso (timestamp + duration_ms)
+
+2. Action button trigger:
+   - 'Disparar REFRESH agora' com confirmDialog warning operacao pesada
+   - Loading state com Refresh icon animate-spin
+   - duration_ms feedback no msg sucesso (~500-2000ms tipico)
+   - Detect 429 rate-limit friendly UX (5/h backend)
+
+3. Historico table ultimos 30 events:
+   - Timestamp + tipo (Manual badge magenta / Cron badge blue)
+   - Severity badge cor por nivel (info/warn/error/critical)
+   - Duration ms (cron payload tem refresh_duration_ms + cron_duration_ms)
+   - Sellers count (ok/total para cron)
+   - Actor user_id slice (cron = 'cron' label)
+
+a11y patterns:
+- role='status'/'alert' em msg/erro banners
+- aria-label dinamico em buttons (Disparar, Atualizar, fechar)
+- aria-hidden='true' em icones decorativos (RefreshCw/Clock/AlertTriangle)
+- focus-visible:outline-2 cor contextual (magenta/green/red)
+- aria-live='polite' em msg success
+
+Fetch strategy:
+- Combine 4 audit_log queries:
+  1. action='mv_seller_kpi.refresh' (success cron)
+  2. action='mv_seller_kpi.refresh.fail' (fail cron)
+  3. action='mv_seller_kpi.refresh.manual' (success manual)
+  4. action='mv_seller_kpi.refresh.manual.fail' (fail manual)
+- Concat + sort created_at DESC + slice top 30
+- Re-fetch apos manual trigger (1s delay p/ audit_log settle)
+
+USE CASES dashboard admin:
+- Apos mass platform-take admin clica refresh
+- Apos pagamento payout grande
+- Investigacao admin: KPI parece errado, force refresh
+- Monitoramento: cron noturno OK? Quantas falhas semana?
+
+NAV admin agora 15 entries:
+- Visao Geral / Sellers / Produtos / QA Queue / Pedidos / Saques /
+  Denuncias / Alertas / Vault / Webhooks / Audit Log / Disputas /
+  DB Audit / LLM Cost / MV KPI Refresh (NEW)
+
+Commit 8339fb4 pushed origin/main
+VPS SSH ainda bloqueado (42 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (42 ciclos):
+- 168-208: documentados
+- 209: admin /mv-kpi-refresh dashboard frontend
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-admin --force
+- Acessar: https://admin.inovareinteligenciaartificial.com/mv-kpi-refresh
+- Click 'Disparar REFRESH agora' -> confirmDialog -> 200 OK ~500-2000ms
+- Historico mostra entry imediato (cron + manual eventos)
+
+PROXIMA ITER:
+- W17: vault-svc seller BYOK endpoints
+- W14: fn_refresh_seller_reputation perf audit (loop O(N))
+- W18: cache /api/auth/me (admin polling auth status)
+- 🚨 VPS SSH unblock URGENTE (42 ciclos - 14h sem deploy!)
