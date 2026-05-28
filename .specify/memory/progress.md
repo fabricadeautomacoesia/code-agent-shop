@@ -17332,7 +17332,27 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Rewrites PT-BR /loja + /produto + descobrindo URLs reais dashboards (pass 112)
 - ✅ Audit E2E cart + MLB features prod (pass 113) - 0 bugs novos
 - ✅ Rebuild dashboard-admin + dashboard-seller (pass 114) - 6 pages admin ressurgiram
-- ✅ Fix /conta link Downloads + audit admin pages (pass 115 esta iter)
+- ✅ Fix /conta link Downloads + audit admin pages (pass 115)
+- ✅ Audit visual/UX + Fix OG layout completo (pass 116 esta iter)
+
+W7 PASS 116 RESUMO - AUDIT VISUAL + OG COMPLETO:
+- Audit visual 10 pages prod via curl + heuristic regex:
+  * Buttons sem hover: false positive (btn-primary/ghost CSS class)
+  * A11y inputs: SSR client-only nas pages auth (renderiza no browser)
+  * Tabs PDP: aria-selected funciona corretamente
+- BUG REAL detectado: layout.tsx openGraph faltava 'images' explicit
+  * Grep meu inicial pegava so og:title|description|image -> 1/3
+  * Mas faltava REAL: og:url, og:site_name, og:locale, og:image:width/height
+- FIX layout.tsx openGraph completo:
+  * + images array com /opengraph-image (Next 16 auto-route)
+  * + width/height/alt p/ Twitter Card validator
+  * + description estendida com keywords (260 chars)
+  * + url canonical
+- VALIDATION POS-DEPLOY:
+  * 11 og:* tags no HTML (era 1)
+  * og:image apontando /opengraph-image route auto-gen PNG
+  * twitter:card summary_large_image + 3 twitter:* tags
+- Pattern W7 em 145+ endpoints/pages LIVE - 116 micro-iters
 
 W7 PASS 115 RESUMO - AUDIT ADMIN PAGES + FIX LINK QUEBRADO:
 - Audit 7 admin pages novas (criadas pass 114):
