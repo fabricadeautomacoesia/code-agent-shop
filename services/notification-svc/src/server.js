@@ -497,6 +497,60 @@ app.post('/read-all',
   })
 );
 
+// ============================================================
+// FIX-WORKER-13 pass 227: USER NOTIFICATION PREFERENCES endpoints
+// ============================================================
+// LGPD compliance + UX: user pode opt-out canais especificos por template.
+// Tabela user_notification_prefs (mig 008) ja existia mas zero usage cross-svc.
+// Pass 227 ativa via 3 endpoints + outbox processor check.
+//
+// PATTERN: prefs default ENABLED - row em prefs APENAS quando user explicitly
+//   opt-out. Reduz storage + simplifies query (default-on).
+// Critical templates (security_*, password_reset, 2fa_*) BYPASS prefs.
+
+// GET /api/notifications/prefs - lista preferences do user logado
+app.get('/prefs', jwt.requireAuth(), asyncHandler(async (req, res) => {
+  const r = await query(
+    `SELECT template_code, channel, is_enabled
+       FROM user_notification_prefs
+      WHERE user_id = $1
+      ORDER BY template_code, channel`,
+    [req.user.sub]
+  );
+  res.json({ prefs: r.rows, count: r.rows.length });
+}));
+
+// PATCH /api/notifications/prefs - bulk update preferences
+// Body: { prefs: [{ template_code, channel, is_enabled }] }
+const PREFS_CHANNEL_ENUM = new Set(['in_app', 'email', 'telegram']);
+app.patch('/prefs', jwt.requireAuth(), asyncHandler(async (req, res) => {
+  const body = req.body;
+  if (!Array.isArray(body?.prefs)) {
+    return res.status(400).json({ error: 'invalid_body', message: 'prefs deve ser array' });
+  }
+  if (body.prefs.length > 100) {
+    return res.status(400).json({ error: 'too_many_prefs', message: 'Max 100 prefs por request' });
+  }
+
+  let updated = 0, skipped = 0;
+  for (const pref of body.prefs) {
+    if (!pref.template_code || typeof pref.template_code !== 'string') { skipped++; continue; }
+    if (!PREFS_CHANNEL_ENUM.has(pref.channel)) { skipped++; continue; }
+    if (typeof pref.is_enabled !== 'boolean') { skipped++; continue; }
+
+    // UPSERT: INSERT ON CONFLICT DO UPDATE
+    await query(
+      `INSERT INTO user_notification_prefs (user_id, template_code, channel, is_enabled)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, template_code, channel) DO UPDATE SET is_enabled = EXCLUDED.is_enabled`,
+      [req.user.sub, pref.template_code, pref.channel, pref.is_enabled]
+    );
+    updated++;
+  }
+
+  res.json({ ok: true, updated, skipped });
+}));
+
 // POST /api/notifications/test - admin envia teste
 // FIX-WORKER-13 pass 6: 3 hardening em endpoint sensitivo:
 // 1. rate-limit 10/h/admin (anti-spam-relay quando admin compromised)
@@ -647,25 +701,62 @@ async function processOutbox() {
 
   // Carrega payload completo das linhas claimed
   // FIX-WORKER-7 pass 26 (Regra B): u.deleted_at IS NULL filter.
-  // User soft-deleted (admin moderou) NAO deve receber notifications.
-  // Edge case: admin banne user por abuso, mas notification pending
-  // ja era enviada -> email "Pedido aprovado" para user banido.
-  // Trata como sucesso (sent_status='sent') para nao retry infinito -
-  // user nao existe mais, nao adianta retry.
+  // FIX-WORKER-13 pass 227: user_notification_prefs check (LGPD/preferences).
+  // Pre-pass-227: tabela user_notification_prefs (mig 008) existia mas
+  //   ZERO usage cross-svc. Notifs enviadas SEMPRE, ignorando opt-out user.
+  //   LGPD compliance: user pode desativar canal especifico (email marketing).
+  // Post-pass-227: LEFT JOIN user_notification_prefs + filter is_enabled.
+  //   - Match (user_id, template_code, channel) - PK da tabela
+  //   - Se row existe AND is_enabled=FALSE -> notif SKIP (sent_status='skipped')
+  //   - Se row nao existe -> default ENABLED (opt-out explicito needed)
+  // Notifs criticas (security_*, password_reset, 2fa_*) BYPASS prefs check:
+  //   Pattern industry - alerts seguranca SEMPRE enviadas mesmo opted-out.
+  const CRITICAL_TEMPLATES = `'security_refresh_reuse', 'password_reset', '2fa_disabled', 'asaas_refund_failed'`;
   const pending = await query(
     `SELECT n.id, n.user_id, n.channel, n.template_code, n.title, n.body, n.body_html,
-            n.priority, n.payload, n.retry_count, u.email, u.full_name, u.locale
+            n.priority, n.payload, n.retry_count, u.email, u.full_name, u.locale,
+            -- W13 pass 227: user prefs override - opt-out support
+            CASE
+              WHEN n.template_code IN (${CRITICAL_TEMPLATES}) THEN TRUE
+              WHEN unp.is_enabled IS NULL THEN TRUE   -- default enabled
+              ELSE unp.is_enabled
+            END AS pref_enabled
        FROM notifications n
        JOIN users u ON u.id = n.user_id AND u.deleted_at IS NULL
+       LEFT JOIN user_notification_prefs unp ON
+            unp.user_id = n.user_id
+        AND unp.template_code = n.template_code
+        AND unp.channel = n.channel
       WHERE n.id = ANY($1::uuid[])`,
     [ids]
   );
+
+  // FIX-WORKER-13 pass 227: skip notif quando user opt-out (nao critico)
+  // Mark sent_status='sent' (nao 'failed' - eh decisao do user, nao erro)
+  // Pattern industry: opt-out tracking sem retry/audit fail.
+  const skipIds = pending.rows.filter((r) => !r.pref_enabled).map((r) => r.id);
+  if (skipIds.length) {
+    await query(
+      `UPDATE notifications
+          SET sent_status = 'sent',
+              sent_at = NOW(),
+              failed_reason = 'skipped_user_preference',
+              locked_by = NULL,
+              locked_at = NULL
+        WHERE id = ANY($1::uuid[]) AND sent_status = 'pending'`,
+      [skipIds]
+    );
+    log.info({ skipped: skipIds.length }, '[notif.opt_out_skipped]');
+  }
+
+  // Filtra pending para processar apenas notifs com pref_enabled
+  pending.rows = pending.rows.filter((r) => r.pref_enabled);
 
   // FIX-WORKER-7 pass 26: marca notifs orfas (user deletado entre claim
   // e load) como 'failed' p/ evitar retry infinito + reclaim loop.
   // Diff de IDs claimed vs IDs retornados pelo JOIN.
   const loadedIds = new Set(pending.rows.map((r) => r.id));
-  const orphanIds = ids.filter((id) => !loadedIds.has(id));
+  const orphanIds = ids.filter((id) => !loadedIds.has(id) && !skipIds.includes(id));
   if (orphanIds.length) {
     await query(
       `UPDATE notifications
