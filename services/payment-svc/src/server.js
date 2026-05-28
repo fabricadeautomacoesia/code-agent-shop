@@ -1448,6 +1448,20 @@ async function reconcileWebhooks() {
     //   -> retry_count atinge 5 (terminal) 2x mais rapido que esperado.
     //   Pattern qa-svc/timeoutStuckRuns (pass 240) consolidado: claim atomico
     //   via SELECT FOR UPDATE SKIP LOCKED -> cada replica pega lote distinto.
+    //
+    // FIX-WORKER-11 pass 409 (idempotent UPDATE guard - fix race sem lock 5min):
+    //   PRE-FIX pass 244: SELECT FOR UPDATE SKIP LOCKED autocommit libera
+    //   lock imediato pos-query. Race retry_count++ persiste em replicas.
+    //   Tentou-se wrap tx() mas processWebhookEvent dentro tx = pool exhaustion
+    //   (5min tx hold em payment-svc com 2-3 connections cada replica).
+    //   POST-FIX: manter SELECT autocommit (lock window minimo, ~ms) +
+    //   adicionar idempotent UPDATE guard com WHERE clause restrictive.
+    //   UPDATE retry_count += 1 WHERE retry_count = $3 (val antigo lido)
+    //   - Replica A: SELECT row retry=2 -> UPDATE retry=2 (OK +1=3)
+    //   - Replica B: SELECT mesma row retry=2 -> UPDATE retry=2 (rowCount=0
+    //     pois A ja moveu para 3) -> noop
+    //   Same pattern em UPDATE processed_at = NOW() WHERE processed_at IS NULL
+    //   (already implementado em pass 21 outros endpoints).
     const r = await query(
       `SELECT id, payload, retry_count
          FROM asaas_webhook_events
@@ -1469,22 +1483,34 @@ async function reconcileWebhooks() {
         const orderLink = evt.payment?.id
           ? await query('SELECT id FROM orders WHERE asaas_payment_id = $1', [evt.payment.id]).catch(() => ({ rows: [] }))
           : { rows: [] };
+        // FIX-WORKER-11 pass 409 (idempotent UPDATE guard - race-safe sem lock window):
+        //   PRE-FIX: WHERE id=$1 sem retry_count guard
+        //   - 2 replicas processam mesma row em paralelo (lock SELECT autocommit
+        //     releases immediately)
+        //   - Ambas UPDATE processed_at = NOW() em sucesso = OK idempotent
+        //   - MAS em fail path: ambas UPDATE retry_count += 1 -> double increment
+        //   POST-FIX: WHERE id=$N AND processed_at IS NULL
+        //   - Idempotent guard: replica B skip se A ja marcou processed
+        //   - Race condition + double-increment retry_count ELIMINADO
+        //   - Pattern V8 W11 paridade orders/asaas_payment_id UPDATE (pass 21)
         await query(
           `UPDATE asaas_webhook_events
               SET processed_at = NOW(),
                   order_id = COALESCE(order_id, $1::UUID),
                   processing_error = NULL
-            WHERE id = $2`,
+            WHERE id = $2 AND processed_at IS NULL`,
           [orderLink.rows[0]?.id || null, row.id]
         );
         log.info({ webhook_id: row.id, attempt: row.retry_count + 1 }, '[reconcile.ok]');
       } catch (e) {
+        // FIX pass 409: idempotent guard retry_count - evita double-increment race
         await query(
           `UPDATE asaas_webhook_events
               SET processing_error = $1,
                   retry_count = retry_count + 1
-            WHERE id = $2`,
-          [/* FIX pass 345 DLP */ mask.text(String(e.message || '').slice(0, 500)), row.id]
+            WHERE id = $2 AND processed_at IS NULL AND retry_count = $3`,
+          [/* FIX pass 345 DLP */ mask.text(String(e.message || '').slice(0, 500)),
+           row.id, row.retry_count]
         ).catch(() => {});
         log.warn({ webhook_id: row.id, /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[reconcile.fail]');
       }
