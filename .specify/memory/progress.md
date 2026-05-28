@@ -30469,3 +30469,45 @@ PROXIMA ITER:
 - W4 audit /admin/:id/archive optional() body padronizar
 - W7 product-svc upload routes
 - VPS SSH unblock URGENTISSIMO (169 ciclos - 56.3h)
+
+
+============================================================
+PASS 337 - 2026-05-28 - W5 seller loja form maxLength frontend/backend alignment
+============================================================
+Files: 1 modificado
+  - apps/dashboard-seller/src/app/loja/page.tsx (5 maxLength + 1 counter)
+Lines: ~20 changed
+
+W5 (loja form HTML maxLength alinhado backend Zod):
+- PRE-FIX: 5 inputs SEM maxLength HTML5
+  - store_name (backend max 120)
+  - store_description (backend max 5000)
+  - store_banner_url (backend max 2048 pass 333)
+  - store_logo_url (backend max 2048 pass 333)
+  - asaas_pix_key (backend max 200)
+- User digita >limit -> submit -> backend Zod reject generic
+- POST-FIX:
+  - HTML maxLength alinhado (browser blocks typing >limit)
+  - minLength={3} em store_name (alinhado min(3))
+  - Counter visual em store_description (yellow > 4750)
+- Pattern V8 frontend/backend validation alignment
+
+Coverage maxLength dashboard-seller cumulative:
+- /reviews reply (pass 330)
+- /qna answer (pass 331)
+- /loja form 5 fields (pass 337)
+
+VPS SSH BLOQUEADO (170 ciclos - 56.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-seller --force
+- W5 verify /seller/loja:
+  - store_name typing 121 chars - bloqueado HTML5
+  - description 4750+ chars - counter yellow
+  - URLs 2048+ chars - bloqueado
+
+PROXIMA ITER:
+- W5 /upload form maxLength alignment (description min(50).max(30000) pass 332)
+- W5 /products/[id]/edit form maxLength alignment
+- VPS SSH unblock URGENTISSIMO (170 ciclos - 56.7h)

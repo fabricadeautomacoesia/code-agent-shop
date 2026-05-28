@@ -192,27 +192,35 @@ export default function LojaPage() {
       <form onSubmit={save} className="space-y-6">
         <section className="glass p-6 space-y-4">
           <h3 className="font-display font-bold text-lg">Identidade da loja</h3>
-          {/* FIX-WORKER-5 pass 146 (a11y): store form 5 inputs htmlFor + id */}
+          {/* FIX-WORKER-5 pass 337: maxLength alinhado com backend Zod (paridade pass 330/331).
+              Backend updateSchema:
+              - store_name max(120) | store_description max(5000)
+              - store_banner_url + store_logo_url max(2048)
+              - asaas_pix_key max(200) */}
           <div>
             <label htmlFor="loja-name" className="text-xs text-white/60 uppercase">Nome da loja</label>
             <input id="loja-name" value={form.store_name} onChange={(e) => setForm({...form, store_name: e.target.value})}
-              autoComplete="organization"
+              autoComplete="organization" maxLength={120} minLength={3}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
           </div>
           <div>
             <label htmlFor="loja-desc" className="text-xs text-white/60 uppercase">Descricao</label>
             <textarea id="loja-desc" value={form.store_description} onChange={(e) => setForm({...form, store_description: e.target.value})} rows={4}
+              maxLength={5000}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
+            <div className={`text-[10px] text-right mt-1 ${
+              (form.store_description?.length || 0) > 4750 ? 'text-yellow-400' : 'text-white/30'
+            }`}>{form.store_description?.length || 0}/5000</div>
           </div>
           <div className="grid md:grid-cols-2 gap-3">
             <div>
               <label htmlFor="loja-banner" className="text-xs text-white/60 uppercase">URL banner</label>
-              <input id="loja-banner" type="url" inputMode="url" value={form.store_banner_url} onChange={(e) => setForm({...form, store_banner_url: e.target.value})}
+              <input id="loja-banner" type="url" inputMode="url" maxLength={2048} value={form.store_banner_url} onChange={(e) => setForm({...form, store_banner_url: e.target.value})}
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono text-xs" />
             </div>
             <div>
               <label htmlFor="loja-logo" className="text-xs text-white/60 uppercase">URL logo</label>
-              <input id="loja-logo" type="url" inputMode="url" value={form.store_logo_url} onChange={(e) => setForm({...form, store_logo_url: e.target.value})}
+              <input id="loja-logo" type="url" inputMode="url" maxLength={2048} value={form.store_logo_url} onChange={(e) => setForm({...form, store_logo_url: e.target.value})}
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono text-xs" />
             </div>
           </div>
@@ -223,7 +231,7 @@ export default function LojaPage() {
           <div>
             <label htmlFor="loja-pix" className="text-xs text-white/60 uppercase">Chave PIX</label>
             <input id="loja-pix" value={form.asaas_pix_key} onChange={(e) => setForm({...form, asaas_pix_key: e.target.value})}
-              autoComplete="off"
+              autoComplete="off" maxLength={200}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
           </div>
           <label className="flex items-start gap-3 text-sm">
