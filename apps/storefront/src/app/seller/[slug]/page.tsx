@@ -107,7 +107,7 @@ export default async function SellerPage({ params }: { params: Promise<{ slug: s
             <div className="flex flex-wrap gap-6 text-sm text-white/60">
               <span className="flex items-center gap-2"><Package className="w-4 h-4" /> {seller.total_products_active || 0} produtos</span>
               <span className="flex items-center gap-2"><TrendingUp className="w-4 h-4" /> {seller.total_sales || 0} vendas</span>
-              {seller.avg_rating && <span className="flex items-center gap-2"><Star className="w-4 h-4 fill-yellow-400 text-yellow-400" /> {Number(seller.avg_rating).toFixed(1)}</span>}
+              {seller.avg_rating && <span className="flex items-center gap-2"><Star className="w-4 h-4 fill-yellow-400 text-yellow-400" aria-hidden="true" /> {Number(seller.avg_rating).toFixed(1)}</span>}
               <span className="flex items-center gap-2"><Calendar className="w-4 h-4" /> desde {new Date(seller.created_at).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}</span>
               <span className="font-mono text-xs">score {seller.reputation_score}</span>
             </div>

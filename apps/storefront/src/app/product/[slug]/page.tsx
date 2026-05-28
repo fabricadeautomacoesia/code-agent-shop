@@ -182,7 +182,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             {/* FIX-WORKER-15 pass 4: flex-wrap evita overflow horizontal em 375px com
                 review_count + sales_count grandes (ex: "4.8 (127 reviews) | 412 vendas"). */}
             <div className="flex items-center gap-3 mb-6 text-sm flex-wrap">
-              <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+              <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" aria-hidden="true" />
               <span className="font-semibold">{product.avg_rating ? Number(product.avg_rating).toFixed(1) : '-'}</span>
               <span className="text-white/40">({product.review_count} reviews)</span>
               <span className="text-white/40 hidden sm:inline">|</span>

@@ -67,7 +67,7 @@ export function RecentlyViewed() {
               </h3>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1 text-xs">
-                  <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
+                  <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" aria-hidden="true" />
                   <span className="font-semibold">{p.avg_rating ? Number(p.avg_rating).toFixed(1) : '-'}</span>
                 </div>
                 <div className="font-display font-bold text-sm text-magenta-glow">

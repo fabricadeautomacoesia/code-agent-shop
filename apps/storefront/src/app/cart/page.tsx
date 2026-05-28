@@ -258,7 +258,7 @@ export default function CartPage() {
               )}
               {cart?.loyalty_discount_cents > 0 && (
                 <div className="flex justify-between text-magenta-glow">
-                  <span className="flex items-center gap-1"><Star className="w-3 h-3" /> {cart.loyalty_points_redeemed} pts</span>
+                  <span className="flex items-center gap-1"><Star className="w-3 h-3" aria-hidden="true" /> {cart.loyalty_points_redeemed} pts</span>
                   <span>- {Api.formatBRL(cart.loyalty_discount_cents)}</span>
                 </div>
               )}
@@ -268,7 +268,7 @@ export default function CartPage() {
             {loyalty && Number(loyalty.points_balance) >= 500 && (
               <div className="rounded-lg border border-magenta/30 bg-magenta/5 p-3 mb-4">
                 <div className="flex items-center gap-2 text-xs font-bold text-magenta mb-2">
-                  <Star className="w-3.5 h-3.5" /> CAS PONTOS
+                  <Star className="w-3.5 h-3.5" aria-hidden="true" /> CAS PONTOS
                 </div>
                 <div className="text-[11px] text-white/60 mb-2">
                   Saldo: <strong className="text-white">{Number(loyalty.points_balance).toLocaleString('pt-BR')}</strong> pts

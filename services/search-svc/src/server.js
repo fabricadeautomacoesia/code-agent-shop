@@ -452,14 +452,14 @@ app.get('/top-sellers/:category',
             p.is_platform_owned, p.published_at,
             s.store_slug, s.store_name, s.reputation_tier,
             ROW_NUMBER() OVER (
-              ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id
+              ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id DESC
             ) AS sales_rank
        FROM products p
        LEFT JOIN sellers s ON s.id = p.seller_id
       WHERE p.status IN ('approved','platform_owned')
         AND p.deleted_at IS NULL
         AND p.category_id = $1
-      ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id
+      ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id DESC
       LIMIT $2`, [cat.id, lim]
   );
   res.json({

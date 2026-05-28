@@ -26355,3 +26355,84 @@ PROXIMA ITER:
 - W8: aria-hidden nos 9 Stars restantes (PDP/comparar/cart-drawer/etc)
 - W4 admin: bulk select payouts
 - VPS SSH unblock URGENTISSIMO (88 ciclos - 29.3h!!!)
+
+============================================================
+PASS 256 (2026-05-28) - W8 + W12 + W10 a11y/docs/direction
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W8 storefront: aria-hidden em 9 Star icons restantes (pass 255 cleanup)
+- W12 qa-worker: misleading docstring sobre THRESHOLD
+- W10 search-svc: top-sellers/:category ORDER BY direction (parity pass 251)
+
+============================================================
+1. W8 - aria-hidden em 9 Star icons restantes
+============================================================
+FILES: 8 pages/components storefront
+
+PROBLEMA (consolidacao pass 255):
+- Pass 255 fix Star em product-card hot path
+- 9 outros Stars audit grep ainda sem aria-hidden:
+  cart/page.tsx (2), comparar/page.tsx, product/[slug]/page.tsx,
+  seller/[slug]/page.tsx, sellers/page.tsx, cart-drawer.tsx,
+  recently-viewed.tsx
+- NVDA/JAWS continuava anunciando "imagem Star" antes do rating
+
+POST-FIX: aria-hidden="true" em todos os Star decorativos.
+Pattern V8 a11y consolidado em todo storefront.
+
+============================================================
+2. W12 - docstring qa-worker misleading sobre THRESHOLD
+============================================================
+FILE: services/qa-worker/app/main.py:6
+
+PROBLEMA:
+- Comment: "Confidence threshold: padrão 0.80 (configurável QA_CONFIDENCE_THRESHOLD)"
+- Codigo NAO le QA_CONFIDENCE_THRESHOLD em qa-worker
+- Threshold aplicado em qa-svc/server.js linha 27 (callback handler)
+- Worker envia score literal 0.0-1.0; decisao approved/rejected fica com qa-svc
+
+POST-FIX: docstring clarifica responsabilidade
+- "Confidence threshold APLICADO em qa-svc, nao aqui"
+- Worker envia score literal LLM
+- qa-svc le QA_CONFIDENCE_THRESHOLD env default 0.80
+
+============================================================
+3. W10 - top-sellers/:category ORDER BY direction
+============================================================
+FILE: services/search-svc/src/server.js:455+462
+
+PROBLEMA (parity pass 251 W18):
+- 2x ORDER BY p.sales_count DESC, p.avg_rating DESC NULLS LAST,
+  p.published_at DESC NULLS LAST, p.id (sem DESC no id)
+- Mixed direction (DESC, DESC, DESC, ASC) - PG default ASC
+- Mass-insert produtos categoria mesmo timestamp -> ranking shifts
+  entre cache evictions
+- Pattern V8: tiebreaker SAME direction (DESC, DESC, DESC, DESC)
+
+POST-FIX:
+- p.id -> p.id DESC em ambos ORDER BY (window function + final)
+- Deterministic per-snapshot ordering
+
+============================================================
+SUMARIO PASS 256
+============================================================
+Files: 10 modificados
+  - 8 frontend (Star aria-hidden batch)
+  - services/qa-worker/app/main.py (docstring)
+  - services/search-svc/src/server.js (ORDER BY direction)
+Lines: ~30 changed
+
+VPS SSH BLOQUEADO (89 ciclos - 29.7h sem deploy).
+Migs 069-075 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_qa-worker cas_search-svc --force
+- W8: NVDA navegar /cart /product /comparar /sellers /seller/X /conta/pontos
+  Anuncia rating SEM "imagem Star" em todas pages
+- W10: EXPLAIN ANALYZE top-sellers/:category - sort step deterministic
+
+PROXIMA ITER:
+- W4 admin: bulk select payouts UI
+- W13 notification: digest aggregation cron
+- VPS SSH unblock URGENTISSIMO (89 ciclos - 29.7h!!!)

@@ -187,7 +187,7 @@ export default async function CompararPage({ searchParams }: { searchParams: Pro
               {products.map((p: any) => (
                 <td key={p.id} className="p-3">
                   <div className="flex items-center gap-1">
-                    <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+                    <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" aria-hidden="true" />
                     <span className="font-bold">{p.avg_rating ? Number(p.avg_rating).toFixed(1) : '-'}</span>
                     <span className="text-xs text-white/40">({p.review_count})</span>
                   </div>

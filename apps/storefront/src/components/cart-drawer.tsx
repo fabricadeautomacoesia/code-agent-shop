@@ -169,7 +169,7 @@ export function CartDrawer() {
               {cart.loyalty_discount_cents > 0 && (
                 <div className="flex justify-between text-magenta-glow">
                   <span className="flex items-center gap-1">
-                    <Star className="w-3 h-3" /> {cart.loyalty_points_redeemed} pts
+                    <Star className="w-3 h-3" aria-hidden="true" /> {cart.loyalty_points_redeemed} pts
                   </span>
                   <span>- {Api.formatBRL(cart.loyalty_discount_cents)}</span>
                 </div>

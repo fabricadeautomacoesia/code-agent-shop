@@ -101,7 +101,7 @@ export default async function SellersPage({ searchParams }: { searchParams: Prom
               <div className="flex items-center justify-between text-xs text-white/50 pt-3 border-t border-white/5">
                 <span className="flex items-center gap-1"><Package className="w-3 h-3" /> {s.total_products_active || 0}</span>
                 <span>{s.total_sales || 0} vendas</span>
-                {s.avg_rating && <span className="flex items-center gap-1"><Star className="w-3 h-3 fill-yellow-400 text-yellow-400" /> {Number(s.avg_rating).toFixed(1)}</span>}
+                {s.avg_rating && <span className="flex items-center gap-1"><Star className="w-3 h-3 fill-yellow-400 text-yellow-400" aria-hidden="true" /> {Number(s.avg_rating).toFixed(1)}</span>}
               </div>
             </Link>
           ))}

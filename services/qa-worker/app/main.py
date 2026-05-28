@@ -3,7 +3,9 @@ QA Worker - Code & Agent Shop
 Pipeline: download pacote -> analise estatica -> LLM scoring -> callback qa-svc.
 
 Fallback LLM: OpenAI -> Gemini -> Groq (V8 23.7).
-Confidence threshold: padrão 0.80 (configurável QA_CONFIDENCE_THRESHOLD).
+Confidence threshold APLICADO em qa-svc (callback handler), nao aqui.
+qa-worker envia o score literal LLM (0.0-1.0) - decisao approved/rejected
+fica com qa-svc lendo QA_CONFIDENCE_THRESHOLD env (default 0.80).
 """
 from __future__ import annotations
 
