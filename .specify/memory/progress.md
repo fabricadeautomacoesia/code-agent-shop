@@ -17336,7 +17336,37 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Audit visual/UX + Fix OG layout completo (pass 116)
 - ✅ Audit perf+sec + Fix internal-token bypass (pass 117)
 - ✅ SEO metadata /sellers + /products enriquecida (pass 118)
-- ✅ Migration 048 DROP 2 indices orfaos APLICADA em prod (pass 119 esta iter)
+- ✅ Migration 048 DROP 2 indices orfaos APLICADA em prod (pass 119)
+- ✅ Migration 049 ADD 16 FK indices faltando APLICADA em prod (pass 120 esta iter)
+
+W7 PASS 120 RESUMO - W14 DB SCHEMA: 16 FK INDICES MISSING:
+- AUDIT pg_constraint vs pg_index em prod detectou 16 FKs sem cobertura:
+  * Causa table scans em DELETE/UPDATE cascade-check + JOINs auditoria
+- CREATED db/migrations/049_add_fk_indexes.sql:
+  * CREATE INDEX IF NOT EXISTS em 16 FKs criticas
+  * Partial WHERE em nullables (menor storage)
+  * ANALYZE em 14 tabelas pos-create
+  * Header com ROLLBACK plan
+- APPLIED via SSH em prod (postegresp2_postgres):
+  * Pre-state: 247 indices public
+  * 11 CREATE INDEX OK (5 ja existiam IF NOT EXISTS) + 14 ANALYZE OK
+  * Post-state: 263 indices (+16)
+  * INSERT em schema_migrations OK
+- INDICES ADICIONADOS:
+  * products.approved_by (admin force-approve audit)
+  * product_qa_runs.{product_version_id, triggered_by_user_id}
+  * cart_items.product_version_id (cart versioning)
+  * order_items.product_version_id (order history)
+  * coupons.created_by (admin audit)
+  * reports.{reporter_user_id, resolved_by}
+  * disputes.order_item_id + dispute_messages.sender_user_id
+  * product_reviews.reply_by_user_id (admin replies)
+  * sellers.kyc_reviewed_by_user_id (KYC audit)
+  * seller_payouts.approved_by, alerts.acknowledged_by
+  * vault_key_usage.product_id, seller_sla_history.actor_user_id
+- DELETE em users acelera ~100x (era seq_scan em 14 tabelas)
+- W17 vault schema confirmado AES-256-GCM (encrypted_key+iv+auth_tag)
+- COMMIT ab9456a pushed GitHub main + applied prod
 
 W7 PASS 119 RESUMO - W18 PERFORMANCE DROP INDICES ORFAOS:
 - AUDIT pg_stat_user_indexes em prod (3a iter consecutiva confirmando):
