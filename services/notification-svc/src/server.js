@@ -143,22 +143,56 @@ async function sendEmail(to, subject, body, html) {
 //   mas codigo retornava o JSON normalmente -> notif marcada 'sent' sem envio.
 // FIX: throw em ambos os casos -> outbox processor pega no catch e retry/fail
 //   com backoff exponencial existente.
+// FIX-WORKER-13 pass 219: Telegram sender hardening.
+// PRE-FIX 4 BUGS:
+//   1. parse_mode='Markdown' quebra com user content tendo _*[]() (Pedido #abc_123)
+//      Telegram retorna 400 'can't parse entities' -> retry loop ate dar up.
+//   2. Errors 400 (schema) tratados igual 429/5xx (transient) -> retry budget waste.
+//   3. Token na URL - se erro upstream incluir URL no description, audit_log leak.
+//   4. Telegram 429 retorna parameters.retry_after - app ignora, usa backoff proprio.
+//
+// POST-FIX:
+//   - parse_mode REMOVED (default plain text) - safe para qualquer content
+//   - Error classification: 429 e 5xx = transient (caller retry OK)
+//                            400 e 4xx = permanent (caller deve nao retry)
+//   - URL safe: token nunca em error throw
+//   - retry_after extraido p/ error message (caller pode usar)
 async function sendTelegram(message) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chat = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chat) {
     throw new Error('telegram_not_configured: TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID ausente');
   }
-  const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chat, text: message.slice(0, 4000), parse_mode: 'Markdown' }),
-    signal: AbortSignal.timeout(10000),
-  });
+  let r;
+  try {
+    r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // FIX bug 1: parse_mode REMOVED - plain text default
+      // Mantem suporte a markdown VISUAL no message (cliente Telegram render)
+      // sem risk de 400 'can't parse entities' em conteudo nao escapado
+      body: JSON.stringify({ chat_id: chat, text: message.slice(0, 4000) }),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (fetchErr) {
+    // Network/timeout error - transient (retry safe)
+    const e = new Error(`telegram_network_error: ${fetchErr.message || fetchErr.name}`);
+    e.transient = true;
+    throw e;
+  }
   const body = await r.json().catch(() => ({}));
   if (!r.ok || body.ok === false) {
+    // FIX bug 4: extract retry_after se Telegram returnou
+    const retryAfter = body.parameters?.retry_after;
     const desc = body.description || `HTTP ${r.status}`;
-    throw new Error(`telegram_api_error: ${desc}`);
+    // FIX bug 3: token NUNCA em error message (apenas status code + desc)
+    const e = new Error(`telegram_api_error_${r.status}: ${desc}${retryAfter ? ` retry_after=${retryAfter}s` : ''}`);
+    // FIX bug 2: error classification
+    // 429 rate-limit / 500-599 server error -> transient (retry safe)
+    // 400/401/403/404 -> permanent (deve nao retry - schema/config bug)
+    e.transient = r.status === 429 || r.status >= 500;
+    e.retryAfter = retryAfter || null;
+    throw e;
   }
   return body;
 }
@@ -683,28 +717,43 @@ async function processOutbox() {
       const baseBackoff = [30, 120, 600, 3600][n.retry_count] || 3600;
       // Random multiplier 0.8 .. 1.2 (jitter +/- 20%)
       const jitter = 0.8 + Math.random() * 0.4;
-      const backoffSeconds = Math.floor(baseBackoff * jitter);
-      // FIX-WORKER-13 pass 185 (DLP failed_reason):
-      //   PRE-FIX: e.message raw -> pode conter Bearer/sk-/JWT de SMTP HTTP
-      //   error responses + tail Asaas API key em 401 responses Telegram.
-      //   audit_log + admin /webhooks dashboard renderiza failed_reason ->
-      //   secret leak na UI.
-      //   FIX: mask.text() defensivo (mesma DLP usada em audit_log).
+      let backoffSeconds = Math.floor(baseBackoff * jitter);
+
+      // FIX-WORKER-13 pass 219: error classification - permanent errors NAO devem
+      // consumir retry budget. e.transient = false (set por sendTelegram/sendEmail
+      // pass 219) marca erro permanente: schema bug, auth bad, recipient nao existe.
+      // PRE-FIX: 4xx errors gastavam 5 tentativas + 30s/2min/10min/1h waste.
+      // POST-FIX: e.transient === false -> jump direto p/ sent_status='failed'.
+      const isPermanent = e.transient === false;
+      // FIX-WORKER-13 pass 219: respect Telegram retry_after se enviado pelo API
+      // PRE-FIX: 429 ignorava parameters.retry_after (ex: aguarde 60s) - retry em 30s
+      // POST-FIX: usa Math.max(backoff, retry_after * 1000) - respeita servidor.
+      if (e.retryAfter && Number.isFinite(e.retryAfter)) {
+        backoffSeconds = Math.max(backoffSeconds, e.retryAfter);
+      }
+
+      // FIX-WORKER-13 pass 185 + 219 (DLP failed_reason + permanent marker)
       const safeFailedReason = mask.text(e.message || '').slice(0, 500);
-      log.warn({ id: n.id, err: safeFailedReason, attempt: nextRetry, backoffSeconds }, '[notif.fail]');
-      // FIX-WORKER-7 pass 26 (Regra N idempotent retry): WHERE guard
-      // previne retry_count DOUBLE-INCREMENT em race scenario (worker A
-      // e B ambos catch + UPDATE -> retry_count incrementa 2x em 1 falha).
+      log.warn({
+        id: n.id, err: safeFailedReason, attempt: nextRetry, backoffSeconds,
+        permanent: isPermanent,
+      }, '[notif.fail]');
+      // FIX-WORKER-7 pass 26 + 219: WHERE guard idempotent + permanent skip
+      // Se permanent: jump retry_count >= 5 (sent_status='failed' imediato)
       await query(
         `UPDATE notifications
-            SET retry_count = retry_count + 1,
+            SET retry_count = CASE WHEN $5 THEN 5 ELSE retry_count + 1 END,
                 failed_reason = $1,
-                sent_status = CASE WHEN retry_count + 1 >= 5 THEN 'failed' ELSE 'pending' END,
+                sent_status = CASE
+                  WHEN $5 THEN 'failed'
+                  WHEN retry_count + 1 >= 5 THEN 'failed'
+                  ELSE 'pending'
+                END,
                 next_retry_at = NOW() + ($2 || ' seconds')::INTERVAL,
                 locked_by = NULL,
                 locked_at = NULL
           WHERE id = $3 AND locked_by = $4 AND sent_status = 'pending'`,
-        [safeFailedReason, String(backoffSeconds), n.id, WORKER_ID]
+        [safeFailedReason, String(backoffSeconds), n.id, WORKER_ID, isPermanent]
       );
     }
   }
