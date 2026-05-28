@@ -589,7 +589,118 @@ const ALLOWED_TRANSITIONS = {
   'failed':     ['authorized'],          // retry pos-failed eh OK
 };
 
+// FIX-WORKER-11 pass 371 (TRANSFER webhook handler - gap funcional pass 368):
+//   PRE-FIX: processWebhookEvent retornava early se !paymentId.
+//   TRANSFER_CREATED/DONE/FAILED tem evt.transfer.id (NAO evt.payment.id)
+//   -> TODOS transfers silenciosamente descartados:
+//     - Payout marcado 'paid' mas Asaas pode falhar transfer depois
+//     - Status nunca volta a 'rejected' p/ admin notar
+//     - asaas_transfer_id reconciliation impossivel
+//   Pass 282 adicionou externalReference em createTransfer + pass 368
+//   criou idx_payouts_transfer_id - preparou infra mas handler ficou lagged.
+//   POST-FIX: detecta TRANSFER_* events upfront + lookup seller_payouts/
+//   payouts_pending_wallet por asaas_transfer_id (idx pass 368). Updates
+//   status + paid_at + audit_log atomic.
+async function processTransferEvent(evt) {
+  const transferId = evt.transfer?.id;
+  if (!transferId) return;
+  const eventName = evt.event;
+  // Map TRANSFER events -> status transitions
+  // Asaas docs: TRANSFER_CREATED (pending->scheduled), TRANSFER_DONE (->paid),
+  // TRANSFER_FAILED (admin attention), TRANSFER_CANCELLED (admin reverted)
+  const TRANSFER_MAP = {
+    TRANSFER_DONE:      { newStatus: 'paid',     setPaidAt: true },
+    TRANSFER_FAILED:    { newStatus: 'rejected', failedReason: 'asaas_transfer_failed' },
+    TRANSFER_CANCELLED: { newStatus: 'rejected', failedReason: 'asaas_transfer_cancelled' },
+    TRANSFER_CREATED:   { logOnly: true }, // ja foi processado em /process - log only
+  };
+  const action = TRANSFER_MAP[eventName];
+  if (!action) {
+    log.warn({ event: eventName, transfer_id: transferId },
+      '[webhook.transfer.unknown_event] evento TRANSFER nao mapeado');
+    return;
+  }
+  if (action.logOnly) {
+    log.info({ event: eventName, transfer_id: transferId },
+      '[webhook.transfer.log_only] TRANSFER_CREATED ack');
+    return;
+  }
+  // Lookup seller_payouts (caso normal) OU payouts_pending_wallet (legacy debt)
+  // idx_payouts_transfer_id UNIQUE PARTIAL (pass 368) -> O(log n) lookup
+  await withRetry('payment.webhook.transfer.tx', async () => {
+    await tx(async (c) => {
+      // Try seller_payouts first
+      let payout = await c.query(
+        `SELECT id, seller_id, status FROM seller_payouts
+          WHERE asaas_transfer_id = $1 FOR UPDATE`,
+        [transferId]
+      );
+      let table = 'seller_payouts';
+      if (!payout.rows.length) {
+        // Try payouts_pending_wallet
+        payout = await c.query(
+          `SELECT id, seller_id, status FROM payouts_pending_wallet
+            WHERE asaas_transfer_id = $1 FOR UPDATE`,
+          [transferId]
+        );
+        table = 'payouts_pending_wallet';
+      }
+      if (!payout.rows.length) {
+        log.warn({ event: eventName, transfer_id: transferId },
+          '[webhook.transfer.no_match] transfer_id sem payout - investigar');
+        return;
+      }
+      const row = payout.rows[0];
+      // State machine: payout final states sao terminal
+      if (['paid', 'rejected'].includes(row.status) && row.status === action.newStatus) {
+        log.info({ event: eventName, payout_id: row.id, status: row.status },
+          '[webhook.transfer.idempotent] mesmo estado - noop');
+        return;
+      }
+      // UPDATE conforme tabela
+      if (table === 'seller_payouts') {
+        await c.query(
+          `UPDATE seller_payouts SET status = $1,
+              paid_at = CASE WHEN $2 THEN NOW() ELSE paid_at END,
+              rejected_reason = CASE WHEN $3 IS NOT NULL THEN $3 ELSE rejected_reason END
+            WHERE id = $4`,
+          [action.newStatus, !!action.setPaidAt, action.failedReason || null, row.id]
+        );
+      } else {
+        // payouts_pending_wallet: liquidated_at OR forfeited_at
+        await c.query(
+          `UPDATE payouts_pending_wallet SET
+              status = CASE WHEN $1 = 'paid' THEN 'liquidated' ELSE 'forfeited' END,
+              liquidated_at = CASE WHEN $1 = 'paid' THEN NOW() ELSE liquidated_at END,
+              forfeited_at = CASE WHEN $1 = 'rejected' THEN NOW() ELSE forfeited_at END,
+              forfeited_reason = CASE WHEN $2 IS NOT NULL THEN $2 ELSE forfeited_reason END
+            WHERE id = $3`,
+          [action.newStatus, action.failedReason || null, row.id]
+        );
+      }
+      // Audit log
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES (NULL, 'service', $1, $2, $3, $4, $5::JSONB)`,
+        ['asaas.' + eventName.toLowerCase(),
+         table === 'seller_payouts' ? 'seller_payout' : 'pending_wallet_payout',
+         row.id,
+         action.newStatus === 'rejected' ? 'critical' : 'info',
+         JSON.stringify({
+           event: eventName, transfer_id: transferId,
+           previous_status: row.status, new_status: action.newStatus,
+           reason: action.failedReason || null,
+         })]
+      );
+    });
+  });
+}
+
 async function processWebhookEvent(evt) {
+  // FIX-WORKER-11 pass 371: dispatch TRANSFER events ANTES de payment check
+  if (evt.event && evt.event.startsWith('TRANSFER_')) {
+    return processTransferEvent(evt);
+  }
   const paymentId = evt.payment?.id;
   if (!paymentId) return;
 
