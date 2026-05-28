@@ -20516,3 +20516,53 @@ PROXIMA ITER:
 - W6 audit reset-password flow
 - W10 search-svc bugs (autocomplete trie)
 - 🚨 VPS SSH unblock URGENTE (12 ciclos - >4h sem deploy!)
+
+PASS 180 (W17 vault-svc N+1 -> LATERAL + COUNT window) - 2026-05-28:
+- W17 audit vault-svc /keys listing identificou 3 problemas:
+
+PRE-FIX:
+1. 3 correlated subqueries por row em vault_api_keys SELECT:
+   * calls_7d (COUNT vault_key_usage WHERE 7d)
+   * errors_7d (COUNT vault_key_usage WHERE 7d AND fail)
+   * last_error_at (MAX created_at WHERE fail)
+   * 50 keys = 150 sub-scans em vault_key_usage (~10k rows/dia)
+2. COUNT separado em segunda query (2 round-trips PG)
+3. Cache key sem user context (admin-only OK, pre-fix p/ multi-tenant futuro)
+
+POST-FIX:
+1. LATERAL JOIN com FILTER WHERE:
+   * PG escaneia vault_key_usage 1x por key (vs 3x antes)
+   * COALESCE(0) p/ keys sem usage (NULL safe)
+   * Mesma semantica preservada (FILTER WHERE para conditional aggregation)
+2. COUNT(*) OVER() window elimina segunda query
+3. Strip _total interno do response
+
+Performance esperada: ~200ms -> ~80ms (3x faster em /admin/vault list)
+
+DLP mask.text revoked_reason preserved (admin pode escrever
+free-text com CPF/Bearer/JWT acidentalmente).
+
+Commit 3a6d154 pushed origin/main
+VPS SSH ainda bloqueado (13 ciclos consecutivos)
+
+PADRAO LATERAL + FILTER aplicavel a outras N+1 oportunidades:
+- review-svc dashboard com COUNT reviews + AVG rating per product
+- search-svc trending com sales_count 7d/30d/all
+- aiops-svc per-svc metric aggregation
+
+CODIGO ACUMULADO ORIGIN/MAIN (13 ciclos):
+- 168-179: documentados
+- 180: vault-svc N+1 -> LATERAL
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_vault-svc --force
+- EXPLAIN ANALYZE GET /vault/keys?limit=50:
+  Pre: 3 subqueries por linha (50 keys -> 150 scans)
+  Post: 1 LATERAL join + 1 window COUNT
+- time curl -H "Bearer $ADMIN" /vault/keys -> ~80ms expected (was ~200ms)
+
+PROXIMA ITER:
+- W7: aplicar LATERAL pattern em review-svc dashboard
+- W18: cache /products list (cuidado vary by filters)
+- W6: audit reset-password flow
+- 🚨 VPS SSH unblock URGENTE (13 ciclos - >4h sem deploy!)
