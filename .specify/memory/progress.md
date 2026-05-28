@@ -28186,3 +28186,40 @@ PROXIMA ITER:
 - W14 audit notifications cleanup metrics (verify pass 276 2-tier retention efetivo)
 - W7 product-svc create eligibility check (seller sem wallet -> warn)
 - VPS SSH unblock URGENTISSIMO (111 ciclos)
+
+
+============================================================
+PASS 279 - 2026-05-28 - W7 + W14 (seller wallet warn + notif cleanup hardening)
+============================================================
+Files: 2 modificados
+  - services/product-svc/src/routes/seller-mgmt.js (submit response wallet_warning)
+  - services/notification-svc/src/server.js (advisory lock + audit + LIMIT 50k)
+Lines: ~75 added/changed
+
+W7 (seller-side wallet warning paridade W11):
+- POST /products/me/:id/submit retorna { wallet_configured, wallet_warning? }
+- SELECT s.asaas_wallet_id JOIN sellers
+- Frontend dashboard-seller pode usar wallet_warning p/ banner pos-submit
+- Mensagem UX clara: "Vendas aceitas, repasse aguarda config wallet em /seller/loja"
+
+W14 (notif.cleanup hardening multi-replica):
+- pg_try_advisory_lock(hashtext('notif_cleanup_daily')) - so 1 replica executa
+- try/catch wrap p/ nao crashar svc se cleanup falha
+- LIMIT 50000 via CTE ctid IN p/ evitar lock prolongado (cron 24h rerun overflow)
+- audit_log INSERT quando deletado >0 (LGPD compliance trail)
+- pg_advisory_unlock no finally block
+
+VPS SSH BLOQUEADO (112 ciclos - 37.3h sem deploy).
+Migs 069-080 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc cas_notification-svc --force
+- W7: POST /api/products/me/<id>/submit (seller sem wallet) -> resp inclui wallet_warning
+  curl -X POST -H "Authorization: Bearer $T" https://cas.../api/products/me/<id>/submit | jq .wallet_warning
+- W14: tail logs notification-svc -> 04:00 UTC -> [notif.cleanup] + audit_log query:
+  SELECT * FROM audit_log WHERE action='notification.cleanup_batch' ORDER BY created_at DESC LIMIT 5;
+
+PROXIMA ITER:
+- W5 dashboard-seller consume wallet_warning banner UI
+- W2 checkout warn buyer multi-seller mix (wallet+non-wallet items)
+- VPS SSH unblock URGENTISSIMO (112 ciclos - 37.3h)

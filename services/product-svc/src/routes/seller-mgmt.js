@@ -537,9 +537,13 @@ router.post('/:id/submit',
 
     await tx(async (c) => {
       // BUG 2 Regra K: SELECT FOR UPDATE + ownership + return state actual
+      // FIX-WORKER-7 pass 279: include seller.asaas_wallet_id para warn seller
+      // que payouts virao via debt queue se wallet nao configurada (paridade
+      // pass 278 W11 cart warning, mas para seller-side ao submeter).
       const cur = await c.query(
         `SELECT p.id, p.title, p.status, p.description, p.cover_image_url,
-                p.price_cents, p.currency
+                p.price_cents, p.currency,
+                s.asaas_wallet_id
            FROM products p JOIN sellers s ON s.id = p.seller_id
           WHERE p.id = $1 AND s.user_id = $2
           FOR UPDATE OF p`,
@@ -591,7 +595,9 @@ router.post('/:id/submit',
          })]
       );
 
-      productInfo = { id: p.id, title: p.title };
+      // FIX-WORKER-7 pass 279: wallet warning flag p/ frontend dashboard-seller
+      const walletConfigured = !!(p.asaas_wallet_id && p.asaas_wallet_id !== '');
+      productInfo = { id: p.id, title: p.title, wallet_configured: walletConfigured };
     });
 
     if (outcome?.error === 'not_found') return next(errorHandler.notFound('product_not_found'));
@@ -640,7 +646,18 @@ router.post('/:id/submit',
       .finally(() => clearTimeout(timer));
 
     await invalidate(req.params.id);
-    res.json({ ok: true, message: 'Produto enviado para QA', product_id: productInfo.id });
+    // FIX-WORKER-7 pass 279: response inclui wallet_warning quando seller submeteu
+    // produto SEM wallet config. Frontend usa p/ exibir banner no /seller/products/[id].
+    const response = {
+      ok: true,
+      message: 'Produto enviado para QA',
+      product_id: productInfo.id,
+      wallet_configured: productInfo.wallet_configured,
+    };
+    if (!productInfo.wallet_configured) {
+      response.wallet_warning = 'Sua carteira Asaas nao esta configurada. Vendas serao aceitas, mas o repasse ficara em fila ate voce configurar em /seller/loja.';
+    }
+    res.json(response);
   })
 );
 

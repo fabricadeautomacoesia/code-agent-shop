@@ -960,32 +960,77 @@ cron.schedule('* * * * *', () => reclaimOrphanLocks().catch((e) => log.error({ e
 //   - Security/auth events (priority=3 OR template prefix sec/2fa/password): 365d
 //   - Regular notifs (engagement, transactional): 60d
 cron.schedule('0 4 * * *', async () => {
-  // Regular notifications (60d) - exclude security
-  const r1 = await query(
-    `DELETE FROM notifications
-      WHERE created_at < NOW() - INTERVAL '60 days'
-        AND priority < 3
-        AND template_code NOT LIKE 'security_%'
-        AND template_code NOT LIKE 'password_%'
-        AND template_code NOT LIKE '2fa_%'
-        AND template_code != 'asaas_refund_failed'
-      RETURNING id`
-  );
-  // Security/critical (365d) - retention forensics
-  const r2 = await query(
-    `DELETE FROM notifications
-      WHERE created_at < NOW() - INTERVAL '365 days'
-        AND (priority >= 3
-             OR template_code LIKE 'security_%'
-             OR template_code LIKE 'password_%'
-             OR template_code LIKE '2fa_%'
-             OR template_code = 'asaas_refund_failed')
-      RETURNING id`
-  );
-  log.info({
-    regular_deleted: r1.rowCount,
-    security_deleted: r2.rowCount,
-  }, '[notif.cleanup]');
+  // FIX-WORKER-14 pass 279: multi-replica safe + try/catch + audit log forensics
+  //   PRE-FIX: 2 replicas notification-svc rodam 0 4 * * * simultaneo -> 2 DELETEs
+  //   concorrentes (lock-wait spike + 2 log entries identicas confusas).
+  //   Sem audit em DELETE batch grande (>10k rows) = ops perde rastro p/ LGPD.
+  //   POST-FIX:
+  //   1. pg_try_advisory_lock(notif_cleanup_lock_id) - so 1 replica executa
+  //   2. try/catch wrap p/ nao crashar svc se cleanup falha
+  //   3. audit_log INSERT quando deletado >0 (compliance trail)
+  //   4. LIMIT 50000 via CTE ctid IN p/ evitar lock prolongado
+  try {
+    const lockAcquired = await query(
+      `SELECT pg_try_advisory_lock(hashtext('notif_cleanup_daily')::bigint) AS locked`
+    );
+    if (!lockAcquired.rows[0]?.locked) {
+      log.info('[notif.cleanup.skip] another replica is running');
+      return;
+    }
+    try {
+      // Regular notifications (60d) - exclude security
+      const r1 = await query(
+        `DELETE FROM notifications
+          WHERE ctid IN (
+            SELECT ctid FROM notifications
+             WHERE created_at < NOW() - INTERVAL '60 days'
+               AND priority < 3
+               AND template_code NOT LIKE 'security_%'
+               AND template_code NOT LIKE 'password_%'
+               AND template_code NOT LIKE '2fa_%'
+               AND template_code != 'asaas_refund_failed'
+             LIMIT 50000
+          )
+          RETURNING id`
+      );
+      // Security/critical (365d) - retention forensics
+      const r2 = await query(
+        `DELETE FROM notifications
+          WHERE ctid IN (
+            SELECT ctid FROM notifications
+             WHERE created_at < NOW() - INTERVAL '365 days'
+               AND (priority >= 3
+                    OR template_code LIKE 'security_%'
+                    OR template_code LIKE 'password_%'
+                    OR template_code LIKE '2fa_%'
+                    OR template_code = 'asaas_refund_failed')
+             LIMIT 50000
+          )
+          RETURNING id`
+      );
+      log.info({
+        regular_deleted: r1.rowCount,
+        security_deleted: r2.rowCount,
+      }, '[notif.cleanup]');
+      // Audit trail when nonzero deletion (LGPD compliance)
+      if ((r1.rowCount + r2.rowCount) > 0) {
+        await query(
+          `INSERT INTO audit_log
+            (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+           VALUES (NULL, 'system', 'notification.cleanup_batch', 'notifications', NULL, 'info', $1::JSONB)`,
+          [JSON.stringify({
+            regular_deleted: r1.rowCount,
+            security_deleted: r2.rowCount,
+            policy: '60d_regular_365d_security',
+          })]
+        );
+      }
+    } finally {
+      await query(`SELECT pg_advisory_unlock(hashtext('notif_cleanup_daily')::bigint)`);
+    }
+  } catch (e) {
+    log.error({ err: e.message }, '[notif.cleanup.failed]');
+  }
 });
 
 app.use((req, res) => res.status(404).json({ error: 'route_not_found' }));
