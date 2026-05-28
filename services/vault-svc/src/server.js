@@ -350,9 +350,14 @@ app.get('/keys/rotation-due',
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const daysWindow = Math.max(-30, Math.min(365, parseInt(req.query.days_window, 10) || 30));
 
+    /* FIX-WORKER-17 pass 319: COUNT(*) OVER() window consolidation.
+       PRE-FIX: 2 queries (rows + COUNT) com WHERE identico em vault_api_keys.
+       Pattern V8 18+ endpoints consolidated (passes 178-313).
+       POST-FIX: 1 query + strip _total via map + has_more boolean. */
     const r = await query(
       `SELECT id, key_alias, provider, is_platform_pool, rotation_due_at,
-              EXTRACT(EPOCH FROM (rotation_due_at - NOW()))/86400 AS days_remaining
+              EXTRACT(EPOCH FROM (rotation_due_at - NOW()))/86400 AS days_remaining,
+              COUNT(*) OVER()::INT AS _total
          FROM vault_api_keys
         WHERE is_active = TRUE
           AND rotation_due_at IS NOT NULL
@@ -362,18 +367,15 @@ app.get('/keys/rotation-due',
       [String(daysWindow), limit, offset]
     );
 
-    const totalRes = await query(
-      `SELECT COUNT(*)::INT AS total FROM vault_api_keys
-        WHERE is_active = TRUE AND rotation_due_at IS NOT NULL
-          AND rotation_due_at < NOW() + ($1 || ' days')::INTERVAL`,
-      [String(daysWindow)]
-    );
+    const total = r.rows[0]?._total ?? 0;
+    const keys = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
 
     res.json({
-      keys: r.rows,
-      count: r.rows.length,
-      total: totalRes.rows[0].total,
+      keys,
+      count: keys.length,
+      total,
       limit, offset, days_window: daysWindow,
+      has_more: (offset + keys.length) < total,
     });
   })
 );

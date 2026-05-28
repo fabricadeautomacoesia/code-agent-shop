@@ -29804,3 +29804,31 @@ PROXIMA ITER:
 - W2 migrate restantes notification-bell defensive
 - W14 audit final tables
 - VPS SSH unblock URGENTISSIMO (151 ciclos - 50.3h)
+
+
+============================================================
+PASS 319 - 2026-05-28 - W17 vault /keys/rotation-due COUNT OVER
+============================================================
+Files: 1 modificado
+  - services/vault-svc/src/server.js (rotation-due COUNT OVER)
+Lines: ~15 changed
+
+W17 (vault rotation-due perf consolidation):
+- PRE-FIX: 2 queries (rows + COUNT) com WHERE identico
+- POST-FIX: 1 query COUNT(*) OVER() + strip _total + has_more
+- Pattern V8 18+ endpoints (passes 178-313)
+- Cache 300s mantido + has_more UX pagination
+
+VPS SSH BLOQUEADO (152 ciclos - 50.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+COUNT OVER Final - 18 endpoints (passes 178-319)
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_vault-svc --force
+- W17: EXPLAIN ANALYZE /vault/keys/rotation-due - Index Scan unico
+
+PROXIMA ITER:
+- W18 product-svc additional consolidations
+- W4 admin /audit-log enhance
+- VPS SSH unblock URGENTISSIMO (152 ciclos - 50.7h)
