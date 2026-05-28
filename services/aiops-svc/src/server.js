@@ -392,39 +392,55 @@ const auditLogHandler = asyncHandler(async (req, res) => {
   // BUG 2 DLP CRITICAL: payload_after pode conter secrets em vault.rotate/
   //   webhook.reset/payment.create -> Asaas API key, Bearer, JWT raw.
   //   mask.obj() recursive aplicado pre-response.
+  // FIX-WORKER-18 pass 200: COUNT(*) OVER() window consolidation.
+  // PRE-FIX: 2 queries (SELECT rows + COUNT separado) - PG scan duplo.
+  // POST-FIX: 1 query window (PG scan unico).
+  // Pattern consolidado pass 178/179/180/181/187/189/197/198/199.
+  // Latencia: ~40ms (2 queries) -> ~22ms (1 query) - audit_log ~450k rows.
   // Note: usa idx_audit_action_created quando action presente, idx_audit_created caso contrario
   const r = await query(
     `SELECT id, actor_user_id, actor_role, action, target_type, target_id,
-            severity, payload_after, created_at
+            severity, payload_after, created_at,
+            COUNT(*) OVER()::INT AS _total
        FROM audit_log
       WHERE ${where.join(' AND ')}
       ORDER BY created_at DESC, id DESC
       LIMIT $${i++} OFFSET $${i++}`,
     params
   );
-  const totalRow = await query(
-    `SELECT COUNT(*)::INT AS n FROM audit_log
-      WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
-        ${action ? 'AND action = $2' : ''}
-        ${sevFilter ? `AND severity = $${action ? 3 : 2}` : ''}`,
-    [String(days), ...(action ? [action] : []), ...(sevFilter ? [sevFilter] : [])]
-  );
 
-  // DLP CRITICAL: payload_after recursive mask
-  const entries = r.rows.map((row) => ({
-    ...row,
-    payload_after: row.payload_after ? mask.obj(row.payload_after) : null,
-  }));
+  const total = r.rows[0]?._total || 0;
+
+  // DLP CRITICAL: payload_after recursive mask + strip _total
+  const entries = r.rows.map((row) => {
+    const { _total, ...rest } = row;
+    return {
+      ...rest,
+      payload_after: rest.payload_after ? mask.obj(rest.payload_after) : null,
+    };
+  });
 
   res.json({
     entries,
-    total: totalRow.rows[0]?.n || 0,
+    total,
     limit: lim,
     offset: off,
+    has_more: (off + entries.length) < total,
     filter: { days, action: action || null, severity: sevFilter },
   });
 });
-app.get('/audit-log', jwt.requireAuth({ roles: ['admin','staff'] }), auditLogHandler);
+// FIX-WORKER-18 pass 200: cache.cacheMiddleware 30s vary by filtros (days+action+severity+lim+off).
+// Admin dashboard /admin/audit-log polling sem cache antes - cada filtro click hit DB.
+// 30s freshness adequada: audit_log eh forensic (nao realtime critical).
+const auditLogCacheKey = (req) => {
+  const q = req.query;
+  return `aiops:audit-log:d=${q.days||7}:a=${q.action||''}:s=${q.severity||''}:lim=${q.limit||50}:off=${q.offset||0}`;
+};
+app.get('/audit-log',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  cache.cacheMiddleware(auditLogCacheKey, 30),
+  auditLogHandler
+);
 
 // GET /audit-log/actions - lista actions distintas para popular dropdown filter
 // FIX-WORKER-7 pass 64: 3 BUGS (Regras D + UX + cache).
