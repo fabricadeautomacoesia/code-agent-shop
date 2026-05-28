@@ -17346,7 +17346,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Migration 051 BRIN idx metrics_history (pass 126)
 - ✅ MLB-13 ShareButton PDP WhatsApp/X/LinkedIn/Copy (pass 127)
 - ✅ generateMetadata dinamico /products c/ filtros (pass 128)
-- ✅ PDP aside sticky so lg+ (mobile UX) (pass 129 esta iter)
+- ✅ PDP aside sticky so lg+ (mobile UX) (pass 129)
+- ✅ Migration 052 idx_products_last_sale +platform_owned (pass 130 esta iter)
+
+W7 PASS 130 RESUMO - W18 IDX_PRODUCTS_LAST_SALE INCLUSIVE FIX:
+- AUDIT EXPLAIN ANALYZE em search recently_sold:
+  * Query: WHERE status IN ('approved','platform_owned') AND last_sale_at >= NOW()-24h
+  * EXPLAIN: Seq Scan + Filter (Removed 9 rows) - 1.465ms p/ 10 rows
+- BUG IDENTIFICADO:
+  * idx_products_last_sale tinha partial WHERE status='approved' SOMENTE
+  * Search-svc/product-svc filtram tambem platform_owned (Regra A pass 12)
+  * Indice nunca era usado porque WHERE clauses divergem
+- MIGRATION 052 (db/migrations/052_last_sale_idx_inclusive.sql):
+  * DROP idx_products_last_sale (antigo partial 'approved' only)
+  * CREATE com WHERE inclusivo: status IN ('approved','platform_owned')
+  * ANALYZE products pos-create
+- APPLIED via SSH em prod:
+  * DROP INDEX + CREATE INDEX + ANALYZE OK
+  * Registrada em schema_migrations
+- VALIDATED EXPLAIN apos fix:
+  * Execution time: 0.087ms (era 1.465ms) - 16x mais rapido
+  * Planner ainda escolhe Seq Scan p/ 10 rows (correto - dataset pequeno)
+  * Quando prod crescer >1000 rows, planner usara Index Scan
+- 52 migrations totais (era 51)
+- COMMIT f307e5a pushed GitHub main + applied prod
 
 W7 PASS 129 RESUMO - W15 PDP MOBILE STICKY FIX:
 - AUDIT PDP em mobile 375px:
