@@ -885,7 +885,9 @@ router.get('/payouts-pending-wallet',
               pw.created_at, pw.liquidated_at, pw.forfeited_at,
               pw.asaas_transfer_id,
               s.store_name, s.store_slug,
-              s.asaas_wallet_id IS NOT NULL AS wallet_configured,
+              /* FIX-WORKER-11 pass 278: paridade cart endpoint - empty string nao
+                 conta como wallet configurada (seller pode ter '' apos clear admin). */
+              (s.asaas_wallet_id IS NOT NULL AND s.asaas_wallet_id <> '') AS wallet_configured,
               COUNT(*) OVER()::INT AS _total
          FROM payouts_pending_wallet pw
          JOIN sellers s ON s.id = pw.seller_id

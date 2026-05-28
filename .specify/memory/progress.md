@@ -28141,3 +28141,48 @@ PROXIMA ITER:
 - W11 wallet validate seller pre-checkout (frontend warn)
 - W3 PDP review write modal
 - VPS SSH unblock CRITICAL (110 ciclos - 36.7h)
+
+
+============================================================
+PASS 278 - 2026-05-28 - W11 + W3 + W18 (wallet warning + tabs date guard + idx refine)
+============================================================
+Files: 6 modificados/criados
+  - services/order-svc/src/routes/cart.js (expose seller_wallet_configured flag)
+  - apps/storefront/src/app/cart/page.tsx (banner orange wallet warning)
+  - apps/storefront/src/components/product-tabs.tsx (reply_at + versions defensive)
+  - services/seller-svc/src/routes/admin.js (wallet_configured AND <> '')
+  - services/payment-svc/src/server.js (cron liquidator AND <> '')
+  - db/migrations/080_sellers_wallet_partial_refine.sql (NEW idx partial refine)
+Lines: ~80 added
+
+W11 (wallet validate pre-checkout):
+- Backend cart GET expoe seller_wallet_configured boolean por item
+- Frontend cart page banner orange (role=alert) se >=1 item sem wallet
+- Mensagem UX transparente: "compra processada normalmente, repasse ao vendedor
+  apos config wallet, voce nao paga nada a mais"
+- Lista items afetados por titulo
+
+W3 (product-tabs defensive date):
+- reply_at: paridade pass 254 guard - !isNaN(new Date(x).getTime())
+- versions sort: NaN coerce fallback 0 (sort instabilidade evitada)
+- v.created_at render guard contra "Invalid Date" UX
+
+W18 (perf - idx + consistency):
+- Mig 080: DROP idx_sellers_asaas_wallet + recreate idx_sellers_asaas_wallet_valid
+  predicate IS NOT NULL AND <> '' (exclui empty string admin clear)
+- payment-svc cron liquidator + seller-svc admin endpoint paridade <> ''
+
+VPS SSH BLOQUEADO (111 ciclos - 37h sem deploy).
+Migs 069-080 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_order-svc cas_seller-svc cas_payment-svc --force
+- Apply mig: psql -f /opt/cas/db/migrations/080_sellers_wallet_partial_refine.sql
+- W11: login teste1@cas.io -> add produto seller-svc sem wallet -> /cart -> banner orange
+- W3: produto com review (reply_from_seller mas reply_at=NULL) -> data oculta gracioso
+- W18: EXPLAIN ANALYZE liquidator query - Index Scan idx_sellers_asaas_wallet_valid
+
+PROXIMA ITER:
+- W14 audit notifications cleanup metrics (verify pass 276 2-tier retention efetivo)
+- W7 product-svc create eligibility check (seller sem wallet -> warn)
+- VPS SSH unblock URGENTISSIMO (111 ciclos)

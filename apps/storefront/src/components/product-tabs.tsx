@@ -147,12 +147,18 @@ export function ProductTabs({ product, reviews, qna }: Props) {
             <div className="not-prose space-y-3">
               {/* FIX-WORKER-3 pass 5: ordem DESC garantida (mais recente primeiro).
                   Backend pode retornar em qualquer ordem - aqui forcamos by created_at DESC. */}
-              {[...product.versions].sort((a: any, b: any) =>
-                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-              ).map((v: any) => (
+              {/* FIX-WORKER-3 pass 278: sort defensive - new Date(null/undef).getTime() = NaN
+                  -> NaN-NaN=NaN -> sort instabil. Coerce to 0 fallback. */}
+              {[...product.versions].sort((a: any, b: any) => {
+                const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+                const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+                return (isNaN(tb) ? 0 : tb) - (isNaN(ta) ? 0 : ta);
+              }).map((v: any) => (
                 <div key={v.id} className="border-l-2 border-magenta pl-3">
                   <div className="font-mono text-sm font-bold">v{v.version}</div>
-                  <div className="text-xs text-white/40 mb-1">{new Date(v.created_at).toLocaleDateString('pt-BR')}</div>
+                  <div className="text-xs text-white/40 mb-1">{v.created_at && !isNaN(new Date(v.created_at).getTime())
+                    ? new Date(v.created_at).toLocaleDateString('pt-BR')
+                    : '-'}</div>
                   <div className="text-sm text-white/70 whitespace-pre-line">{v.changelog}</div>
                   {v.breaking_changes && (
                     <div className="text-xs text-orange-300 mt-1">Breaking changes!</div>
@@ -217,7 +223,10 @@ export function ProductTabs({ product, reviews, qna }: Props) {
                     <div className="mt-2 ml-3 pl-3 border-l-2 border-magenta">
                       <div className="text-[10px] uppercase text-magenta-glow font-bold mb-1">Resposta do vendedor</div>
                       <p className="text-xs text-white/70 whitespace-pre-line">{r.reply_from_seller}</p>
-                      {r.reply_at && (
+                      {/* FIX-WORKER-3 pass 278 (defensive reply_at):
+                          Paridade com r.created_at guard pass 254. r.reply_at pode
+                          ser string invalida (typo backend) - "Invalid Date" UX ruim. */}
+                      {r.reply_at && !isNaN(new Date(r.reply_at).getTime()) && (
                         <div className="text-[10px] text-white/30 mt-1">
                           {new Date(r.reply_at).toLocaleDateString('pt-BR')}
                         </div>

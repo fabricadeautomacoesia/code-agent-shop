@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { Trash2, Tag, TrendingUp, Plus, Minus, Star, ShoppingBag } from 'lucide-react';
+import { Trash2, Tag, TrendingUp, Plus, Minus, Star, ShoppingBag, AlertTriangle } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 import { ProgressiveCouponTeaser } from '@/components/progressive-coupon-teaser';
@@ -150,6 +150,14 @@ export default function CartPage() {
 
   const items = cart?.items || [];
 
+  // FIX-WORKER-11 pass 278: detecta items de sellers sem wallet configurada
+  // (skip platform_owned - sao da CAS direta, nao precisam split).
+  // Banner informativo: order eh aceito mas payout vai p/ debt queue
+  // ate seller configurar wallet (cron 24h liquida). UX transparency.
+  const noWalletItems = items.filter((it: any) =>
+    it.product && !it.product.is_platform_owned && it.product.seller_wallet_configured === false
+  );
+
   return (
     <div className="container mx-auto px-6 py-8">
       <h1 className="font-display font-bold text-4xl mb-8">Carrinho</h1>
@@ -168,6 +176,30 @@ export default function CartPage() {
           <Link href="/products" className="btn-primary inline-block">Explorar catalogo</Link>
         </div>
       ) : (
+        <>
+        {/* FIX-WORKER-11 pass 278: wallet warning banner (pre-checkout)
+            Quando >=1 item tem seller sem asaas_wallet_id, informa buyer
+            de forma transparente que esses payouts entram debt queue.
+            Order eh processado normal - apenas a liquidacao p/ seller
+            tem delay (cron 24h apos seller configurar wallet). */}
+        {noWalletItems.length > 0 && (
+          <div role="alert" className="glass border border-orange-500/30 bg-orange-500/5 p-4 mb-6 flex gap-3 items-start">
+            <AlertTriangle className="w-5 h-5 text-orange-300 flex-shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="text-sm">
+              <div className="font-semibold text-orange-200 mb-1">
+                {noWalletItems.length === 1 ? '1 produto' : `${noWalletItems.length} produtos`} de vendedor sem carteira configurada
+              </div>
+              <p className="text-white/70 text-xs leading-relaxed">
+                Sua compra sera processada normalmente, mas o repasse ao vendedor sera feito apos ele
+                configurar a carteira Asaas. Voce nao paga nada a mais por isso. Itens afetados:
+                {' '}
+                <span className="text-white/90">
+                  {noWalletItems.map((it: any) => it.product?.title).filter(Boolean).join(', ')}
+                </span>
+              </p>
+            </div>
+          </div>
+        )}
         <div className="grid lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-4">
             {items.map((it: any) => (
@@ -366,6 +398,7 @@ export default function CartPage() {
             {err && <div className="text-sm text-red-400 mt-3">{err}</div>}
           </aside>
         </div>
+        </>
       )}
     </div>
   );

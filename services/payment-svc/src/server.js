@@ -1485,7 +1485,11 @@ async function liquidatePendingWalletPayouts() {
          FROM payouts_pending_wallet pw
          JOIN sellers s ON s.id = pw.seller_id
         WHERE pw.status = 'pending'
+          /* FIX-WORKER-11 pass 278: empty string '' nao conta como wallet OK
+             (admin clear -> seller string vazia, mas integridade falha no Asaas).
+             Paridade com cart/admin endpoints. */
           AND s.asaas_wallet_id IS NOT NULL
+          AND s.asaas_wallet_id <> ''
           AND s.status = 'active'
         ORDER BY pw.created_at ASC, pw.id ASC
         LIMIT 50

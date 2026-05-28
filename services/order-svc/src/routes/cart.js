@@ -48,7 +48,11 @@ router.get('/', asyncHandler(async (req, res) => {
            'product', json_build_object(
              'title', p.title, 'slug', p.slug, 'cover_image_url', p.cover_image_url,
              'kind', p.kind, 'is_platform_owned', p.is_platform_owned,
-             'seller_name', s.store_name
+             'seller_name', s.store_name,
+             /* FIX-WORKER-11 pass 278: expoe flag para cart UI alertar buyer
+                qd seller sem asaas_wallet_id (payout entra debt queue).
+                Boolean explicito - true=split direto, false=fallback queue. */
+             'seller_wallet_configured', (s.asaas_wallet_id IS NOT NULL AND s.asaas_wallet_id <> '')
            )
          ))
          FROM cart_items ci
