@@ -29033,3 +29033,43 @@ PROXIMA ITER:
 - W18 audit /admin/sellers list COUNT OVER consolidation
 - W4 admin /vault dashboard error_message viewer
 - VPS SSH unblock URGENTISSIMO (131 ciclos - 43.7h)
+
+
+============================================================
+PASS 299 - 2026-05-28 - W18 admin /sellers/all hardening + W10 search audit
+============================================================
+Files: 1 modificado
+  - services/seller-svc/src/routes/admin.js (ENUM whitelist + ILIKE escape)
+Lines: ~35 added
+
+W18 (admin /sellers/all 2 BUGS):
+- BUG 1: status/seller_class sem ENUM whitelist
+  - req.query.status='invalid' -> PG cast erro -> 500 leak
+  - POST-FIX: VALID_STATUS/VALID_CLASS Set + 400 invalid + allowed list response
+- BUG 2: ILIKE wildcard injection (% e _)
+  - ?q=%% -> ILIKE '%%%' -> match TODOS sellers (data exfil mass)
+  - ?q=_a -> ILIKE '%_a%' -> single-char wildcard
+  - Mass DoS amplification em seq scan
+  - POST-FIX: escape regex /[%_\]/g + ESCAPE '\' + slice(0,100) anti-DoS
+- Paridade pass 13 search-svc autocomplete escape pattern
+
+W10 (search-svc audit):
+- Verificado: ENUM whitelist em kind/tier/sort OK
+- Wildcards autocomplete escape OK (pass 13)
+- min_price/max_price NaN guards OK (pass 2)
+- limit/page Math.max clamps OK
+- Nenhuma vulnerabilidade descoberta
+
+VPS SSH BLOQUEADO (132 ciclos - 44h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc --force
+- W18 verify:
+  - curl admin /sellers/admin/all?status=hacker -> 400 invalid_status
+  - curl admin /sellers/admin/all?q=%% -> nao match-all (escaped) returns realistic count
+
+PROXIMA ITER:
+- W18 search /facets ILIKE escape similar
+- W4 admin sellers list UI consume enum allowed
+- VPS SSH unblock URGENTISSIMO (132 ciclos - 44h)

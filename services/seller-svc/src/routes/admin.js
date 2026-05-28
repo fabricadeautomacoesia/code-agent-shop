@@ -333,18 +333,41 @@ router.get('/all',
     // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
     const lim = Math.max(1, Math.min(parseInt(req.query.limit || '30', 10), 100));
     const off = (Math.max(parseInt(req.query.page || '1', 10), 1) - 1) * lim;
+    /* FIX-WORKER-18 pass 299 hardening:
+       PRE-FIX bugs:
+       1. status/seller_class sem ENUM whitelist - param invalido -> PG cast erro 500
+          attacker: ?status=invalid -> 500 leak vs limpo 400
+       2. ILIKE %${q}% sem escape - wildcards % e _ aceitos:
+          ?q=%% -> ILIKE '%%%' -> match all sellers (data exfil)
+          ?q=_a -> ILIKE '%_a%' -> single-char wildcard semantics
+       POST-FIX:
+       - VALID_STATUS/VALID_CLASS enum whitelist + 400 invalid
+       - q escape regex /[%_\\]/g antes wrap em %...%
+       - Paridade pass 13 autocomplete escape pattern. */
+    const VALID_STATUS = new Set(['pending_kyc','kyc_submitted','active','suspended','banned','closed']);
+    const VALID_CLASS = new Set(['class_a','class_b']);
     const where = ['1=1'];
     const params = [];
     let i = 1;
     if (req.query.status) {
-      where.push(`s.status = $${i++}`); params.push(req.query.status);
+      const st = String(req.query.status).toLowerCase();
+      if (!VALID_STATUS.has(st)) {
+        return res.status(400).json({ error: 'invalid_status', allowed: Array.from(VALID_STATUS) });
+      }
+      where.push(`s.status = $${i++}`); params.push(st);
     }
     if (req.query.seller_class) {
-      where.push(`s.seller_class = $${i++}`); params.push(req.query.seller_class);
+      const sc = String(req.query.seller_class).toLowerCase();
+      if (!VALID_CLASS.has(sc)) {
+        return res.status(400).json({ error: 'invalid_seller_class', allowed: Array.from(VALID_CLASS) });
+      }
+      where.push(`s.seller_class = $${i++}`); params.push(sc);
     }
     if (req.query.q) {
-      where.push(`(s.store_name ILIKE $${i} OR u.email ILIKE $${i})`);
-      params.push(`%${req.query.q}%`); i++;
+      // Escape SQL LIKE wildcards (% _ \) before wrap em %...% - anti-DoS via match-all
+      const qEscaped = String(req.query.q).replace(/[%_\\]/g, '\\$&').slice(0, 100);
+      where.push(`(s.store_name ILIKE $${i} ESCAPE '\\' OR u.email ILIKE $${i} ESCAPE '\\')`);
+      params.push(`%${qEscaped}%`); i++;
     }
     params.push(lim, off);
     const r = await query(
