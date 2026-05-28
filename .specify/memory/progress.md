@@ -17359,7 +17359,29 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Register form a11y + autoComplete (pass 139)
 - ✅ Checkout payment + installments radiogroup (pass 140)
 - ✅ Seller dashboard 6 titles especificos (pass 141)
-- ✅ /conta/downloads/[token] generateMetadata dinamico + DLP (pass 142 esta iter)
+- ✅ /conta/downloads/[token] generateMetadata dinamico + DLP (pass 142)
+- ✅ Migration 055 idx user_sessions active composite (pass 143 esta iter)
+
+W7 PASS 143 RESUMO - W14 IDX USER_SESSIONS ACTIVE QUERY:
+- AUDIT EXPLAIN ANALYZE em queries criticas restantes:
+  * product_qna: ja tem 7 indices excellent (incluindo idx_qna_seller_pending)
+  * product_reviews: ja tem 10 indices comprehensivos
+  * user_sessions: 5 indices mas NENHUM cobre query 'active sessions per user'
+- BUG identificado em audit query Storefront:
+  * UI /conta/seguranca lista sessoes c/ user_id + is_revoked=false + expires_at>NOW
+  * ORDER BY last_seen_at DESC NULLS LAST LIMIT 10
+  * Indices existentes faziam Index Scan + Filter + explicit Sort
+- CREATED db/migrations/055_user_sessions_active_idx.sql:
+  * CREATE INDEX idx_sessions_user_active
+  * (user_id, last_seen_at DESC NULLS LAST) WHERE is_revoked = false
+  * Covering scan: idx integra ORDER BY (sem explicit Sort)
+- APPLIED via SSH em prod:
+  * Idx criado 16kB
+  * EXPLAIN agora usa Index Scan using idx_sessions_user_active (era Seq Scan)
+  * Execution time minimal 0.040ms
+  * Registrada em schema_migrations
+- 55 migrations totais (era 54)
+- COMMIT 320140d pushed GitHub main + applied prod
 
 W7 PASS 142 RESUMO - W9 SEO DINAMICO /conta/downloads/[token] + DLP:
 - AUDIT: /conta/downloads/[token]/layout.tsx tinha metadata ESTATICA
