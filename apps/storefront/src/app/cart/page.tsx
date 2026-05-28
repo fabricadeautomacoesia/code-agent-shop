@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { Trash2, Tag, TrendingUp, Plus, Minus, Star } from 'lucide-react';
+import { Trash2, Tag, TrendingUp, Plus, Minus, Star, ShoppingBag } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 import { ProgressiveCouponTeaser } from '@/components/progressive-coupon-teaser';
@@ -128,7 +128,13 @@ export default function CartPage() {
       {loading ? (
         <div className="glass p-12 text-center text-white/60">Carregando...</div>
       ) : items.length === 0 ? (
+        /* FIX-WORKER-8 pass 242 (visual parity): cart-drawer empty state ja tinha
+           <ShoppingBag w-16 h-16> icon decorativo (linha 96-98 cart-drawer.tsx)
+           mas /cart page empty state nao. Inconsistencia visual entre drawer
+           e full-page renderings. POST-FIX: paridade adiciona icon + same
+           padding pattern (espelha drawer empty state) + aria-hidden decorativo. */
         <div className="glass p-12 text-center">
+          <ShoppingBag className="w-16 h-16 mx-auto mb-4 text-white/20" aria-hidden="true" />
           <p className="text-xl mb-4">Carrinho vazio</p>
           <Link href="/products" className="btn-primary inline-block">Explorar catalogo</Link>
         </div>

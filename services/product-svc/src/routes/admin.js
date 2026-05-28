@@ -349,11 +349,49 @@ router.post('/:id/platform-take',
 );
 
 // POST /products/admin/:id/archive
-router.post('/:id/archive', asyncHandler(async (req, res) => {
-  await query(`UPDATE products SET status = 'archived', archived_at = NOW(), updated_at = NOW() WHERE id = $1`, [req.params.id]);
-  // FIX-WORKER-7 pass 5: invalida tambem detail/reviews/qna por slug
-  await invalidateProductCache(req.params.id);
-  res.json({ ok: true });
-}));
+// FIX-WORKER-4 pass 242 (defense-in-depth admin/:id/archive):
+//   PRE-FIX: 5 bugs em endpoint admin critical:
+//   1. SEM UUID validate -> PG 22P02 invalid_text_representation = 500
+//   2. SEM audit_log -> compliance gap (admin altera state produto sem trail)
+//   3. SEM state machine -> archive ja archived = wasted UPDATE + invalidate
+//   4. SEM validate body -> aceita qualquer payload + sem reason p/ audit
+//   5. SEM rate-limit -> mass archive abuse se token admin leak
+//   POST-FIX: 5 layers de defesa em paridade com /force-approve linha 188
+router.post('/:id/archive',
+  forceApproveLimiter,  // reuse limiter (5/min suficiente p/ ops admin)
+  validate({ body: z.object({ reason: z.string().min(5).max(1000) }).optional() }),
+  asyncHandler(async (req, res, next) => {
+    if (!FORCE_APPROVE_UUID_RE.test(req.params.id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+    // State machine: arquivar product ja archived = no-op (idempotent friendly)
+    const r = await query(
+      `UPDATE products SET status = 'archived', archived_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND status != 'archived'
+        RETURNING id, slug, title, status`,
+      [req.params.id]
+    );
+    if (!r.rows.length) {
+      // Pode ser: not found OR ja archived (idempotent path)
+      const check = await query('SELECT id, status FROM products WHERE id = $1', [req.params.id]);
+      if (!check.rows.length) return next(errorHandler.notFound('product_not_found'));
+      return res.json({ ok: true, idempotent: true, status: check.rows[0].status });
+    }
+    // Audit log (admin financial decision class - high-impact)
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'product.archive', 'product', $3, 'warn', $4::JSONB)`,
+      [req.user.sub, req.user.role, req.params.id, JSON.stringify({
+        slug: r.rows[0].slug,
+        title: r.rows[0].title,
+        reason: req.body?.reason || null,
+        ip: req.ip,
+      })]
+    ).catch((e) => log.warn({ err: e.message }, '[product.archive.audit_fail]'));
+    // FIX-WORKER-7 pass 5: invalida tambem detail/reviews/qna por slug
+    await invalidateProductCache(req.params.id);
+    res.json({ ok: true, archived: r.rows[0].id });
+  })
+);
 
 module.exports = router;

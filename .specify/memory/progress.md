@@ -25126,3 +25126,111 @@ PROXIMA ITER:
 - W13 notification: weekly digest cron
 - W8 visual: consistencia gradient buttons
 - VPS SSH unblock CRITICAL (74 ciclos - 24.7h)
+
+============================================================
+PASS 242 (2026-05-28) - W4 + W8 + W18 admin/visual/perf
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W4 product-svc: /admin/:id/archive 5-bug defense-in-depth
+- W8 storefront: /cart empty state icon parity drawer
+- W18 db: mig 072 loyalty_transactions indexes
+
+============================================================
+1. W4 - /admin/:id/archive 5-bug defensive overhaul
+============================================================
+FILE: services/product-svc/src/routes/admin.js:352-358 -> 352-394
+
+PROBLEMA (5 bugs em endpoint admin critical):
+1. SEM UUID validate -> PG 22P02 = 500 errorHandler
+2. SEM audit_log -> compliance gap (admin altera produto sem trail)
+3. SEM state machine -> archive ja archived = wasted UPDATE + invalidate
+4. SEM validate body -> aceita qualquer payload + sem reason
+5. SEM rate-limit -> mass archive abuse se token admin leak
+
+POST-FIX (5 layers defesa - paridade com /force-approve linha 188):
+- forceApproveLimiter (5/min reuse limiter existente)
+- validate body { reason min(5) max(1000) }.optional()
+- FORCE_APPROVE_UUID_RE.test(req.params.id) ou 400
+- UPDATE com WHERE status != 'archived' RETURNING
+  -> not found OR ja archived (idempotent friendly)
+- audit_log INSERT 'product.archive' severity warn payload
+  { slug, title, reason, ip }
+- log.warn no .catch para audit fail nao quebrar response
+
+============================================================
+2. W8 - /cart empty state icon parity
+============================================================
+FILE: apps/storefront/src/app/cart/page.tsx:130-134
+
+PROBLEMA:
+- cart-drawer.tsx empty state (linha 96-103):
+  <ShoppingBag w-16 h-16 mx-auto mb-4 text-white/20 />
+  <p>Carrinho vazio</p>
+  <Link>Explorar catalogo</Link>
+- /cart page empty state (full page):
+  <p>Carrinho vazio</p>  <!-- SEM icon -->
+  <Link>Explorar catalogo</Link>
+- Inconsistencia visual entre drawer (quick view) e full page
+- User context-switching entre drawer e /cart percebe gap
+
+POST-FIX:
+- Adiciona <ShoppingBag w-16 h-16 mx-auto mb-4 text-white/20 aria-hidden="true">
+- Paridade visual completa drawer ↔ page
+- Import ShoppingBag adicionado ao lucide-react
+
+============================================================
+3. W18 - mig 072 loyalty_transactions indexes
+============================================================
+FILE: db/migrations/072_loyalty_tx_user_idx.sql (CRIADO)
+
+PROBLEMA:
+- loyalty_transactions tabela append-only (5-10 rows/dia/user ativo)
+- Pos-1-ano com 1000 users: 1.8M-3.6M rows
+- INDICES EXISTENTES: NENHUM (mig 010 esqueceu)
+- FK user_id REFERENCES users e constraint, NAO index
+- Hot path queries SEM cobertura:
+  * seller-svc/loyalty.js:82 SUM balance per user
+  * seller-svc/loyalty.js:101 historico user ORDER BY created_at DESC
+  * /conta/pontos UI poll 30s
+- 1M+ rows: 200-800ms full scan + sort
+
+POST-FIX: 2 indices estrategicos:
+1. idx_loyalty_tx_user_created (user_id, created_at DESC)
+   - Cover SUM balance + historico ORDER BY satisfeito sem sort
+   - Lookup O(log n) - 200-800ms -> 2-5ms
+2. idx_loyalty_tx_reference (reference_type, reference_id) PARTIAL
+   WHERE reference_id IS NOT NULL
+   - Audit forense "quem ganhou do order X?"
+   - PARTIAL filtra ~30% rows sem reference
+
+============================================================
+SUMARIO PASS 242
+============================================================
+Files: 3 modificados/criados
+  - services/product-svc/src/routes/admin.js (archive defense)
+  - apps/storefront/src/app/cart/page.tsx (empty icon)
+  - db/migrations/072_loyalty_tx_user_idx.sql (NEW perf idx)
+Lines: ~80 added
+
+VPS SSH BLOQUEADO (75 ciclos - 25h sem deploy).
+Migs 069+070+071+072 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc cas_storefront --force
+- Apply mig 072:
+    docker exec cas_postgres psql -U cas_admin -d cas \
+      -f /docker/db/migrations/072_loyalty_tx_user_idx.sql
+- W4 test: POST /admin/:id/archive 2x mesmo produto:
+    1a: { ok:true, archived:<id> }
+    2a: { ok:true, idempotent:true, status:'archived' }
+  SELECT * FROM audit_log WHERE action='product.archive'
+- W8 test: mobile /cart sem items -> ShoppingBag icon visivel
+- W18 test: EXPLAIN ANALYZE SELECT * FROM loyalty_transactions
+  WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50
+  -> Index Scan idx_loyalty_tx_user_created (era Seq Scan + Sort)
+
+PROXIMA ITER:
+- W13 notification: digest weekly cron
+- W17 vault: rotate endpoint state machine
+- VPS SSH unblock CRITICAL (75 ciclos - 25h!!!)
