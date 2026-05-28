@@ -382,7 +382,13 @@ app.get('/metrics/latest',
 //   Note: 10s curto vs outros (audit-log/metrics 30s) pq alerts SAO urgent
 //   Admin precisa ver novo critical alert em <15s tipico SLO
 const alertsHandler = asyncHandler(async (req, res) => {
-  const days = Math.min(parseInt(req.query.days || '7', 10), 90);
+  /* FIX-WORKER-10 pass 288 (days min bound paridade audit-log):
+     PRE-FIX: Math.min(parsed, 90) sem Math.max(1, ...).
+     - ?days=0 -> 0 -> interval '0 days' -> created_at > NOW() (empty) + cache pollution
+     - ?days=-5 -> -5 -> interval '-5 days' -> PG aceita (future timestamps - sempre empty)
+     - ?days=NaN -> NaN -> PG cast erro 500 leak
+     POST-FIX: clamp [1, 90] paridade auditLogHandler linha 456. */
+  const days = Math.min(Math.max(1, parseInt(req.query.days || '7', 10) || 7), 90);
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 100));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 

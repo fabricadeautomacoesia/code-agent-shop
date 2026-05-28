@@ -28552,3 +28552,40 @@ PROXIMA ITER:
 - W4 admin /admin/payouts column 'wallet_configured' (consume pass 278 flag)
 - W2 checkout payment_method labels (PIX 5% destaque vs CC parcelamento)
 - VPS SSH unblock URGENTISSIMO (120 ciclos - 40h)
+
+
+============================================================
+PASS 288 - 2026-05-28 - W10 aiops alerts days bound + audit findings
+============================================================
+Files: 1 modificado
+  - services/aiops-svc/src/server.js (alerts days min bound)
+Lines: ~8 added
+
+W10 (aiops /alerts days parameter min guard):
+- PRE-FIX: Math.min(parseInt(days||'7'), 90) sem Math.max(1,...)
+- Edge cases:
+  - ?days=0 -> interval '0 days' -> created_at > NOW() (always empty)
+  - ?days=-5 -> PG aceita interval '-5 days' -> future filter (empty)
+  - ?days=NaN -> parseInt returns NaN -> PG cast erro 500
+- POST-FIX: Math.min(Math.max(1, parsed || 7), 90)
+- Paridade auditLogHandler linha 456 (mesmo svc, padrao consolidado)
+- Cache key d=0 nao mais polui cache
+
+W2 (checkout audit - sem bug acionavel este ciclo):
+- POST /orders/checkout: validacao+atomicity+tx OK
+- GET /orders/:id: cache key vary by user.sub correto (admin/buyer separate)
+- GET /orders/:id detail: campos explicit, no download_token leak, ownership OR admin
+- Nenhuma vulnerabilidade detectada - flow correto
+
+VPS SSH BLOQUEADO (121 ciclos - 40.3h sem deploy).
+Migs 069-082 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_aiops-svc --force
+- W10: curl com ?days=0 -> esperado: rows com clamp days=1 (nao empty)
+  curl -H "Authorization: Bearer $T" "https://cas.../api/aiops/alerts?days=0&limit=10"
+
+PROXIMA ITER:
+- W4 admin /alerts UI consume bounded days param
+- W7 product-svc admin platform-take atomicity audit
+- VPS SSH unblock URGENTISSIMO (121 ciclos - 40.3h)
