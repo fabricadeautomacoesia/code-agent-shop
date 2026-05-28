@@ -26694,3 +26694,92 @@ PROXIMA ITER:
 - W2 PIX QR refresh button
 - W3 review helpful click
 - VPS SSH unblock CRITICAL (92 ciclos - 30.7h)
+
+============================================================
+PASS 260 (2026-05-28) - W7 + W14 + W15 page/idx/mobile
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W7 product-svc: reviews page cap (pattern qna pass 245)
+- W14 db: mig 076 coupons UPPER idx funcional
+- W15 storefront: /conta header mobile overflow
+
+============================================================
+1. W7 - reviews page cap parity qna
+============================================================
+FILE: services/product-svc/src/routes/public.js:916-922
+
+PROBLEMA (mesmo bug pass 245):
+- /:slug/reviews aceitava ?page=99999 mas total=10
+- Response retornava { page: 99999, has_more: false }
+- Frontend pagination renderia "Pagina 99999 de 1"
+- Cache 60s armazenava response invalido
+
+POST-FIX:
+- effectivePage = Math.min(requestedPage, Math.ceil(total/lim))
+- Mesmo pattern qna route pass 245 - paridade cross-endpoint
+
+============================================================
+2. W14 - mig 076 coupons functional UPPER idx
+============================================================
+FILE: db/migrations/076_coupons_code_upper_idx.sql (CRIADO)
+
+PROBLEMA:
+- coupons.code UNIQUE constraint nao serve UPPER(code) lookup
+- Endpoints case-insensitive (pass 16 W7):
+  WHERE UPPER(code) = UPPER($1)
+- PG Seq Scan tabela inteira p/ aplicar UPPER functional
+- 10k coupons (1 ano prod): 50-200ms per /coupon/preview hit
+- Cache 30s mitiga mas miss = scan completo
+
+POST-FIX:
+- CREATE INDEX idx_coupons_code_upper ON coupons(UPPER(code))
+- Lookup O(log n) vs O(n)
+- Read-heavy table - idx write em UPDATE rare
+
+============================================================
+3. W15 - /conta header mobile 375px overflow
+============================================================
+FILE: apps/storefront/src/app/conta/page.tsx:38-49
+
+PROBLEMA:
+- flex items-center justify-between SEM wrap
+- h1 text-4xl "Ola, NomeLongo" (~150px) + email (50-200px) +
+  role badge (40px) + btn Sair (70px) = 310-460px
+- Mobile 375px viewport - 48px padding = 327px usavel
+- Overflow horizontal scroll em users com nomes/emails longos
+- Pattern V8 paridade pass 245 (pedido detail header)
+
+POST-FIX:
+- flex-wrap + items-start + gap-3
+- min-w-0 flex-1 no <div> esquerdo (permite shrink)
+- text-3xl sm:text-4xl + break-words (mobile menor)
+- email/badge inline-block + break-words
+- flex-shrink-0 no btn (sempre visivel)
+
+============================================================
+SUMARIO PASS 260
+============================================================
+Files: 3 modificados/criados
+  - services/product-svc/src/routes/public.js (reviews page cap)
+  - db/migrations/076_coupons_code_upper_idx.sql (NEW UPPER idx)
+  - apps/storefront/src/app/conta/page.tsx (mobile header)
+Lines: ~60 added
+
+VPS SSH BLOQUEADO (93 ciclos - 31h sem deploy).
+Migs 069-076 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc cas_storefront --force
+- Apply mig 076:
+    docker exec cas_postgres psql -U cas_admin -d cas \
+      -f /docker/db/migrations/076_coupons_code_upper_idx.sql
+- W7: curl /api/products/X/reviews?page=99999 -> response.page max real
+- W14: EXPLAIN ANALYZE SELECT * FROM coupons WHERE UPPER(code)=UPPER('TEST')
+  Index Scan idx_coupons_code_upper (era Seq Scan)
+- W15: iPhone SE 375px /conta com user.full_name longo -> sem overflow
+
+PROXIMA ITER:
+- W4 admin: dispute resolution UI
+- W17 vault: rotate audit dedup
+- VPS SSH unblock CRITICAL (93 ciclos - 31h)

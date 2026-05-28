@@ -916,9 +916,20 @@ router.get('/:slug/reviews',
   const total = r.rows[0]?._total ?? 0;
   const reviews = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
 
+  // FIX-WORKER-7 pass 260 (page cap parity qna pass 245):
+  //   PRE-FIX: page = Math.max(req.query.page||1, 1) sem cap p/ total
+  //   ?page=99999 com total=10 retornava { page:99999, has_more:false }
+  //   Frontend pagination "Pagina 99999 de 1" - UX broken
+  //   Cache 60s armazenava response invalido
+  //   POST-FIX: effectivePage = Math.min(requested, ceil(total/lim))
+  //   Pattern V8 paridade com qna route (pass 245)
+  const requestedPage = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const maxPage = total > 0 ? Math.ceil(total / lim) : 1;
+  const effectivePage = Math.min(requestedPage, maxPage);
+
   res.json({
     reviews,
-    total, limit: lim, page: Math.max(parseInt(req.query.page, 10) || 1, 1),
+    total, limit: lim, page: effectivePage,
     has_more: (off + reviews.length) < total,
     sort, rating: ratingFilter,
   });

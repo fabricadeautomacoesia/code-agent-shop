@@ -35,15 +35,22 @@ export default function ContaPage() {
 
   return (
     <div className="container mx-auto px-6 py-8">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="font-display font-bold text-4xl">Ola, {me.display_name || me.full_name?.split(' ')[0]}</h1>
-          <p className="text-white/60">{me.email} <span className="px-2 py-0.5 rounded-md bg-magenta/20 text-xs ml-2">{me.role}</span></p>
+      {/* FIX-WORKER-15 pass 260 (mobile 375px overflow):
+          Header flex sem wrap em mobile: h1 text-4xl "Ola, NomeLongo" + email
+          + role badge + botao Sair (~250-300px) excedia 375px viewport com
+          padding container (~327px) -> overflow horizontal scroll.
+          Pattern V8 paridade pass 245 (pedido detail header).
+          POST-FIX: flex-wrap + items-start + min-w-0 flex-1 + text-3xl sm:text-4xl
+          + break-words + flex-shrink-0 no btn (sempre visivel). */}
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-8">
+        <div className="min-w-0 flex-1">
+          <h1 className="font-display font-bold text-3xl sm:text-4xl break-words">Ola, {me.display_name || me.full_name?.split(' ')[0]}</h1>
+          <p className="text-white/60 text-sm sm:text-base break-words">{me.email} <span className="px-2 py-0.5 rounded-md bg-magenta/20 text-xs ml-2 inline-block">{me.role}</span></p>
         </div>
         {/* FIX-WORKER-1 pass 163 (a11y): type=button + aria-label + LogOut aria-hidden + focus-visible */}
         <button type="button" onClick={logout}
           aria-label="Sair da conta (logout)"
-          className="btn-ghost flex items-center gap-2 text-sm focus-visible:outline-2 focus-visible:outline-magenta">
+          className="btn-ghost flex items-center gap-2 text-sm flex-shrink-0 focus-visible:outline-2 focus-visible:outline-magenta">
           <LogOut className="w-4 h-4" aria-hidden="true" /> Sair
         </button>
       </div>
