@@ -38,8 +38,12 @@ export default function SellerProductsPage() {
       confirmLabel: 'Enviar para QA',
     })) return;
     action.run(`submit-${id}`, async () => {
-      await sellerFetch(`/products/me/${id}/submit`, { method: 'POST' });
-      return `Produto ${id.slice(0, 8)}... enviado para QA`;
+      /* FIX-WORKER-5 pass 280: consume wallet_warning do response (pass 279)
+         Backend retorna { wallet_warning?: string } quando seller sem asaas_wallet_id.
+         UX: aparece junto com banner success do useSellerAction. */
+      const r = await sellerFetch<{ wallet_warning?: string }>(`/products/me/${id}/submit`, { method: 'POST' });
+      const base = `Produto ${id.slice(0, 8)}... enviado para QA.`;
+      return r?.wallet_warning ? `${base} ATENCAO: ${r.wallet_warning}` : base;
     });
   }
 

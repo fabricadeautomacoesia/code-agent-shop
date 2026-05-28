@@ -28223,3 +28223,42 @@ PROXIMA ITER:
 - W5 dashboard-seller consume wallet_warning banner UI
 - W2 checkout warn buyer multi-seller mix (wallet+non-wallet items)
 - VPS SSH unblock URGENTISSIMO (112 ciclos - 37.3h)
+
+
+============================================================
+PASS 280 - 2026-05-28 - W5 + W17 (seller wallet UX + vault read rate-limit)
+============================================================
+Files: 3 modificados
+  - apps/dashboard-seller/src/app/products/page.tsx (consume wallet_warning)
+  - apps/dashboard-seller/src/app/products/[id]/page.tsx (consume + delay redirect)
+  - services/vault-svc/src/server.js (readRateLimit + 3 GET endpoints)
+Lines: ~35 added
+
+W5 (seller dash consume wallet_warning - paridade buyer/seller pass 278/279):
+- products/page.tsx submitQA: response inclui wallet_warning -> suffix banner
+- products/[id]/page.tsx submit: setTimeout 2500ms se warning (seller le antes
+  do redirect); 600ms se sem warning (UX normal)
+- Mensagem "Produto X enviado. ATENCAO: <wallet_warning>"
+
+W17 (vault enumeration defense - read endpoints rate-limit):
+- Novo readRateLimit (60 req/min/ip, env VAULT_READ_RATE_LIMIT)
+- Aplicado GET /keys, GET /keys/me, GET /keys/rotation-due
+- Pattern V8: read endpoints com material sensivel TAMBEM rate-limit
+- PRE-FIX: token seller valido -> enumerar 1000 req/s metadata sem block
+- POST-FIX: 60/min generoso UX legit + DoS bloqueio
+
+VPS SSH BLOQUEADO (113 ciclos - 37.7h sem deploy).
+Migs 069-080 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-seller cas_vault-svc --force
+- W5: login vendedor1@cas.io -> /products/<id> -> Enviar QA -> banner verde
+  com ATENCAO + wallet_warning text (se seller sem wallet)
+- W17: rajada 100 req/s GET /api/vault/keys/me -> 429 apos 60 req:
+  for i in $(seq 1 100); do curl -s -H "Authorization: Bearer $T" .../api/vault/keys/me &; done; wait
+  Expected: ~60 200 + 40 429 (rate_limit_exceeded)
+
+PROXIMA ITER:
+- W2 checkout multi-seller mix banner (cart tem items mistos wallet+sem)
+- W4 admin notification cleanup logs viewer (consume pass 279 audit_log)
+- VPS SSH unblock URGENTISSIMO (113 ciclos - 37.7h)

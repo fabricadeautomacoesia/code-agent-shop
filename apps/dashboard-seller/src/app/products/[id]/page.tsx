@@ -74,9 +74,13 @@ export default function EditProductPage() {
       variant: 'danger', confirmLabel: 'Enviar para QA',
     })) return;
     action.run('submit', async () => {
-      await sellerFetch(`/products/me/${id}/submit`, { method: 'POST' });
-      router.push('/products');
-      return 'Enviado para QA pipeline';
+      /* FIX-WORKER-5 pass 280: capture wallet_warning (pass 279 backend) - exibe
+         como suffix p/ que seller veja o alerta antes do redirect. */
+      const r = await sellerFetch<{ wallet_warning?: string }>(`/products/me/${id}/submit`, { method: 'POST' });
+      // Pequeno delay antes redirect p/ usuario ler banner success com warning
+      setTimeout(() => router.push('/products'), r?.wallet_warning ? 2500 : 600);
+      const base = 'Enviado para QA pipeline.';
+      return r?.wallet_warning ? `${base} ATENCAO: ${r.wallet_warning}` : base;
     });
   }
 

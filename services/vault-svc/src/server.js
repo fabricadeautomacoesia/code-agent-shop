@@ -102,6 +102,23 @@ const provisionRateLimit = rateLimit({
   message: { error: 'rate_limit_exceeded' },
 });
 
+// FIX-WORKER-17 pass 280 (enumeration defense em endpoints read):
+//   PRE-FIX: GET /keys, GET /keys/me, GET /keys/rotation-due sem rate-limit.
+//   Atacante com token seller valido pode enumerar metadata (key_alias,
+//   fingerprints, expires_at) em loop 1000+ req/s -> stats leak + DoS
+//   vault-svc (PG query overhead em CADA req mesmo apos cache HTTP no-store).
+//   POST-FIX: rate-limit GENEROSO read (60 req/min/ip) - alinha com UX legit
+//   (admin dash refresh + seller paineis). Pattern V8 cross-svc:
+//   "Read endpoints com material sensivel TAMBEM precisam rate-limit".
+const readRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.VAULT_READ_RATE_LIMIT || '60', 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limit_exceeded' },
+  keyGenerator: (req) => req.headers['x-real-ip'] || req.ip,
+});
+
 // FIX-WORKER-17 pass 254: plain_key DoS prevention (max 500 chars - cobre todos providers)
 // FIX-WORKER-17 pass 276 (key_alias XSS + log injection):
 //   PRE-FIX: key_alias z.string().min(3).max(100) sem regex
@@ -312,6 +329,7 @@ const rotationDueCacheKey = (req) => {
 };
 
 app.get('/keys/rotation-due',
+  readRateLimit,
   adminOnly,
   cache.cacheMiddleware(rotationDueCacheKey, 300),
   asyncHandler(async (req, res) => {
@@ -405,6 +423,7 @@ const keysListCacheKey = (req) => {
 };
 
 app.get('/keys',
+  readRateLimit,
   adminOnly,
   cache.cacheMiddleware(keysListCacheKey, 60),
   asyncHandler(async (req, res) => {
@@ -1009,7 +1028,7 @@ const sellerKeyProvisionSchema = z.object({
 });
 
 // GET /api/vault/keys/me - lista chaves do seller logado (sem encrypted)
-app.get('/keys/me', sellerOrAdmin, asyncHandler(async (req, res) => {
+app.get('/keys/me', readRateLimit, sellerOrAdmin, asyncHandler(async (req, res) => {
   // SECURITY: ownership via sellers.user_id (admin pode passar ?seller_id query)
   const isAdmin = req.user && ['admin','staff'].includes(req.user.role);
   // FIX-WORKER-17 pass 264 (UUID validation defense):
