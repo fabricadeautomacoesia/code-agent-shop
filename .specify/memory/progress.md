@@ -30006,3 +30006,38 @@ PROXIMA ITER:
 - W4 admin DLP audit dashboard (consume audit_log masked entries)
 - W11 final payment refund audit
 - VPS SSH unblock URGENTISSIMO (157 ciclos - 52.3h)
+
+
+============================================================
+PASS 325 - 2026-05-28 - W2 public /sellers list hardening + COUNT OVER
+============================================================
+Files: 1 modificado
+  - services/seller-svc/src/routes/sellers.js (3 BUGS fixados)
+Lines: ~35 changed
+
+W2 (public sellers list 3 BUGS):
+1. tier sem ENUM whitelist - PG cast 500 leak
+   POST-FIX: VALID_TIER Set + 400 invalid response
+2. search ILIKE %${search}% sem escape - wildcards % e _ aceitos
+   ?search=%% -> match TODOS sellers (mass PII exfil)
+   POST-FIX: escape regex /[%_\]/g + ESCAPE '\' + slice(0,100)
+3. 2 queries (rows + COUNT) - pattern V8 cross-svc
+   POST-FIX: COUNT(*) OVER() window + strip _total
+- Paridade pass 299 admin/all + pass 321 search /
+
+VPS SSH BLOQUEADO (158 ciclos - 52.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+COUNT OVER Final cumulativo - 21 endpoints (passes 178-325)
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc --force
+- W2 verify:
+  curl '/api/sellers?tier=invalid' -> 400
+  curl '/api/sellers?search=%25%25' -> not match-all
+  curl '/api/sellers?limit=10' -> 1 scan (vs 2 pre-fix)
+
+PROXIMA ITER:
+- W2 sellers /:slug GET COUNT OVER (linha 168, 180, 192, 325)
+- W4 admin dashboard /api/sellers stats
+- VPS SSH unblock URGENTISSIMO (158 ciclos - 52.7h)

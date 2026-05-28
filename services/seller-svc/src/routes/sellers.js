@@ -47,11 +47,27 @@ router.get('/',
     return res.status(400).json({ error: 'invalid_tier', allowed: Array.from(SELLER_TIER_ENUM) });
   }
 
+  /* FIX-WORKER-2 pass 325 hardening:
+     PRE-FIX bugs:
+     1. tier sem ENUM whitelist - PG cast erro 22P02 -> 500 leak
+     2. search ILIKE %${search}% sem escape - wildcards % e _ aceitos
+        ?search=%% -> match TODOS sellers (mass exfil)
+     POST-FIX paridade pass 299 admin/all:
+     - VALID_TIER whitelist + 400 invalid
+     - search escape regex /[%_\\]/g + ESCAPE '\\' + slice(0,100) */
+  const VALID_TIER = new Set(['iniciante','bronze','prata','ouro','platinum']);
+  if (tier && !VALID_TIER.has(String(tier).toLowerCase())) {
+    return res.status(400).json({ error: 'invalid_tier', allowed: Array.from(VALID_TIER) });
+  }
   const where = [`s.status = 'active'`, `s.deleted_at IS NULL`];
   const params = [];
   let i = 1;
-  if (tier)   { where.push(`s.reputation_tier = $${i++}`); params.push(tier); }
-  if (search) { where.push(`s.store_name ILIKE $${i++}`);  params.push(`%${search}%`); }
+  if (tier)   { where.push(`s.reputation_tier = $${i++}`); params.push(String(tier).toLowerCase()); }
+  if (search) {
+    const sEscaped = String(search).replace(/[%_\\]/g, '\\$&').slice(0, 100);
+    where.push(`s.store_name ILIKE $${i++} ESCAPE '\\'`);
+    params.push(`%${sEscaped}%`);
+  }
 
   // FIX-WORKER-7 pass 72 BUG 1: + s.id ASC tiebreaker
   const order = ({
@@ -61,11 +77,14 @@ router.get('/',
     newest:     's.created_at DESC, s.id ASC',
   })[sort] || 's.reputation_score DESC, s.id ASC';
 
+  /* FIX-WORKER-2 pass 325: COUNT(*) OVER() window consolidation.
+     Pattern V8 20+ endpoints (passes 178-321). */
   params.push(lim, off);
   const r = await query(
     `SELECT s.id, s.store_slug, s.store_name, s.store_description, s.store_banner_url, s.store_logo_url,
             s.reputation_tier, s.reputation_score, s.total_sales, s.avg_rating,
-            s.total_products_active, s.created_at
+            s.total_products_active, s.created_at,
+            COUNT(*) OVER()::INT AS _total
        FROM sellers s
       WHERE ${where.join(' AND ')}
       ORDER BY ${order}
@@ -73,20 +92,15 @@ router.get('/',
     params
   );
 
-  // Total count UX paginacao
-  const countParams = params.slice(0, -2);
-  const totalRes = await query(
-    `SELECT COUNT(*)::INT AS total FROM sellers s WHERE ${where.join(' AND ')}`,
-    countParams
-  );
-  const total = totalRes.rows[0].total;
+  const total = r.rows[0]?._total ?? 0;
+  const sellers = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
 
   res.json({
-    sellers: r.rows,
+    sellers,
     page: Number(page),
     limit: lim,
     total,
-    has_more: (off + r.rows.length) < total,
+    has_more: (off + sellers.length) < total,
   });
 }));
 
