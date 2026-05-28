@@ -32053,3 +32053,32 @@ W12 LLM hardening:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
+
+## PASS 388 W4 ADMIN: audit-log actor email + display_name (UX investigation)
+commit 607e38f
+BUG audit-log viewer so mostrava UUID slice
+PRE-FIX:
+  - Frontend: e.actor_user_id.slice(0, 8)
+  - Admin investigation lookup manual PG SELECT email FROM users
+  - Tempo 10x lento
+
+POST-FIX backend:
+- LEFT JOIN users + actor_email + actor_display_name
+- WHERE parts prefixed a. (anti-ambiguous)
+- maskPII.email LGPD pre-response
+- + maskPII import @cas/shared
+
+POST-FIX frontend:
+- Display chain: display_name > masked email > UUID slice
+- LGPD compliant email mask 'jo***@cas.io'
+- Visual: principal display_name + email subscript
+
+W4 audit-log investigation-ready (TODO da iter 367+)
+
+121 passes acumulados (268->388) sem deploy VPS
+5 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W2 checkout E2E
+- W18 perf optimization
