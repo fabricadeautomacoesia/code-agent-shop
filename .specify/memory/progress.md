@@ -23204,3 +23204,79 @@ PROXIMA ITER:
 - W4 admin: vault-svc admin filtrar por seller_id (frontend)
 - W18: cache /api/notifications/me (com TTL care - mutations frequent)
 - 🚨 VPS SSH unblock URGENTE (52 ciclos - >17.3h sem deploy!)
+
+PASS 220 (W13 sendEmail retry classification cross-svc pattern) - 2026-05-28:
+- W13 aplica pattern retry classification de pass 219 em sendEmail
+
+PRE-FIX em sendEmail:
+- mailer.sendMail() throws nodemailer errors RAW
+- Outbox processor pass 219 consume e.transient flag mas sendEmail
+  NAO setava o flag
+- Permanent errors (EAUTH/EENVELOPE) consumiam 5 retries waste budget
+- Em prod: SMTP auth fail (admin trocou senha sem atualizar env)
+  causava notif retry loop por horas ate dar up sem fix possivel
+
+NODEMAILER ERROR CODES MAPPING (post-pass-220):
+
+PERMANENT (4xx-like - skip retry budget):
+- EAUTH: SMTP credentials invalidos (admin precisa fix env)
+- EENVELOPE: recipient bad email (user record broken)
+- EMESSAGE: message format invalid
+- EFILE: attachment file missing
+- responseCode 5xx SMTP (550, 551, 553, 554)
+  * 550 mailbox unavailable
+  * 553 syntax error
+  * 554 transaction failed
+
+TRANSIENT (5xx-like / rede):
+- ECONNECTION: TCP connection failed
+- EDNS: DNS resolution failed
+- ETIMEDOUT: timeout
+- ESOCKET: socket error
+- Unknown code: safer default = retry
+
+POST-FIX implementation:
+- email_not_configured -> transient=false (env misconfigured)
+- email_missing_recipient -> transient=false (user record broken)
+- mailer.sendMail() catch -> classify code + wrap new Error:
+  * e.transient = !isPermanent
+  * e.smtpCode = error code original
+  * e.smtpResponseCode = SMTP server response code
+
+PATTERN V8 RETRY CLASSIFICATION cross-svc CONSOLIDADO:
+- pass 192: qa-worker LLM fallback (timeout/429/5xx vs 4xx)
+- pass 219: notification-svc Telegram (HTTP status code)
+- pass 220: notification-svc Email (SMTP error code) - NEW
+
+OUTBOX PROCESSOR consumer pass 219:
+- isPermanent = e.transient === false
+- retry_count = CASE WHEN isPermanent THEN 5 ELSE +1
+- sent_status = 'failed' imediato se permanent
+- Resultado: EAUTH/EENVELOPE fail em 1 tentativa (vs 5 antes)
+
+Commit 20f56c8 pushed origin/main (+40/-3)
+VPS SSH ainda bloqueado (53 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (53 ciclos):
+- 168-219: documentados
+- 220: notification-svc sendEmail retry classification
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_notification-svc --force
+- Test EAUTH permanent skip:
+  Set SMTP_PASS=invalid no env -> notification fail EAUTH
+  Antes: 5 retries waste (1+30s+2min+10min+1h)
+  Depois: retry_count=5 imediato, sent_status='failed' em 1 tentativa
+- Test ETIMEDOUT transient:
+  Mock SMTP server slow (~15s)
+  Antes/Depois: retry com backoff exponencial (same behavior)
+- Test responseCode 550:
+  Mock SMTP server returns 550 mailbox unavailable
+  Antes: 5 retries waste
+  Depois: permanent skip - admin investigates record
+
+PROXIMA ITER:
+- W11: payment-svc Asaas refund edge cases (PAYMENT_REFUND_FAILED)
+- W4 admin: vault-svc filtrar seller_id (frontend filter UI)
+- W18: cache /api/notifications/me list (with TTL care)
+- 🚨 VPS SSH unblock URGENTE (53 ciclos - >17.7h sem deploy!)
