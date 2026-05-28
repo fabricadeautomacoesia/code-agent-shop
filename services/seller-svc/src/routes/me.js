@@ -364,9 +364,12 @@ router.get('/sla-status', asyncHandler(async (req, res) => {
 router.get('/sla-history', asyncHandler(async (req, res) => {
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  // FIX-WORKER-7 pass 109 deploy: schema real seller_sla_history tem
+  // 'event' (não event_type), 'deadline_was', 'actual_upload_at', 'days_overdue',
+  // 'actor_user_id', 'notes' (não previous_class/new_class etc).
   const r = await query(
-    `SELECT h.id, h.seller_id, h.event_type, h.previous_class, h.new_class,
-            h.previous_status, h.new_status, h.reason, h.created_at
+    `SELECT h.id, h.seller_id, h.event, h.deadline_was, h.actual_upload_at,
+            h.days_overdue, h.actor_user_id, h.notes, h.created_at
        FROM seller_sla_history h
        JOIN sellers s ON s.id = h.seller_id
       WHERE s.user_id = $1
@@ -646,28 +649,35 @@ const kpiCacheKey = (req) => `seller:kpi:${req.user?.sub || 'anon'}`;
 router.get('/kpi',
   cache.cacheMiddleware(kpiCacheKey, 300),
   asyncHandler(async (req, res) => {
+    // FIX-WORKER-7 pass 109 deploy: schema real mv_seller_kpi (DESCRIBE):
+    //   seller_id, user_id, seller_class, status, reputation_tier, reputation_score,
+    //   products_active, products_pending_qa, gross_revenue_cents, net_payout_cents,
+    //   platform_commission_cents, total_orders, avg_rating, review_count,
+    //   open_disputes, sla_next_deadline_at, updated_at
+    // Removidas colunas que nao existem: total_sales, total_revenue_cents,
+    //   refund_rate, on_time_qa_rate, response_rate, last_updated_at.
+    // Adicionadas: total_orders, gross_revenue_cents, net_payout_cents,
+    //   products_active, products_pending_qa, open_disputes.
     const r = await query(
-      `SELECT k.seller_id,
-              k.total_sales, k.total_revenue_cents,
-              k.avg_rating, k.review_count,
-              k.refund_rate, k.on_time_qa_rate, k.response_rate,
-              k.products_active_count, k.products_pending_count,
+      `SELECT k.seller_id, k.seller_class, k.status,
               k.reputation_tier, k.reputation_score,
-              k.last_updated_at
+              k.products_active, k.products_pending_qa,
+              k.gross_revenue_cents, k.net_payout_cents,
+              k.platform_commission_cents,
+              k.total_orders, k.avg_rating, k.review_count,
+              k.open_disputes, k.sla_next_deadline_at, k.updated_at
          FROM mv_seller_kpi k
-         JOIN sellers s ON s.id = k.seller_id
-        WHERE s.user_id = $1`, [req.user.sub]
+        WHERE k.user_id = $1`, [req.user.sub]
     );
 
     // Default empty state p/ seller novo sem mv entry
     const kpi = r.rows[0] || {
-      seller_id: null,
-      total_sales: 0, total_revenue_cents: 0,
-      avg_rating: 0, review_count: 0,
-      refund_rate: 0, on_time_qa_rate: 0, response_rate: 0,
-      products_active_count: 0, products_pending_count: 0,
-      reputation_tier: 'bronze', reputation_score: 0,
-      last_updated_at: null,
+      seller_id: null, seller_class: null, status: null,
+      reputation_tier: 'iniciante', reputation_score: 0,
+      products_active: 0, products_pending_qa: 0,
+      gross_revenue_cents: 0, net_payout_cents: 0, platform_commission_cents: 0,
+      total_orders: 0, avg_rating: 0, review_count: 0,
+      open_disputes: 0, sla_next_deadline_at: null, updated_at: null,
     };
     res.json({ kpi });
   })
