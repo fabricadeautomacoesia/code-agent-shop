@@ -20412,3 +20412,51 @@ PROXIMA ITER:
 - W6 audit reset-password flow
 - W10 search-svc bugs (autocomplete trie)
 - 🚨 VPS SSH unblock URGENTE (10 ciclos - >3h sem deploy!)
+
+PASS 178 (W18 wishlist cache + coherency + check) - 2026-05-28:
+- W18 pass 178 - 3 melhorias em /products/wishlist:
+
+1. COUNT(*) OVER() window consolidation:
+   * Antes: 2 queries (SELECT rows + COUNT separado)
+   * Depois: 1 query (window aggregated)
+   * Latencia: ~30ms -> ~15ms (PG)
+   * Strip _total interno do response
+
+2. Cache invalidation POST/DELETE:
+   * BUG: usuario favorita -> GET /wishlist cached stale 30s (W7 pass 80 cache)
+   * Fix: invalidateWishlistCache helper - del wildcard
+     wishlist:{userId}:* + wishlist:check:{userId}:*
+   * Chamado em router.post (apos INSERT) + router.delete (apos DELETE)
+
+3. Cache GET /:product_id/check (NOVO 60s TTL):
+   * Hot path - cada ProductCard + WishlistButton em PDP/cards chama
+   * 100 produtos visiveis = 100 hits PG nesta endpoint
+   * Cache key: wishlist:check:{userId}:{productId}
+   * Invalidation coherente via invalidateWishlistCache wildcard
+
+- Commit b496d12 pushed origin/main
+- VPS SSH ainda bloqueado (11 ciclos consecutivos)
+
+CACHE COVERAGE wishlist completo:
+- GET /wishlist (list): 30s (W7 pass 80, optimizada pass 178)
+- GET /wishlist/:productId/check: 60s (pass 178 novo)
+- POST/DELETE: invalidate cascade
+
+CODIGO ACUMULADO ORIGIN/MAIN (11 ciclos):
+- 168-176: documentados
+- 177: SEO noindex dashboards + robots.txt
+- 178: wishlist cache + coherency + check
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc --force
+- Cache hit: time curl -H "Bearer $T" /products/wishlist (2a chamada <5ms)
+- Coherency: POST /wishlist -> GET /wishlist deve mostrar imediato
+- Check cache: time curl -H "Bearer $T" /products/wishlist/UUID/check
+  2a chamada <5ms
+
+PROXIMA ITER:
+- W18: cache /notifications/me
+- W18: cache /products list (publica - cuidado vary by filters)
+- W6 audit reset-password flow
+- W10 search-svc bugs (autocomplete trie)
+- 🚨 VPS SSH unblock URGENTE (11 ciclos - >3.5h sem deploy!)
