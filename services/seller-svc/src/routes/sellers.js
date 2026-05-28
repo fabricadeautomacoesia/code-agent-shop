@@ -110,7 +110,15 @@ router.get('/',
 // que muda em reviews mas TTL 60s eh aceitavel). Usar withCache (vs middleware) para
 // preservar errorHandler.notFound() em casos slug invalido.
 router.get('/:slug', asyncHandler(async (req, res, next) => {
-  const { value: seller } = await cache.withCache(`sellers:detail:${req.params.slug}`, 60, async () => {
+  // FIX-WORKER-18 pass 380 (cache key normalization - paridade pass 350):
+  //   PRE-FIX: cache.withCache(`sellers:detail:${req.params.slug}`) raw
+  //   - User acessa /Loja-Tech, /LOJA-TECH, /loja-tech -> 3 entries Redis
+  //   - DoS amplification + memory waste em sellers top
+  //   - Cache pollution paridade products:detail (corrigido pass 350)
+  //   POST-FIX: slugNorm trim().toLowerCase() consolidacao pattern V8
+  //   Tambem query usa slugNorm direct (PG store_slug ja lowercase canonical).
+  const slugNorm = String(req.params.slug || '').trim().toLowerCase();
+  const { value: seller } = await cache.withCache(`sellers:detail:${slugNorm}`, 60, async () => {
     const r = await query(
       `SELECT s.id, s.store_slug, s.store_name, s.store_description,
               s.store_banner_url, s.store_logo_url,
@@ -123,7 +131,7 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
          FROM sellers s
          JOIN users u ON u.id = s.user_id
         WHERE s.store_slug = $1 AND s.status = 'active' AND s.deleted_at IS NULL`,
-      [req.params.slug]
+      [slugNorm]
     );
     return r.rows[0] || null;
   });
