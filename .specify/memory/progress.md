@@ -17338,7 +17338,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ SEO metadata /sellers + /products enriquecida (pass 118)
 - ✅ Migration 048 DROP 2 indices orfaos APLICADA em prod (pass 119)
 - ✅ Migration 049 ADD 16 FK indices faltando APLICADA em prod (pass 120)
-- ✅ generateMetadata dinamico /categoria/[slug] (pass 121 esta iter)
+- ✅ generateMetadata dinamico /categoria/[slug] (pass 121)
+- ✅ MLB-12 Buscas Recentes localStorage (pass 122 esta iter)
+
+W7 PASS 122 RESUMO - W16 MLB FEATURE 12: BUSCAS RECENTES:
+- AUDIT search-autocomplete.tsx confirma SO trending fetch + autocomplete debounce
+- GAP MLB confirmado: usuario nao tinha historico de buscas previas
+- ADDED 4 helpers em search-autocomplete.tsx:
+  * loadRecent(): le localStorage 'cas:recent_searches' c/ fallback []
+  * pushRecent(q): dedup case-insensitive + LIFO cap 8 + slice 80 chars
+  * removeRecent(q): remove 1 entry e retorna lista atualizada
+  * clearRecent(): zera tudo (botao 'Limpar')
+- WIRED no submit() + clickRecent() + trending click p/ persistir LRU
+- NEW STATE: useState<string[]>([]) hidratado on mount
+- NEW UI SECTION:
+  * Header 'Buscas recentes' c/ Clock icon + botao 'Limpar' (right-align)
+  * Lista: Clock icon + query + X individual (hover reveals X)
+  * Click no botao da row -> clickRecent (navega + LRU refresh)
+  * Click no X -> removeRecent + setState
+  * Trending segue abaixo (mostra sempre que q<2)
+- PRIVACY: localStorage = client-side only (zero trip ao backend)
+- ROBUSTNESS: try-catch em quota_exceeded / privacy-mode / Safari ITP
+- BUILD storefront OK + service converged + novo bundle 2574-* (era 2235-*)
+- COMMIT ef8a40a pushed GitHub main + deployed prod
+- MLB features agora: 12 (era 11) - 100% paridade ML + extras
 
 W7 PASS 121 RESUMO - W9 SEO DINAMICO /categoria/[slug]:
 - AUDIT pages SEM metadata explicita:
