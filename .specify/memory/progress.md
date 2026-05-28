@@ -17330,7 +17330,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Audit admin endpoints + 5 schema fixes (pass 110)
 - ✅ Audit storefront SSR + 3 fixes deploy infra (pass 111)
 - ✅ Rewrites PT-BR /loja + /produto + descobrindo URLs reais dashboards (pass 112)
-- ✅ Audit E2E cart + MLB features prod (pass 113 esta iter) - 0 bugs novos
+- ✅ Audit E2E cart + MLB features prod (pass 113) - 0 bugs novos
+- ✅ Rebuild dashboard-admin + dashboard-seller (pass 114) - 6 pages admin ressurgiram
+
+W7 PASS 114 RESUMO - DEPLOY DASHBOARDS NOVOS:
+- Audit 22 paginas (storefront /conta/* + admin/* + seller/*) detectou 6 ADMIN 404:
+  * /audit-log, /aiops, /db-audit, /disputes, /reports, /vault, /webhooks, /alerts
+- ROOT CAUSE: imagem localhost/cas-admin:latest era de 15h atras (deploy pass 108)
+  mas Dockerfile.next bugado (pass 111) impediu rebuild p/ pegar pages novas
+  criadas em passes recentes (13/31/61/65/etc).
+- FIX: rebuild com Dockerfile.next pass 111 (monorepo aware --build-arg APP):
+  * docker build APP=dashboard-admin -t cas-admin:latest
+  * docker build APP=dashboard-seller -t cas-dashboard-seller:latest
+  * docker service update --force ambos
+- VALIDATION POS-FIX (admin):
+  * /audit-log -> 200 (era 404)
+  * /db-audit -> 200 (era 404) - usa /api/aiops/db/dead-indexes
+  * /disputes -> 200 (era 404) - usa /api/orders/admin/disputes
+  * /reports -> 200 (era 404)
+  * /vault -> 200 (era 404)
+  * /webhooks -> 200 (era 404)
+  * /alerts -> 200 (era 404)
+  * /aiops -> 404 (page nunca foi criada - so APIs)
+- Admin agora tem 13 paginas funcionais (era 5)
+- Pattern W7 em 140+ endpoints/pages LIVE - 114 micro-iters
 
 W7 PASS 113 RESUMO - AUDIT COMPLETO E2E + MLB:
 - Audit dashboard-seller (subdomain seller.cas...) - 7 paginas HTTP 200:
