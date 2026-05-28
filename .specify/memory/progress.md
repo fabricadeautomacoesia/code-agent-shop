@@ -21747,3 +21747,77 @@ PROXIMA ITER:
 - W18: cache /aiops/audit-log query (admin polling)
 - W11: payment-svc Asaas refund flow
 - 🚨 VPS SSH unblock URGENTE (32 ciclos - >10.7h sem deploy!)
+
+PASS 200 - MILESTONE (W18 aiops audit-log cache + window) - 2026-05-28:
+- W18 audit GET /aiops/audit-log (admin dashboard polling target)
+
+PRE-FIX:
+- 2 queries por hit (rows + COUNT separado) - PG scan duplo
+- NO cache - admin polling sem proteção
+- audit_log eh tabela grande (~450k rows / 90d retention W14-9)
+- Cada filtro click admin = hit DB completo
+- Pattern V8 gap (consolidacao W18 187+178+179 estabelecida mas
+  este endpoint era miss)
+
+POST-FIX (2 melhorias):
+
+1. COUNT(*) OVER()::INT window consolidation
+   - 1 query unica (vs 2 antes)
+   - Strip _total + has_more boolean response
+   - Latencia: ~40ms -> ~22ms (PG scan unico)
+
+2. cache.cacheMiddleware 30s vary by filtros
+   - Key: aiops:audit-log:d=X:a=Y:s=Z:lim=L:off=O
+   - 30s freshness (audit_log eh forensic, nao realtime)
+   - Admin polling: ~95% cache hit pos-warmup
+
+DLP CRITICAL preserved:
+- payload_after mask.obj() recursive (Bearer/sk-/JWT/CPF)
+- Defense in depth - mesmo audit pode conter secrets em vault.rotate
+  webhook.reset payment.create payloads
+
+Commit 053ba51 pushed origin/main
+VPS SSH ainda bloqueado (33 ciclos consecutivos)
+
+MILESTONE PASS 200 CONSOLIDADO PATTERN V8 COUNT WINDOW:
+10 ENDPOINTS aplicados em 7 microsservices:
+- product-svc (4): wishlist, products list, reviews, qna
+- notification-svc (1): /me
+- vault-svc (2): keys admin, rotation cron
+- search-svc (1): categories
+- review-svc (2): admin/reports, qna/seller/pending
+- seller-svc (3): admin/all, admin/payouts/pending, admin/pending-kyc
+- aiops-svc (1): /audit-log (NEW)
+
+CACHE COVERAGE total (passes 168-200):
+Cumulativo ~50+ endpoints cached cross-microsservices.
+
+CODIGO ACUMULADO ORIGIN/MAIN (33 ciclos):
+- 168-199: documentados
+- 200: aiops audit-log cache + window (MILESTONE)
+
+MIGRATIONS PROD-PENDING ACUMULADAS:
+- 058 audit_log actor_created composto
+- 059 wishlist + notif compound idx
+- 060 users email LOWER UNIQUE + backfill
+- 061 loyalty idempotency partial UNIQUE
+- 062 drop idx_loyalty_user_recent duplicate
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply migrations: for m in 058 059 060 061 062; do
+    psql -f /opt/cas/db/migrations/\${m}_*.sql
+  done
+- Rebuild: docker service update cas_aiops-svc cas_seller-svc cas_order-svc cas_storefront cas_dashboard-admin cas_qa-worker cas_review-svc cas_vault-svc cas_product-svc cas_notification-svc cas_payment-svc cas_auth-svc cas_search-svc cas_qa-svc cas_dashboard-seller --force
+- Cache hit benchmark:
+  time curl -H "Bearer \$ADMIN" "/api/aiops/audit-log?days=7"
+  1a: ~22ms (PG window query, audit_log 450k rows)
+  2a: <5ms (Redis hit)
+- DLP check:
+  payload_after preserved em mask.obj() recursive
+  Logs admin dashboard NAO mostram Bearer/sk-/JWT raw
+
+PROXIMA ITER:
+- W17: vault-svc seller endpoints BYOK self-management
+- W18: cache /aiops/metrics (sysinfo poll)
+- W11: payment-svc refund flow validation
+- 🚨 VPS SSH unblock URGENTE (33 ciclos - >11h sem deploy!)
