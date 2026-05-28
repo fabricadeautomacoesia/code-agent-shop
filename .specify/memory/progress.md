@@ -32649,3 +32649,27 @@ Pattern V8 W13: bulk via UNNEST quando N rows
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 409 W11 PAYMENT: webhook reconcile idempotent UPDATE guard
+commit f9de4ad
+BUG retry_count race multi-replica reconcile
+PRE-FIX pass 244 SELECT FOR UPDATE SKIP LOCKED autocommit:
+  - PG autocommit libera lock POS-query (~ms window)
+  - Replicas em paralelo SELECT mesmas rows
+  - processWebhookEvent async fora lock
+  - UPDATE retry_count += 1 race-prone
+
+ALTERNATIVA REJEITADA: wrap tx() = pool exhaustion 5min holds
+
+POST-FIX idempotent UPDATE guards:
+1. Success: WHERE processed_at IS NULL
+2. Fail: WHERE retry_count = $3 (valor antigo lido)
+3. + AND processed_at IS NULL fail path tambem
+
+Pattern V8 paridade pass 21 orders UPDATE guard
+
+142 passes acumulados (268->409) sem deploy VPS
+5 CRITICAL + 23 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
