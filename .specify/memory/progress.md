@@ -31024,3 +31024,34 @@ PROXIMA ITER:
 - W2 checkout E2E completion
 - W17 vault security audit
 - VPS SSH unblock URGENTISSIMO (63h+ ciclos)
+
+## PASS 352 W14: coupon max_uses_per_user + idx composto
+commit 74c9316
+GAP FUNCIONAL DESCOBERTO:
+  - coupons.max_uses_per_user existe (mig 006 linha 211) mas
+    endpoint /orders/cart/coupon NUNCA valida
+  - User reaplica mesmo cupom N vezes (abuse vector + UX MLB)
+  - Coluna deserdada (admin configura, backend ignora)
+
+POST-FIX:
+- order-svc/cart.js POST /coupon:
+  - SELECT inclui id + max_uses_per_user
+  - COUNT coupon_uses WHERE coupon_id AND user_id
+  - 403 coupon_max_uses_per_user_reached com counts pre-response
+  - Early check antes do tier check
+
+- mig 085 idx_cuses_coupon_user composto:
+  - idx existing standalone (coupon_id, user_id) -> BitmapAnd
+  - Composto direto O(log n) - cheap COUNT
+  - Index-only scan capable
+  - ANALYZE coupon_uses
+
+W14 schema gap: backend + DB consistente
+85 passes acumulados (268->352) sem deploy VPS
+Migrations pendentes: 069-085 (17 idx defensivos)
+
+PROXIMA ITER:
+- W4 admin DLP audit-log viewer
+- W2 checkout E2E completion
+- W17 vault security audit
+- VPS SSH unblock URGENTISSIMO (63h+ ciclos)
