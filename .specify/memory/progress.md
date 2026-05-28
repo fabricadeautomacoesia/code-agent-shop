@@ -17347,7 +17347,36 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ MLB-13 ShareButton PDP WhatsApp/X/LinkedIn/Copy (pass 127)
 - ✅ generateMetadata dinamico /products c/ filtros (pass 128)
 - ✅ PDP aside sticky so lg+ (mobile UX) (pass 129)
-- ✅ Migration 052 idx_products_last_sale +platform_owned (pass 130 esta iter)
+- ✅ Migration 052 idx_products_last_sale +platform_owned (pass 130)
+- ✅ MLB-14 RecentlyViewedGuest localStorage (pass 131 esta iter)
+
+W7 PASS 131 RESUMO - W16 MLB-14 RECENTLY VIEWED GUESTS:
+- AUDIT W7: endpoints OK (force-approve/wishlist 404 sem id valido, OK)
+- AUDIT W17 vault: vault_api_keys vazia, 2fa 1 user (admin), audit_log_security
+  table nao existe (referenciada por comments mas nao implementada)
+- AUDIT MLB gap: RecentlyViewed/RecentlyViewedStrip backend-only
+  -> guests anonimos NUNCA viam strip 'Continuou navegando'
+- IMPLEMENTED MLB-14 client-side guest tracking:
+  * NEW recently-viewed-guest.tsx (167 linhas):
+    - trackProductView(): localStorage 'cas:recent_products'
+    - LIFO cap 12, dedup por slug, TTL 30 dias
+    - Auto-expire entries antigas em loadRecent
+    - clearRecentProducts() helper
+    - RecentlyViewedGuest component (strip horizontal)
+  * NEW track-product-view-client.tsx (35 linhas):
+    - Client wrapper p/ trigger trackProductView em PDP (server component)
+    - useEffect on mount + cleanup proper deps
+    - Renderiza null (so side-effect)
+  * INTEGRATED em /product/[slug]/page.tsx:
+    - <TrackProductViewClient product={...} /> apos RecentlyViewedStrip
+    - <RecentlyViewedGuest excludeSlug={product.slug} />
+    - Strip horizontal w-36 sm:w-44 c/ snap-x scroll
+- BUILD storefront OK + service converged
+- VALIDATED: novo CSS chunk ae528ade9ca9af0a.css (era c4def71737792fb1.css)
+- Privacy: 100% client-side, zero trip ao backend
+- Storage: ~8KB localStorage typical (12 prod * 650 bytes)
+- MLB count: 14 features (era 13)
+- Engagement esperado: +tempo sessao, +taxa retorno, +convers~ao re-engagement
 
 W7 PASS 130 RESUMO - W18 IDX_PRODUCTS_LAST_SALE INCLUSIVE FIX:
 - AUDIT EXPLAIN ANALYZE em search recently_sold:
