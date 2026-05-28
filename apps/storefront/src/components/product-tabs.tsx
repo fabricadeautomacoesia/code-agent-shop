@@ -76,7 +76,15 @@ export function ProductTabs({ product, reviews, qna }: Props) {
               }`}>
               {t.label}
               {badge !== null && badge > 0 && (
-                <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-white/10" aria-label={`${badge} ${t.id === 'reviews' ? 'avaliacoes' : 'perguntas'}`}>{badge}</span>
+                /* FIX-WORKER-3 pass 232 (a11y plural): singular/plural correto p/ screen readers.
+                   PRE-FIX: badge=1 lia "1 avaliacoes" (plural errado). PT-BR: 1 -> singular,
+                   >1 -> plural. NVDA/JAWS anunciava errado a contagem. */
+                <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-white/10"
+                  aria-label={`${badge} ${
+                    t.id === 'reviews'
+                      ? (badge === 1 ? 'avaliacao' : 'avaliacoes')
+                      : (badge === 1 ? 'pergunta' : 'perguntas')
+                  }`}>{badge}</span>
               )}
             </button>
           );

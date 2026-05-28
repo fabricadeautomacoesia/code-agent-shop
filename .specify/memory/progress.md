@@ -24233,3 +24233,85 @@ PROXIMA ITER:
 - W16 MLB feature: Comparador de produtos UI (rota /comparar ja existe?)
 - W3 PDP: AddToCart audit (postponed)
 - VPS SSH unblock URGENTE (64 ciclos - 21.3h sem deploy!)
+
+============================================================
+PASS 232 (2026-05-28) - W9 + W10 + W3 SEO/cache/a11y
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W9 storefront: layout.tsx generateMetadata para /seller/[slug]
+- W10 search-svc: autocomplete short-query cache pollution
+- W3 storefront: product-tabs aria-label singular/plural
+
+============================================================
+1. W9 - /seller/[slug] layout.tsx com generateMetadata
+============================================================
+FILE: apps/storefront/src/app/seller/[slug]/layout.tsx (CRIADO)
+
+PRE-FIX: nenhum layout.tsx no /seller/[slug] -> heranca metadata
+generico do root ("Code & Agent Shop"). Compartilhar link de loja
+no WhatsApp/Twitter mostrava preview da home em vez do nome da loja.
+SEO Google indexava perfis sellers com title duplicado vs home -
+canonical conflict + ranking diluido.
+
+POST-FIX: generateMetadata async fetch /api/sellers/:slug ->
+  - title: "${store_name} - Code & Agent Shop"
+  - description: store_description.slice(0,160) ou fallback
+  - alternates.canonical: /seller/${slug} (Google guidance)
+  - openGraph: type=profile + image se banner existir
+  - twitter: card large_image se banner existir
+  - Fallback gracioso se /api/sellers/${slug} 404 (usa slug)
+
+============================================================
+2. W10 - search-svc autocomplete short-query cache pollution
+============================================================
+FILE: services/search-svc/src/server.js:256-280
+
+PROBLEMA:
+- User digitando "java" passava por 'j' -> 'ja' -> 'jav' -> 'java'
+- 'j' falhava o guard q.length<2 mas cacheMiddleware JA tinha criado
+  entry vazia em Redis com chave search:ac:HASH('j'):lim=10
+- 26 letras + acentos + numeros = ~256+ keys lixo Redis per language
+- Redis MEMORY USAGE crescia + SCAN amplification em invalidate
+
+FIX: short-circuit ANTES do cacheMiddleware. Handler inicial verifica
+qRaw.length<2 -> retorna [] direto sem hit middleware. Middleware
+soh entra em queries validas (>=2 chars). Guard original mantido por
+defense-in-depth.
+
+============================================================
+3. W3 - product-tabs aria-label PT-BR plural
+============================================================
+FILE: apps/storefront/src/components/product-tabs.tsx:78-85
+
+PRE-FIX: aria-label sempre plural - "1 avaliacoes", "1 perguntas".
+PT-BR: 1 -> singular, >1 -> plural. NVDA/JAWS anunciava errado
+("1 avaliacoes" soa robotico/ruim).
+
+POST-FIX: ternario singular/plural:
+  badge === 1 ? 'avaliacao' : 'avaliacoes'
+  badge === 1 ? 'pergunta'  : 'perguntas'
+
+============================================================
+SUMARIO CIRURGICO PASS 232
+============================================================
+Files: 3 modificados/criados
+  - apps/storefront/src/app/seller/[slug]/layout.tsx (NEW, 56 lines)
+  - services/search-svc/src/server.js (autocomplete short-circuit)
+  - apps/storefront/src/components/product-tabs.tsx (a11y plural)
+Lines: ~80 adicionados
+
+VPS SSH BLOQUEADO (65 ciclos - 21.7h sem deploy).
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_search-svc --force
+- W9 test: curl -s shop.cas/seller/joao | grep "<title>"
+  Deve mostrar "${store_name} - Code & Agent Shop" (era root generico)
+- W10 test: digitar query lenta no autocomplete + monitorar Redis:
+  KEYS search:ac:* ANTES vs DEPOIS - reducao 256+ keys vazias
+- W3 test: produto com 1 review -> NVDA anuncia "1 avaliacao" correto
+
+PROXIMA ITER:
+- W16 MLB: Comparador UI improvements (rota /comparar existe)
+- W4 admin: bulk actions QA queue
+- VPS SSH unblock URGENTE (65 ciclos - 21.7h sem deploy)

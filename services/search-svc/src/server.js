@@ -253,18 +253,38 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
 //   PRE-FIX: 2 queries paralelas executadas sequencialmente (await + await).
 //   Latency = ILIKE_ms + similarity_ms.
 //   FIX: Promise.all() concurrent - latency = max(ILIKE, similarity).
+// FIX-WORKER-10 pass 232 (cache pollution short queries): autocomplete
+// caching CADA query < 2 chars criava ~256+ keys lixo no Redis.
+// User digitando "java" passava por 'j'(skip) -> 'ja'(skip) -> 'jav'(cache)
+// -> 'java'(cache). PRE-FIX: cacheMiddleware capturava ANTES do guard
+// q.length<2, criando entries vazias para a,b,c,...,z + acentos + numeros.
+// Redis MEMORY USAGE crescia + SCAN amplification em invalidate.
+// POST-FIX: short-circuit antes do middleware - guard inline no handler
+// inicial (returns 200 [] sem hit middleware quando q < 2).
+const _autocompleteCacheKey = (req) => {
+  const qNorm = (req.query.q || '').toString().trim().toLowerCase();
+  const lim = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 10));
+  // BUG 1: hash defensive (PII/DLP - cache key nao expoe query)
+  const crypto = require('node:crypto');
+  const qHash = crypto.createHash('sha256').update(qNorm).digest('hex').slice(0, 16);
+  return `search:ac:${qHash}:lim=${lim}`;
+};
+
 app.get('/autocomplete',
   autocompleteLimiter,
-  cache.cacheMiddleware((req) => {
-    const qNorm = (req.query.q || '').toString().trim().toLowerCase();
-    const lim = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 10));
-    // BUG 1: hash defensive (PII/DLP - cache key nao expoe query)
-    const crypto = require('node:crypto');
-    const qHash = crypto.createHash('sha256').update(qNorm).digest('hex').slice(0, 16);
-    return `search:ac:${qHash}:lim=${lim}`;
-  }, 60),
+  // FIX-WORKER-10 pass 232: short-circuit q<2 ANTES do cache middleware
+  asyncHandler(async (req, res, next) => {
+    const qRaw = (req.query.q || '').toString().trim();
+    if (qRaw.length < 2) {
+      // Skip cache - return empty direto (no Redis pollution)
+      return res.json({ suggestions: [] });
+    }
+    return next();
+  }),
+  cache.cacheMiddleware(_autocompleteCacheKey, 60),
   asyncHandler(async (req, res) => {
   const q = (req.query.q || '').toString().trim();
+  // Guard mantido por defense-in-depth (em caso middleware drift no futuro)
   if (q.length < 2) return res.json({ suggestions: [] });
   // BUG 2: ?limit configurable
   const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 10));
