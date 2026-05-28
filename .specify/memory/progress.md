@@ -31108,3 +31108,31 @@ PROXIMA ITER:
 - W17 vault security audit
 - W4 admin DLP audit-log viewer
 - VPS SSH unblock URGENTISSIMO - 3 CRITICAL acumulados
+
+## PASS 355 W1 AUTH: env-driven seller URL + revert SITE_URL pass 351
+commit 80b6621
+BUG 1 notification-bell SELLER_URL hardcoded:
+  - 'https://seller.cas.inovareinteligenciaartificial.com/financeiro' fixo
+  - Inflexivel: dev/staging/alt requirem rebuild storefront (8-12min)
+  - FIX: NEXT_PUBLIC_SELLER_URL env + fallback Traefik ativo
+
+BUG 2 revert pass 351 SITE_URL (json-ld):
+  - Pass 351 mudou p/ code-agent-shop.inovareinteligenciaartificial.com
+    ASSUMINDO host real
+  - Audit revelou Traefik ativo (stack.inovare.yml) usa cas.*
+  - JSON-LD pos-pass 351 apontava host inexistente
+  - FIX: env-driven NEXT_PUBLIC_SITE_URL + fallback Traefik ativo
+  - Outros 3 fixes pass 351 (status, filter order, breadcrumb URL) ok
+
+Pattern V8 W1 env-driven critical paths:
+  - SITE_URL (SEO + canonical)
+  - SELLER_DASH_URL (notification CTA)
+  - Deploy controla via .env -> 0 rebuild ao mudar dominio
+
+88 passes acumulados (268->355) sem deploy VPS
+3 CRITICAL fixes (asaas, rateLimit, body limit) acumulados
+
+PROXIMA ITER:
+- W17 vault security audit
+- W4 admin DLP audit-log viewer
+- VPS SSH unblock URGENTISSIMO
