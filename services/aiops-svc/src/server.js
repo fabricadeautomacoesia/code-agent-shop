@@ -9,7 +9,7 @@ const fs = require('node:fs/promises');
 const { exec } = require('node:child_process');
 const { promisify } = require('node:util');
 const { query, healthcheck } = require('@cas/db-client');
-const { logger, errorHandler, asyncHandler, jwt, cache, mask, rateLimiter } = require('@cas/shared');
+const { logger, errorHandler, asyncHandler, jwt, cache, mask, maskPII, rateLimiter } = require('@cas/shared');
 
 const execP = promisify(exec);
 const log = logger.child({ svc: 'aiops-svc' });
@@ -469,11 +469,12 @@ const auditLogHandler = asyncHandler(async (req, res) => {
   // Whitelist severities (anti SQL injection via param) - validates against enum
   const VALID_SEV = new Set(['info','warn','error','critical']);
   const sevFilter = VALID_SEV.has(severity) ? severity : null;
-  const where = [`created_at > NOW() - ($1 || ' days')::INTERVAL`];
+  // FIX-WORKER-4 pass 388: prefix a. apos JOIN aliasing (ambiguous otherwise)
+  const where = [`a.created_at > NOW() - ($1 || ' days')::INTERVAL`];
   const params = [String(days)];
   let i = 2;
-  if (action) { where.push(`action = $${i++}`); params.push(action); }
-  if (sevFilter) { where.push(`severity = $${i++}`); params.push(sevFilter); }
+  if (action) { where.push(`a.action = $${i++}`); params.push(action); }
+  if (sevFilter) { where.push(`a.severity = $${i++}`); params.push(sevFilter); }
   params.push(lim);
   params.push(off);
   // FIX-WORKER-7 pass 63: 2 bugs (Regra D + DLP CRITICAL).
@@ -489,25 +490,38 @@ const auditLogHandler = asyncHandler(async (req, res) => {
   // Pattern consolidado pass 178/179/180/181/187/189/197/198/199.
   // Latencia: ~40ms (2 queries) -> ~22ms (1 query) - audit_log ~450k rows.
   // Note: usa idx_audit_action_created quando action presente, idx_audit_created caso contrario
+  // FIX-WORKER-4 pass 388 (actor_email + display_name p/ UX investigation):
+  //   PRE-FIX: response retornava actor_user_id UUID apenas
+  //   - Admin auditando incident via /audit-log via apenas '<uuid_slice_8>'
+  //   - Lookup manual user via PG client p/ identificar quem fez acao
+  //   - UX MLB-style audit: 'admin@cas.io' (display_name) e mais util que UUID slice
+  //   POST-FIX: LEFT JOIN users + maskPII.email (LGPD) + display_name
+  //   - LEFT JOIN p/ admitir actor_user_id NULL (service actions)
+  //   - maskPII.email: 'jo***@cas.io' (admin pode ver mas LGPD compliance)
+  //   - display_name raw (nao PII em si - public-facing nome loja/user)
   const r = await query(
-    `SELECT id, actor_user_id, actor_role, action, target_type, target_id,
-            severity, payload_after, created_at,
+    `SELECT a.id, a.actor_user_id, a.actor_role, a.action, a.target_type, a.target_id,
+            a.severity, a.payload_after, a.created_at,
+            u.email AS actor_email, u.display_name AS actor_display_name,
             COUNT(*) OVER()::INT AS _total
-       FROM audit_log
+       FROM audit_log a
+       LEFT JOIN users u ON u.id = a.actor_user_id
       WHERE ${where.join(' AND ')}
-      ORDER BY created_at DESC, id DESC
+      ORDER BY a.created_at DESC, a.id DESC
       LIMIT $${i++} OFFSET $${i++}`,
     params
   );
 
   const total = r.rows[0]?._total || 0;
 
-  // DLP CRITICAL: payload_after recursive mask + strip _total
+  // DLP CRITICAL: payload_after recursive mask + strip _total + email mask LGPD
   const entries = r.rows.map((row) => {
     const { _total, ...rest } = row;
     return {
       ...rest,
       payload_after: rest.payload_after ? mask.obj(rest.payload_after) : null,
+      // FIX pass 388: maskPII.email (LGPD even admin view - compliance reinforced)
+      actor_email: rest.actor_email ? maskPII.email(rest.actor_email) : null,
     };
   });
 

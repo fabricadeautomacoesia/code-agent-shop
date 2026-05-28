@@ -142,8 +142,21 @@ export default function AdminAuditLogPage() {
               {entries.map((e) => (
                 <tr key={e.id} className="border-b border-white/5 hover:bg-white/5">
                   <td className="py-2 text-xs text-white/60 whitespace-nowrap">{fmtDate(e.created_at)}</td>
+                  {/* FIX-WORKER-4 pass 388 (actor email + display_name UX investigation):
+                      PRE-FIX: so mostrava UUID slice 8 chars (admin precisava lookup PG manual)
+                      POST-FIX: backend agora retorna actor_email (masked LGPD) + display_name
+                      Display: display_name > masked email > UUID slice fallback */}
                   <td className="text-xs">
-                    <span className="font-mono text-white/70">{e.actor_user_id ? e.actor_user_id.slice(0, 8) : '-'}</span>
+                    {e.actor_display_name ? (
+                      <>
+                        <span className="text-white/80">{e.actor_display_name}</span>
+                        {e.actor_email && <span className="ml-1 text-[10px] text-white/40">{e.actor_email}</span>}
+                      </>
+                    ) : e.actor_email ? (
+                      <span className="text-white/70">{e.actor_email}</span>
+                    ) : (
+                      <span className="font-mono text-white/70">{e.actor_user_id ? e.actor_user_id.slice(0, 8) : '-'}</span>
+                    )}
                     {e.actor_role && <span className="ml-1 text-[10px] text-white/40">({e.actor_role})</span>}
                   </td>
                   <td>
