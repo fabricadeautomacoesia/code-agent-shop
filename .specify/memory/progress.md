@@ -31472,3 +31472,30 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (100 passes acumulados!)
 - W4 admin audit-log viewer
 - W2 checkout E2E
+
+## PASS 368 W14: idx UNIQUE PARTIAL asaas_transfer_id (webhook reconcile)
+commit 59de558
+LACUNA: asaas_transfer_id sem idx em 2 tabelas
+- seller_payouts (mig 003)
+- payouts_pending_wallet (mig 078)
+Webhook handler futuro TRANSFER_DONE/FAILED faria Seq Scan
+
+POST-FIX mig 087:
+- idx_payouts_transfer_id UNIQUE PARTIAL WHERE NOT NULL
+- idx_pending_wallet_transfer_id UNIQUE PARTIAL WHERE NOT NULL
+- UNIQUE defensive (Asaas ID global unique - bug latente sem)
+- PARTIAL WHERE NOT NULL (permite NULL pending state)
+- payouts_pending_wallet defensive existence check
+
+W14 stack acumulado idx:
+  * mig 086 idx_audit_severity_created
+  * mig 087 idx_payouts_transfer_id
+
+101 passes acumulados (268->368) sem deploy VPS
+19 migrations pendentes apply (069-087)
+4 CRITICAL acumulados
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (100+ passes!)
+- TRANSFER_DONE/FAILED webhook handler (gap funcional descoberto)
+- W4 admin audit-log viewer
