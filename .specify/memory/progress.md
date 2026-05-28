@@ -32348,3 +32348,38 @@ W7 public reviews completo:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Frontend PDP usar stars_breakdown (UI histogram)
+
+## PASS 399 W3 PDP: stars_breakdown histogram UI (MLB-style)
+commit aefc983
+CONTEXTO: Pass 398 backend retorna stars_breakdown + avg_rating
+Frontend renderiza histogram MLB-quality
+
+page.tsx:
+- Capture stars_breakdown + avg_rating do Api.reviews response
+- Defensive type check
+- Propagar como props ProductTabs
+
+product-tabs.tsx:
+- Props starsBreakdown + avgRatingAgg
+- Histogram block antes lista reviews:
+  * Avg rating + visual stars + total count
+  * 5 barras (5/4/3/2/1):
+    - Bar progressivo gradient yellow->magenta
+    - Count + percentage tabular
+    - aria-label progressbar + role semantico
+- Render so se starsBreakdown + totalAgg > 0
+- glass-strong card
+
+W3 reviews MLB-quality coordinated:
+  pass 398 backend stars_breakdown agg
+  pass 399 frontend histogram render <- ESTE
+
+Pattern V8: backend feature + frontend UI sempre coordinated
+
+132 passes acumulados (268->399) sem deploy VPS
+5 CRITICAL + 22 migrations pendentes apply
+PROXIMA = MARCO 400 PASSES
+
+PROXIMA ITER:
+- MARCO 400 PASSES
+- VPS SSH unblock URGENTISSIMO
