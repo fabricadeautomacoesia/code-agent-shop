@@ -117,11 +117,13 @@ export default function DisputesPage() {
       </h1>
       <p className="text-white/60 mb-6">Triagem e resolucao de disputas abertas por compradores.</p>
 
-      {/* Filtros status */}
-      <div className="flex flex-wrap gap-2 mb-6">
+      {/* Filtros status - FIX-WORKER-4 pass 165 (a11y): radiogroup pattern + type=button */}
+      <h2 id="disputes-filter-label" className="sr-only">Filtrar disputas por status</h2>
+      <div role="radiogroup" aria-labelledby="disputes-filter-label" className="flex flex-wrap gap-2 mb-6">
         {(['opened','under_review','resolved_buyer','resolved_seller','cancelled',''] as Status[]).map((s) => (
-          <button key={s || 'all'} onClick={() => setFilter(s)}
-            className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
+          <button key={s || 'all'} type="button" onClick={() => setFilter(s)}
+            role="radio" aria-checked={filter === s}
+            className={`px-3 py-1.5 rounded-lg text-sm border transition-colors focus-visible:outline-2 focus-visible:outline-magenta ${
               filter === s ? 'bg-magenta text-white border-magenta' : 'border-white/10 hover:border-white/30'
             }`}>
             {s ? STATUS_LABELS[s] : 'Todas'}
@@ -133,22 +135,28 @@ export default function DisputesPage() {
       </div>
 
       {loadError && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>Erro carregando: {loadError}</span>
-          <button onClick={() => { setLoadError(''); load(); }} className="text-xs hover:underline">retry</button>
+          <button type="button" onClick={() => { setLoadError(''); load(); }}
+            aria-label="Tentar carregar disputas novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">retry</button>
         </div>
       )}
 
       {action.error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.error}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear}
+            aria-label="Fechar mensagem de erro"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">fechar</button>
         </div>
       )}
       {action.success && (
-        <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+        <div role="status" aria-live="polite" className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg mb-4 flex items-center justify-between">
           <span>{action.success}</span>
-          <button onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <button type="button" onClick={action.clear}
+            aria-label="Fechar mensagem de sucesso"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">fechar</button>
         </div>
       )}
 
@@ -187,20 +195,24 @@ export default function DisputesPage() {
                     </div>
                   </div>
                   {canResolve && (
-                    <div className="flex flex-col gap-1.5 flex-shrink-0">
-                      <button onClick={() => resolveDispute(d.id, 'buyer')}
+                    /* FIX-WORKER-4 pass 165 (a11y): type=button + aria-label dinamico c/ dispute # */
+                    <div className="flex flex-col gap-1.5 flex-shrink-0" role="group" aria-label={`Acoes disputa #${d.order_number}`}>
+                      <button type="button" onClick={() => resolveDispute(d.id, 'buyer')}
                         disabled={action.busyKey === `resolve-${d.id}`}
-                        className="text-green-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50">
-                        <CheckCircle className="w-3 h-3" /> Favor buyer
+                        aria-label={`Resolver disputa #${d.order_number} a favor do comprador`}
+                        className="text-green-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                        <CheckCircle className="w-3 h-3" aria-hidden="true" /> Favor buyer
                       </button>
-                      <button onClick={() => resolveDispute(d.id, 'seller')}
+                      <button type="button" onClick={() => resolveDispute(d.id, 'seller')}
                         disabled={action.busyKey === `resolve-${d.id}`}
-                        className="text-purple-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50">
-                        <XCircle className="w-3 h-3" /> Favor seller
+                        aria-label={`Resolver disputa #${d.order_number} a favor do vendedor`}
+                        className="text-purple-400 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                        <XCircle className="w-3 h-3" aria-hidden="true" /> Favor seller
                       </button>
-                      <button onClick={() => resolveDispute(d.id, 'cancel')}
+                      <button type="button" onClick={() => resolveDispute(d.id, 'cancel')}
                         disabled={action.busyKey === `resolve-${d.id}`}
-                        className="text-white/40 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50">
+                        aria-label={`Cancelar disputa #${d.order_number}`}
+                        className="text-white/40 hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta rounded">
                         Cancelar
                       </button>
                     </div>
