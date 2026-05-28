@@ -33605,3 +33605,51 @@ W12 notification payload completeness series:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 436 W13 NOTIFICATION: in_app opt-out respect (paridade pass 227 email/telegram)
+commit pendente
+GAP critico LGPD: in_app channel NUNCA respeita user_notification_prefs
+PRE-FIX:
+- Pass 227 aplicou prefs check em processOutbox (email/telegram channels)
+- in_app channel NUNCA filtrado por prefs
+- GET / list (linha 343) retorna TODAS in_app sem filter prefs
+- GET /unread-count (linha 418) COUNT inclui opted-out
+- Frontend /prefs API aceita channel='in_app' opt-out silenciosamente ignorado
+- LGPD violation: user opt-out deve aplicar cross-channel
+- UX: user desabilita product_qna_new -> ainda ve em sino -> confusion
+
+CENARIO:
+- User vai /conta/notificacoes desativa product_qna_new in_app
+- /prefs PATCH 200 ok (pref salva)
+- Buyer faz pergunta no produto -> review-svc INSERT notif in_app seller
+- Seller bell badge mostra +1 (count nao filtra prefs)
+- Click bell -> notif listada (list nao filtra prefs)
+- User: "configurei mas continua aparecendo - bug?"
+
+POST-FIX (2 endpoints):
+1. GET / (list):
+   - LEFT JOIN user_notification_prefs
+   - WHERE (is_enabled IS NULL OR TRUE) OR CRITICAL bypass
+   - LOWER() case-fold (paridade pass 238)
+2. GET /unread-count (badge):
+   - Same JOIN + WHERE para evitar mismatch count vs list
+   - Sem fix -> badge=5 mas bell mostra 3 (UX bug)
+
+Critical templates SEMPRE visiveis:
+- security_refresh_reuse
+- password_reset
+- 2fa_disabled
+- asaas_refund_failed
+
+W13 prefs respect series:
+  pass 227 processOutbox prefs check (email/telegram)
+  pass 238 LOWER() case-fold defensive
+  pass 436 GET / + /unread-count in_app prefs <- ESTE (consolidacao cross-channel)
+
+Pattern V8 W13: user_notification_prefs MUST aplicar em TODOS canais
+
+169 passes acumulados (268->436) sem deploy VPS
+5 CRITICAL + 26 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO

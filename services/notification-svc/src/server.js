@@ -340,13 +340,38 @@ app.get('/', jwt.requireAuth(),
   // Pre-fix: 2 queries (SELECT + COUNT - PG scan duplo).
   // Post-fix: 1 query (window scan unico) - ~30ms -> ~15ms.
   // BONUS W14-179: novo idx_notif_user_channel_created cobre WHERE + ORDER.
+  /* FIX-WORKER-13 pass 436 (in_app opt-out respect - LGPD/UX paridade pass 227):
+     PRE-FIX: GET / listing retornava TODAS in_app notifs do user, IGNORANDO
+     user_notification_prefs.is_enabled=false p/ (template_code, 'in_app').
+     - Pass 227 aplicou prefs check em processOutbox MAS so para email/telegram
+     - in_app channel NUNCA respeita user prefs
+     - UX gap: user desabilita product_qna_new em /conta/notificacoes -> ainda
+       ve em sino badge -> "configurei mas continua aparecendo, framework bug?"
+     - LGPD: opt-out user MUST apply cross-channel (user expects honour)
+     - Frontend /prefs API aceita channel='in_app' opt-out silenciosamente ignorado
+     POST-FIX: LEFT JOIN user_notification_prefs + WHERE prefs ativo OR null.
+     - Mesmo pattern processOutbox pass 227 (CRITICAL_TEMPLATES bypass)
+     - LOWER() case-fold paridade pass 238
+     - Default behavior preserved: row null -> default enabled (opt-out explicito)
+     - CRITICAL templates SEMPRE visivel (security_*/password_*/2fa_*/asaas_refund_failed)
+     - Notifs ja existentes (legacy in_app sem prefs row) -> sem mudanca UX */
   const r = await query(
-    `SELECT id, channel, template_code, title, body, body_html, cta_label, cta_url, icon,
-            priority, payload, is_read, read_at, created_at,
+    `SELECT n.id, n.channel, n.template_code, n.title, n.body, n.body_html,
+            n.cta_label, n.cta_url, n.icon,
+            n.priority, n.payload, n.is_read, n.read_at, n.created_at,
             COUNT(*) OVER()::INT AS _total
-       FROM notifications
-      WHERE user_id = $1 AND channel = 'in_app'${whereExtra}
-      ORDER BY created_at DESC, id DESC
+       FROM notifications n
+       LEFT JOIN user_notification_prefs unp ON
+            unp.user_id = n.user_id
+        AND LOWER(unp.template_code) = LOWER(n.template_code)
+        AND unp.channel = n.channel
+      WHERE n.user_id = $1 AND n.channel = 'in_app'${whereExtra}
+        AND (
+          unp.is_enabled IS NULL  -- default enabled (no pref set)
+          OR unp.is_enabled = TRUE -- explicit enabled
+          OR LOWER(n.template_code) IN ('security_refresh_reuse', 'password_reset', '2fa_disabled', 'asaas_refund_failed')
+        )
+      ORDER BY n.created_at DESC, n.id DESC
       LIMIT $2 OFFSET $3`,
     [req.user.sub, limit, offset]
   );
@@ -390,10 +415,25 @@ app.get('/unread-count',
   jwt.requireAuth(),
   cache.cacheMiddleware(unreadCountCacheKey, 20),
   asyncHandler(async (req, res) => {
+    // FIX-WORKER-13 pass 436 (in_app opt-out respect - paridade GET / listing acima):
+    //   PRE-FIX: COUNT inclui templates opted-out -> badge inflado.
+    //   User desabilitou product_qna_new mas continua vendo "5" no badge -> abre
+    //   bell -> ve 5 itens 3 product_qna_new (opted-out na lista pos pass 436) +
+    //   2 outros = aparece "3"  -> mismatch badge vs lista = UX bug.
+    //   POST-FIX: WHERE filter prefs (mesmo LEFT JOIN logic) garante count = list.
     const r = await query(
       `SELECT COUNT(*)::INT AS count
-         FROM notifications
-        WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE`,
+         FROM notifications n
+         LEFT JOIN user_notification_prefs unp ON
+              unp.user_id = n.user_id
+          AND LOWER(unp.template_code) = LOWER(n.template_code)
+          AND unp.channel = n.channel
+        WHERE n.user_id = $1 AND n.channel = 'in_app' AND n.is_read = FALSE
+          AND (
+            unp.is_enabled IS NULL
+            OR unp.is_enabled = TRUE
+            OR LOWER(n.template_code) IN ('security_refresh_reuse', 'password_reset', '2fa_disabled', 'asaas_refund_failed')
+          )`,
       [req.user.sub]
     );
     res.json({ count: r.rows[0]?.count || 0 });
