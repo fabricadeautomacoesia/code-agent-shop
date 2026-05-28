@@ -20566,3 +20566,59 @@ PROXIMA ITER:
 - W18: cache /products list (cuidado vary by filters)
 - W6: audit reset-password flow
 - 🚨 VPS SSH unblock URGENTE (13 ciclos - >4h sem deploy!)
+
+PASS 181 (W10 search-svc /categories N+1 -> CTE) - 2026-05-28:
+- W10 audit search-svc identificou /categories megamenu MLB-style com:
+
+PRE-FIX em GET /search/categories:
+- 1 product_count correlated subquery por top-level category
+- 1 product_count correlated subquery por child category (nested)
+- 10 parents x 1 = 10 scans
+- 10 parents x 5 children x 1 = 50 scans
+- Total: ~60 sub-scans em products (~30k rows pos-launch)
+- Latencia: ~250ms (cache miss em /search:categories:v2 - 900s TTL)
+
+POST-FIX (CTE GROUP BY approach):
+- CTE pcounts agrega COUNT por category_id em 1 GROUP BY
+  WHERE status IN ('approved','platform_owned') AND deleted_at IS NULL
+- LEFT JOIN pcounts em c (parent) AND c2 (child) reutiliza aggregate
+- COALESCE(pc.cnt, 0) NULL-safe categoria sem produtos
+- 1 single scan em products (vs ~60 antes)
+- Cache key bumped v2 -> v3 forca regeneracao pos novo schema
+
+Performance esperada: ~250ms -> ~50ms (5x faster cache miss)
+
+Estrutura response preservada:
+- categories[].product_count semanticamente identico
+- children[] mantem array shape + ORDER BY (sort_order, name, id)
+
+Commit 53aeb8f pushed origin/main
+VPS SSH ainda bloqueado (14 ciclos consecutivos)
+
+CONSOLIDADO N+1 ELIMINATIONS (passes 178-181):
+- pass 178: product-svc /wishlist COUNT(*) OVER() window
+- pass 179: notification-svc /me COUNT(*) OVER() window
+- pass 180: vault-svc /keys LATERAL + COUNT window (3x N+1)
+- pass 181: search-svc /categories CTE GROUP BY (60+ subscans -> 1)
+
+Pattern reutilizavel para futuras micro-iters:
+- review-svc dashboard (COUNT reviews + AVG rating per product)
+- aiops-svc per-svc metric aggregation
+- analytics-svc trending per category
+
+CODIGO ACUMULADO ORIGIN/MAIN (14 ciclos):
+- 168-180: documentados
+- 181: search-svc /categories CTE GROUP BY
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_search-svc --force
+- EXPLAIN ANALYZE GET /search/categories:
+  Pre: ~60 subqueries em products
+  Post: 1 CTE scan + JOINs
+- time curl https://api.../search/categories -> ~50ms (vs ~250ms)
+
+PROXIMA ITER:
+- W18: cache /products list (cuidado vary by filters amplos)
+- W6: audit reset-password flow
+- W13 audit notification-svc retry backoff edge cases
+- 🚨 VPS SSH unblock URGENTE (14 ciclos - >4.5h sem deploy!)
