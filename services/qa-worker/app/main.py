@@ -227,14 +227,43 @@ async def download_and_extract(url: str) -> str:
             return read_file_safe(local)
         raise FileNotFoundError(f"package nao encontrado: {url}")
 
-    async with httpx.AsyncClient(timeout=120) as cli:
-        r = await cli.get(url)
-        r.raise_for_status()
-        if len(r.content) > MAX_PKG_BYTES:
-            raise ValueError("package excede limite de tamanho")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as f:
-            f.write(r.content)
-            tmp = Path(f.name)
+    # FIX-WORKER-12 pass 407 (memory exhaustion DoS via large download):
+    #   PRE-FIX: r = await cli.get(url) carrega INTEIRO em memoria
+    #   - Atacante URL p/ arquivo 1GB+ -> alloca 1GB RAM no worker
+    #   - Check len(r.content) > MAX_PKG_BYTES eh APOS download completo
+    #   - DoS: 10 paralel attacks = 10GB RAM = worker OOM kill
+    #   - Slow-loris stream: timeout 120s permite hold connection
+    #   POST-FIX: streaming download com early size check
+    #   - Content-Length header check ANTES do body read (cheap reject)
+    #   - Stream chunks com running total - rejeita ao cross MAX_PKG_BYTES
+    #   - Timeout reduzido 60s connect + 60s read (vs 120s total)
+    #   Pattern V8 W12: streaming downloads sempre size-bounded
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30, read=60, write=30, pool=60)) as cli:
+        # Stream mode - HEAD-like early check via Content-Length se disponivel
+        async with cli.stream("GET", url) as r:
+            r.raise_for_status()
+            # Early reject via Content-Length header (cheap pre-download)
+            content_length = r.headers.get("content-length")
+            if content_length:
+                try:
+                    declared_size = int(content_length)
+                    if declared_size > MAX_PKG_BYTES:
+                        raise ValueError(f"package excede limite (declared {declared_size} bytes)")
+                except (ValueError, TypeError) as e:
+                    if "excede" in str(e):
+                        raise
+                    # parseInt fail = skip header check, fallback streaming
+            # Streaming write com running size check (catch chunked encoding lies)
+            total = 0
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as f:
+                async for chunk in r.aiter_bytes(chunk_size=64 * 1024):
+                    total += len(chunk)
+                    if total > MAX_PKG_BYTES:
+                        f.close()
+                        Path(f.name).unlink(missing_ok=True)
+                        raise ValueError(f"package excede limite durante streaming ({total} bytes)")
+                    f.write(chunk)
+                tmp = Path(f.name)
     try:
         return read_file_safe(tmp)
     finally:
