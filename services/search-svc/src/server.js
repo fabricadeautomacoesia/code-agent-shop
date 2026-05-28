@@ -620,6 +620,11 @@ app.get('/facets',
   //    User filtra kind=template -> resultado /search difere do count facet.
   // 2. COALESCE em json_agg para garantir array vazio em vez de NULL.
   //    Frontend .map() em null crash. Pattern defensive cross-svc.
+  // FIX-WORKER-10 pass 123: BUG 42883 'operator does not exist: product_kind = text'
+  // ANTES: p.kind = $2 - PG parser nao consegue inferir tipo do $2 quando NULL,
+  //        e quando kindFilter='ai_agent' tambem da erro porque $2 chega como TEXT.
+  // AGORA: p.kind::TEXT = $2 - cast enum -> text resolve sem ambiguidade.
+  //        Mesma logica aplicada em c.slug = $1 ja funciona (slug e TEXT).
   const r = await query(
     `WITH base AS (
        SELECT p.id, p.kind, p.price_cents, p.seller_id, p.category_id
@@ -628,7 +633,7 @@ app.get('/facets',
         WHERE p.status IN ('approved','platform_owned')
           AND p.deleted_at IS NULL
           AND ($1::TEXT IS NULL OR c.slug = $1)
-          AND ($2::TEXT IS NULL OR p.kind = $2)
+          AND ($2::TEXT IS NULL OR p.kind::TEXT = $2)
      )
      SELECT
        COALESCE(
