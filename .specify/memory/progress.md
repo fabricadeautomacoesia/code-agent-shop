@@ -21267,3 +21267,66 @@ PROXIMA ITER:
 - W17: vault auto-rotation swap atomico
 - W4: dashboard-admin /aiops/llm-cost view (consume cost_usd_cents)
 - 🚨 VPS SSH unblock URGENTE (25 ciclos - ~8.3h sem deploy!)
+
+PASS 193 (W4 aiops-svc GET /llm-cost admin observability) - 2026-05-28:
+- W4 novo endpoint admin /aiops/llm-cost para observabilidade gastos LLM
+- Consume product_qa_runs.cost_usd_cents (W12 qa-svc pass 27 grava callback)
+
+ENDPOINT: GET /aiops/llm-cost (admin/staff only, cache 300s)
+
+3 AGGREGATIONS retornadas:
+
+1. by_provider: top providers+models ordenado por custo total 30d
+   - SELECT llm_provider, llm_model, COUNT(*), SUM(cost_usd_cents),
+     AVG/MAX, SUM tokens input/output, AVG duration_ms
+   - GROUP BY provider+model ORDER BY total_cents DESC
+
+2. total: 30d aggregate
+   - total_calls, total_cents
+   - FILTER (WHERE verdict = 'approved'/'rejected'/error)
+   - Success rate observability
+
+3. daily: timeseries diario para sparkline UI
+   - DATE_TRUNC('day', created_at) com calls + total_cents
+   - 30 dias ASC ordem para chart frontend
+
+USE CASES dashboard admin:
+- Identificar provider mais caro
+- Detectar spike anomalo (gasto subitamente alto = bug runaway)
+- Justificar trocar provider (Gemini ~10x cheaper que OpenAI tipico)
+- Forecasting mensal (project cost atual extrapolar 30d)
+
+CACHE 300s: cost atualiza por QA callback - mudancas em batches.
+Acceptable stale 5min para dashboard analytics.
+
+AUTH admin/staff: custos internos = sensitive operacional
+(seller nao deve ver platform LLM spend).
+
+Commit 94370fb pushed origin/main
+VPS SSH ainda bloqueado (26 ciclos consecutivos)
+
+OBSERVABILIDADE ROADMAP CONSOLIDADO:
+- /aiops/status         (W10 health)
+- /aiops/metrics        (W10 PG/Redis/disk)
+- /aiops/alerts         (W10 active alerts)
+- /aiops/audit-log      (W4 pass 12 audit queries)
+- /aiops/audit-log/actions (W4 pass 12 dropdown filter)
+- /aiops/db/dead-indexes (W14 pass 8 index drop candidates)
+- /aiops/llm-cost (W4 pass 193 NEW - LLM spend dashboard)
+
+CODIGO ACUMULADO ORIGIN/MAIN (26 ciclos):
+- 168-192: documentados
+- 193: aiops-svc /llm-cost endpoint
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_aiops-svc --force
+- curl: time curl -H "Bearer $ADMIN" https://api.../aiops/llm-cost | jq
+  Esperado: { window_days: 30, total: {...}, by_provider: [...], daily: [...] }
+- 1a chamada: ~80ms (CTE com 3 aggregations)
+- 2a chamada (cache hit): <5ms
+
+PROXIMA ITER:
+- W4 frontend: dashboard-admin novo page /admin/llm-cost (consume endpoint)
+- W17: vault auto-rotation swap atomico
+- W14: drop duplicate idx_loyalty_user_recent (apos pg_stat zero scans 2w)
+- 🚨 VPS SSH unblock URGENTE (26 ciclos - ~8.7h sem deploy!)
