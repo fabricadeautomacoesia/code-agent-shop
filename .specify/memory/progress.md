@@ -32160,3 +32160,28 @@ Pattern V8 W13: migrations multi-schema fallback legacy deploys
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W18 perf optimization
+
+## PASS 392 W3 PDP: wishlist state leak entre users (logout sem clear)
+commit 692b308
+BUG state leak cross-identity em browser compartilhado
+PRE-FIX: useAuth.clear() so reset token/user
+  - useWishlist.ids continuava items User A
+  - User B logado depois ve heart marked em cards de A
+  - Severo: cafe/kiosk/work shared PC
+  - LGPD potencial: preference cross-leak
+
+POST-FIX:
+- useAuth.clear() encadeia useWishlist.clear()
+- Promise.resolve().then() defer (anti circular dep)
+- try/catch defensive
+- useCompare NAO limpa (intencional)
+
+W3 PDP state hygiene completo
+Pattern V8: state cleanup cross-store em logout
+
+125 passes acumulados (268->392) sem deploy VPS
+5 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W18 perf optimization
