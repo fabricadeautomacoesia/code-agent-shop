@@ -32704,3 +32704,30 @@ Pattern V8 W14: TODA migration nova precisa:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 411 W7+W10: LEFT JOIN categories is_active extensao cross-svc
+commit 2c19211
+CONTEXTO: Pass 406 fixou 3 endpoints public.js
+Audit cross-svc revelou mais 3 sites:
+- product-svc/wishlist.js
+- search-svc /search (hot path)
+- search-svc /facets CTE
+
+CENARIO consistente:
+- Admin desativa cat -> endpoints retornam category_slug inativo
+- Frontend chip -> 404 silent
+
+POST-FIX cross-svc consolidacao:
+- wishlist + search + facets com AND c.is_active = TRUE
+
+W7 categories filter coverage cross-svc COMPLETO:
+  pass 406: public.js (list + detail + compare)
+  pass 411: wishlist + search + facets <- ESTE
+
+Pattern V8: filter no JOIN condition graceful
+
+144 passes acumulados (268->411) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
