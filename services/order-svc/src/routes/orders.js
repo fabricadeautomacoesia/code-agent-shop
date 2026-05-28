@@ -959,6 +959,56 @@ router.post('/admin/disputes/:id/resolve',
     try {
       await cache.del('order:admin:disputes:*');
     } catch (_) { /* best-effort */ }
+
+    // FIX-WORKER-11 pass 384 *** CRITICAL REAL MONEY GAP ***:
+    //   PRE-FIX: admin resolve dispute resolution_action='refund_approved' ou
+    //   'partial_refund' -> notification "Refund aprovado" enviada ao buyer
+    //   MAS asaas.refundPayment() NUNCA EH CHAMADO.
+    //   - Order marcada 'refunded' silenciosamente no audit
+    //   - Buyer recebe email "Refund aprovado" mas dinheiro NUNCA volta
+    //   - Asaas webhook PAYMENT_REFUNDED nunca chega (nada disparou)
+    //   - Suporte ticket flood: "recebi email mas nao chegou refund"
+    //   - Pass 289 fixou asaas.cancelPayment missing - similar pattern.
+    //   asaas.js linha 80 refundPayment exists + exported (pass 384 verified)
+    //   mas ZERO callers no codebase = export orphan.
+    //   POST-FIX: dispatch async setImmediate p/ payment-svc /payments/asaas/refund
+    //   (paridade pattern checkout setImmediate linha 250-272).
+    //   Se Asaas refund falhar, webhook PAYMENT_REFUND_FAILED ja existing (pass 222)
+    //   sinaliza admin via audit_log critical + notification.
+    if (outcome?.ok && ['refund_approved','partial_refund'].includes(req.body.resolution_action)) {
+      setImmediate(async () => {
+        try {
+          const paymentUrl = process.env.UPSTREAM_PAYMENT || `http://tasks.cas_payment-svc:${process.env.PORT_PAYMENT || 3016}`;
+          const hasToken = !!process.env.PAYMENT_INTERNAL_TOKEN;
+          const body = {
+            order_id: outcome.dispute_id ? null : null, // dispute_id NAO eh order_id; payment-svc lookup via order via dispute
+            dispute_id: req.params.id,
+            refund_amount_cents: req.body.refund_amount_cents || null, // null = full refund
+            reason: req.body.admin_notes ? req.body.admin_notes.slice(0, 200) : `Dispute resolved: ${req.body.resolution_action}`,
+          };
+          const r = await fetch(`${paymentUrl}/payments/asaas/refund`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(hasToken ? { 'x-internal-token': process.env.PAYMENT_INTERNAL_TOKEN } : {}),
+            },
+            body: JSON.stringify(body),
+          });
+          if (!r.ok) {
+            const txt = await r.text().catch(() => '');
+            log.error({ dispute_id: req.params.id, status: r.status, /* DLP */ body: mask.text(txt.slice(0, 300)) },
+              '[dispute.refund.dispatch_failed]');
+          } else {
+            log.info({ dispute_id: req.params.id, refund_amount_cents: req.body.refund_amount_cents || 'full' },
+              '[dispute.refund.dispatched]');
+          }
+        } catch (e) {
+          log.error({ dispute_id: req.params.id, err: mask.text(String(e.message || '').slice(0, 300)) },
+            '[dispute.refund.dispatch_exception]');
+        }
+      });
+    }
+
     res.json(outcome);
   })
 );

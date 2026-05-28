@@ -417,6 +417,68 @@ app.post('/payments/asaas/create',
 // POST /payments/asaas/webhook - recebe eventos Asaas
 // FIX SEG-PAY-1 (CRITICAL): bug anterior permitia bypass total da assinatura quando
 // ASAAS_WEBHOOK_SECRET nao estava configurado (valid=true por default).
+// FIX-WORKER-11 pass 384 *** CRITICAL REAL MONEY GAP - dispute refund dispatch ***:
+//   PRE-FIX: asaas.refundPayment exported em asaas.js linha 80 mas ZERO callers.
+//   order-svc dispute resolve marcava order=refunded SEM disparar Asaas refund.
+//   Buyer recebia notification "Refund aprovado" mas dinheiro NUNCA voltava.
+//   POST-FIX: endpoint internal /payments/asaas/refund - chamado por order-svc
+//   setImmediate apos dispute resolve com resolution_action in (refund_approved, partial_refund).
+//   Looks up order via dispute_id, dispatch asaas.refundPayment(payment_id, value).
+//   Asaas webhook PAYMENT_REFUNDED (mapeado linha 730) finaliza status=refunded.
+//   Se Asaas falhar, PAYMENT_REFUND_FAILED webhook (pass 222) alerta admin.
+app.post('/payments/asaas/refund', asyncHandler(async (req, res, next) => {
+  // x-internal-token guard (paridade /payments/asaas/create pass 117)
+  const expected = process.env.PAYMENT_INTERNAL_TOKEN;
+  if (expected && req.headers['x-internal-token'] !== expected) {
+    log.warn({ ip: req.ip }, '[refund.unauthorized]');
+    return next(errorHandler.unauthorized('invalid_internal_token'));
+  }
+  const { dispute_id, refund_amount_cents, reason } = req.body || {};
+  if (!dispute_id) return next(errorHandler.badRequest('dispute_id_required'));
+  // Lookup order via dispute_id
+  const r = await query(
+    `SELECT o.id AS order_id, o.asaas_payment_id, o.total_cents, o.payment_status
+       FROM disputes d
+       JOIN orders o ON o.id = d.order_id
+      WHERE d.id = $1::UUID AND o.asaas_payment_id IS NOT NULL`,
+    [dispute_id]
+  );
+  if (!r.rows.length) {
+    log.warn({ dispute_id }, '[refund.no_payment] dispute sem payment associado');
+    return next(errorHandler.notFound('payment_not_found'));
+  }
+  const order = r.rows[0];
+  // Partial refund: value in BRL (Asaas API). Full refund: undefined.
+  const refundValueBRL = refund_amount_cents
+    ? Math.min(refund_amount_cents, order.total_cents) / 100
+    : undefined;
+  try {
+    const refund = await asaas.refundPayment(order.asaas_payment_id, refundValueBRL,
+      String(reason || 'dispute_refund').slice(0, 200));
+    // Audit log atomic (Pattern V8 W7 Regra P)
+    await query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES (NULL, 'service', 'payment.refund.dispatched', 'order', $1, 'warn', $2::JSONB)`,
+      [order.order_id, JSON.stringify({
+        dispute_id, asaas_payment_id: order.asaas_payment_id,
+        refund_amount_cents: refund_amount_cents || order.total_cents,
+        full_refund: !refund_amount_cents,
+        reason: mask.text(String(reason || '').slice(0, 200)),
+        asaas_refund_id: refund?.id || null,
+      })]
+    );
+    log.info({ dispute_id, order_id: order.order_id, asaas_refund_id: refund?.id },
+      '[refund.dispatched]');
+    res.json({ ok: true, asaas_refund_id: refund?.id, order_id: order.order_id });
+  } catch (e) {
+    log.error({ dispute_id, order_id: order.order_id,
+      err: mask.text(String(e.message || '').slice(0, 300)) },
+      '[refund.asaas_call_failed]');
+    return next(errorHandler.badRequest('asaas_refund_failed',
+      'Falha ao processar refund Asaas. Tente novamente ou contate suporte.'));
+  }
+}));
+
 // Atacante podia forjar PAYMENT_RECEIVED para qualquer order pending e desbloquear downloads.
 //
 // AGORA:
