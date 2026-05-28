@@ -30943,3 +30943,35 @@ LINKS PARA TESTE (apos VPS unblock):
 PROXIMA ITER:
 - Final consolidation: verify cross-svc tests
 - VPS SSH unblock URGENTISSIMO (180 ciclos - 60h)
+
+## PASS 348 W7: multer error classification + HTTP 413
+commit bcc942a
+- product-svc/upload.js multer error handler:
+  - LIMIT_FILE_SIZE -> HTTP 413 + max_bytes hint
+  - LIMIT_UNEXPECTED_FILE -> 400 unexpected_field
+  - extensao_nao_permitida -> 400 invalid_extension
+  - default -> 400 upload_error DLP masked
+  - next() fallthrough quando err undefined
+- UX seller: tamanho max visivel
+- HTTP semantics: 413 correto p/ payload-too-large
+
+## PASS 349 W16 MLB-2: Q&A upvote cache invalidation realtime
+commit 60703ab
+- review-svc POST /qna/:id/upvote:
+  - SELECT inicial JOIN products p/ capturar slug
+  - FOR UPDATE OF q (lock so qna)
+  - Apos tx commit -> cache.del(products:qna:slug:*) wildcard
+  - Paridade pass 327 (qna-form pattern)
+  - slugNorm toLowerCase().trim() (pass 298)
+- W16 MLB-2 (Q&A upvote system) realtime completo:
+  * Backend toggle atomic (pass 37+)
+  * UI a11y aria-pressed (pass 152)
+  * Public list ORDER BY upvote_count DESC (pass 75)
+  * Cache invalidation realtime (pass 349) <- ESTE
+- 82 passes acumulados (268->349) sem deploy VPS
+
+PROXIMA ITER:
+- W18 perf: EXPLAIN ANALYZE query lenta
+- W4 admin DLP audit-log viewer
+- W2 checkout E2E completion
+- VPS SSH unblock URGENTISSIMO (60h+ ciclos)
