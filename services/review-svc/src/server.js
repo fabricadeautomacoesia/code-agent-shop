@@ -433,8 +433,14 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
     await tx(async (c) => {
       // Regras A+B+J: SELECT product valido (FOR UPDATE seria desnecessario
       // - product nao muta - usa SHARE lock que basta p/ orphan detection)
+      // FIX-WORKER-7 pass 420 (+ title p/ notification context):
+      //   PRE-FIX: SELECT seller_id, slug apenas
+      //   Notification seller body hardcoded 'Nova pergunta sobre produto'
+      //   - Seller com 10 produtos NAO sabe QUAL produto recebeu pergunta
+      //   - inferCtaUrl pass 355 espera payload.slug + product title
+      //   POST-FIX: + title (context na notification body)
       const p = await c.query(
-        `SELECT seller_id, slug FROM products
+        `SELECT seller_id, slug, title FROM products
           WHERE id = $1::UUID
             AND status IN ('approved','platform_owned')
             AND deleted_at IS NULL
@@ -467,12 +473,30 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
       qna = r.rows[0];
 
       // INSERT notification ATOMICO (mesmo tx)
+      // FIX-WORKER-7 pass 420 (notification context + payload):
+      //   PRE-FIX: title='Nova pergunta' + body='Nova pergunta sobre produto'
+      //   - Generic strings sem product context
+      //   - SEM payload JSONB (inferCtaUrl pass 355 precisa payload.slug)
+      //   - Seller multi-produto perde tempo identificando produto
+      //   POST-FIX:
+      //   - title includes product title (truncate 60 chars)
+      //   - body includes question excerpt (truncate 200)
+      //   - payload JSONB com slug + product_id (NotificationBell deep-link)
+      //   - template_code='product_qna_new' paridade inferCtaUrl pass 355 mapping
       if (p.rows[0].seller_id) {
+        const productTitle = String(p.rows[0].title || 'produto').slice(0, 60);
+        const questionExcerpt = String(req.body.question).slice(0, 200);
         await c.query(
-          `INSERT INTO notifications (user_id, channel, template_code, title, body)
-           SELECT user_id, 'in_app', 'qna_question', 'Nova pergunta', $1
-             FROM sellers WHERE id = $2::UUID`,
-          [`Nova pergunta sobre produto`, p.rows[0].seller_id]
+          `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
+           SELECT user_id, 'in_app', 'product_qna_new',
+                  $1, $2, $3::JSONB, 1
+             FROM sellers WHERE id = $4::UUID`,
+          [
+            `Nova pergunta: ${productTitle}`,
+            `"${questionExcerpt}${req.body.question.length > 200 ? '...' : ''}"`,
+            JSON.stringify({ slug: p.rows[0].slug, product_id: req.body.product_id, qna_id: null }),
+            p.rows[0].seller_id,
+          ]
         );
       }
       outcome = { ok: true, slug: p.rows[0].slug };
