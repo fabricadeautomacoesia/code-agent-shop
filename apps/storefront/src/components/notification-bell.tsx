@@ -161,7 +161,8 @@ export function NotificationBell() {
 
   return (
     <div className="relative">
-      <button onClick={() => setOpen(!open)}
+      {/* FIX-WORKER-1 pass 160 (a11y): type='button' defensive (V8 Regra 23) */}
+      <button type="button" onClick={() => setOpen(!open)}
         aria-label={bellLabel}
         aria-expanded={open}
         aria-haspopup="menu"
@@ -177,21 +178,30 @@ export function NotificationBell() {
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-12 z-50 w-96 max-w-[calc(100vw-2rem)] glass-strong rounded-xl overflow-hidden shadow-2xl">
+          {/* FIX-WORKER-1 pass 160 (a11y): backdrop button p/ keyboard close (Esc tambem funciona).
+              role='presentation' p/ SR ignorar (decorativo - X visivel atende UX). */}
+          <button type="button" aria-label="Fechar notificacoes"
+            className="fixed inset-0 z-40 cursor-default"
+            onClick={() => setOpen(false)} />
+          <div role="menu" aria-label="Notificacoes"
+            className="absolute right-0 top-12 z-50 w-96 max-w-[calc(100vw-2rem)] glass-strong rounded-xl overflow-hidden shadow-2xl">
             <header className="flex items-center justify-between p-4 border-b border-white/10">
               <h3 className="font-display font-bold">Notificacoes</h3>
               <div className="flex items-center gap-1">
                 {unread > 0 && (
-                  <button onClick={markAllRead}
-                    className="px-2 py-1 text-[11px] rounded hover:bg-white/5 text-magenta hover:text-magenta-glow transition-colors flex items-center gap-1"
+                  /* FIX-WORKER-1 pass 160: type='button' + aria-label dinamico count */
+                  <button type="button" onClick={markAllRead}
+                    aria-label={`Marcar todas as ${unread} notificacoes como lidas`}
+                    className="px-2 py-1 text-[11px] rounded hover:bg-white/5 text-magenta hover:text-magenta-glow transition-colors flex items-center gap-1 focus-visible:outline-2 focus-visible:outline-magenta"
                     title="Marcar todas como lidas">
-                    <CheckCheck className="w-3.5 h-3.5" />
+                    <CheckCheck className="w-3.5 h-3.5" aria-hidden="true" />
                     Marcar todas
                   </button>
                 )}
-                <button onClick={() => setOpen(false)} className="p-1 hover:bg-white/5 rounded">
-                  <X className="w-4 h-4" />
+                <button type="button" onClick={() => setOpen(false)}
+                  aria-label="Fechar painel de notificacoes"
+                  className="p-1 hover:bg-white/5 rounded focus-visible:outline-2 focus-visible:outline-magenta">
+                  <X className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
             </header>
