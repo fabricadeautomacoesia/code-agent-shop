@@ -402,9 +402,13 @@ router.get('/sla-history', asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 109 deploy: schema real seller_sla_history tem
   // 'event' (não event_type), 'deadline_was', 'actual_upload_at', 'days_overdue',
   // 'actor_user_id', 'notes' (não previous_class/new_class etc).
+  // FIX-WORKER-18 pass 262 (COUNT window consolidation):
+  //   2 queries -> 1 via COUNT(*) OVER(). Pattern V8 cross-svc consolidated.
+  //   Reduz 50% DB roundtrip + reusa plan JOIN identico.
   const r = await query(
     `SELECT h.id, h.seller_id, h.event, h.deadline_was, h.actual_upload_at,
-            h.days_overdue, h.actor_user_id, h.notes, h.created_at
+            h.days_overdue, h.actor_user_id, h.notes, h.created_at,
+            COUNT(*) OVER()::INT AS _total
        FROM seller_sla_history h
        JOIN sellers s ON s.id = h.seller_id
       WHERE s.user_id = $1
@@ -412,16 +416,13 @@ router.get('/sla-history', asyncHandler(async (req, res) => {
       LIMIT $2 OFFSET $3`,
     [req.user.sub, limit, offset]
   );
-  const totalRes = await query(
-    `SELECT COUNT(*)::INT AS total FROM seller_sla_history h
-       JOIN sellers s ON s.id = h.seller_id WHERE s.user_id = $1`,
-    [req.user.sub]
-  );
-  const total = totalRes.rows[0].total;
+  const total = r.rows[0]?._total ?? 0;
+  // Strip _total from response
+  const history = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
   res.json({
-    history: r.rows,
+    history,
     total, limit, offset,
-    has_more: (offset + r.rows.length) < total,
+    has_more: (offset + history.length) < total,
   });
 }));
 

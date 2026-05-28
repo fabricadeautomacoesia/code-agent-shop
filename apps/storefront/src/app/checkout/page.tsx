@@ -62,11 +62,22 @@ export default function CheckoutPage() {
     setLoading(true); setErr('');
     try {
       const order: any = await Api.checkout(token!, method, method === 'credit_card' ? installmentCount : undefined);
+      // FIX-WORKER-2 pass 262 (defensive shape check):
+      //   PRE-FIX: assumia order.order.id existir sempre. Backend transient
+      //   bug poderia retornar { ok: true } sem order field -> .id crash
+      //   ou poll for loop com order.order.id undefined -> GET /orders/undefined
+      //   -> 400/404 + setPaymentResult com order=null -> linha 98 o.order_number crash
+      //   POST-FIX: early-return + error friendly se shape invalida
+      if (!order?.order?.id) {
+        setErr('Resposta do servidor invalida. Tente novamente em alguns segundos ou contate suporte.');
+        return;
+      }
       // FIX-WORKER-2 pass 2: payment-svc cria Asaas via setImmediate no backend (async).
       // Antes: 1 GET imediato -> asaas_pix_qrcode=null, UI mostra "Pedido criado!" sem QR.
       // Agora: poll com backoff 500ms..3s, 8 tentativas (~14s timeout) ate receber payment.
       // Boleto/invoice tem mesma logica (campos diferentes por metodo).
       const isReady = (o: any) => {
+        if (!o) return false; // defensive: poll pode retornar null/undefined
         if (method === 'pix') return !!o.asaas_pix_qrcode;
         if (method === 'credit_card') return !!o.asaas_invoice_url;
         if (method === 'boleto') return !!o.asaas_boleto_url;
@@ -76,9 +87,13 @@ export default function CheckoutPage() {
       const delays = [500, 800, 1200, 1800, 2400, 3000, 3000, 3000];
       for (const d of delays) {
         await new Promise((r) => setTimeout(r, d));
-        const r: any = await Api.api(`/orders/${order.order.id}`, { auth: token!, cache: 'no-store' });
-        polled = r.order;
-        if (isReady(polled)) break;
+        try {
+          const r: any = await Api.api(`/orders/${order.order.id}`, { auth: token!, cache: 'no-store' });
+          polled = r.order;
+          if (isReady(polled)) break;
+        } catch {
+          // GET transient fail - continue poll (network blip, gateway 502)
+        }
       }
       if (!isReady(polled)) {
         setErr('Pagamento esta demorando mais do que o esperado. Veja em "Meus pedidos" - o pagamento sera atualizado em segundos.');

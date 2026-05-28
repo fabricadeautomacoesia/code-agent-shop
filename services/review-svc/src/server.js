@@ -203,10 +203,15 @@ app.post('/:id/vote', voteLimiter, jwt.requireAuth(),
       );
 
       // FIX bug 1: SUM dentro do mesmo tx (snapshot consistente via FOR UPDATE acima)
+      // FIX-WORKER-3 pass 262 (NULL SUM defensive):
+      //   PRE-FIX: SUM(CASE...) retorna NULL quando 0 rows (review nunca votado)
+      //   product_reviews.helpful_count INT NOT NULL -> 23502 not_null_violation
+      //   Tx rollback -> vote falha + frontend retry storm
+      //   POST-FIX: COALESCE(SUM(...), 0) garante INT 0 quando sem votes
       const counts = await c.query(
         `SELECT
-           SUM(CASE WHEN vote = 1 THEN 1 ELSE 0 END)::INT AS helpful,
-           SUM(CASE WHEN vote = -1 THEN 1 ELSE 0 END)::INT AS unhelpful
+           COALESCE(SUM(CASE WHEN vote = 1 THEN 1 ELSE 0 END), 0)::INT AS helpful,
+           COALESCE(SUM(CASE WHEN vote = -1 THEN 1 ELSE 0 END), 0)::INT AS unhelpful
          FROM review_votes WHERE review_id = $1::UUID`, [req.params.id]
       );
 

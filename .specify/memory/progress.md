@@ -26875,3 +26875,89 @@ PROXIMA ITER:
 - W3 PDP review helpful click
 - W11 payment chargeback timeline
 - VPS SSH unblock CRITICAL (94 ciclos - 31.3h!!!)
+
+============================================================
+PASS 262 (2026-05-28) - W3 + W2 + W18
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W3 review-svc: vote SUM NULL defensive
+- W2 storefront: checkout defensive shape + GET retry
+- W18 seller-svc: sla-history COUNT window consolidation
+
+============================================================
+1. W3 - review vote NULL SUM defensive
+============================================================
+FILE: services/review-svc/src/server.js:205-211
+
+PROBLEMA:
+- SUM(CASE...)::INT retorna NULL quando 0 rows (review nunca votado)
+- product_reviews.helpful_count INT NOT NULL -> PG 23502
+- Tx rollback -> primeira vote em review FALHA
+- Frontend retry storm + user UX broken (botao "Util" sem feedback)
+
+POST-FIX:
+- COALESCE(SUM(...), 0)::INT em helpful + unhelpful
+- Garante 0 quando vacia + bypass NOT NULL constraint
+- Pattern V8 defensive aggregation
+
+============================================================
+2. W2 - checkout defensive shape + GET retry resilience
+============================================================
+FILE: apps/storefront/src/app/checkout/page.tsx:61-101
+
+PROBLEMA A (shape):
+- Assumia order.order.id existir sempre
+- Backend transient bug retornando { ok: true } sem order field
+- .id crash + GET /orders/undefined -> 400/404
+- setPaymentResult com order=null -> linha 98 o.order_number crash WSOD
+
+PROBLEMA B (poll fragility):
+- Cada GET no for loop sem try/catch
+- 1 network blip / gateway 502 -> exception jogava p/ catch externo
+- User via friendly error sem oportunidade de retry (8 tentativas perdidas)
+
+POST-FIX:
+- Early-return + setErr se !order?.order?.id (shape defensive)
+- try/catch per GET no loop - continua poll em transient fail
+- isReady defensive: if (!o) return false
+- 8 tentativas resilient (network blips ok)
+
+============================================================
+3. W18 - sla-history COUNT(*) OVER() consolidation
+============================================================
+FILE: services/seller-svc/src/routes/me.js:399-426
+
+PROBLEMA:
+- 2 queries separadas (SELECT rows + SELECT COUNT) com JOIN replicado
+- Seller veterano com 100+ SLA events: 2 DB roundtrips per dashboard hit
+- Pattern V8 W18 pass 178-249+ ja consolidou em 13+ endpoints
+
+POST-FIX:
+- COUNT(*) OVER()::INT AS _total inline na query principal
+- Strip _total no map response
+- 50% reducao roundtrip + plan JOIN reuse pelo PG
+
+============================================================
+SUMARIO PASS 262
+============================================================
+Files: 3 modificados
+  - services/review-svc/src/server.js (COALESCE SUM)
+  - apps/storefront/src/app/checkout/page.tsx (defensive + retry)
+  - services/seller-svc/src/routes/me.js (COUNT window)
+Lines: ~70 added
+
+VPS SSH BLOQUEADO (95 ciclos - 31.7h sem deploy).
+Migs 069-076 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_review-svc cas_storefront cas_seller-svc --force
+- W3: review virgem -> POST /:id/vote -> success (era 500 NOT NULL)
+- W2: simular backend retornar {} no checkout -> friendly error
+  simular network blip durante poll -> continua tentar
+- W18: EXPLAIN ANALYZE /sellers/me/sla-history - 1 query unica
+
+PROXIMA ITER:
+- W4 admin force-approve audit dedup
+- W11 chargeback timeline events
+- VPS SSH unblock CRITICAL (95 ciclos - 31.7h!!!)
