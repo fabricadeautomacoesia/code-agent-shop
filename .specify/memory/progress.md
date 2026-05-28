@@ -17367,7 +17367,25 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Seller /qna response textarea aria-label (pass 147)
 - ✅ Storefront /conta/perfil edit form a11y (pass 148)
 - ✅ Admin PromptDialog substitui window.prompt (pass 149)
-- ✅ Admin confirmDialog substitui 7 window.confirm (pass 150 esta iter)
+- ✅ Admin confirmDialog substitui 7 window.confirm (pass 150)
+- ✅ Seller PromptDialog/confirmDialog 2 callsites (pass 151 esta iter)
+
+W7 PASS 151 RESUMO - W5 SELLER DIALOG A11Y:
+- AUDIT seller dashboard: 2 callsites window.confirm() restantes
+  * /products lista: submitQA confirm 'Enviar para QA'
+  * /products/[id] edit: submitQA confirm 'Voce nao podera editar'
+- CREATED apps/dashboard-seller/src/components/prompt-dialog.tsx:
+  * Clone exato do admin (pass 149-150) - cross-app consistency
+  * promptDialog() + confirmDialog() helpers + Provider
+  * Mesma a11y: role=dialog + aria-modal + focus + Esc + click-outside
+  * variant=danger p/ acoes irreversiveis
+- Layout root seller: PromptDialogProvider montado
+- INTEGRATED:
+  * /products lista submitQA: confirm normal (info-only)
+  * /products/[id] edit submit: confirm DANGER (lock edicao ate QA result)
+- 0 window.confirm() restantes em seller + admin (100% migrated)
+- BUILD dashboard-seller OK + service converged
+- COMMIT 7cb12b4 pushed GitHub main + deployed prod
 
 W7 PASS 150 RESUMO - W4 CONFIRM DIALOG A11Y:
 - AUDIT cross-app: 9 callsites window.confirm() (7 admin + 2 seller)
