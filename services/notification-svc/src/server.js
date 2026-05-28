@@ -8,7 +8,7 @@ const nodemailer = require('nodemailer');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, mask } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, mask, cache } = require('@cas/shared');
 
 // FIX-WORKER-13 pass 6: rate-limit em /test - era endpoint admin sem QUALQUER limit.
 // Admin compromised (XSS/session hijack) pode disparar emails ilimitados para
@@ -265,15 +265,27 @@ app.get('/', jwt.requireAuth(), asyncHandler(async (req, res) => {
 // obrigando fetch de TODAS as 30 notifs (~15kb payload) so para mostrar badge "5+".
 // Endpoint dedicado retorna SO o numero (16 bytes) -> permite poll 30s sem custo.
 // Idx idx_notif_user_channel_created (mig 020) garante <2ms query.
-app.get('/unread-count', jwt.requireAuth(), asyncHandler(async (req, res) => {
-  const r = await query(
-    `SELECT COUNT(*)::INT AS count
-       FROM notifications
-      WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE`,
-    [req.user.sub]
-  );
-  res.json({ count: r.rows[0]?.count || 0 });
-}));
+// FIX-WORKER-18 pass 212: cache 20s per-user.
+// NotificationBell polling 30s sem cache = hit DB toda chamada.
+// Multi-tab user dispara N polls simultaneos = N queries identicas.
+// Cache 20s vary by user.sub - bell ainda atualiza rapido ao receber notif
+// (websocket/sse seria ideal mas polling cache 20s eh boa aproximacao).
+// Invalidation: POST /:id/read + POST /mark-all-read + INSERT notification (cross-svc)
+const unreadCountCacheKey = (req) => `notifs:unread-count:${req.user?.sub || 'anon'}`;
+
+app.get('/unread-count',
+  jwt.requireAuth(),
+  cache.cacheMiddleware(unreadCountCacheKey, 20),
+  asyncHandler(async (req, res) => {
+    const r = await query(
+      `SELECT COUNT(*)::INT AS count
+         FROM notifications
+        WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE`,
+      [req.user.sub]
+    );
+    res.json({ count: r.rows[0]?.count || 0 });
+  })
+);
 
 // POST /api/notifications/:id/read - marcar 1 notif como lida
 // FIX-WORKER-13: regex UUID antes do query evita PG 22P02 -> 500.
@@ -342,6 +354,8 @@ app.post('/:id/read',
       WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE`,
     [req.user.sub]
   );
+  // FIX-WORKER-18 pass 212: invalida cache unread-count (acabou de mudar)
+  await cache.del(`notifs:unread-count:${req.user.sub}`).catch(() => {});
   res.json({ ok: true, unread_count_remaining: remaining.rows[0]?.n || 0 });
 }));
 
@@ -404,6 +418,9 @@ app.post('/read-all',
          JSON.stringify({ marked: r.rowCount, has_more: hasMore, ip: req.ip })]
       );
     } catch (_e) { /* audit best-effort */ }
+
+    // FIX-WORKER-18 pass 212: invalida cache unread-count (todas viraram TRUE)
+    await cache.del(`notifs:unread-count:${req.user.sub}`).catch(() => {});
 
     res.json({ ok: true, marked: r.rowCount, has_more: hasMore, batch_limit: 1000 });
   })
