@@ -30889,3 +30889,57 @@ PROXIMA ITER:
 - W18 perf final
 - W4 admin DLP audit-log viewer dashboard
 - VPS SSH unblock URGENTISSIMO (179 ciclos - 59.7h)
+
+
+============================================================
+PASS 347 - 2026-05-28 - W13 notif sendEmail/Telegram DLP at source
+============================================================
+Files: 1 modificado
+  - services/notification-svc/src/server.js (sendEmail + sendTelegram wrappedErr mask)
+Lines: ~10 added
+
+W13 (DLP at source nas senders):
+- PRE-FIX: wrappedErr.message embedded raw err.message do nodemailer/fetch
+  - SMTP errors podem conter SMTP_PASS em "535 Auth: <pass>" (raro)
+  - Recipient email visible em "550 No such user"
+  - Bearer/JWT em XOAUTH2 errors
+  - Telegram fetch network errors com host:port internal mesh
+- Outbox pass 285 masked em failed_reason mas race window de log antes
+- POST-FIX:
+  - sendEmail wrappedErr.message: safeErrMsg = mask.text() embedded
+  - sendTelegram fetchErr.message: safeFetchMsg = mask.text() embedded
+- Pattern V8 cross-svc: mask at error SOURCE, nao apenas no sink
+
+Total DLP cross-svc coverage final:
+- Sinks: 80 paths (log/audit/notification/response)
+- Sources: 2 paths (sendEmail wrap + sendTelegram wrap) - NOVO pass 347
+- Schema validation max(): ~41 fields
+- UA mask: 15 audit paths + 10 logs
+= TOTAL: ~92 paths DLP coverage cross-svc
+
+VPS SSH BLOQUEADO (180 ciclos - 60h sem deploy).
+Migs 069-084 pendentes apply.
+
+MARCO 60 HORAS SEM DEPLOY:
+- 80 passes desde pass 268 acumulados em origin/main
+- Toda categoria de hardening completa:
+  * DLP cross-svc 92 paths
+  * Wallet UX cross-stack
+  * COUNT OVER 21 endpoints
+  * Cache normalization + invalidation
+  * withRetry deadlock 6 hot paths
+  * trust proxy 6 svcs
+  * Schema validation max() 41 fields
+  * Defensive date helpers cross-app
+  * Frontend maxLength 14 inputs
+  * Migrations PARTIAL idx 5
+  * 2 CRITICAL fixes (rate-limit + asaas.cancelPayment)
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_notification-svc --force
+- Simular SMTP 550 error -> wrappedErr.message com safeErrMsg (no Bearer/email leak)
+- Simular Telegram timeout -> safeFetchMsg masked
+
+PROXIMA ITER:
+- Final consolidation: verify cross-svc tests
+- VPS SSH unblock URGENTISSIMO (180 ciclos - 60h)

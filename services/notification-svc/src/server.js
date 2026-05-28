@@ -165,7 +165,17 @@ async function sendEmail(to, subject, body, html) {
       code === 'EFILE' ||
       // SMTP responseCode 5xx (550/551/553/554) = recipient/permanent
       (typeof err.responseCode === 'number' && err.responseCode >= 500 && err.responseCode < 600);
-    const wrappedErr = new Error(`smtp_error_${code || 'unknown'}: ${err.message || ''}`.slice(0, 500));
+    /* FIX-WORKER-13 pass 347: DLP mask at source.
+       err.message do nodemailer pode conter:
+       - SMTP_PASS em "535 Auth: <pass>" raro mas observado em alguns providers
+       - Recipient email visible em "550 No such user"
+       - Bearer/JWT em XOAUTH2 errors
+       PRE-FIX: embedded raw em wrappedErr.message - intermediate log antes
+       do outbox mask poderia vazar. Outbox pass 285 mask aplicava em catch
+       MAS algumas log paths antes (race window).
+       POST-FIX: mask.text() no err.message embedding. */
+    const safeErrMsg = mask.text(String(err.message || '').slice(0, 300));
+    const wrappedErr = new Error(`smtp_error_${code || 'unknown'}: ${safeErrMsg}`.slice(0, 500));
     wrappedErr.transient = !isPermanent;
     wrappedErr.smtpCode = code || null;
     wrappedErr.smtpResponseCode = err.responseCode || null;
@@ -224,8 +234,10 @@ async function sendTelegram(message) {
       signal: AbortSignal.timeout(10000),
     });
   } catch (fetchErr) {
-    // Network/timeout error - transient (retry safe)
-    const e = new Error(`telegram_network_error: ${fetchErr.message || fetchErr.name}`);
+    /* FIX-WORKER-13 pass 347: DLP at source paridade sendEmail.
+       Network error pode incluir host:port internal mesh em error.cause. */
+    const safeFetchMsg = mask.text(String(fetchErr.message || fetchErr.name || '').slice(0, 200));
+    const e = new Error(`telegram_network_error: ${safeFetchMsg}`);
     e.transient = true;
     throw e;
   }
