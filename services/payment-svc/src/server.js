@@ -1089,6 +1089,10 @@ app.post('/payments/payouts/:id/process',
         wallet: payout.asaas_wallet_id,
         value: Math.round(Number(payout.amount_cents)) / 100,
         description: `Saque seller ${payout.seller_id}`,
+        /* FIX-WORKER-11 pass 282: externalReference p/ reconcile reverso
+           payout.id eh canonical chave - se transfer.id se perder ainda
+           podemos query Asaas /transfers?externalReference=<id>. */
+        externalReference: `payout:${req.params.id}`,
       });
     } catch (e) {
       log.error({ err: e.message, payout_id: req.params.id },
@@ -1501,10 +1505,12 @@ async function liquidatePendingWalletPayouts() {
     for (const row of pending.rows) {
       try {
         // Asaas transfer (createTransfer ja existe em asaas.js)
+        // FIX-WORKER-11 pass 282: externalReference payouts_pending_wallet.id
         const transfer = await asaas.createTransfer({
           wallet: row.asaas_wallet_id,
           value: Math.round(Number(row.amount_cents)) / 100,
           description: `Liquidacao payout pendente (order ${row.order_id})`,
+          externalReference: `payouts_pending_wallet:${row.id}`,
         });
         // UPDATE atomic - status + transfer_id + liquidated_at
         await query(

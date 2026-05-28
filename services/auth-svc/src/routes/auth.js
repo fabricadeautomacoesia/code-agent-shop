@@ -745,12 +745,15 @@ router.post('/forgot-password',
           ]
         );
         // FIX bug 2: audit_log atomic (security event critical - account takeover signal)
+        // FIX-WORKER-6 pass 282: ua_prefix via mask.text() paridade endpoint logout (linha 646)
+        //   PRE-FIX: raw user-agent string em audit_log -> potencial PII em UA legado
+        //   (alguns browsers/clients incluem hostname/user em UA tail). DLP defese.
         await c.query(
           `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
            VALUES ($1, 'system', 'auth.forgot_password', 'user', $1, 'warn', $2::JSONB)`,
           [userId, JSON.stringify({
             ip: req.ip,
-            ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+            ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
             // email_hash em vez de email completo (privacy LGPD)
             email_hash: crypto.createHash('sha256').update(req.body.email).digest('hex').slice(0, 16),
           })]
@@ -825,22 +828,37 @@ router.post('/reset-password',
         [r.rows[0].user_id]
       );
       // FIX bug 1: audit_log atomic - security event critical
+      // FIX-WORKER-6 pass 282: ua_prefix via mask.text (paridade forgot+logout)
       await c.query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, 'user', 'auth.password_reset', 'user', $1, 'warn', $2::JSONB)`,
         [r.rows[0].user_id, JSON.stringify({
           ip: req.ip,
-          ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
           sessions_revoked: revoked.rows.length,
           token_id_prefix: r.rows[0].id.slice(0, 8),
         })]
       );
+      outcome = { sessions_revoked: revoked.rows.length };
     });
 
     if (outcome?.error === 'invalid_or_expired_token') {
       return next(require('@cas/shared').errorHandler.badRequest('invalid_or_expired_token'));
     }
-    res.json({ ok: true, message: 'Senha redefinida. Faca login com a nova senha.' });
+    /* FIX-WORKER-6 pass 282: response inclui sessions_revoked count
+       UX: usuario sabe se tinha sessoes ativas em outros devices invalidadas.
+       Mensagem UX clara com pluralizacao PT-BR. */
+    const n = outcome?.sessions_revoked || 0;
+    const sessionsMsg = n === 0
+      ? ''
+      : n === 1
+        ? ' 1 sessao ativa foi encerrada.'
+        : ` ${n} sessoes ativas foram encerradas.`;
+    res.json({
+      ok: true,
+      message: `Senha redefinida.${sessionsMsg} Faca login com a nova senha.`,
+      sessions_revoked: n,
+    });
   })
 );
 

@@ -28298,3 +28298,44 @@ PROXIMA ITER:
 - W3 PDP variant selector (badge OFICIAL MAIS VENDIDO MLB-9)
 - W2 checkout multi-seller mix banner
 - VPS SSH unblock URGENTISSIMO (114 ciclos - 38h)
+
+
+============================================================
+PASS 282 - 2026-05-28 - W6 + W11 (auth DLP mask + asaas reconcile)
+============================================================
+Files: 3 modificados
+  - services/auth-svc/src/routes/auth.js (mask.text + sessions_revoked response)
+  - services/payment-svc/src/asaas.js (createTransfer accept externalReference)
+  - services/payment-svc/src/server.js (2 callers passam externalReference)
+Lines: ~25 added
+
+W6 (auth audit_log DLP mask paridade + UX response):
+- forgot-password: ua_prefix raw -> mask.text() (PII em UA legado)
+- reset-password: ua_prefix raw -> mask.text() (paridade logout linha 646)
+- reset-password response: sessions_revoked count + msg PT-BR pluralizada
+- UX: user sabe quantos devices invalidados ("1 sessao encerrada" vs "3 sessoes")
+
+W11 (asaas createTransfer externalReference reconcile):
+- asaas.js createTransfer({externalReference?}) opcional
+- Cenario: cron crash entre transfer.create + UPDATE payout.asaas_transfer_id
+  - sem externalReference -> nao da pra rastrear transfer reverso
+  - Com externalReference -> Asaas /transfers?externalReference=payout:<id>
+- 2 callers atualizados:
+  - manual payout process: externalReference='payout:<payout_id>'
+  - cron liquidator pending_wallet: externalReference='payouts_pending_wallet:<id>'
+
+VPS SSH BLOQUEADO (115 ciclos - 38.3h sem deploy).
+Migs 069-080 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_auth-svc cas_payment-svc --force
+- W6: POST /api/auth/reset-password -> resp inclui sessions_revoked + msg
+  Audit query: SELECT payload_after->>'ua_prefix' FROM audit_log WHERE action='auth.password_reset' LIMIT 5;
+  Esperado: '****' onde PII detected, raw UA token caso contrario
+- W11: Apos transfer Asaas success - lookup reverse:
+  curl -H "access_token:$KEY" "https://api.asaas.com/v3/transfers?externalReference=payout:<id>"
+
+PROXIMA ITER:
+- W3 PDP MLB-9 badge OFICIAL MAIS VENDIDO (lookup sales_count thresh)
+- W2 checkout payment_method validation UX (PIX vs CC vs Boleto labels)
+- VPS SSH unblock URGENTISSIMO (115 ciclos - 38.3h)

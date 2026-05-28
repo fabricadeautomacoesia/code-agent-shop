@@ -74,8 +74,17 @@ async function refundPayment(id, value, description) {
   return api('POST', `/payments/${id}/refund`, value ? { value, description } : { description });
 }
 
-async function createTransfer({ wallet, value, description }) {
-  return api('POST', '/transfers', { walletId: wallet, value, description });
+/* FIX-WORKER-11 pass 282: externalReference em createTransfer
+   PRE-FIX: transfer Asaas criado sem campo externalReference - reconciliacao
+   pos-transfer (webhook TRANSFER_DONE ou status check manual) precisa lookup
+   transfer.id em DB. Se transfer.id perdido (cron crash entre create+UPDATE),
+   sem rastreio reverso eficiente.
+   POST-FIX: aceita externalReference opcional (payout.id ou pw.id) - canonical
+   chave reconcile cross-systems. Asaas v3 documenta o campo no /transfers. */
+async function createTransfer({ wallet, value, description, externalReference }) {
+  const payload = { walletId: wallet, value, description };
+  if (externalReference) payload.externalReference = externalReference;
+  return api('POST', '/transfers', payload);
 }
 
 module.exports = {
