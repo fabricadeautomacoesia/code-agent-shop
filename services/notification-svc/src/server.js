@@ -123,14 +123,51 @@ function renderMustache(template, ctx, isHtml = false) {
 // FIX-WORKER-13 pass 5: defesa simetrica ao Telegram - se SMTP nao configurado,
 // throw cedo em vez de nodemailer dar erro confuso "ECONNREFUSED 127.0.0.1:587".
 // Outbox processor pega no catch + retry/fail backoff exponencial existente.
+// FIX-WORKER-13 pass 220: sendEmail retry classification (cross-svc pattern de
+// sendTelegram pass 219). Aplica mesmo e.transient flag para outbox processor
+// decidir retry vs fail-fast.
+//
+// PRE-FIX:
+// - mailer.sendMail() throws nodemailer errors sem classificacao
+// - Outbox processor trata todos errors igual = 5 retries waste em EAUTH/EENVELOPE
+//   * EAUTH (SMTP auth bad) = permanente ate admin trocar credentials
+//   * EENVELOPE (recipient bad email) = permanente ate user corrigir email
+//   * ECONNECTION/EDNS/ETIMEDOUT = transient (rede recovery)
+//
+// POST-FIX: classify nodemailer error code -> e.transient flag
+// - Outbox processor pass 219 ja consome e.transient para isPermanent skip
 async function sendEmail(to, subject, body, html) {
   if (!process.env.SMTP_HOST) {
-    throw new Error('email_not_configured: SMTP_HOST ausente');
+    const e = new Error('email_not_configured: SMTP_HOST ausente');
+    e.transient = false; // misconfigured = admin precisa fix - retry waste
+    throw e;
   }
   if (!to) {
-    throw new Error('email_missing_recipient: user sem coluna email no DB');
+    const e = new Error('email_missing_recipient: user sem coluna email no DB');
+    e.transient = false; // user broken - retry nao vai resolver
+    throw e;
   }
-  return mailer.sendMail({ from: FROM, to, subject, text: body, html: html || undefined });
+  try {
+    return await mailer.sendMail({ from: FROM, to, subject, text: body, html: html || undefined });
+  } catch (err) {
+    // Nodemailer error codes - classificacao retry:
+    // - EAUTH / EENVELOPE / EMESSAGE / EFILE: permanent (4xx-like)
+    // - ECONNECTION / EDNS / ETIMEDOUT / ESOCKET: transient (5xx-like)
+    // - Unknown error: transient (assume rede - safer default)
+    const code = err.code || err.responseCode || '';
+    const isPermanent =
+      code === 'EAUTH' ||
+      code === 'EENVELOPE' ||
+      code === 'EMESSAGE' ||
+      code === 'EFILE' ||
+      // SMTP responseCode 5xx (550/551/553/554) = recipient/permanent
+      (typeof err.responseCode === 'number' && err.responseCode >= 500 && err.responseCode < 600);
+    const wrappedErr = new Error(`smtp_error_${code || 'unknown'}: ${err.message || ''}`.slice(0, 500));
+    wrappedErr.transient = !isPermanent;
+    wrappedErr.smtpCode = code || null;
+    wrappedErr.smtpResponseCode = err.responseCode || null;
+    throw wrappedErr;
+  }
 }
 
 // FIX-WORKER-13 pass 5: 2 bugs criticos resolvidos no envio Telegram.
