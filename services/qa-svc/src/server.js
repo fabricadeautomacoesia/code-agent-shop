@@ -24,7 +24,30 @@ const log = logger.child({ svc: 'qa-svc' });
 const app = express();
 const PORT = parseInt(process.env.PORT_QA || '3013', 10);
 
-const QA_THRESHOLD = parseFloat(process.env.QA_CONFIDENCE_THRESHOLD || '0.80');
+// FIX-WORKER-12 pass 366 (env config validation - silent rejection bug):
+//   PRE-FIX: parseFloat(env || '0.80') sem validate range.
+//   Cenarios broken:
+//   - QA_CONFIDENCE_THRESHOLD='high' (typo) -> parseFloat = NaN
+//     -> linha 435 score >= NaN sempre FALSE -> TODOS produtos rejeitados
+//     silenciosamente (mesmo score=1.0)
+//   - QA_CONFIDENCE_THRESHOLD='1.5' (typo admin) -> nada aprova (range invalido)
+//   - QA_CONFIDENCE_THRESHOLD='-0.1' -> tudo aprova (todo score >= -0.1)
+//   Detection: silent fail - apenas observavel apos N rejeitos legítimos confusos.
+//   POST-FIX: parseFloat + isFinite + range [0..1] check + safe fallback +
+//   log.warn se config invalida (alert ops).
+function parseQaThreshold() {
+  const raw = process.env.QA_CONFIDENCE_THRESHOLD;
+  if (!raw) return 0.80; // default
+  const v = parseFloat(raw);
+  if (!Number.isFinite(v) || v < 0 || v > 1) {
+    // log.warn fora do scope (logger nao initialized ainda) - console direto OK
+    // boot-time validation - admin notice via stdout
+    console.warn(`[qa-svc] QA_CONFIDENCE_THRESHOLD invalido '${raw}' (esperado 0.0-1.0), usando 0.80`);
+    return 0.80;
+  }
+  return v;
+}
+const QA_THRESHOLD = parseQaThreshold();
 const N8N_URL      = process.env.N8N_WEBHOOK_URL;
 const N8N_SECRET   = process.env.N8N_WEBHOOK_SECRET || '';
 const WORKER_URL   = process.env.QA_WORKER_URL || `http://tasks.cas_qa-worker:${process.env.PORT_QA_WORKER || 3014}`;
