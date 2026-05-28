@@ -26,7 +26,19 @@ export function QnaForm({ productId, onSubmitted }: { productId: string; onSubmi
 
   const trimmed = q.trim();
   const tooShort = trimmed.length > 0 && trimmed.length < MIN_LEN;
-  const canSubmit = !loading && trimmed.length >= MIN_LEN && trimmed.length <= MAX_LEN;
+  // FIX-WORKER-3 pass 413 (canSubmit UX: token consideration):
+  //   PRE-FIX: canSubmit = !loading && length valida (sem checar token)
+  //   - User nao logado digita pergunta -> button enabled
+  //   - Clica -> submit detecta !token -> redirect login
+  //   - User PERDE texto digitado (form reset apos redirect)
+  //   - UX MLB: button enabled mas action = login (confuso)
+  //   POST-FIX:
+  //   - canSubmit considera token (button so enabled se vai fazer submit real)
+  //   - canLoginRedirect = !token (separate state - mostra CTA login visivel)
+  //   - User nao logado: button mostra 'Login para perguntar' enabled SEM
+  //     precisar digitar (atrito reduzido + zero perda de texto)
+  const canSubmit = !loading && !!token && trimmed.length >= MIN_LEN && trimmed.length <= MAX_LEN;
+  const canLoginRedirect = !loading && !token;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -95,8 +107,9 @@ export function QnaForm({ productId, onSubmitted }: { productId: string; onSubmi
       </div>
       {/* FIX-WORKER-3 pass 186 (a11y): aria-hidden em icone decorativo + focus-visible
           + aria-label dinamico contextual SR */}
+      {/* FIX-WORKER-3 pass 413: button enabled apenas com submit real OR login CTA */}
       <button type="submit"
-        disabled={!canSubmit}
+        disabled={!canSubmit && !canLoginRedirect}
         aria-label={loading ? 'Enviando pergunta' : (token ? 'Enviar pergunta sobre o produto' : 'Fazer login para perguntar')}
         className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-magenta">
         <Send className="w-4 h-4" aria-hidden="true" /> {loading ? 'Enviando...' : (token ? 'Enviar pergunta' : 'Login para perguntar')}
