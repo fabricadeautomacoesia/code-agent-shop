@@ -666,21 +666,33 @@ router.post('/logout',
 
     // BUG 2+4: audit log atomic + DLP mask ua
     // (await sem catch - se falhar response inclui flag)
+    //
+    // FIX-WORKER-6 pass 363 (audit_log entry per session em revoke_all):
+    //   PRE-FIX: 1 INSERT audit_log usando revokedRows[0] apenas.
+    //   revoke_all com 5 sessions = audit_log mostra so 1 target_id.
+    //   Compliance forense: "qual session foi revogada quando" sem resposta.
+    //   LGPD direito-acesso: user solicita historico - audit so cobre 1 das 5.
+    //   POST-FIX: bulk INSERT via SELECT UNNEST p/ cobrir TODAS sessions
+    //   revogadas em revoke_all. Em logout single, sem mudanca (1 entry).
+    //   Performance: 1 query INSERT...SELECT bulk - O(1) com array param.
     const safeUa = mask.text((req.headers['user-agent'] || '').slice(0, 200));
     let auditOk = true;
     try {
+      const sessionIds = revokedRows.map(r => r.id);
+      const userId = revokedRows[0].user_id;
+      const action = revokeAll ? 'auth.logout_all' : 'auth.logout';
+      const payloadJson = JSON.stringify({
+        ip: req.ip,
+        ua: safeUa,
+        sessions_revoked: revokedRows.length,
+        revoke_all: revokeAll,
+      });
+      // Bulk INSERT via UNNEST: 1 query, N rows audit_log (1 per session)
       await query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-         VALUES ($1, 'user', $2, 'user_session', $3, 'info', $4::JSONB)`,
-        [revokedRows[0].user_id,
-         revokeAll ? 'auth.logout_all' : 'auth.logout',
-         revokedRows[0].id,
-         JSON.stringify({
-           ip: req.ip,
-           ua: safeUa,
-           sessions_revoked: revokedRows.length,
-           revoke_all: revokeAll,
-         })]
+         SELECT $1, 'user', $2, 'user_session', sid, 'info', $3::JSONB
+           FROM UNNEST($4::UUID[]) AS t(sid)`,
+        [userId, action, payloadJson, sessionIds]
       );
     } catch (e) {
       auditOk = false;
