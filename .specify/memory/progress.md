@@ -31366,3 +31366,32 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
 - W2 checkout E2E
+
+## PASS 364 W7 PRODUCT-SVC: audit_log gap em product.draft.create
+commit 5a35fe6
+BUG compliance gap POST /products/me/
+PRE-FIX: create draft sem INSERT audit_log atomic
+  - PATCH /:id, /:id/submit, /:id/versions JA tem audit
+  - POST / lagged (Pattern V8 Regra P incompleto)
+  - Cenario: bot spam 100 products = nao rastreado ate moderacao manual
+  - LGPD: user historico drafts indisponivel
+
+POST-FIX:
+- INSERT audit_log dentro tx() apos product INSERT
+- action 'product.draft.create' severity 'info'
+- payload: title+kind+price+currency+slug+ip
+- Paridade pattern submit/patch
+
+W7 audit coverage seller-mgmt agora completo:
+  POST / (create) pass 364
+  PATCH /:id (edit) pass 83
+  POST /:id/submit pass 547 pre-exist
+  POST /:id/versions pass 735 pre-exist
+
+97 passes acumulados (268->364) sem deploy VPS
+4 CRITICAL + 18 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W2 checkout E2E
