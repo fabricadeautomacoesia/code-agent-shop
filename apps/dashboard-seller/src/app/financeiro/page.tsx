@@ -47,8 +47,17 @@ export default function FinanceiroPage() {
   async function requestPayout(e: React.FormEvent) {
     e.preventDefault();
     setWalletAlert(null);
-    const value = parseFloat(amount);
-    if (!value || value < 50) {
+    // FIX-WORKER-5 pass 405 (PT-BR comma decimal parse):
+    //   PRE-FIX: parseFloat(amount) - user digita "100,50" -> 100 (cents perdidos)
+    //   - type=number HTML5 forca decimal '.' MAS alguns mobile/locale PT-BR
+    //     aceitam vírgula via OS picker (Brasil number keypad)
+    //   - Backend recebe R$100 em vez de R$100.50 = 50 centavos perdidos
+    //   - Silent precision loss em payout requests = compliance gap audit
+    //   POST-FIX: normalize comma->dot ANTES parseFloat (paridade qa-worker pass 387)
+    //   Pattern V8 cross-svc: PT-BR comma normalization sempre
+    const normalized = amount.replace(',', '.').trim();
+    const value = parseFloat(normalized);
+    if (!value || isNaN(value) || value < 50) {
       action.run('payout', async () => { throw new Error('Valor minimo R$ 50,00'); });
       return;
     }
@@ -169,8 +178,9 @@ export default function FinanceiroPage() {
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-lg font-mono focus:border-magenta focus:outline-none disabled:opacity-50" />
             <div className="text-[11px] text-white/40 mt-1">Saque liquido disponivel: <strong className="text-white/70">{fmtBRL(kpi?.net_payout_cents || 0)}</strong></div>
           </div>
+          {/* FIX pass 405: paridade comma normalization no disabled check */}
           <button type="submit"
-            disabled={action.busyKey === 'payout' || !amount || parseFloat(amount) < 50}
+            disabled={action.busyKey === 'payout' || !amount || parseFloat(amount.replace(',', '.')) < 50}
             className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed">
             {action.busyKey === 'payout' ? 'Solicitando...' : 'Solicitar saque'}
           </button>
