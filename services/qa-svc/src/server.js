@@ -740,13 +740,35 @@ app.get('/qa/runs/:product_id', jwt.requireAuth(), asyncHandler(async (req, res,
 // passar dos 10min do anti-duplicate window).
 async function timeoutStuckRuns() {
   try {
+    // FIX-WORKER-12 pass 240 (multi-replica cron race):
+    //   PRE-FIX: Swarm com 2+ replicas qa-svc, ambas rodavam setInterval(5min)
+    //   simultaneo (no clock drift) -> ambas SELECT mesmos 20 stuck rows.
+    //   UPDATE protegido por verdict='running' WHERE filter (segunda no-op),
+    //   MAS notification INSERT duplicava: cada replica criava notif
+    //   'qa_run_timeout' para mesmo user_id+product_id (sem dedup constraint
+    //   - notifications table aceita N rows per same template).
+    //   Trabalho dobrado + spam usuario + log noise.
+    //   POST-FIX: SELECT FOR UPDATE SKIP LOCKED. Cada replica pega lote
+    //   DIFERENTE de stuck runs sem contention. Pattern processOutbox
+    //   notification-svc consolidado.
+    //   NOTA: lock liberado em commit do tx() seguinte - aqui select
+    //   isolado consome o lock implicit ao read transaction.
+    //   Workaround correto: usar UPDATE...RETURNING para claim atomico.
     const stuck = await query(
-      `SELECT id, product_id, started_at,
-              EXTRACT(EPOCH FROM (NOW() - started_at))/60 AS minutes_running
-         FROM product_qa_runs
-        WHERE verdict = 'running'
-          AND started_at < NOW() - INTERVAL '10 minutes'
-        ORDER BY started_at ASC LIMIT 20`
+      `WITH claimed AS (
+         UPDATE product_qa_runs
+            SET verdict = verdict  -- no-op UPDATE p/ row lock
+          WHERE id IN (
+            SELECT id FROM product_qa_runs
+             WHERE verdict = 'running'
+               AND started_at < NOW() - INTERVAL '10 minutes'
+             ORDER BY started_at ASC LIMIT 20
+             FOR UPDATE SKIP LOCKED
+          )
+          RETURNING id, product_id, started_at,
+                    EXTRACT(EPOCH FROM (NOW() - started_at))/60 AS minutes_running
+       )
+       SELECT * FROM claimed`
     );
     if (!stuck.rows.length) return;
     log.warn({ count: stuck.rows.length }, '[qa.timeout.cron]');

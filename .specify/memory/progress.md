@@ -24941,3 +24941,94 @@ PROXIMA ITER:
 - W12 qa-svc: cron timeout cleanup
 - W4 admin: dashboard KPI freshness indicator
 - VPS SSH unblock CRITICAL (72 ciclos - 24h!!)
+
+============================================================
+PASS 240 (2026-05-28) - W12 + W17 + W5 multi-replica/sec/a11y
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W12 qa-svc: timeoutStuckRuns multi-replica race
+- W17 vault-svc: /keys/me/:id/revoke sem rate-limit (parity gap)
+- W5 dashboard-seller: financeiro loadError a11y
+
+============================================================
+1. W12 - qa-svc timeoutStuckRuns multi-replica race
+============================================================
+FILE: services/qa-svc/src/server.js:741-755
+
+PROBLEMA (Swarm 2+ replicas):
+- setInterval(5min) roda paralelo em todas replicas
+- Ambas SELECT mesmo lote de 20 stuck rows (verdict='running' >10min)
+- UPDATE protegido por verdict='running' WHERE filter (segunda no-op)
+- MAS: INSERT notification 'qa_run_timeout' duplicava per replica
+  (notifications table sem UNIQUE constraint same template/user)
+- Resultado: seller recebia 2-3 notifs identicas + spam + log noise
+
+POST-FIX: claim atomico via CTE UPDATE...RETURNING:
+- WITH claimed AS (UPDATE ... WHERE id IN (SELECT FOR UPDATE SKIP LOCKED))
+- SELECT FOR UPDATE SKIP LOCKED garante que cada replica pega lote
+  DIFERENTE sem contention
+- Pattern processOutbox notification-svc consolidado cross-svc
+- Mesma serializacao automatica multi-worker
+
+============================================================
+2. W17 - vault /keys/me/:id/revoke sem rate-limit (parity gap)
+============================================================
+FILE: services/vault-svc/src/server.js:1013-1016
+
+PROBLEMA:
+- Pass 236 adicionou provisionRateLimit em /keys/:id/revoke (admin)
+- Endpoint SELLER equivalente /keys/me/:id/revoke ficou sem limit
+- Account takeover seller (XSS dashboard-seller, OAuth pwn):
+  * Atacante itera vault_api_keys WHERE seller_id=mine
+  * POST /keys/me/:id/revoke cada -> mass revoke segundos
+  * BYOK chain (LLM features pessoais) quebra silently
+  * Sabotagem indetectavel sem audit cross-check
+
+POST-FIX: provisionRateLimit (5/min) em /keys/me/:id/revoke
+- Suficiente p/ ops normal (seller raramente revoga 5+ keys/min)
+- Paridade com endpoint admin
+- Combina com fail2ban global + sellerOrAdmin RBAC
+
+============================================================
+3. W5 - financeiro loadError sem role=alert
+============================================================
+FILE: apps/dashboard-seller/src/app/financeiro/page.tsx:66
+
+PROBLEMA:
+- 3 banners de erro/sucesso no mesmo file
+- action.error (linha 68): role=alert OK
+- action.success (linha 75): role=status aria-live=polite OK
+- loadError (linha 66): SEM role=alert
+- Screen reader nao anunciava falha de carregamento KPI/payouts
+- UX confuso: page parece vazia mas erro silencioso
+
+POST-FIX: role="alert" em loadError + comment paridade
+
+============================================================
+SUMARIO PASS 240
+============================================================
+Files: 3 modificados
+  - services/qa-svc/src/server.js (CTE FOR UPDATE SKIP LOCKED)
+  - services/vault-svc/src/server.js (rate-limit seller revoke)
+  - apps/dashboard-seller/src/app/financeiro/page.tsx (a11y)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (73 ciclos - 24.3h sem deploy).
+Migs 069+070+071 ainda pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_qa-svc cas_vault-svc cas_dashboard-seller --force
+- W12 test: simular 2 stuck QA runs + rodar cron 2x simultaneous ->
+  SELECT COUNT(*) FROM notifications WHERE template_code='qa_run_timeout'
+  AND created_at > NOW() - INTERVAL '1 minute'
+  Deve ser EXACT 2 (era 4 com 2 replicas)
+- W17 test: rapid-fire 10 POST /api/vault/keys/me/:id/revoke seller token
+  -> 6a+ retorna 429
+- W5 test: simular network fail GET /sellers/me/kpi -> NVDA navega
+  /financeiro deve anunciar "Erro carregando dados: ..."
+
+PROXIMA ITER:
+- W4 admin: bulk actions QA queue
+- W13 notification: schedule digest weekly
+- VPS SSH unblock URGENTE (73 ciclos - 24.3h)

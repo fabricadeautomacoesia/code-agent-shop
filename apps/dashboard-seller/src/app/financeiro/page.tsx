@@ -63,7 +63,16 @@ export default function FinanceiroPage() {
       <p className="text-white/60 mb-6">Receita liquida, comissoes e solicitacao de saques</p>
 
       {/* FIX-WORKER-5 pass 6: banners centralizados (era inline no form) */}
-      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando dados: {loadError}</div>}
+      {/* FIX-WORKER-5 pass 240 (a11y parity): loadError sem role=alert mesmo
+          quando action.error (linha 68) e action.success (75) ja tem. Screen
+          reader nao anunciava falha de carregamento (UX confuso: page parece
+          vazia mas erro silencioso). Pattern V8: all error displays need
+          role=alert + (decorative icon aria-hidden, if any). */}
+      {loadError && (
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">
+          Erro carregando dados: {loadError}
+        </div>
+      )}
       {/* FIX-WORKER-5 pass 172 (a11y V8 R23): role=alert/status + type=button + aria-label */}
       {action.error && (
         <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">

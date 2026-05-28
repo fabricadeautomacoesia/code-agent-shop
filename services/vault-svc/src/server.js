@@ -1011,7 +1011,17 @@ app.post('/keys/me',
 );
 
 // POST /api/vault/keys/me/:id/revoke - seller revoga SUA chave
+// FIX-WORKER-17 pass 240 (rate-limit parity seller revoke):
+//   Pass 236 adicionou provisionRateLimit em /keys/:id/revoke (admin) mas
+//   este endpoint SELLER ficou sem rate-limit. Account takeover scenario:
+//   - Atacante hijack seller session (XSS dashboard-seller, OAuth pwn)
+//   - Itera vault_api_keys WHERE seller_id=mine -> POST /keys/me/:id/revoke
+//   - Sabotagem: todas keys BYOK do seller revogadas em segundos
+//   - LLM features dependentes da BYOK chain quebram silently
+//   POST-FIX: reuse provisionRateLimit (5/min). Sufficient p/ ops normal
+//   (seller raramente revoga 5 keys/min) + bloqueia mass abuse.
 app.post('/keys/me/:id/revoke',
+  provisionRateLimit,
   sellerOrAdmin,
   validate({ body: z.object({ reason: z.string().min(3).max(500) }) }),
   asyncHandler(async (req, res, next) => {
