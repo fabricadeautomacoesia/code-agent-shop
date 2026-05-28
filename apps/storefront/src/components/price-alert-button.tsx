@@ -91,7 +91,8 @@ export function PriceAlertButton({ productId, currentPriceCents: _unused }: Prop
   }
 
   return (
-    <button onClick={toggle} disabled={loading}
+    /* FIX-WORKER-3 pass 159 (a11y): type='button' defensive (V8 Regra 23) */
+    <button type="button" onClick={toggle} disabled={loading}
       aria-label={active ? 'Remover alerta de preco' : 'Receber email quando o preco baixar'}
       aria-pressed={active}
       title={active ? 'Voce sera notificado se o preco baixar' : 'Receber email se o preco baixar'}

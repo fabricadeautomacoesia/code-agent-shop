@@ -31,7 +31,9 @@ export function AskQuickButton({ productId }: { productId: string }) {
 
   return (
     <>
+      {/* FIX-WORKER-3 pass 159 (a11y): type='button' defensive */}
       <button
+        type="button"
         onClick={() => setOpen(true)}
         className="w-full mt-3 px-4 py-2.5 rounded-xl text-sm font-medium border border-white/15 bg-white/5 hover:bg-magenta/10 hover:border-magenta/40 transition-colors flex items-center justify-center gap-2 group focus-visible:outline-2 focus-visible:outline-magenta"
         aria-label="Fazer pergunta sobre este produto"
@@ -52,7 +54,7 @@ export function AskQuickButton({ productId }: { productId: string }) {
         closeLabel="Fechar modal"
         className="relative glass-strong rounded-2xl p-6 max-w-md w-full shadow-2xl"
       >
-        <button onClick={() => setOpen(false)} aria-label="Fechar modal"
+        <button type="button" onClick={() => setOpen(false)} aria-label="Fechar modal"
           className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-2 focus-visible:outline-magenta">
           <X className="w-5 h-5" aria-hidden="true" />
         </button>

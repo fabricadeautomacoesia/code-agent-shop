@@ -108,11 +108,12 @@ export function WishlistButton({
 
   if (variant === 'card') {
     return (
-      <button onClick={toggle} disabled={loading}
+      /* FIX-WORKER-3 pass 159 (a11y): type='button' defensive + focus-visible */
+      <button type="button" onClick={toggle} disabled={loading}
         aria-label={favorited ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
         aria-pressed={favorited}
         title={favorited ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-        className={`absolute top-3 right-3 z-10 p-2 rounded-full backdrop-blur transition-all ${
+        className={`absolute top-3 right-3 z-10 p-2 rounded-full backdrop-blur transition-all focus-visible:outline-2 focus-visible:outline-magenta ${
           favorited
             ? 'bg-magenta/90 text-white shadow-lg shadow-magenta/40'
             : 'bg-black/40 text-white/80 hover:bg-magenta/80 hover:text-white'
@@ -126,8 +127,9 @@ export function WishlistButton({
 
   return (
     /* FIX-WORKER-3 pass 6: PDP variant agora com aria-label + aria-pressed (era apenas title).
-       title nao e anunciado por screen readers consistentemente. */
-    <button onClick={toggle} disabled={loading}
+       title nao e anunciado por screen readers consistentemente.
+       FIX-WORKER-3 pass 159: type='button' defensive (V8 Regra 23) */
+    <button type="button" onClick={toggle} disabled={loading}
       aria-label={favorited ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
       aria-pressed={favorited}
       className={`p-2 rounded-lg border transition-all focus-visible:outline-2 focus-visible:outline-magenta ${
