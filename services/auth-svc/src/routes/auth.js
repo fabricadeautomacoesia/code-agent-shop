@@ -61,8 +61,19 @@ const emptyToUndef = (v) => (v === '' || v === null ? undefined : v);
 // Pattern NIST 800-63B: maiuscula + numero + special char.
 // Inconsistencia pre-fix: register accept "Aaa1aaaa", reset force "Aaa1aaaa!"
 // = user reseta com senha mais forte que registrava (UX confuso).
+// FIX-WORKER-6 pass 182 (CRITICAL UX/SECURITY): normalize email lowercase + trim
+// BUG identificado: SELECT WHERE u.email = $1 (login, forgot-password) usa raw input.
+// User registra 'John@Example.com' -> login com 'john@example.com' falha (case-mismatch).
+// UX: "Email ou senha invalidos" sem indicacao real - user reclama suporte.
+// Security: tambem facilita email enumeration (atacante registra com case diferente
+// p/ ver se conta existe).
+// FIX centralizado: .transform em todos schemas - lowercase + trim defensivo.
+// PG colation default em users.email NAO sera UNIQUE case-insensitive, mas normalizar
+// na app é defesa em profundidade comum (pattern Stripe, Auth0, Supabase).
+const normalizedEmail = z.string().email().max(180).transform((s) => s.trim().toLowerCase());
+
 const registerSchema = z.object({
-  email: z.string().email().max(180),
+  email: normalizedEmail,
   password: z.string().min(8).max(128)
     .refine((s) => /[A-Z]/.test(s) && /[0-9]/.test(s) && /[^\w\s]/.test(s),
       'Senha precisa de maiuscula, numero e caractere especial (!@#$%^&* etc)'),
@@ -73,7 +84,7 @@ const registerSchema = z.object({
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: normalizedEmail,
   password: z.string().min(1),
   totp: z.string().length(6).optional(),
 });
@@ -645,7 +656,8 @@ router.post('/logout',
 // POST /auth/forgot-password
 router.post('/forgot-password',
   forgotPasswordLimiter,
-  validate({ body: z.object({ email: z.string().email() }) }),
+  // FIX-WORKER-6 pass 182: usa normalizedEmail (.toLowerCase().trim())
+  validate({ body: z.object({ email: normalizedEmail }) }),
   asyncHandler(async (req, res) => {
     // FIX-WORKER-7 pass 50: 4 BUGS CRITICOS aplicando Pattern W7 + W13 cross-svc.
     //
