@@ -20115,3 +20115,43 @@ PROXIMA ITER:
 - W7 pass 58: extract @cas/shared.maskPII (3 svcs duplicam helper)
 - W18 query performance: EXPLAIN ANALYZE em pedidos lentos
 - VPS SSH unblock + git pull em /opt/cas + docker service update storefront/dashboard-admin
+
+PASS 171 (W4 admin a11y sweep V8 R23) - 2026-05-28:
+- Auditoria /admin/sellers + /admin/orders + /admin/products + /admin/reports
+- Sweep continuation pass 170: mesmo pattern em 4 paginas
+- sellers/page.tsx: 4 fixes (2 banner buttons + promoteB + suspend)
+  * aria-label dinamico com store_name
+- orders/page.tsx: 1 fix (retry button banner)
+- products/page.tsx: 5 fixes (3 banners + platformTake + archive)
+  * Action buttons ja tinham aria-label - so faltava type=button
+- reports/page.tsx: 5 fixes (3 banners + resolve + dismiss)
+- Total: 15 buttons consertados nesta iter
+- Pattern aplicado:
+  * type='button' (V8 R23 defensivo)
+  * aria-label dinamico contextual
+  * role='alert' nos error banners
+  * role='status' aria-live='polite' nos success
+  * focus-visible:outline-2 cor contextual
+  * aria-hidden='true' em icons Lucide decorativos
+- Commit bc92809 pushed origin/main
+- VPS SSH ainda bloqueado (4 ciclos consecutivos - investigar pw rotation?)
+
+LINKS PARA TESTE (apos VPS desbloquear):
+- https://admin.inovareinteligenciaartificial.com/sellers
+- https://admin.inovareinteligenciaartificial.com/orders
+- https://admin.inovareinteligenciaartificial.com/products
+- https://admin.inovareinteligenciaartificial.com/reports
+- SR/NVDA deve anunciar: "Promover [seller] para classe B", "Suspender seller [name]",
+  "Resolver denuncia [id]", "Arquivar produto [title]", etc.
+
+CONTAGEM CONSOLIDADA V8 R23 admin (passes 137-171):
+- Botoes auditados/corrigidos: 60+
+- Paginas 100% V8 R23 compliant: /sellers /qa-queue /payouts /orders
+  /products /reports /vault /webhooks (parcial)
+- Pendente: /vault + /webhooks banners + action buttons
+
+PROXIMA ITER:
+- W4 final sweep: /vault + /webhooks (16 buttons pendentes)
+- W7 pass 58: extract @cas/shared.maskPII
+- W18: query performance
+- 🚨 VPS SSH unblock URGENTE (4 ciclos sem deploy, fail2ban likely + pw rotation suspeita)
