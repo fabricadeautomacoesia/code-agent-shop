@@ -17337,7 +17337,32 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Audit perf+sec + Fix internal-token bypass (pass 117)
 - ✅ SEO metadata /sellers + /products enriquecida (pass 118)
 - ✅ Migration 048 DROP 2 indices orfaos APLICADA em prod (pass 119)
-- ✅ Migration 049 ADD 16 FK indices faltando APLICADA em prod (pass 120 esta iter)
+- ✅ Migration 049 ADD 16 FK indices faltando APLICADA em prod (pass 120)
+- ✅ generateMetadata dinamico /categoria/[slug] (pass 121 esta iter)
+
+W7 PASS 121 RESUMO - W9 SEO DINAMICO /categoria/[slug]:
+- AUDIT pages SEM metadata explicita:
+  * /categoria/[slug] confirmado SEM export const metadata
+  * /seller/[slug] tem generateMetadata
+- ADDED generateMetadata async dinamico em /categoria/[slug]:
+  * Reusa fetchTopSellers p/ pegar category.description rica
+  * displayName = kebab-case -> Title Case automatico
+  * title: '{Nome} - Mais Vendidos | Code & Agent Shop'
+  * description.slice(0, 160) p/ search engines
+  * alternates.canonical /categoria/{slug} (evita duplicate content)
+  * openGraph type/url/title/desc/images
+  * twitter card summary_large_image
+  * keywords array per-categoria
+- BEFORE: todas /categoria/* herdavam metadata root generica
+  -> search engines indexavam c/ mesmo title (duplicate content penalty)
+- AFTER (validado via curl em prod):
+  * /categoria/automacao retorna:
+    <title>Automacao - Mais Vendidos | Code & Agent Shop</title>
+    <link rel='canonical' href='.../categoria/automacao'>
+    <meta property='og:title' content='Automacao - Mais Vendidos'>
+    14 meta tags SEO especificas (era 4 generic)
+- BUILD storefront OK + service converged + validation PUBLIC
+- COMMIT 53cdf1f pushed GitHub main + deployed prod
 
 W7 PASS 120 RESUMO - W14 DB SCHEMA: 16 FK INDICES MISSING:
 - AUDIT pg_constraint vs pg_index em prod detectou 16 FKs sem cobertura:
