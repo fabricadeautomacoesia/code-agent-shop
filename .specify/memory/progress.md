@@ -28339,3 +28339,45 @@ PROXIMA ITER:
 - W3 PDP MLB-9 badge OFICIAL MAIS VENDIDO (lookup sales_count thresh)
 - W2 checkout payment_method validation UX (PIX vs CC vs Boleto labels)
 - VPS SSH unblock URGENTISSIMO (115 ciclos - 38.3h)
+
+
+============================================================
+PASS 283 - 2026-05-28 - W3 PDP zero state + W18 trending PARTIAL idx
+============================================================
+Files: 2 modificados/criados
+  - apps/storefront/src/app/product/[slug]/page.tsx (zero state UX)
+  - db/migrations/081_search_log_trending_partial.sql (NEW idx PARTIAL)
+Lines: ~50 added
+
+W3 (PDP zero state cleanup - produto novo):
+- PRE-FIX: "- (0 reviews) | 0 vendas" - feio + reduz trust
+- POST-FIX:
+  - review_count > 0 -> render "(N reviews)" com singular/plural correto
+  - sales_count > 0 -> render "N vendas" com singular/plural
+  - separator "|" so se ambos > 0
+  - ambos = 0 -> "Produto novo" italico pequeno (MLB style)
+- A11y: paridade pass 232 (plural correto NVDA/JAWS)
+
+W18 (perf trending hot-path):
+- Mig 081: idx_search_log_trending_clean PARTIAL
+  - ON search_log(created_at DESC, query_normalized)
+  - WHERE query_normalized NOT NULL AND != '' AND CHAR_LENGTH >= 3
+- Cobre static predicates trending endpoint
+- Cache 300s existente cobre cache hits, idx acelera misses+rebuilds
+- DB com 1M+ search_log rows: scan reduzido p/ rows clean apenas
+- ROLLBACK simples: DROP INDEX IF EXISTS
+
+VPS SSH BLOQUEADO (116 ciclos - 38.7h sem deploy).
+Migs 069-081 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Apply mig: psql -f /opt/cas/db/migrations/081_search_log_trending_partial.sql
+- Rebuild: docker service update cas_storefront --force
+- W3: GET /product/<slug> produto novo (sales=0,reviews=0) -> badge "Produto novo"
+  com 1 review: "(1 review)" singular vs ">=2: (N reviews)" plural
+- W18: EXPLAIN ANALYZE trending query - Index Scan idx_search_log_trending_clean
+
+PROXIMA ITER:
+- W7 product-svc trending searches consume idx pass 283
+- W2 checkout payment_method UX (PIX 5% off proeminente vs CC parcelado)
+- VPS SSH unblock URGENTISSIMO (116 ciclos - 38.7h)

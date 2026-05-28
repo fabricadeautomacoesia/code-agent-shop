@@ -189,9 +189,25 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             <div className="flex items-center gap-3 mb-6 text-sm flex-wrap">
               <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" aria-hidden="true" />
               <span className="font-semibold">{product.avg_rating ? Number(product.avg_rating).toFixed(1) : '-'}</span>
-              <span className="text-white/40">({product.review_count} reviews)</span>
-              <span className="text-white/40 hidden sm:inline">|</span>
-              <span className="text-white/60">{product.sales_count} vendas</span>
+              {/* FIX-WORKER-3 pass 283 (UX zero state):
+                  PRE-FIX: produto novo (review_count=0, sales_count=0) renderizava
+                  "- (0 reviews) | 0 vendas" - visual feio + reduz trust ("ninguem comprou").
+                  POST-FIX: skip rendering quando 0 - apenas star+rating shown.
+                  Pattern V8 zero-state hide (paridade card list pass 7 linha 335).
+                  Para produtos novos: rating "-" + nada (apenas star icon),
+                  conforme MLB style "produto novo sem historico". */}
+              {Number(product.review_count) > 0 && (
+                <span className="text-white/40">({product.review_count} {Number(product.review_count) === 1 ? 'review' : 'reviews'})</span>
+              )}
+              {Number(product.sales_count) > 0 && Number(product.review_count) > 0 && (
+                <span className="text-white/40 hidden sm:inline">|</span>
+              )}
+              {Number(product.sales_count) > 0 && (
+                <span className="text-white/60">{product.sales_count} {Number(product.sales_count) === 1 ? 'venda' : 'vendas'}</span>
+              )}
+              {Number(product.review_count) === 0 && Number(product.sales_count) === 0 && (
+                <span className="text-white/40 text-xs italic">Produto novo</span>
+              )}
             </div>
             <div className="text-4xl font-display font-bold text-magenta-glow mb-6">
               {product.is_free ? 'Gratis' : Api.formatBRL(product.price_cents)}
