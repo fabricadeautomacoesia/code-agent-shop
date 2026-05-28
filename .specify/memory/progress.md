@@ -32993,3 +32993,34 @@ W7 review notification:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 421 W12 QA-WORKER: static_analysis n8n nodes defensive parse
+commit 25319d2
+BUG static_analysis n8n_workflow crash em malformed
+PRE-FIX:
+  nodes = data.get("nodes", [])
+  for n in nodes # TypeError se None/dict/string
+  n.get("type", "") # falha se n nao-dict
+
+CENARIOS:
+1. 'nodes': null -> TypeError iteration
+2. 'nodes': {} -> loop yields keys -> n.get crash
+3. 'nodes': 'foo' -> char-by-char
+4. nodes[0] sem 'type' -> '' valid mas legacy 'nodeType'
+
+POST-FIX defensive:
+- isinstance(nodes, list) check explicit
+- has_trigger filter isinstance(n, dict)
+- (n.get('type') or '') p/ None field
+- nodes.length AND check trigger validation
+
+W12 qa-worker defensive series:
+  pass 387 parse_score
+  pass 407 download DoS streaming
+  pass 421 static_analysis n8n <- ESTE
+
+154 passes acumulados (268->421) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
