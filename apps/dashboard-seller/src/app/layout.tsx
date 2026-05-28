@@ -1,9 +1,18 @@
 import './globals.css';
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { LayoutDashboard, Package, MessageCircle, DollarSign, Settings, Upload, Star } from 'lucide-react';
 import { PromptDialogProvider } from '@/components/prompt-dialog';
 
-export const metadata = { title: 'Painel do Vendedor - Code & Agent Shop' };
+// FIX-WORKER-9 pass 177 (CRITICAL SEO/PRIVACY): paineis seller tem KPIs $, payouts,
+// store_slug. Sem robots noindex, link externo acidental -> Google indexa receita,
+// dados bancarios (Asaas wallet UUID), historico vendas. robots noindex defesa em
+// profundidade alem do gateway JWT auth.
+export const metadata: Metadata = {
+  title: 'Painel do Vendedor - Code & Agent Shop',
+  description: 'Painel do vendedor Code & Agent Shop. Gerencie produtos, vendas, payouts e KYC.',
+  robots: { index: false, follow: false, nocache: true },
+};
 
 const NAV = [
   { href: '/',           Icon: LayoutDashboard, label: 'Visao Geral' },

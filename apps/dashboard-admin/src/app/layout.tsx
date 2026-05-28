@@ -1,9 +1,20 @@
 import './globals.css';
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { LayoutDashboard, Users, Package, ShoppingCart, AlertTriangle, DollarSign, Activity, KeyRound, Shield, Webhook, FileText, Scale, Database } from 'lucide-react';
 import { PromptDialogProvider } from '@/components/prompt-dialog';
 
-export const metadata = { title: 'Admin - Code & Agent Shop' };
+// FIX-WORKER-9 pass 177 (CRITICAL SEO/PRIVACY): adicionar robots noindex+nofollow
+// + description + Metadata type. Antes: { title } solo - se Google crawler entrasse
+// (link externo, sitemap acidental), paginas admin viriam indexadas com dados
+// sensiveis em search results. robots noindex eh defesa em profundidade alem do
+// gateway auth (admin JWT requireRole=admin). Pattern Mercado Livre Painel Vendedor
+// + Pattern Shopify Admin: ambos noindex no robots.txt + meta tag.
+export const metadata: Metadata = {
+  title: 'Admin - Code & Agent Shop',
+  description: 'Painel administrativo Code & Agent Shop. Acesso restrito a equipe interna.',
+  robots: { index: false, follow: false, nocache: true },
+};
 
 const NAV = [
   { href: '/',            Icon: LayoutDashboard, label: 'Visao Geral' },
