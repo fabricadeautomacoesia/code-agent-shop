@@ -58,11 +58,15 @@ export function Nav() {
         </div>
 
         <div className="flex items-center gap-1 sm:gap-3">
-          <button onClick={() => setSearchOpen(true)} aria-label="Buscar" className="p-2 rounded-lg hover:bg-white/5 transition-colors">
-            <Search className="w-5 h-5" />
+          {/* FIX-WORKER-1 pass 156 (a11y): type='button' explicito p/ todos botoes
+              de UI no nav. Default <button> em HTML5 e type='submit' - pode causar
+              bug se nav for renderizado dentro de form (defensive).
+              + aria-hidden em icones decorativos. */}
+          <button type="button" onClick={() => setSearchOpen(true)} aria-label="Buscar" className="p-2 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-2 focus-visible:outline-magenta">
+            <Search className="w-5 h-5" aria-hidden="true" />
           </button>
-          <button onClick={() => setCartOpen(true)} aria-label="Carrinho" className="p-2 rounded-lg hover:bg-white/5 transition-colors relative">
-            <ShoppingCart className="w-5 h-5" />
+          <button type="button" onClick={() => setCartOpen(true)} aria-label="Carrinho" className="p-2 rounded-lg hover:bg-white/5 transition-colors relative focus-visible:outline-2 focus-visible:outline-magenta">
+            <ShoppingCart className="w-5 h-5" aria-hidden="true" />
           </button>
           {/* FIX-WORKER-15 pass 3: ocultar Wishlist + Bell em <sm (< 640px).
               Mobile drawer expoe links /conta/favoritos + /conta (notifs).
@@ -79,9 +83,10 @@ export function Nav() {
           ) : (
             <Link href="/login" className="btn-primary text-xs sm:text-sm hidden sm:inline-flex">Entrar</Link>
           )}
-          {/* WORKER 15: hamburger mobile (icon Menu era importado mas nunca usado) */}
-          <button onClick={() => setMobileOpen(true)} aria-label="Menu" className="lg:hidden p-2 rounded-lg hover:bg-white/5 transition-colors">
-            <Menu className="w-5 h-5" />
+          {/* WORKER 15: hamburger mobile (icon Menu era importado mas nunca usado)
+              FIX-WORKER-1 pass 156: type=button + aria-hidden icon */}
+          <button type="button" onClick={() => setMobileOpen(true)} aria-label="Menu" className="lg:hidden p-2 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-2 focus-visible:outline-magenta">
+            <Menu className="w-5 h-5" aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -102,7 +107,7 @@ export function Nav() {
     >
           <div className="flex items-center justify-between p-4 border-b border-white/10">
             <span className="font-display font-bold">Menu</span>
-            <button onClick={() => setMobileOpen(false)} aria-label="Fechar menu" className="p-1.5 rounded hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-magenta">
+            <button type="button" onClick={() => setMobileOpen(false)} aria-label="Fechar menu" className="p-1.5 rounded hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-magenta">
               <X className="w-5 h-5" aria-hidden="true" />
             </button>
           </div>
