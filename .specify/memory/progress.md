@@ -17377,7 +17377,29 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Cart-drawer 4 buttons a11y rico (pass 157)
 - ✅ Compare-drawer + add-to-cart 6 buttons (pass 158)
 - ✅ Wishlist + price-alert + ask-quick 5 buttons (pass 159)
-- ✅ notification-bell 3 buttons + role=menu (pass 160 esta iter)
+- ✅ notification-bell 3 buttons + role=menu (pass 160)
+- ✅ /cart + /checkout 9 buttons a11y rico (pass 161 esta iter)
+
+W7 PASS 161 RESUMO - W2 /cart + /checkout BUTTONS A11Y:
+- AUDIT pages cart + checkout: 9 buttons sem type='button' (V8 Regra 23)
+- FIXES /cart (8 buttons):
+  * Diminuir qty: type=button + aria-label DINAMICO '{produto} (atual: N)'
+    + focus-visible:outline-magenta
+  * Aumentar qty: idem dinamico
+  * Trash item remove: type=button + 'Remover {titulo} do carrinho'
+    + focus-visible:outline-RED (acao destrutiva)
+  * qty span: aria-live='polite' (anuncia mudanca SR)
+  * Remover pts loyalty: type=button + aria-label
+  * 3 buttons aplicar pts (500/1000/5000): type=button + aria-label rico
+    '{N} pontos (desconto R\$X)'
+  * Botao Max pts: type=button + aria-label dinamico saldo
+  * 'Ir para checkout' primary CTA: type=button + aria-label
+- FIXES /checkout (1 button):
+  * 'Finalizar pagamento': type=button + aria-label dinamico
+    (Processando vs Finalizar baseado em loading state)
+- 5 icones aria-hidden=true (Minus, Plus, Trash2 + outros)
+- BUILD storefront OK + service converged
+- COMMIT fa269bd pushed GitHub main + deployed prod
 
 W7 PASS 160 RESUMO - W1 NOTIFICATION-BELL A11Y ROLE=MENU:
 - AUDIT notification-bell.tsx: 3 buttons sem type='button' + backdrop sem semantica
