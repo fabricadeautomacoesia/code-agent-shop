@@ -31247,3 +31247,37 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (4 CRITICAL!)
 - W4 admin audit-log viewer
 - W2 checkout E2E
+
+## PASS 360 W14 DB SCHEMA: idx audit_log severity+created_at PARTIAL
+commit cf01a2e
+CONTEXTO: /aiops/audit-log filter ?severity=warn (dashboard admin)
+PRE-FIX:
+  - idx_audit_severity PARCIAL exclui 'warn' (mig 002 ('error','critical'))
+  - severity='warn' filter -> Bitmap Heap idx_audit_created + Filter
+  - Audit_log ~450k rows produo
+  - severity='warn' = ~25% (~112k rows scan)
+  - Latencia: 150-300ms
+
+POST-FIX mig 086:
+  idx_audit_severity_created (severity, created_at DESC)
+    WHERE severity IN ('warn','error','critical')
+  - PARTIAL exclui 'info' (low value high volume)
+  - ORDER BY embutido - no Sort node
+  - Filter severity='warn' + days = pure Index Scan
+  - Latencia esperada: 5-20ms
+
+Pattern V8 W14: composite PARTIAL para queries comuns
+Stack idx audit_log:
+  * action_created (mig 037 W14-9)
+  * actor_created (mig 058)
+  * severity_created (mig 086 pass 360) <- ESTE
+  * Outros: actor, action, target, severity, created, payload_gin
+
+93 passes acumulados (268->360) sem deploy VPS
+Migrations pendentes apply: 069-086 (18 idx defensivos)
+4 CRITICAL acumulados (urgentissimo unblock SSH)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
+- W2 checkout E2E
