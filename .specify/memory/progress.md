@@ -17371,7 +17371,25 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Seller PromptDialog/confirmDialog 2 callsites (pass 151)
 - ✅ qna-upvote alert -> inline error + aria-pressed (pass 152)
 - ✅ alertDialog + /disputes 4 nativos eliminados (pass 153)
-- ✅ Vault admin form a11y + autoComplete PII (pass 154 esta iter)
+- ✅ Vault admin form a11y + autoComplete PII (pass 154)
+- ✅ Admin reports + payouts filter a11y (pass 155 esta iter)
+
+W7 PASS 155 RESUMO - W4 ADMIN FILTERS A11Y:
+- AUDIT W18 cache hit ratio + W14 schema:
+  * idx_hit 95.07%, heap_hit 93.56% (acima threshold prod)
+  * 0 tabelas sem PK, 0 FKs sem indice (W14 limpo)
+- AUDIT W11 webhook events: 5 entries (4 invalid sig 401 correto + 1 PAYMENT_NOOP
+  legacy smoke test pre-pass 6 tracking) - sem bug ativo
+- AUDIT admin selects/filters:
+  * /reports: select status sem aria-label
+  * /payouts: 3 buttons filter sem radiogroup semantico
+  * /audit-log: ja tinha 3 aria-labels OK
+- FIXES:
+  * /reports: aria-label='Filtrar denuncias por status' no select
+  * /payouts: h2 sr-only + role=radiogroup + role=radio em 3 buttons + aria-checked
+  * focus-visible:outline-magenta consistente
+- BUILD dashboard-admin OK + service converged
+- COMMIT 1f107c7 pushed GitHub main + deployed prod
 
 W7 PASS 154 RESUMO - W4+W17 VAULT FORM A11Y + PII SECURITY:
 - AUDIT vault provisioning form: 5 labels SEM htmlFor + 5 inputs SEM id
