@@ -30152,3 +30152,42 @@ PROXIMA ITER:
 - W7 audit auth-svc cache.del auth:me (single key - confirma sem wildcard)
 - W4 admin dashboard verify mock data
 - VPS SSH unblock URGENTISSIMO (161 ciclos - 53.7h)
+
+
+============================================================
+PASS 329 - 2026-05-28 - W4/W5 seller-svc cache.del stats wildcard
+============================================================
+Files: 2 modificados
+  - services/seller-svc/src/routes/admin.js (sellers:stats :*)
+  - services/seller-svc/src/routes/me.js (sellers:stats :*)
+Lines: ~10 changed
+
+W4/W5 (seller-svc cache invalidate stats):
+- PRE-FIX: cache.del('sellers:stats:${slug}') sem wildcard
+- Keys reais tem suffix ':w=N' (sellers.js linha 162 cacheMiddleware)
+- del sem :* era no-op (paridade bug class pass 327/328)
+- Bug UX:
+  - admin atualiza seller -> /seller/<slug>/stats mostrava stale 180s
+  - seller atualiza /me -> mesma stale window
+- POST-FIX:
+  - slug.toLowerCase().trim() normalize
+  - Wildcard ':*' no pattern
+
+Total cache.del wildcard cross-svc cumulative:
+- review-svc pass 327: 2 locais (POST qna + answer)
+- product-svc pass 328: 2 locais (admin + seller-mgmt helpers)
+- seller-svc pass 329: 2 locais (admin + me helpers)
+= 6 locais cross-svc com wildcard correto
+
+VPS SSH BLOQUEADO (162 ciclos - 54h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc --force
+- W4 verify: admin PATCH seller -> verificar:
+  redis-cli KEYS 'cas:sellers:stats:<slug>:*' | wc -l -> 0
+
+PROXIMA ITER:
+- W7 audit auth-svc cache.del auth:me confirm sem suffix (single key OK)
+- W4 admin dashboard verify
+- VPS SSH unblock URGENTISSIMO (162 ciclos - 54h)

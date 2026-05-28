@@ -28,10 +28,12 @@ async function invalidateSellerCache(userId) {
       );
     }
     if (r.rows.length) {
-      const slug = r.rows[0].store_slug;
+      /* FIX-WORKER-5 pass 329: cache.del wildcard paridade pass 327/328.
+         sellers:stats keys tem suffix ':w=N' - del sem :* era no-op. */
+      const slug = String(r.rows[0].store_slug).toLowerCase().trim();
       tasks.push(
         cache.del(`sellers:detail:${slug}`),
-        cache.del(`sellers:stats:${slug}`),
+        cache.del(`sellers:stats:${slug}:*`),
         cache.del(`sellers:products:${slug}:*`)
       );
     }

@@ -35,10 +35,13 @@ async function invalidateSellerCache(sellerId) {
       cache.del('seller:admin:sla-risk:*'),         // W18 pass 203: admin /sla-risk
     ];
     if (r.rows.length) {
-      const slug = r.rows[0].store_slug;
+      /* FIX-WORKER-4 pass 329: cache.del wildcard paridade pass 327/328.
+         sellers:stats keys tem suffix ':w=N' (sellers.js linha 162).
+         del sem :* era no-op silencioso. */
+      const slug = String(r.rows[0].store_slug).toLowerCase().trim();
       tasks.push(
         cache.del(`sellers:detail:${slug}`),
-        cache.del(`sellers:stats:${slug}`),
+        cache.del(`sellers:stats:${slug}:*`),
         cache.del(`sellers:products:${slug}:*`)
       );
     }
