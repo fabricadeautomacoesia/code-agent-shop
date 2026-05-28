@@ -20677,3 +20677,62 @@ PROXIMA ITER:
 - W7: review-svc dashboard LATERAL pattern
 - W11: payment-svc Asaas webhook idempotency edge cases
 - 🚨 VPS SSH unblock URGENTE (15 ciclos - >5h sem deploy!)
+
+PASS 183 (W1 storefront auth pages register + email normalize) - 2026-05-28:
+- W1 auditoria storefront auth flow (login/register/esqueci-senha):
+
+4 BUGS identificados em /register page:
+
+1. Error banner sem role=alert + close button:
+   * Login (pass 5) ja tinha pattern - register ficou inconsistente
+   * SR nao anuncia erro com role=alert
+   * Fix: role=alert + close button identico ao login
+
+2. Role toggle buttons (Comprador/Vendedor) sem aria-pressed:
+   * Pattern WAI-ARIA toggle button incompleto
+   * SR nao indicava qual ativa (so visual gradient)
+   * Fix: aria-pressed + role=group + focus-visible
+
+3. Password label desatualizado:
+   * PRE: 'Senha (min 8, com maiuscula e numero)'
+   * Backend pass 51 auth.js: refine /[A-Z]/ + /[0-9]/ + /[^\w\s]/
+   * User envia Aaa1aaaa -> backend 400
+   * Fix: label 'min 8, com maiuscula, numero e simbolo'
+
+4. Client-server email case inconsistency:
+   * Backend pass 182 normaliza lowercase em 3 schemas
+   * Client envia raw input em 3 pages (login, register, esqueci-senha)
+   * Embora backend normalize, defesa em profundidade preferivel:
+     - fail2ban/analytics inspecionam pre-normalize -> ve cases diferentes
+     - se backend mudar, app continua robusto
+   * Fix: email.trim().toLowerCase() em 3 submit handlers
+
+- 3 files changed, 29 insertions, 7 deletions
+- Commit b555bb5 pushed origin/main
+- VPS SSH ainda bloqueado (16 ciclos consecutivos)
+
+PADRAO V8 R23 + WAI-ARIA refresh:
+- aria-pressed em toggle buttons (Comprador/Vendedor)
+- role=group wrapper em radio-like toggles
+- role=alert em error banners
+- focus-visible:outline-2 contextual
+- close button com aria-label semantico
+
+CODIGO ACUMULADO ORIGIN/MAIN (16 ciclos):
+- 168-182: documentados
+- 183: register a11y + 3-page email normalize
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront --force
+- Teste E2E /register:
+  * Tab role buttons (Comprador/Vendedor) - SR anuncia 'pressed'
+  * Senha forte 'Aaaa1234' -> backend rejeita pq falta special
+  * Agora label avisa que precisa simbolo
+- Teste E2E /login:
+  * Email 'TEST@Example.com' -> client lowercase -> backend match
+
+PROXIMA ITER:
+- W18: cache /products list
+- W11: payment-svc Asaas webhook idempotency
+- W7: review-svc dashboard LATERAL pattern
+- 🚨 VPS SSH unblock URGENTE (16 ciclos - ~5h sem deploy!)
