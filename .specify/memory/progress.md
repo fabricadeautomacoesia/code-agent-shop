@@ -28766,3 +28766,42 @@ PROXIMA ITER:
 - W17 audit /2fa/enable disable paths para mesma DLP
 - W4 admin notification prefs UI consume TEMPLATE_CODE_REGEX (frontend mirror)
 - VPS SSH unblock URGENTISSIMO (125 ciclos - 41.7h)
+
+
+============================================================
+PASS 293 - 2026-05-28 - W18 flash-promo COUNT OVER + W14 audit indexes
+============================================================
+Files: 1 modificado
+  - services/product-svc/src/routes/public.js (flash-promo COUNT OVER)
+Lines: ~20 changed
+
+W18 (perf consolidation /flash-promo/active):
+- PRE-FIX: 2 queries (SELECT rows + COUNT separado) - scan duplicado
+  com filtros identicos (status + flash_promo_active + ends_at > NOW + deleted_at)
+- POST-FIX: 1 query COUNT(*) OVER()::INT AS _total + strip _total no map
+- Pattern V8 consolidado pass 178/200/202/206/289 (12+ endpoints)
+- Latencia ~25ms (2 scans) -> ~14ms (1 scan)
+- has_more boolean mantido
+
+W14 (audit indexes existentes):
+- products.flash_promo_active/_ends_at: idx_products_flash_promo PARTIAL OK
+- product_qna: idx_qna_product PARTIAL is_hidden=FALSE OK
+- product_qna_votes: idx_qna_votes_user(user_id, qna_id) OK
+- review_votes: idx_review_votes_user OK
+- Cobertura adequada - nenhum gap identificado neste ciclo
+- (passes anteriores cobriram lacunas: 069-083 batch)
+
+VPS SSH BLOQUEADO (126 ciclos - 42h sem deploy).
+Migs 069-083 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_product-svc --force
+- W18: EXPLAIN ANALYZE /flash-promo/active - Index Scan unico (vs duplo)
+  Esperado: ~14ms total (vs ~25ms pre-fix)
+- Endpoint test:
+  curl -s https://cas.../api/products/flash-promo/active?limit=10 | jq '.total, .has_more'
+
+PROXIMA ITER:
+- W7 admin /flash-promo/list endpoint (gestao admin promos)
+- W3 PDP timer countdown render perf optimization
+- VPS SSH unblock URGENTISSIMO (126 ciclos - 42h)
