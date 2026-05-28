@@ -31842,3 +31842,32 @@ W18 cache key normalization cross-svc:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
+
+## PASS 381 W4 ADMIN: forceApprove a11y promptDialog (UX consistency)
+commit 166ac67
+BUG forceApprove com prompt() nativo (vs platformTake usa promptDialog)
+PRE-FIX:
+  - prompt() browser-blocking sync modal
+  - NAO acessivel (SR inconsistente)
+  - Sem styling glassmorphism
+  - Inconsistencia: 2 critical actions com modals diferentes
+  - Force-approve eh OVERRIDE LLM - alta criticidade
+
+POST-FIX paridade platformTake:
+- confirmDialog danger variant 'Aprovar produto manualmente?'
+  body explica override threshold + audit_log warn
+- promptDialog reason (min 5 - paridade Zod backend)
+- 2-step confirmation (intencional para high-criticidade)
+- Visual glassmorphism consistente
+
+GAPS REMANESCENTES:
+  - disputes/page.tsx prompt()
+  - vault/page.tsx prompt()
+
+114 passes acumulados (268->381) sem deploy VPS
+4 CRITICAL + 21 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 disputes/vault prompt() migration
+- W18 perf optimization
