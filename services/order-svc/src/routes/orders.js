@@ -20,6 +20,24 @@ const disputeOpenLimiter = rateLimiter.createLimiter({
   message: 'Muitas disputas abertas recentemente. Aguarde 1 hora.',
 });
 
+// FIX-WORKER-2 pass 196 (CRITICAL): rate-limit /orders/checkout.
+// PRE-FIX: zero limit. Atacante autenticado pode spam POST /checkout
+// criando 1000 orders pending em segundos:
+//   - PG pool exhaustion (cada checkout faz tx longa - SELECT FOR UPDATE +
+//     ~10 queries)
+//   - Asaas createPayment dispara em paralelo (assincrono setImmediate
+//     linha 188) -> rate-limit upstream + cost extra
+//   - DB enche de orders pending_payment orfas (cron cleanup hum hum)
+//   - User experience: 1 checkout serializa toda a app
+// FIX: 20 checkouts/hora/user (real user faz <5/dia normalmente).
+// Pattern V8 W7: high-impact mutations DEVEM ter limiter.
+// Real users overage: limite generoso 20/h ainda permite poweruser
+// completar carrinhos multiplos legitimos (impulse buys + reset).
+const checkoutLimiter = rateLimiter.createLimiter({
+  windowMs: 60 * 60 * 1000, max: 20,
+  message: 'Muitas tentativas de checkout. Aguarde alguns minutos.',
+});
+
 const router = express.Router();
 const log = logger.child({ svc: 'order-svc', mod: 'orders' });
 router.use(jwt.requireAuth());
@@ -32,6 +50,7 @@ const TAKE_RATE = parseFloat(process.env.PLATFORM_TAKE_RATE || '0.18');
 // silenciosamente DROPED na linha 120 -> pedido criado sem parcelas mas usuario achava
 // que receberia 12x. UX confuso.
 router.post('/checkout',
+  checkoutLimiter,  // FIX-WORKER-2 pass 196: rate-limit 20/h/user (anti-spam DoS)
   validate({ body: z.object({
     payment_method: z.enum(['pix','credit_card','boleto']),
     installment_count: z.number().int().min(1).max(12).optional(),

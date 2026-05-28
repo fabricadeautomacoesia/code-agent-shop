@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { Copy, Check } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
+import { friendlyCheckoutError } from '@/lib/friendly-errors';
 
 type PaymentMethod = 'pix' | 'credit_card' | 'boleto';
 
@@ -84,7 +85,8 @@ export default function CheckoutPage() {
       }
       setPaymentResult({ order: order.order, asaas: polled });
     } catch (e: any) {
-      setErr(e.data?.message || e.message);
+      // FIX-WORKER-2 pass 196: friendly error mapping (rate-limit + checkout errors)
+      setErr(friendlyCheckoutError(e));
     } finally { setLoading(false); }
   }
 

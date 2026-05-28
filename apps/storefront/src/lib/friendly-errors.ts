@@ -91,3 +91,37 @@ export function friendlyReviewError(e: any): string {
   }
   return 'Erro ao publicar avaliacao. Tente novamente em instantes.';
 }
+
+// ============================================================
+// CHECKOUT (cart -> checkout flow)
+// W2 pass 196: friendly UX p/ checkout errors backend (order-svc)
+// ============================================================
+const CHECKOUT_ERROR_MESSAGES: Record<string, string> = {
+  empty_cart:                    'Seu carrinho esta vazio. Adicione produtos antes de finalizar.',
+  rate_limited:                  'Voce fez muitas tentativas de checkout. Aguarde alguns minutos.',
+  insufficient_points_at_checkout: 'Saldo de pontos insuficiente. Remova o resgate ou ajuste a quantidade.',
+  product_unavailable:           'Um ou mais produtos no carrinho ficaram indisponiveis. Recarregue a pagina.',
+  payment_method_unsupported:    'Metodo de pagamento nao suportado neste momento.',
+  installment_count_invalid:     'Parcelamento exige cartao de credito.',
+  validation_error:              'Dados invalidos. Verifique os campos e tente novamente.',
+  forbidden_role:                'Sua conta nao tem permissao para finalizar compras.',
+};
+
+export function friendlyCheckoutError(e: any): string {
+  // FIX-WORKER-2 pass 196: status 429 (rate-limit do checkoutLimiter)
+  // pode chegar sem error code legivel - detect by status.
+  if (e?.status === 429 || e?.data?.statusCode === 429) {
+    return CHECKOUT_ERROR_MESSAGES.rate_limited;
+  }
+  const code = e?.data?.error || e?.message || '';
+  if (CHECKOUT_ERROR_MESSAGES[code]) return CHECKOUT_ERROR_MESSAGES[code];
+  if (code === 'validation_error' && e?.data?.details?.length) {
+    const d = e.data.details[0];
+    const field = Array.isArray(d.path) ? d.path[d.path.length - 1] : d.path;
+    if (field === 'installment_count') return CHECKOUT_ERROR_MESSAGES.installment_count_invalid;
+    return `Campo ${field}: ${d.message || 'invalido'}`;
+  }
+  // backend error message pode ja ser legivel (rejected_reason, etc)
+  if (e?.data?.message) return e.data.message;
+  return 'Erro ao finalizar compra. Tente novamente em instantes.';
+}
