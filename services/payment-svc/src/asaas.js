@@ -77,8 +77,31 @@ async function getPayment(id) { return api('GET', `/payments/${id}`); }
 
 async function getPixQrCode(id) { return api('GET', `/payments/${id}/pixQrCode`); }
 
+/* FIX-WORKER-11 pass 439 (defensive guard partial refund vs full):
+   PRE-FIX: value ? { value, description } : { description }
+   - value=0 -> falsy -> sends { description } -> Asaas trata FULL refund
+   - value=NaN -> falsy -> idem (NaN tipico de Math.min com NaN input)
+   - value=-5 -> truthy -> sends value:-5 -> Asaas 400 (invalid_value)
+   - value='' -> falsy -> sends { description } -> Asaas FULL refund
+   Cenario REAL MONEY LOSS:
+   - order-svc dispute resolve passa refund_amount_cents=0 (admin slip)
+   - server.js linha 452-454: refundValueBRL = 0/100 = 0
+   - refundPayment(id, 0, reason) -> { description } -> FULL refund Asaas
+   - Buyer recebe TOTAL em vez de R$0,00 = perda financeira sem trace
+   POST-FIX: explicit check Number.isFinite(value) && value > 0.
+   - 0 / NaN / negativos / strings sempre throws -> caller deve passar
+     undefined p/ full refund explicito (intent clear).
+   - Asaas v3 docs: value omitted = full refund, value present > 0 = partial. */
 async function refundPayment(id, value, description) {
-  return api('POST', `/payments/${id}/refund`, value ? { value, description } : { description });
+  if (value !== undefined && value !== null) {
+    if (!Number.isFinite(value) || value <= 0) {
+      const e = new Error(`refundPayment_invalid_value: ${value} (expect undefined p/ full refund OR finite > 0)`);
+      e.transient = false;
+      throw e;
+    }
+  }
+  return api('POST', `/payments/${id}/refund`,
+    (value !== undefined && value !== null) ? { value, description } : { description });
 }
 
 /* FIX-WORKER-11 pass 289 (BUG REAL MONEY LOSS - cancelPayment ausente):

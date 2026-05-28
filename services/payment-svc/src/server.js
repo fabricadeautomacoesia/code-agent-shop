@@ -435,6 +435,20 @@ app.post('/payments/asaas/refund', asyncHandler(async (req, res, next) => {
   }
   const { dispute_id, refund_amount_cents, reason } = req.body || {};
   if (!dispute_id) return next(errorHandler.badRequest('dispute_id_required'));
+  /* FIX-WORKER-11 pass 439 (defensive guard refund_amount_cents - REAL MONEY):
+     PRE-FIX: refund_amount_cents nao validado.
+     - admin/order-svc slip envia 0 -> Math.min(0, total)/100 = 0
+     - 0 passa pelo (refund_amount_cents ?...) e vira refundValueBRL=0
+     - asaas.refundPayment(id, 0, reason) com pre-pass-439 -> { description } -> FULL refund
+     - Buyer recebe total em vez de zero (perda financeira)
+     POST-FIX: validar > 0 OU null/undefined (intent full refund).
+     Asaas v3: value omitted = full refund, value present > 0 = partial. */
+  if (refund_amount_cents !== undefined && refund_amount_cents !== null) {
+    if (typeof refund_amount_cents !== 'number' || !Number.isFinite(refund_amount_cents) || refund_amount_cents <= 0) {
+      return next(errorHandler.badRequest('invalid_refund_amount_cents',
+        'refund_amount_cents deve ser inteiro positivo OU omitido (full refund)'));
+    }
+  }
   // Lookup order via dispute_id
   const r = await query(
     `SELECT o.id AS order_id, o.asaas_payment_id, o.total_cents, o.payment_status

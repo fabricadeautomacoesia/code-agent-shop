@@ -33746,3 +33746,55 @@ Pattern V8 W17: TODA audit_log security-critical em ALL svcs DEVE ter ua_prefix 
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 439 W11 PAYMENT/ASAAS: defensive guard refundPayment value=0 (REAL MONEY)
+commit pendente
+BUG CRITICAL REAL MONEY: value=0 em refundPayment -> Asaas FULL refund
+PRE-FIX asaas.refundPayment (linha 80-82):
+- value ? { value, description } : { description }
+- value=0 -> falsy -> { description } -> Asaas v3 trata FULL refund
+- value=NaN -> idem
+- value='' -> idem
+- Sem guard explicit -> caller pode dispatcher full refund acidental
+
+CENARIO REAL MONEY LOSS:
+- order-svc dispute resolve dispatches /payments/asaas/refund
+- Admin slip: passa refund_amount_cents=0 (typo decimal/UI bug)
+- server.js linha 452-454: refundValueBRL = 0/100 = 0 (passa truthy check)
+- asaas.refundPayment(id, 0, reason) -> { description } -> FULL refund
+- Buyer recebe order.total_cents em vez de R$0,00
+- Plataforma perde dinheiro real sem trace
+- audit_log mostra refund_amount_cents=0 mas Asaas executou total
+
+SCOPE financeiro:
+- Order R$1500 + admin slip 0 cents -> R$1500 refunded
+- Multiplicado por N disputes -> volume losses cumulativos
+- 5 CRITICAL aggregated: pass 289 (cancelPayment) + 304 (rateLimit) +
+  354 (gateway) + 359 (vault) + 384 (dispute dispatch) + 439 (refund 0) - NOVO
+
+POST-FIX 2 layers:
+1. asaas.refundPayment (defense source):
+   - Explicit Number.isFinite(value) && value > 0 check
+   - throw transient=false em invalid (caller deve passar undefined p/ full)
+2. server.js /payments/asaas/refund endpoint:
+   - Guard refund_amount_cents must be > 0 OR omitted
+   - 400 explicit invalid_refund_amount_cents
+
+W11 CRITICAL series consolidada:
+  pass 289 cancelPayment missing
+  pass 304 gateway rateLimit keyGen
+  pass 354 gateway body limit order
+  pass 359 vault+auth keyGen
+  pass 384 dispute refund dispatch
+  pass 439 refundPayment value=0 guard <- ESTE (6º CRITICAL)
+
+Pattern V8 W11: TODO call Asaas com value MUST defensive guard:
+- value > 0 strictly
+- NaN/string/negative reject upfront
+- undefined SOMENTE para intent "full" explicit
+
+172 passes acumulados (268->439) sem deploy VPS
+6 CRITICAL + 27 migrations pendentes apply (era 5 - novo pass 439)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
