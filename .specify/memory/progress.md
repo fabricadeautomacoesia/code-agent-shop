@@ -32928,3 +32928,33 @@ Pattern V8 W11: SELECT/INSERT casts paridade
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 419 W14 SEARCH: /top-sellers global JOIN cat is_active (paridade 417)
+commit c31a740
+BUG /top-sellers (sem :category) JOIN sem is_active
+PRE-FIX:
+  JOIN categories c ON c.id = p.category_id
+  WHERE p.status... AND c.parent_id IS NULL
+
+CENARIO:
+- Cat desativada -> products ainda agrupados grouped[slug]
+- Frontend section cat inativa visivel
+- Inconsistency vs /categories listing
+
+POST-FIX:
+- + AND c.is_active = TRUE
+- 8 sites cross-svc complete
+
+W14 categories is_active filter consolidacao TOTAL:
+  pass 406 product-svc/public.js LEFT JOIN (3)
+  pass 411 wishlist + search + facets LEFT JOIN
+  pass 417 slug lookups + /top-sellers/:cat
+  pass 419 /top-sellers global <- ESTE
+
+audit grep zero remanescentes
+
+152 passes acumulados (268->419) sem deploy VPS
+5 CRITICAL + 24 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
