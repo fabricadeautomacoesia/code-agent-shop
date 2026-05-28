@@ -8,12 +8,27 @@ import { Ban, CheckCircle, ArrowUp, ShieldCheck } from 'lucide-react';
 export default function SellersPage() {
   const [pending, setPending] = useState<any[]>([]);
   const [loadError, setLoadError] = useState('');
+  // FIX-WORKER-4 pass 414 (search filter scale - 100+ KYC pending):
+  //   Backend pass 414 adicionou ?q search em /pending-kyc
+  //   Frontend: input debounced 300ms + load() trigger
+  const [searchQuery, setSearchQuery] = useState('');
 
-  async function load() {
-    try { const r = await adminFetch<{ sellers: any[] }>('/sellers/admin/pending-kyc'); setPending(r.sellers); setLoadError(''); }
+  async function load(q?: string) {
+    try {
+      const qs = q !== undefined ? `?q=${encodeURIComponent(q)}` : '';
+      const r = await adminFetch<{ sellers: any[] }>(`/sellers/admin/pending-kyc${qs}`);
+      setPending(r.sellers);
+      setLoadError('');
+    }
     catch (e: any) { setLoadError(e.message); }
   }
   useEffect(() => { load(); }, []);
+
+  // Debounced search trigger
+  useEffect(() => {
+    const t = setTimeout(() => { load(searchQuery.trim()); }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   // FIX-WORKER-4 pass 2: useAdminAction hook
   const action = useAdminAction(load);
@@ -77,7 +92,17 @@ export default function SellersPage() {
       )}
 
       <div className="glass p-6">
-        <h2 className="font-display font-bold text-xl mb-4">KYC Pendente ({pending.length})</h2>
+        <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <h2 className="font-display font-bold text-xl">KYC Pendente ({pending.length})</h2>
+          {/* FIX-WORKER-4 pass 414: search input p/ scale 100+ sellers KYC */}
+          <input type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Buscar nome/email/legal_name..."
+            maxLength={100}
+            aria-label="Filtrar sellers KYC pendente"
+            className="px-3 py-1.5 text-xs rounded bg-white/5 border border-white/10 focus:border-magenta focus:outline-none w-60" />
+        </div>
         {pending.length === 0 ? (
           <p className="text-white/60">Nenhum KYC aguardando.</p>
         ) : (

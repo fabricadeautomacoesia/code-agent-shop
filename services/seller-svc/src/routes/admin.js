@@ -419,7 +419,12 @@ router.get('/all',
 // LGPD mask preserved (admin full, staff masked - critico p/ KYC data)
 const pendingKycCacheKey = (req) => {
   const q = req.query;
-  return `seller:admin:pending-kyc:lim=${q.limit||50}:off=${q.offset||0}`;
+  // FIX pass 414: + q search no cache key
+  // Hash do q p/ DLP (paridade autocomplete pass 92 / coupon preview pass 105)
+  const crypto = require('node:crypto');
+  const qNorm = (q.q || '').toString().trim().toLowerCase().slice(0, 100);
+  const qHash = qNorm ? crypto.createHash('sha256').update(qNorm).digest('hex').slice(0, 12) : '';
+  return `seller:admin:pending-kyc:lim=${q.limit||50}:off=${q.offset||0}:q=${qHash}`;
 };
 
 router.get('/pending-kyc',
@@ -427,6 +432,30 @@ router.get('/pending-kyc',
   asyncHandler(async (req, res) => {
     const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    // FIX-WORKER-4 pass 414 (?q search filter - admin scaling):
+    //   PRE-FIX: endpoint sem filter -> admin com 100+ KYC pending forcado a
+    //   scrollar lista paginada manualmente. UX impossivel em prod scale.
+    //   POST-FIX: ?q search opcional em store_name + email + legal_name
+    //   - Trim + lowercase + ILIKE para case-insensitive
+    //   - Max 100 chars (anti-DoS LIKE wildcard expansion)
+    //   - Escape % _ \ wildcards (paridade pass 13 search-svc)
+    const qRaw = (req.query.q || '').toString().trim().toLowerCase().slice(0, 100);
+    const qEscaped = qRaw.replace(/[%_\\]/g, '\\$&');
+    const whereParts = [`s.status IN ('pending_kyc','kyc_submitted')`];
+    const params = [];
+    let i = 1;
+    if (qEscaped) {
+      whereParts.push(`(
+        LOWER(s.store_name) ILIKE $${i} ESCAPE '\\' OR
+        LOWER(u.email) ILIKE $${i} ESCAPE '\\' OR
+        LOWER(COALESCE(s.legal_name, '')) ILIKE $${i} ESCAPE '\\'
+      )`);
+      params.push(`%${qEscaped}%`);
+      i++;
+    }
+    params.push(limit, offset);
+    const limIdx = i++;
+    const offIdx = i++;
 
     const r = await query(
       `SELECT s.id, s.store_slug, s.store_name, s.status, s.seller_class,
@@ -438,7 +467,7 @@ router.get('/pending-kyc',
               COUNT(*) OVER()::INT AS _total
          FROM sellers s
          JOIN users u ON u.id = s.user_id
-        WHERE s.status IN ('pending_kyc','kyc_submitted')
+        WHERE ${whereParts.join(' AND ')}
         ORDER BY
           CASE s.status
             WHEN 'kyc_submitted' THEN 1   -- priorizar review (FIFO submit time)
@@ -448,8 +477,8 @@ router.get('/pending-kyc',
           s.kyc_submitted_at ASC NULLS LAST,
           s.created_at ASC,
           s.id
-        LIMIT $1 OFFSET $2`,
-      [limit, offset]
+        LIMIT $${limIdx} OFFSET $${offIdx}`,
+      params
     );
 
     const total = r.rows[0]?._total ?? 0;
