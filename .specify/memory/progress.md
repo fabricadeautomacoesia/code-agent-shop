@@ -33932,3 +33932,52 @@ W10 perf regression series:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO + mig 096 EM ALTA PRIORIDADE
+
+## PASS 443 W6 AUTH-SVC: ua_prefix gap em audit_log critical (paridade pass 438 vault cross-svc)
+commit pendente
+GAP forensic ua_prefix em 2 audit_log INSERTs critical em auth.js
+PRE-FIX:
+- Pass 282 estabeleceu pattern ua_prefix em refresh paths /forgot+/reset
+- Pass 292 aplicou em 2fa.invalid_totp
+- Pass 438 vault-svc cross-endpoints (consolidacao cross-svc)
+- Mas auth.js ficou com 2 critical events SEM ua_prefix:
+  1. refresh_banned_user_blocked (linha 565) - pass 233 lagged
+  2. 2fa.decrypt_fail (linha 354) - pass 292 partial cover
+
+VECTORS gap forensic:
+1. refresh_banned_user_blocked:
+   - Banned user tenta /refresh apos ban admin
+   - Audit so ip + session_id + cascaded - SEM device fingerprint
+   - Investigation: "foi mesmo browser ban event ou bot?"
+2. 2fa.decrypt_fail:
+   - 2FA secret corrompido OR atacante post-DB-breach inserted bad secret
+   - Audit critical mas so err + ip - SEM ua_prefix
+   - Investigation impossivel correlacionar device + breach
+
+POST-FIX (2 endpoints):
+- refresh_banned_user_blocked: + ua field masked (200 chars)
+- 2fa.decrypt_fail: + ua_prefix masked (60 chars - paridade 2fa.invalid_totp pass 292)
+- mask.text() em ambos (defense-in-depth - UA pode ter Bearer/JWT em corner UAs)
+
+Pattern V8 W6 consolidado: TODO audit_log severity critical/warn MUST ter ua_prefix
+- refresh_reuse_breach pass 315 ✓
+- 2fa.invalid_totp pass 292 ✓
+- /forgot+/reset pass 282 ✓
+- vault cross-endpoints pass 438 ✓
+- refresh_banned + 2fa.decrypt pass 443 <- ESTE (consolidacao final auth.js)
+
+W6 ua_prefix audit series consolidada:
+  pass 282 forgot+reset
+  pass 292 2fa.invalid_totp
+  pass 296 review-svc
+  pass 315 refresh_reuse_breach
+  pass 408 seller-svc
+  pass 438 vault-svc cross-endpoints
+  pass 443 refresh_banned + 2fa.decrypt <- ESTE (gap fill auth.js)
+
+176 passes acumulados (268->443) sem deploy VPS
+6 CRITICAL + 28 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE (perf regression cura)

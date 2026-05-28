@@ -350,10 +350,17 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
          exception pode conter secret material em corner cases. */
       const safeErr = mask.text(String(e.message || '').slice(0, 200));
       log.error({ userId: user.id, err: safeErr }, '[2fa.decrypt_fail]');
+      // FIX-WORKER-6 pass 443 (ua_prefix paridade 2fa.invalid_totp pass 292):
+      //   2fa.decrypt_fail e critical security event - admin precisa fingerprint
+      //   device de quem tentou login com 2FA corrompido (atacante post-DB-breach?).
       query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, 'system', '2fa.decrypt_fail', 'user', $1, 'critical', $2::JSONB)`,
-        [user.id, JSON.stringify({ err: safeErr, ip: req.ip })]
+        [user.id, JSON.stringify({
+          err: safeErr,
+          ip: req.ip,
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+        })]
       ).catch(() => {});
       return next(errorHandler.unauthorized('twofa_corrupt', 'Reconfigure 2FA'));
     }
@@ -559,12 +566,22 @@ router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
         RETURNING id`,
       [user.id]
     );
+    /* FIX-WORKER-6 pass 443 (ua_prefix forensic gap - paridade refresh_reuse_breach + pass 438):
+       PRE-FIX (pass 233): banned cascade revoke audit_log SEM ua field.
+       - refresh_reuse_breach (linha 504-509) JA incluia ua: safeUa masked
+       - refresh_banned_user_blocked lagged - mesmo path critical sem fingerprint
+       - Forensic admin investigation banned-user-bypass attempts:
+         * IP visivel (correlaciona com login forense)
+         * SEM ua_prefix -> nao consegue match device de ban event original
+       POST-FIX: + ua field masked (paridade safeUa ja computed acima linha 482).
+       Pattern V8 W6 consolidado pass 438 cross-svc - TODO audit critical = ip + ua. */
     // Audit critical (admin precisa saber que banned user tentou access)
     query(
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
        VALUES ($1, 'system', 'auth.refresh_banned_user_blocked', 'user', $1, 'critical', $2::JSONB)`,
       [user.id, JSON.stringify({
         ip: req.ip,
+        ua: mask.text((req.headers['user-agent'] || '').slice(0, 200)),
         session_id: s.rows[0].id,
         cascaded_sessions: cascaded.rowCount,
       })]
