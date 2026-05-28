@@ -20084,3 +20084,34 @@ PROXIMA ITER:
 - W11 SMTP credenciais Gmail (3 emails failed)
 - W11 ASAAS_API_KEY substituir placeholder
 - VPS SSH unblock + git pull + rebuild storefront
+
+PASS 170 (W4 admin a11y V8 R23) - 2026-05-28:
+- Auditoria /admin/payouts + /admin/qa-queue: 10 bugs a11y identificados
+  * 5 buttons sem type='button' (default 'submit' bug latente)
+  * 5 buttons sem aria-label (icon-only Check/X/Send/CheckCircle/Award)
+  * banners sem role=alert/status aria-live (SR nao anuncia)
+- Fix payouts:
+  * 3 action buttons (Aprovar/Rejeitar/Transferir Asaas) -> type=button +
+    aria-label dinamico com store_name + valor
+  * 2 banner close buttons (error/success) -> type=button + aria-label
+  * role=alert no error banner, role=status aria-live=polite no success
+  * focus-visible:outline-2 contextual (verde/vermelho/magenta)
+  * Icons Lucide -> aria-hidden=true (decorativos)
+- Fix qa-queue:
+  * retry button -> type=button + aria-label
+  * 2 banner close + 2 action buttons (Aprovar/Take) -> mesmo pattern
+- MLB-18 (Cupom Progressivo) ja implementado (cart/page.tsx + ProgressiveCouponTeaser)
+- MLB-19 (Flash promo timer) ja implementado (flash-promo-timer.tsx)
+- Commits ef9570b + 67b1c9a + 558b049 pushed origin/main
+- VPS SSH ainda bloqueado (fail2ban transient ~30+ min) - deploy diferido
+
+LINKS PARA TESTE (apos VPS desbloquear):
+- https://admin.inovareinteligenciaartificial.com/payouts (admin token)
+- https://admin.inovareinteligenciaartificial.com/qa-queue (admin token)
+- Testar SR: NVDA/VoiceOver navegando -> deve anunciar "Aprovar payout de X..."
+
+PROXIMA ITER:
+- W4 audit /admin/sellers + /admin/orders (mesmo pattern provavel)
+- W7 pass 58: extract @cas/shared.maskPII (3 svcs duplicam helper)
+- W18 query performance: EXPLAIN ANALYZE em pedidos lentos
+- VPS SSH unblock + git pull em /opt/cas + docker service update storefront/dashboard-admin
