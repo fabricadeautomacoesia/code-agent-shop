@@ -31687,3 +31687,31 @@ Pattern V8 W10: analytics tracking comprehensive
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W4 admin audit-log viewer
+
+## PASS 375 W1 AUTH: ?next deep-link redirect (UX gap)
+commit d0c4ce2
+BUG login page IGNORAVA ?next param
+PRE-FIX: sempre router.push('/conta')
+  4 componentes ENVIAM /login?next=<path>:
+  - add-to-cart, qna-form, qna-upvote, wishlist-button
+  Apos login user vai /conta NAO destino original
+  4 componentes feature dead - ignored param
+
+POST-FIX:
+- safeNextPath() validacao defensive:
+  * decode URI try/catch
+  * BLOCK //evil.com (protocol-relative)
+  * BLOCK javascript:/data:/file: schemes
+  * BLOCK \ Windows trick
+  * Require leading /
+- Default /conta se invalid (paridade pre-fix)
+- Open Redirect attack protected
+
+Pattern V8 W1: deep-link redirect + defensive URL parse
+
+108 passes acumulados (268->375) sem deploy VPS
+4 CRITICAL + 20 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W4 admin audit-log viewer
