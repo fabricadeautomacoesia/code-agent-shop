@@ -19,6 +19,31 @@ function LoginInner() {
   const sp = useSearchParams();
   const justRegistered = sp.get('registered') === '1';
   const passwordReset = sp.get('reset') === '1';
+  // FIX-WORKER-1 pass 375 (?next deep-link redirect):
+  //   PRE-FIX: login redirecionava SEMPRE para /conta apos sucesso.
+  //   4 componentes (add-to-cart, qna-form, qna-upvote, wishlist-button) enviam
+  //   /login?next=<path> quando user nao autenticado. Login IGNORAVA o next.
+  //   Cenarios broken:
+  //   - User click "Add to cart" em PDP -> redirect /login?next=/product/X
+  //     -> apos login vai pra /conta (NAO volta ao PDP)
+  //   - User shared link de produto -> precisa navegar manualmente apos login
+  //   - User salvou link de favoritos -> nunca chega
+  //   POST-FIX: ler ?next + validar path safe (mesmo origin, nao external URL)
+  //   + redirect para next se valido.
+  //   Defense: NAO aceitar URLs externas (open redirect attack vector).
+  function safeNextPath(): string {
+    const raw = sp.get('next');
+    if (!raw) return '/conta';
+    // Decode + validate: paths internos apenas (comecam com /, nao //)
+    let decoded: string;
+    try { decoded = decodeURIComponent(raw); } catch { return '/conta'; }
+    // Block: external URLs, protocol-relative (//evil.com), data:, javascript:
+    if (!decoded.startsWith('/') || decoded.startsWith('//') ||
+        decoded.includes(':') || decoded.includes('\\')) {
+      return '/conta';
+    }
+    return decoded;
+  }
   const setAuth = useAuth((s) => s.setAuth);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -38,7 +63,8 @@ function LoginInner() {
       const r: any = await Api.login(email.trim().toLowerCase(), password, needs2fa ? totp : undefined);
       if (r.requires_2fa) { setNeeds2fa(true); setLoading(false); return; }
       setAuth(r.access_token, r.user);
-      router.push('/conta');
+      // FIX pass 375: redirect para ?next safe path (deep-link) ou /conta default
+      router.push(safeNextPath());
     } catch (err: any) {
       setError(friendlyAuthError(err));
     } finally { setLoading(false); }
