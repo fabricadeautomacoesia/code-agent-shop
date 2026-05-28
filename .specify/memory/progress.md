@@ -32133,3 +32133,30 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - W18 perf optimization
 - W4 admin remaining audits
+
+## PASS 391 W13 NOTIFICATION: mig 088 schema fix (3-layer fallback)
+commit 81dac79
+BUG mig 088 (pass 372) usava colunas SCHEMA ANTIGO inexistentes
+PRE-FIX: INSERT (code, title, body, priority, category)
+  Schema real prod (mig 067): template_code, title_template, body_template,
+                              channels, category
+  Mig 008 original: code, name, channel, body_template
+
+ERRO SILENT em apply -> template '2fa_activated' nunca seed
+
+POST-FIX 3-layer fallback (paridade mig 067):
+- LAYER 1: schema atual com category
+- LAYER 2: sem category column
+- LAYER 3: schema original mig 008
+- ON CONFLICT UPDATE idempotente
+- RAISE NOTICE confirmation
+
+Pattern V8 W13: migrations multi-schema fallback legacy deploys
+
+124 passes acumulados (268->391) sem deploy VPS
+5 CRITICAL + 21 migrations pendentes apply
+(mig 088 corrigida - apply funcional agora)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- W18 perf optimization
