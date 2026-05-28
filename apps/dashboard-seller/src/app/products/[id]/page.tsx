@@ -132,15 +132,20 @@ export default function EditProductPage() {
       )}
 
       <form onSubmit={save} className="space-y-4">
+        {/* FIX-WORKER-5 pass 339: maxLength alinhado backend patchSchema (pass 332):
+            - title min(5).max(200), subtitle max(300)
+            - description min(50).max(30000) */}
         <div className="glass p-5 space-y-3">
           <div>
             <label className="text-xs text-white/60 uppercase">Titulo</label>
             <input value={form.title} onChange={(e) => setForm({...form, title: e.target.value})} disabled={!isEditable}
+              minLength={5} maxLength={200}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm disabled:opacity-50" />
           </div>
           <div>
             <label className="text-xs text-white/60 uppercase">Subtitulo</label>
             <input value={form.subtitle} onChange={(e) => setForm({...form, subtitle: e.target.value})} disabled={!isEditable}
+              maxLength={300}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm disabled:opacity-50" />
           </div>
           <div>
@@ -151,9 +156,14 @@ export default function EditProductPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase">Descricao completa</label>
+            <label className="text-xs text-white/60 uppercase">Descricao completa (min 50, max 30000)</label>
             <textarea value={form.description} onChange={(e) => setForm({...form, description: e.target.value})} disabled={!isEditable} rows={6}
+              minLength={50} maxLength={30000}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm disabled:opacity-50 font-mono" />
+            <div className={`text-[10px] text-right mt-1 ${
+              (form.description?.length || 0) > 28500 ? 'text-yellow-400' :
+              (form.description?.length || 0) < 50 ? 'text-orange-400' : 'text-white/30'
+            }`}>{form.description?.length || 0}/30000{(form.description?.length || 0) < 50 ? ' (min 50)' : ''}</div>
           </div>
           <div>
             <label className="text-xs text-white/60 uppercase">Preco em centavos</label>

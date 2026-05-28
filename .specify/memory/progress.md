@@ -30552,3 +30552,44 @@ PROXIMA ITER:
 - W5 /products/[id]/edit form maxLength alignment (PATCH schema pass 332)
 - W7 audit storefront forms (qna-form, review-form ja OK)
 - VPS SSH unblock URGENTISSIMO (171 ciclos - 57h)
+
+
+============================================================
+PASS 339 - 2026-05-28 - W5 seller products/[id] edit form maxLength
+============================================================
+Files: 1 modificado
+  - apps/dashboard-seller/src/app/products/[id]/page.tsx (3 fields maxLength + counter)
+Lines: ~20 changed
+
+W5 (products/[id] edit form aligned backend patchSchema pass 332):
+- PRE-FIX: 3 fields sem maxLength HTML5:
+  - title (backend min(5).max(200))
+  - subtitle (backend max(300))
+  - description (backend min(50).max(30000))
+- POST-FIX:
+  - title: min(5) + max(200)
+  - subtitle: max(300)
+  - description: min(50) + max(30000) + triple-state counter
+- Pattern V8 frontend/backend Zod alignment paridade pass 338
+
+Coverage maxLength alignment dashboard-seller cumulative:
+- /reviews reply (pass 330): 1 textarea
+- /qna answer (pass 331): 1 textarea
+- /loja form (pass 337): 5 inputs/textarea
+- /upload form (pass 338): 4 inputs/textareas
+- /products/[id] form (pass 339): 3 inputs/textareas
+Total: 14 inputs com maxLength alinhado backend Zod
+
+VPS SSH BLOQUEADO (172 ciclos - 57.3h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-seller --force
+- W5: /seller/products/<id> edit
+  - title typing 201 chars - blocked HTML5
+  - description min 50/max 30000 com counter visual
+
+PROXIMA ITER:
+- W7 audit storefront forms (qna-form.tsx + review-form.tsx ja OK)
+- W4 admin /admin/orders quick UI fix
+- VPS SSH unblock URGENTISSIMO (172 ciclos - 57.3h)
