@@ -77,10 +77,11 @@ router.get('/me',
     // MLB-NEW WORKER 16: limit configuravel via query (?limit=50 etc), default 20, max 200
     // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
     const histLimit = Math.max(1, Math.min(parseInt(req.query.limit || '20', 10), 200));
+    // FIX-WORKER-18 pass 259: tiebreaker DESC paridade
     const hist = await query(
       `SELECT id, points_delta, reason, reference_type, reference_id, created_at
          FROM loyalty_transactions WHERE user_id = $1
-         ORDER BY created_at DESC LIMIT $2`, [req.user.sub, histLimit]
+         ORDER BY created_at DESC, id DESC LIMIT $2`, [req.user.sub, histLimit]
     );
     // Bonus de boas-vindas se starter + sem nenhuma transacao
     if (bal.rows[0].tier === 'starter' && hist.rows.length === 0) {
@@ -97,8 +98,13 @@ router.get('/me',
         );
       });
       bal = await query(`SELECT * FROM user_loyalty WHERE user_id = $1`, [req.user.sub]);
+      // FIX-WORKER-18 pass 259 (deterministic order tiebreaker):
+      //   ORDER BY created_at DESC sem id tiebreaker -> mass-insert burst
+      //   (multi tier_up bonus apos compra grande) com mesmo timestamp
+      //   ordena arbitrario. id BIGSERIAL DESC garante deterministic.
+      //   Pattern consolidado pass 251 W18 + 256 W10.
       const newHist = await query(
-        `SELECT * FROM loyalty_transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+        `SELECT * FROM loyalty_transactions WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2`,
         [req.user.sub, histLimit]
       );
       return res.json({ loyalty: bal.rows[0], transactions: newHist.rows });

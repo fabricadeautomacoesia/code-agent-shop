@@ -26617,3 +26617,80 @@ PROXIMA ITER:
 - W2 checkout: PIX QR refresh button
 - W3 PDP: review helpful click feedback
 - VPS SSH unblock CRITICAL (91 ciclos - 30.3h)
+
+============================================================
+PASS 259 (2026-05-28) - W18 + W11 tiebreaker + notif priority
+============================================================
+
+OBJETIVO: 3 workers (W13 audit clean)
+- W18 seller-svc loyalty: ORDER BY tiebreaker (2 queries)
+- W11 payment-svc: notif priority em 2 templates (seller_new_sale, loyalty_tier_up)
+- W13 notification: audit found structure solid (skip)
+
+============================================================
+1. W18 - loyalty_transactions ORDER BY tiebreaker
+============================================================
+FILE: services/seller-svc/src/routes/loyalty.js:80-84, 100-103
+
+PROBLEMA:
+- 2 queries em /loyalty/me:
+  1. Lista historico inicial
+  2. Re-fetch pos-welcome-bonus INSERT
+- Ambas: ORDER BY created_at DESC (sem id tiebreaker)
+- Mass-insert burst (tier_up + welcome + earn na mesma compra grande):
+  3 inserts mesmo timestamp -> ordering arbitraria entre cache evictions
+- User ve historico shifteado entre refreshes
+
+POST-FIX:
+- ORDER BY created_at DESC, id DESC (BIGSERIAL DESC = mais recente)
+- Pattern V8 consolidado passes 251 W18, 256 W10, agora 259 cross-svc
+
+============================================================
+2. W11 - 2 notifications sem priority em payment-svc
+============================================================
+FILE: services/payment-svc/src/server.js:756, 816
+
+PROBLEMA (paridade pass 258):
+- 2 templates payment-svc sem priority -> default 0:
+  * seller_new_sale (linha 816) - critical engagement+cash flow
+  * loyalty_tier_up (linha 756) - engagement gamification
+- Default 0 = baixa prioridade em processOutbox (ORDER BY priority DESC)
+- Seller espera horas para ver "Voce vendeu" notif em prod movimentada
+
+POST-FIX:
+- seller_new_sale priority=2 (medium-high engagement)
+- loyalty_tier_up priority=2 (engagement bonus visivel rapido)
+- Paridade pass 258 W4 (seller_reactivated tambem priority=2)
+
+============================================================
+3. W13 - notification audit (clean)
+============================================================
+Reviewed: GET /, /unread-count, renderMustache. All defensive:
+- COUNT(*) OVER() window pattern
+- mask.obj DLP em payload
+- cache 20s unread (pass 212)
+- prototype pollution + dangerous URL schema guards
+Nenhum gap critico esta iter.
+
+============================================================
+SUMARIO PASS 259
+============================================================
+Files: 2 modificados
+  - services/seller-svc/src/routes/loyalty.js (tiebreaker)
+  - services/payment-svc/src/server.js (2 priority fixes)
+Lines: ~30 added
+
+VPS SSH BLOQUEADO (92 ciclos - 30.7h sem deploy).
+Migs 069-075 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_payment-svc --force
+- W18: mass-insert 3 loyalty_tx mesmo timestamp + GET /loyalty/me 2x ->
+  Ordering identico (era variavel)
+- W11: webhook PAYMENT_RECEIVED -> SELECT priority FROM notifications
+  WHERE template_code='seller_new_sale' DESC LIMIT 1 = 2
+
+PROXIMA ITER:
+- W2 PIX QR refresh button
+- W3 review helpful click
+- VPS SSH unblock CRITICAL (92 ciclos - 30.7h)

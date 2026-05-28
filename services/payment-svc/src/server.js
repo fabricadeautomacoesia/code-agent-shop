@@ -752,10 +752,11 @@ async function processWebhookEvent(evt) {
             // FIX bug tier promotion notification (UX engagement)
             const tierRank = { starter: 0, gold: 1, platinum: 2 };
             if ((tierRank[newTier] || 0) > (tierRank[curTier] || 0)) {
+              // FIX-WORKER-11 pass 259: priority p/ loyalty_tier_up (engagement bonus)
               await c.query(
-                `INSERT INTO notifications (user_id, channel, template_code, title, body)
+                `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
                  VALUES ($1::UUID, 'in_app', 'loyalty_tier_up',
-                         $2, $3)`,
+                         $2, $3, 2)`,
                 [order.buyer_user_id,
                  `Voce subiu para o tier ${newTier.toUpperCase()}!`,
                  `Voce agora tem ${newLifetime} pontos lifetime e beneficios exclusivos do tier ${newTier}.`]
@@ -812,9 +813,14 @@ async function processWebhookEvent(evt) {
           WHERE oi.order_id = $1 AND oi.seller_id IS NOT NULL`, [order.id]
       );
       for (const seller of newSaleSellers.rows) {
+        // FIX-WORKER-11 pass 259 (priority p/ seller_new_sale):
+        //   PRE-FIX: SEM priority -> default 0 (baixa prio em processOutbox)
+        //   Seller espera horas para ver "Voce vendeu" notif crítica engagement.
+        //   POST-FIX: priority=2 (medium-high) - cash flow + engagement core.
+        //   Paridade com pass 258 seller_reactivated.
         await c.query(
-          `INSERT INTO notifications (user_id, channel, template_code, title, body, payload)
-           VALUES ($1, 'email', 'seller_new_sale', 'Nova venda', $2, $3::JSONB)`,
+          `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
+           VALUES ($1, 'email', 'seller_new_sale', 'Nova venda', $2, $3::JSONB, 2)`,
           [seller.user_id, `Voce vendeu "${seller.title}". Liquido: R$ ${(seller.seller_payout_cents/100).toFixed(2)}`,
            JSON.stringify({ title: seller.title, payout: (seller.seller_payout_cents/100).toFixed(2) })]
         );
