@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Trophy, TrendingUp } from 'lucide-react';
+import type { Metadata } from 'next';
 import { Api } from '@/lib/api';
 import { ProductCard } from '@/components/product-card';
 
@@ -14,6 +15,37 @@ async function fetchTopSellers(slug: string): Promise<{ status: number; data: an
     const data = await r.json().catch(() => null);
     return { status: r.status, data };
   } catch { return { status: 0, data: null }; }
+}
+
+// FIX-WORKER-9 pass 121: generateMetadata dinamico p/ SEO categoria
+// Antes: pages /categoria/automacao /categoria/seo etc herdavam metadata root
+// generica. Search engines indexavam todas com mesmo title -> duplicate content.
+// Agora: title + description per-slug + canonical + openGraph dinamico.
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const { slug } = await params;
+  const displayName = slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  // Tentativa de fetch p/ description rica - fallback p/ generic se 404
+  const { data } = await fetchTopSellers(slug);
+  const desc = data?.category?.description
+    || `Mais vendidos em ${displayName}: automacoes, agentes IA, n8n workflows e templates verificados pela Code & Agent Shop.`;
+  return {
+    title: `${displayName} - Mais Vendidos | Code & Agent Shop`,
+    description: desc.slice(0, 160),
+    alternates: { canonical: `/categoria/${slug}` },
+    openGraph: {
+      type: 'website',
+      url: `https://cas.inovareinteligenciaartificial.com/categoria/${slug}`,
+      title: `${displayName} - Mais Vendidos`,
+      description: desc.slice(0, 160),
+      images: ['/opengraph-image'],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: `${displayName} - Mais Vendidos`,
+      description: desc.slice(0, 160),
+    },
+    keywords: [displayName, 'mais vendidos', 'marketplace', 'automacoes', 'agentes IA'],
+  };
 }
 
 export default async function CategoriaPage({ params }: { params: Promise<{ slug: string }> }) {
