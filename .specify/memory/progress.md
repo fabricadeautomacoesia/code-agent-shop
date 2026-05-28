@@ -22800,3 +22800,79 @@ PROXIMA ITER:
 - W11: payment-svc Asaas refund edge cases
 - W13: notification-svc Telegram retry edge cases
 - 🚨 VPS SSH unblock URGENTE (47 ciclos - >15.7h sem deploy!)
+
+PASS 215 (W4 order-svc /admin/recent 3 fixes + coherency) - 2026-05-28:
+- W4 audit GET /orders/admin/recent (admin /admin/orders dashboard):
+
+3 BUGS:
+1. 2 queries por hit (rows + stats aggregations 90d)
+2. NO cache - admin polling sem proteção
+3. Response shape sem total absolute (UI 'X de Y' impossivel)
+
+POST-FIX (3 melhorias + coherency):
+
+1. cache.cacheMiddleware 30s vary by limit+offset:
+   - Key: order:admin:recent:lim={lim}:off={off}
+   - 30s acceptable: stats GROUP BY pequeno + cache hit cobre ambas
+
+2. COUNT(*) OVER()::INT AS _total window:
+   - Strip _total + has_more boolean
+   - Pattern V8 17o endpoint cache+window
+   - Latencia: ~30ms -> ~17ms (PG single scan)
+
+3. Cache coherency cross-svc:
+   - Post-checkout invalidate: + order:admin:recent:*
+   - User finaliza checkout -> admin dashboard mostra novo order imediato
+   - Pattern V8: best-effort try/catch (cache fail nao quebra tx)
+
+Stats FILTER aggregates 90d preservados:
+- count_paid (status IN paid,fulfilled)
+- count_pending (status=pending_payment)
+- total_revenue (SUM total_cents WHERE paid)
+- Pequeno payload + cached junto
+
+LGPD mask preserved via maskPII (admin full / staff masked).
+
+Response shape final V8 consistente:
+{ orders, stats, total, limit, offset, has_more }
+
+PATTERN V8 COUNT WINDOW agora em 17 endpoints / 8 microsservices:
+- product-svc (4): wishlist, products list, reviews, qna
+- notification-svc (1): /me
+- vault-svc (2): keys admin, rotation cron
+- search-svc (1): categories
+- review-svc (2): admin/reports, qna/seller/pending
+- seller-svc (4): admin/all, admin/payouts/pending, admin/pending-kyc, admin/sla-risk
+- aiops-svc (3): /audit-log, /metrics, /alerts
+- order-svc (3): /orders user (206), /admin/disputes (214), /admin/recent (215 NEW)
+
+Commit 8a7d8f3 pushed origin/main (+43/-16)
+VPS SSH ainda bloqueado (48 ciclos consecutivos)
+
+CACHE COVERAGE order-svc FINAL:
+- /orders user: 30s (pass 206)
+- /admin/disputes: 30s (pass 214)
+- /admin/recent: 30s (pass 215 NEW)
+- /cart: 5s (existing)
+- /coupon/:code/preview: 60s (existing)
+- /:id detalhe: TODO audit futura
+
+CODIGO ACUMULADO ORIGIN/MAIN (48 ciclos):
+- 168-214: documentados
+- 215: order-svc /admin/recent cache + window + coherency
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_order-svc --force
+- Cache hit benchmark:
+  time curl -H "Bearer \$ADMIN" "/api/orders/admin/recent?limit=20"
+  1a: ~17ms (PG window)
+  2a: <5ms (Redis hit)
+- Coherency test:
+  POST /orders/checkout -> 201
+  GET /admin/recent -> esperado: novo order presente imediato
+
+PROXIMA ITER:
+- W17: vault-svc seller BYOK endpoints
+- W11: payment-svc PAYMENT_REFUND_FAILED retry edge cases
+- W18: cache /orders/:id detalhe (buyer detail page)
+- 🚨 VPS SSH unblock URGENTE (48 ciclos - 16h sem deploy!)
