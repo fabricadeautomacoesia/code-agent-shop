@@ -184,6 +184,8 @@ router.post('/register', registerLimiter, validate({ body: registerSchema }), as
       }
 
       // BUG 3: audit_log atomic - security event (account creation signal)
+      /* FIX-WORKER-6 pass 322: ua_prefix mask.text() paridade pass 282/292/296/315
+         /register estava sem DLP mask - finally close auth-svc coverage */
       await c.query(
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, $2, 'auth.register', 'user', $1, 'info', $3::JSONB)`,
@@ -193,7 +195,7 @@ router.post('/register', registerLimiter, validate({ body: registerSchema }), as
           has_cpf: !!cpf_cnpj,
           has_phone: !!phone_e164,
           ip: req.ip,
-          ua_prefix: (req.headers['user-agent'] || '').slice(0, 60),
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
         })]
       );
 

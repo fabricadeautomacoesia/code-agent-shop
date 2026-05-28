@@ -29894,3 +29894,36 @@ PROXIMA ITER:
 - W10 search /facets consolidate (search-svc linha 736 ja em CTE - sao paralelas)
 - W12 qa-svc additional audit
 - VPS SSH unblock URGENTISSIMO (154 ciclos - 51.3h)
+
+
+============================================================
+PASS 322 - 2026-05-28 - W6 auth /register ua_prefix DLP MARCO completo
+============================================================
+Files: 1 modificado
+  - services/auth-svc/src/routes/auth.js (register ua_prefix mask)
+Lines: ~3 changed
+
+W6 (auth /register DLP mask - MARCO):
+- PRE-FIX: register audit_log ua_prefix raw (gap descoberto auditoria)
+- POST-FIX: mask.text() aplicado paridade pass 282/292/296/315/318
+- MARCO: auth-svc DLP mask COMPLETE em TODOS audit_log:
+  - auth.js (10 paths): login, refresh, logout, register, forgot, reset, twofa_corrupt, twofa_decrypt, twofa_invalid, twofa_replay
+  - two-factor.js (5 paths): setup_init, recovery, activate_ok, activate_fail, disable
+
+Total auth-svc audit_log entries masked: 15 paths
+
+VPS SSH BLOQUEADO (155 ciclos - 51.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_auth-svc --force
+- W6 verify final coverage:
+  SELECT action, payload_after->>'ua_prefix' FROM audit_log
+  WHERE action LIKE 'auth.%' OR action LIKE '2fa.%'
+  ORDER BY created_at DESC LIMIT 20;
+  Esperado: ua_prefix ALL masked (no raw strings)
+
+PROXIMA ITER:
+- W4 audit consolidate other services ua_prefix coverage
+- W7 product-svc force-approve audit DLP
+- VPS SSH unblock URGENTISSIMO (155 ciclos - 51.7h)
