@@ -443,6 +443,7 @@ app.get('/top-sellers',
         WHERE p.status IN ('approved','platform_owned')
           AND p.deleted_at IS NULL
           AND c.parent_id IS NULL
+          AND c.is_active = TRUE
           AND ($2::TEXT IS NULL OR $2 = '' OR c.slug = $2)
      )
      SELECT id, slug, title, subtitle, short_description, kind, cover_image_url,
