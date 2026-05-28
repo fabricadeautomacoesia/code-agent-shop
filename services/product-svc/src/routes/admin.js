@@ -284,9 +284,30 @@ router.post('/:id/force-approve',
 router.post('/:id/platform-take',
   validate({ body: z.object({ reason: z.string().min(5) }) }),
   asyncHandler(async (req, res, next) => {
-    const r = await query('SELECT platform_resale_enabled, seller_id FROM products WHERE id = $1', [req.params.id]);
+    const r = await query('SELECT platform_resale_enabled, seller_id, slug FROM products WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
     if (!r.rows.length) return next(errorHandler.notFound());
     if (!r.rows[0].platform_resale_enabled) return next(errorHandler.forbidden('resale_not_allowed'));
+    // FIX-WORKER-7 pass 236 (idempotency platform-take):
+    //   PRE-FIX: 2 admin requests concorrentes /platform-take no mesmo product
+    //   tentavam INSERT com mesmo slug "{slug}-platform". UNIQUE constraint
+    //   violava na segunda -> 500 errorHandler. Pior em retry pos-timeout:
+    //   admin acha que falhou, dispara novamente -> duplicacao silenciosa
+    //   se primeira commitou antes de cair na exception.
+    //   Tambem cenario: admin original_id=X criou ja; tentativa repetida
+    //   deve retornar produto existente (idempotency) em vez de error.
+    //   POST-FIX: SELECT existing duplicate primeiro. Se ja existe, retorna
+    //   sem reinsert. Pattern UPSERT graceful + audit log diferenciado.
+    const existing = await query(
+      `SELECT id, slug FROM products
+        WHERE slug = $1 AND is_platform_owned = TRUE AND deleted_at IS NULL
+        LIMIT 1`,
+      [r.rows[0].slug + '-platform']
+    );
+    if (existing.rows.length) {
+      log.info({ original: req.params.id, existing: existing.rows[0].id },
+        '[product.platform_take.idempotent_hit] duplicate ja existe - retorna existente');
+      return res.json({ ok: true, platform_product: existing.rows[0], idempotent: true });
+    }
     // Duplica produto como platform_owned (mantem original do seller)
     const dup = await query(
       `INSERT INTO products
@@ -300,9 +321,21 @@ router.post('/:id/platform-take',
               cover_image_url, gallery_urls, package_url, package_hash_sha256, package_size_bytes,
               TRUE, FALSE, 'approved', NOW(), $1, NOW()
          FROM products WHERE id = $2
-         RETURNING id, slug`,
+       ON CONFLICT (slug) DO NOTHING
+       RETURNING id, slug`,
       [req.user.sub, req.params.id]
     );
+    // ON CONFLICT race-safe: se outro request inseriu entre nosso SELECT e
+    // INSERT, ON CONFLICT swallow. Re-fetch p/ retornar ID
+    if (!dup.rows.length) {
+      const raced = await query(
+        `SELECT id, slug FROM products WHERE slug = $1 LIMIT 1`,
+        [r.rows[0].slug + '-platform']
+      );
+      log.warn({ original: req.params.id, raced_id: raced.rows[0]?.id },
+        '[product.platform_take.race_resolved] outro request criou primeiro');
+      return res.json({ ok: true, platform_product: raced.rows[0], race: true });
+    }
     await query(
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
        VALUES ($1,$2,'product.platform_take','product',$3,'warn',$4::JSONB)`,

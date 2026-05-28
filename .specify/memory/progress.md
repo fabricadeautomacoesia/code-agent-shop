@@ -24595,3 +24595,95 @@ PROXIMA ITER:
 - W16 MLB: Cupom progressivo
 - W7 product-svc: bulk action endpoints
 - VPS SSH unblock URGENTE (68 ciclos)
+
+============================================================
+PASS 236 (2026-05-28) - W7 + W17 + W8
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W7 product-svc: /admin/:id/platform-take idempotency
+- W17 vault-svc: rate-limit em /keys/:id/revoke (DoS protection)
+- W8 storefront: nav.tsx Tailwind class conflict "flex hidden sm:flex"
+
+============================================================
+1. W7 - platform-take idempotency + race-safe ON CONFLICT
+============================================================
+FILE: services/product-svc/src/routes/admin.js:284-330
+
+PROBLEMA:
+- /admin/:id/platform-take cria duplicate produto com slug='{slug}-platform'
+- 2 admin requests concorrentes (refresh duplo, retry pos-timeout):
+  - 1a INSERT commits
+  - 2a INSERT viola UNIQUE constraint -> 500 errorHandler
+- Admin acha falha + dispara retry -> ciclo infinito
+- Sem audit trail de tentativas duplicadas
+
+POST-FIX (defensive 3-layer):
+1. SELECT pre-check: se duplicate ja existe, retorna idempotent=true
+2. INSERT ... ON CONFLICT (slug) DO NOTHING - race-safe
+3. Se ON CONFLICT swallow: re-SELECT + retorna race=true
+- Pattern V8 idempotency aplicado consistente
+
+============================================================
+2. W17 - vault-svc rate-limit em /keys/:id/revoke
+============================================================
+FILE: services/vault-svc/src/server.js:662
+
+PROBLEMA (DoS protection):
+- /keys/:id/revoke adminOnly mas SEM rate-limit
+- Cenario admin token leak (XSS dashboard-admin, hijack):
+  - Atacante itera vault_api_keys.id -> POST /revoke cada
+  - Mass revoke (100 keys em 1s) -> platform sem keys LLM
+  - qa-worker + llm-router degraded -> products stuck em QA
+  - Rebuilds requerem provision manual de 100 keys
+- Pattern V8: ALL endpoints mutate em vault precisam rate-limit
+- /keys (provision) ja tinha provisionRateLimit 5/min, revoke nao
+
+POST-FIX: aplicar provisionRateLimit em /keys/:id/revoke
+- 5 revogacoes/min suficiente p/ ops normal (1-2 keys/incident)
+- Combina com fail2ban global (defesa em profundidade)
+
+============================================================
+3. W8 - nav.tsx Tailwind class conflict "flex hidden sm:flex"
+============================================================
+FILE: apps/storefront/src/components/nav.tsx:80
+
+PROBLEMA:
+- className="btn-ghost text-sm flex items-center gap-2 hidden sm:flex"
+- 3 display rules competindo: flex -> hidden(none) -> sm:flex
+- Tailwind JIT resolve por ordem source mas alguns SSR/build parsers
+  geram FOUC mobile (flash do botao visivel antes do hidden aplicar)
+- Pattern incorreto introducido em pass anterior
+
+POST-FIX: remover "flex" inicial
+- "items-center gap-2 hidden sm:flex"
+- 2 display rules: hidden (default) + sm:flex (override)
+- items-center + gap-2 mantidos (aplicam quando display:flex ativa)
+- Padrao consistente com linha 84 (inline-flex) que ja era correto
+
+============================================================
+SUMARIO PASS 236
+============================================================
+Files: 3 modificados
+  - services/product-svc/src/routes/admin.js (idempotency)
+  - services/vault-svc/src/server.js (rate-limit revoke)
+  - apps/storefront/src/components/nav.tsx (class conflict)
+Lines: ~50 added
+
+VPS SSH BLOQUEADO (69 ciclos - 23h sem deploy).
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild:
+    docker service update cas_product-svc cas_vault-svc cas_storefront --force
+- W7 test: chamar /platform-take 2x mesmo produto via curl admin:
+    Resposta 1: { ok:true, platform_product:{ id, slug } }
+    Resposta 2: { ok:true, platform_product:{ id, slug }, idempotent:true }
+  Sem 500.
+- W17 test: rapid-fire 10 POST /vault/keys/:id/revoke -> 6a+ retorna 429
+- W8 test: mobile 375px (iPhone SE) - inspetor DevTools network slow 3G,
+  link /conta NAO deve flashar antes de aplicar display:none
+
+PROXIMA ITER:
+- W16 MLB: Cupom progressivo
+- W2 checkout: ?return_to query handling
+- VPS SSH unblock URGENTE (69 ciclos)

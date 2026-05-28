@@ -659,7 +659,17 @@ app.post('/use',
 //    UUID mas nao existir no DB.
 //    FIX: RETURNING id + 404 se rowcount=0.
 const REVOKE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-app.post('/keys/:id/revoke', adminOnly,
+// FIX-WORKER-17 pass 236 (rate-limit revoke - DoS protection):
+//   PRE-FIX: /keys/:id/revoke admin endpoint sem rate-limit. Cenario:
+//   - Admin token vaza (XSS dashboard-admin, session hijack, OAuth pwn)
+//   - Atacante itera vault_api_keys ids -> POST /revoke cada -> mass revoke
+//   - Plataforma fica sem chaves LLM -> degraded mode prolongado
+//   - Pattern V8: ALL endpoints write/mutate em vault precisam rate-limit
+//   - /keys (provision) ja tem provisionRateLimit (5/min), revoke nao
+//   POST-FIX: reuse provisionRateLimit (5 revogacoes/min e suficiente p/ ops
+//   normal - operador manualmente revoga 1-2 keys/incident; 5/min protege
+//   massive abuse). fail2ban global + rate-limit defesa em profundidade.
+app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
   validate({ body: z.object({ reason: z.string().min(3).max(200) }) }),
   asyncHandler(async (req, res, next) => {
     if (!REVOKE_UUID_RE.test(req.params.id)) {

@@ -77,7 +77,14 @@ export function Nav() {
             <NotificationBell />
           </div>
           {user ? (
-            <Link href="/conta" className="btn-ghost text-sm flex items-center gap-2 hidden sm:flex">
+            /* FIX-WORKER-8 pass 236 (Tailwind class conflict): remover "flex"
+               inicial. "flex hidden sm:flex" gera 3 display rules competindo
+               (flex -> none -> flex). Tailwind JIT resolve por ordem mas alguns
+               build parsers/SSR podem gerar FOUC mobile (flash botao visivel
+               antes do hidden aplicar). Pattern correto: declarar so estado
+               default (hidden) + breakpoint override (sm:flex). items-center +
+               gap-2 mantidos - aplicam quando display:flex ativa. */
+            <Link href="/conta" className="btn-ghost text-sm items-center gap-2 hidden sm:flex">
               <User className="w-4 h-4" /> {user.display_name || user.full_name?.split(' ')[0]}
             </Link>
           ) : (
