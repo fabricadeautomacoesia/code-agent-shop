@@ -77,7 +77,8 @@ export function CartDrawer() {
         <h2 className="font-display font-bold text-xl flex items-center gap-2">
           <ShoppingBag className="w-5 h-5 text-magenta" aria-hidden="true" /> Carrinho
         </h2>
-        <button onClick={() => setCartOpen(false)}
+        {/* FIX-WORKER-1 pass 157 (a11y defensive): type='button' explicit em 4 botoes UI */}
+        <button type="button" onClick={() => setCartOpen(false)}
           aria-label="Fechar carrinho"
           className="p-2 hover:bg-white/5 rounded-lg focus-visible:outline-2 focus-visible:outline-magenta">
           <X className="w-5 h-5" aria-hidden="true" />
@@ -124,25 +125,29 @@ export function CartDrawer() {
                     {/* FIX-WORKER-15: controles +/- inline (paridade com /cart) */}
                     <div className="flex items-center justify-between mt-2 gap-2">
                       <div className="inline-flex items-center rounded border border-white/10 bg-white/5">
-                        <button onClick={(e) => { e.preventDefault(); setQty(it.id, it.quantity - 1); }}
-                          aria-label="Diminuir"
-                          className="p-1 hover:bg-white/10 rounded-l disabled:opacity-30"
+                        {/* FIX-WORKER-15 pass 157 (a11y): aria-label dinamico com produto + qty atual */}
+                        <button type="button" onClick={(e) => { e.preventDefault(); setQty(it.id, it.quantity - 1); }}
+                          aria-label={`Diminuir quantidade de ${it.product?.title || 'produto'} (atual: ${it.quantity})`}
+                          className="p-1 hover:bg-white/10 rounded-l disabled:opacity-30 focus-visible:outline-2 focus-visible:outline-magenta"
                           disabled={it.quantity <= 1}>
-                          <Minus className="w-3 h-3" />
+                          <Minus className="w-3 h-3" aria-hidden="true" />
                         </button>
-                        <span className="px-2 text-xs font-mono font-semibold min-w-[24px] text-center">{it.quantity}</span>
-                        <button onClick={(e) => { e.preventDefault(); setQty(it.id, it.quantity + 1); }}
-                          aria-label="Aumentar"
-                          className="p-1 hover:bg-white/10 rounded-r disabled:opacity-30"
+                        <span aria-live="polite" className="px-2 text-xs font-mono font-semibold min-w-[24px] text-center">{it.quantity}</span>
+                        <button type="button" onClick={(e) => { e.preventDefault(); setQty(it.id, it.quantity + 1); }}
+                          aria-label={`Aumentar quantidade de ${it.product?.title || 'produto'} (atual: ${it.quantity})`}
+                          className="p-1 hover:bg-white/10 rounded-r disabled:opacity-30 focus-visible:outline-2 focus-visible:outline-magenta"
                           disabled={it.quantity >= 99}>
-                          <Plus className="w-3 h-3" />
+                          <Plus className="w-3 h-3" aria-hidden="true" />
                         </button>
                       </div>
                       <div className="font-display font-bold text-sm text-magenta-glow">{Api.formatBRL(it.line_total_cents)}</div>
                     </div>
                   </div>
-                  <button onClick={() => removeItem(it.id)} className="text-white/40 hover:text-red-400 p-1 h-fit">
-                    <Trash2 className="w-4 h-4" />
+                  {/* FIX-WORKER-1 pass 157 (a11y): aria-label dinamico + type='button' */}
+                  <button type="button" onClick={() => removeItem(it.id)}
+                    aria-label={`Remover ${it.product?.title || 'produto'} do carrinho`}
+                    className="text-white/40 hover:text-red-400 p-1 h-fit focus-visible:outline-2 focus-visible:outline-red-400 rounded">
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
                   </button>
                 </div>
               ))}
