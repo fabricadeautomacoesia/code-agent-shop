@@ -23032,3 +23032,89 @@ PROXIMA ITER:
 - W11: payment-svc Asaas refund edge cases
 - W13: notification-svc Telegram retry edge cases
 - 🚨 VPS SSH unblock URGENTE (50 ciclos - >16.7h sem deploy!)
+
+PASS 218 (W5 seller BYOK page frontend - consume W17 pass 217) - 2026-05-28:
+- W5 frontend dashboard-seller /byok consumindo pass 217 endpoints
+
+ARQUIVOS CRIADOS (3 files, +316/-1):
+- apps/dashboard-seller/src/app/byok/layout.tsx (Metadata + noindex)
+- apps/dashboard-seller/src/app/byok/page.tsx (316 lines)
+- apps/dashboard-seller/src/app/layout.tsx (+ KeyRound icon + NAV entry)
+
+UI FEATURES:
+
+1. Header com action buttons:
+   - 'Nova chave' toggle expandable form (aria-expanded)
+   - Refresh icon button (reload list)
+
+2. Provision form (toggle expandable):
+   - Provider select 8 options (openai/anthropic/gemini/groq/cohere/
+     mistral/azure-openai/custom)
+   - Alias text (3-100 chars validacao server-side)
+   - Plain key INPUT TYPE=PASSWORD (oculto - SECURITY browser-level)
+   - Monthly quota USD input (opcional, converted cents)
+   - Rotation days input (default 90, range 1-365)
+   - Warning banner amarelo PCI/SOC2 best practices
+   - Rate-limit 429 detection -> friendly UX
+
+3. Keys list table com 6 colunas:
+   - Provider badge magenta + alias display
+   - Fingerprint short (16 chars identification)
+   - Usage atual / quota mensal (com / divisor)
+   - Rotacao countdown:
+     * verde > 7d ate vencimento
+     * amarelo <= 7d (urgent)
+     * vermelho 'Vencida (Nd)' overdue
+   - Status badge (Ativa green / Revogada gray)
+   - Revogar button com promptDialog reason input
+
+SECURITY UX hardening:
+- plain_key type=password (browser oculta input)
+- autoComplete='off' (anti password-manager leak)
+- Warning explicito sobre rotation 90d
+- Confirmação promptDialog para revoke (reason 3-500 chars)
+
+a11y patterns aplicados:
+- role='status'/'alert' em banners
+- aria-label dinamico contextual ('Revogar chave {alias}')
+- aria-hidden='true' em icons decorativos
+- aria-expanded em toggle form button
+- focus-visible:outline-2 cor contextual
+
+NAV seller dashboard agora 8 entries:
+- Visao Geral, Meus produtos, Novo produto, Q&A, Avaliacoes,
+  Financeiro, Minha loja, BYOK API Keys (NEW pass 218)
+
+Gateway routing /api/vault preserved (pass 207 fail2ban gateway aplicado).
+
+PATTERN V8 BYOK SELF-SERVICE END-TO-END:
+- pass 217 backend: 3 endpoints vault-svc /keys/me*
+- pass 218 frontend: dashboard-seller /byok page
+- Total: 6 files (3 backend + 3 frontend) + NAV update
+
+Commit 6d60cbd pushed origin/main (+316/-1)
+VPS SSH ainda bloqueado (51 ciclos consecutivos)
+
+CODIGO ACUMULADO ORIGIN/MAIN (51 ciclos):
+- 168-217: documentados
+- 218: seller dashboard /byok page frontend
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_dashboard-seller --force
+- Acessar: https://seller.inovareinteligenciaartificial.com/byok
+  Login: vendedor1@cas.io / Teste123
+- Provisionar key teste:
+  Provider: openai, Alias: 'test-key', Key: 'sk-test-...' (test mode OpenAI)
+  Quota: 50.00, Rotation: 90
+  Esperado: 201 created + chave aparece no list
+- Test revoke:
+  Click 'Revogar' -> promptDialog reason -> 200 revoked
+- Test ownership:
+  Seller A nao deve ver keys seller B (ownership backend pass 217)
+
+PROXIMA ITER:
+- W4 frontend admin: vault-svc admin /vault page revoke/rotate em chaves seller
+  (parte UI ja existe pass anterior, adicionar filtro seller_id query)
+- W11: payment-svc Asaas refund edge cases
+- W13: notification-svc Telegram retry edge cases
+- 🚨 VPS SSH unblock URGENTE (51 ciclos - 17h sem deploy!)
