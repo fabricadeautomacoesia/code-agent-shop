@@ -17364,7 +17364,26 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Migration 056 drop hardcoded rolling indices (pass 144)
 - ✅ Seller upload form a11y 14 inputs (pass 145)
 - ✅ Seller /loja KYC + store form a11y 14 inputs (pass 146)
-- ✅ Seller /qna response textarea aria-label (pass 147 esta iter)
+- ✅ Seller /qna response textarea aria-label (pass 147)
+- ✅ Storefront /conta/perfil edit form a11y (pass 148 esta iter)
+
+W7 PASS 148 RESUMO - W1 /conta/perfil A11Y + autoComplete:
+- AUDIT /conta/perfil page (edit profile): 4 labels SEM htmlFor + 4 inputs SEM id
+- Bonus: faltava autoComplete (browser autofill reaproveita /register data)
+- FIXES (4 ids + autoComplete + inputMode):
+  * perfil-email (autoComplete='email', aria-describedby p/ hint 'nao pode alterar')
+  * perfil-fullname (autoComplete='name')
+  * perfil-cpfcnpj (autoComplete='off' PII, inputMode='numeric')
+  * perfil-phone (type='tel', autoComplete='tel', inputMode='tel')
+- BONUS a11y banners:
+  * err: role='alert' (anuncia imediato SR)
+  * ok: role='status' + aria-live='polite' (era apenas visual)
+  * CheckCircle icon aria-hidden=true (decorativo)
+- 8 forms a11y compliant agora:
+  Storefront (5): QnaForm + ReviewForm + Register + Checkout + Perfil
+  Seller (3): Upload + Loja + Qna
+- BUILD storefront OK + service converged
+- COMMIT 8935998 pushed GitHub main + deployed prod
 
 W7 PASS 147 RESUMO - W5 /qna RESPONSE FORM A11Y:
 - AUDIT /qna page (seller answering buyer questions): textarea SEM label
