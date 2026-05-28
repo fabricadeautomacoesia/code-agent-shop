@@ -137,40 +137,50 @@ export default function VaultPage() {
       )}
 
       {show && (
+        {/* FIX-WORKER-4 pass 154 (a11y): vault create form 6 inputs htmlFor + id
+            + aria-describedby (rotation hint) + autoComplete=off (PII chave) */}
         <form onSubmit={create} className="glass p-6 mb-6 space-y-3">
           <div className="grid md:grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-white/60 uppercase">Provider</label>
-              <select value={form.provider} onChange={(e) => setForm({...form, provider: e.target.value})}
+              <label htmlFor="vault-provider" className="text-xs text-white/60 uppercase">Provider</label>
+              <select id="vault-provider" value={form.provider} onChange={(e) => setForm({...form, provider: e.target.value})}
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm">
                 {['openai','anthropic','gemini','groq','cohere','mistral'].map((p) => <option key={p}>{p}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-xs text-white/60 uppercase">Alias</label>
-              <input value={form.key_alias} onChange={(e) => setForm({...form, key_alias: e.target.value})} required
+              <label htmlFor="vault-alias" className="text-xs text-white/60 uppercase">Alias</label>
+              <input id="vault-alias" value={form.key_alias} onChange={(e) => setForm({...form, key_alias: e.target.value})} required
+                autoComplete="off"
                 placeholder="openai-prod-shared-001"
                 className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
             </div>
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase">Chave (plain, sera criptografada)</label>
-            <input value={form.plain_key} onChange={(e) => setForm({...form, plain_key: e.target.value})} required type="password"
+            <label htmlFor="vault-plainkey" className="text-xs text-white/60 uppercase">Chave (plain, sera criptografada)</label>
+            <input id="vault-plainkey" value={form.plain_key} onChange={(e) => setForm({...form, plain_key: e.target.value})} required type="password"
+              autoComplete="new-password"
+              aria-describedby="vault-plainkey-hint"
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
+            <p id="vault-plainkey-hint" className="text-[10px] text-white/40 mt-1">
+              AES-256-GCM encryption antes de gravar no DB. Plain key nunca persistida.
+            </p>
           </div>
           <div>
-            <label className="text-xs text-white/60 uppercase">Seller especifico (deixe vazio para platform pool)</label>
-            <input value={form.seller_id} onChange={(e) => setForm({...form, seller_id: e.target.value})}
+            <label htmlFor="vault-seller" className="text-xs text-white/60 uppercase">Seller especifico (deixe vazio para platform pool)</label>
+            <input id="vault-seller" value={form.seller_id} onChange={(e) => setForm({...form, seller_id: e.target.value})}
+              autoComplete="off"
               placeholder="UUID do seller (opcional)"
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
           </div>
           {/* FIX-WORKER-4 pass 11: input rotation_days (W17 pass 12 backend) */}
           <div>
-            <label className="text-xs text-white/60 uppercase">Periodo de rotacao (dias)</label>
-            <input type="number" min={1} max={365} value={form.rotation_days}
+            <label htmlFor="vault-rotation" className="text-xs text-white/60 uppercase">Periodo de rotacao (dias)</label>
+            <input id="vault-rotation" type="number" inputMode="numeric" min={1} max={365} value={form.rotation_days}
               onChange={(e) => setForm({...form, rotation_days: Number(e.target.value) || 90})}
+              aria-describedby="vault-rotation-hint"
               className="w-32 px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm" />
-            <span className="ml-2 text-xs text-white/50">
+            <span id="vault-rotation-hint" className="ml-2 text-xs text-white/50">
               Default 90d (PCI/SOC2). Use 30d para chaves criticas, 365d para internal-only.
             </span>
           </div>
