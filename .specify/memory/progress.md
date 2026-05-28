@@ -17370,7 +17370,28 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ Admin confirmDialog substitui 7 window.confirm (pass 150)
 - ✅ Seller PromptDialog/confirmDialog 2 callsites (pass 151)
 - ✅ qna-upvote alert -> inline error + aria-pressed (pass 152)
-- ✅ alertDialog + /disputes 4 nativos eliminados (pass 153 esta iter)
+- ✅ alertDialog + /disputes 4 nativos eliminados (pass 153)
+- ✅ Vault admin form a11y + autoComplete PII (pass 154 esta iter)
+
+W7 PASS 154 RESUMO - W4+W17 VAULT FORM A11Y + PII SECURITY:
+- AUDIT vault provisioning form: 5 labels SEM htmlFor + 5 inputs SEM id
+- Security gap: plain_key input sem autoComplete -> browser podia salvar API key real
+- FIXES (5 ids):
+  * vault-provider (select)
+  * vault-alias (autoComplete='off')
+  * vault-plainkey (autoComplete='new-password', aria-describedby hint AES-256-GCM)
+  * vault-seller (autoComplete='off', PII UUID)
+  * vault-rotation (inputMode='numeric', aria-describedby hint PCI/SOC2)
+- BONUS a11y:
+  * AES-256-GCM hint text id='vault-plainkey-hint'
+  * Rotation hint id='vault-rotation-hint' (era span ao lado)
+  * Ambos aria-describedby ligando ao input (SR anuncia hint apos label)
+- BONUS Security (W17):
+  * autoComplete='new-password' evita browser save API keys reais
+  * Pattern OWASP recomendado para campos sensitive that browsers shouldn't memorize
+- 9 forms a11y compliant total: storefront(5) + seller(3) + admin vault(1)
+- BUILD dashboard-admin OK + service converged
+- COMMIT 39ed187 pushed GitHub main + deployed prod
 
 W7 PASS 153 RESUMO - W4 ALERT DIALOG /disputes:
 - AUDIT /disputes resolve flow: 4 callsites window.prompt/alert nativos
