@@ -1037,23 +1037,34 @@ app.post('/keys/me',
     const fp = cryp.sha256(plain_key).slice(0, 16);
     const rotDays = rotation_days || 90;
 
-    const r = await query(
-      `INSERT INTO vault_api_keys
-         (seller_id, provider, key_alias, encrypted_key, iv, auth_tag, key_fingerprint,
-          monthly_quota_usd_cents, is_platform_pool, expires_at, rotation_due_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW() + ($11 || ' days')::INTERVAL)
-       RETURNING id, provider, key_alias, key_fingerprint, is_platform_pool,
-                 monthly_quota_usd_cents, created_at, rotation_due_at`,
-      [sellerId, provider, key_alias, encrypted, iv, tag, fp,
-       monthly_quota_usd_cents || null, isPlatformPool, expires_at || null, String(rotDays)]
-    );
-    // Audit log seller-led action
-    await query(
-      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-       VALUES ($1, $2, 'vault.seller_provision', 'vault_api_key', $3, 'info', $4::JSONB)`,
-      [req.user.sub, req.user.role, r.rows[0].id,
-       JSON.stringify({ provider, key_alias, fingerprint: fp, seller_id: sellerId, ip: req.ip })]
-    ).catch(() => {});
+    // FIX-WORKER-17 pass 269 (atomicity provision seller paridade pass 261):
+    //   PRE-FIX: INSERT vault_api_keys + INSERT audit_log em 2 queries separadas
+    //   sem tx(). Se key commit mas audit_log falha (DB transient, lock, deadlock):
+    //   - vault_api_keys tem row (key ativa)
+    //   - audit_log SEM trail forense (LGPD/SOC2 compliance gap)
+    //   - Pos-incident: "quem provisionou key X?" -> sem resposta no audit
+    //   POST-FIX: tx() wrap all-or-nothing
+    //   Pattern paridade pass 261 W17 (/usage endpoint).
+    let r;
+    await tx(async (c) => {
+      r = await c.query(
+        `INSERT INTO vault_api_keys
+           (seller_id, provider, key_alias, encrypted_key, iv, auth_tag, key_fingerprint,
+            monthly_quota_usd_cents, is_platform_pool, expires_at, rotation_due_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW() + ($11 || ' days')::INTERVAL)
+         RETURNING id, provider, key_alias, key_fingerprint, is_platform_pool,
+                   monthly_quota_usd_cents, created_at, rotation_due_at`,
+        [sellerId, provider, key_alias, encrypted, iv, tag, fp,
+         monthly_quota_usd_cents || null, isPlatformPool, expires_at || null, String(rotDays)]
+      );
+      // Audit log seller-led action - dentro tx() atomic
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'vault.seller_provision', 'vault_api_key', $3, 'info', $4::JSONB)`,
+        [req.user.sub, req.user.role, r.rows[0].id,
+         JSON.stringify({ provider, key_alias, fingerprint: fp, seller_id: sellerId, ip: req.ip })]
+      );
+    });
 
     log.info({ provisioned: r.rows[0].id, provider, fp, seller_id: sellerId, by: req.user.sub },
       '[vault.seller_provision]');

@@ -27397,3 +27397,66 @@ PROXIMA ITER:
 - W11 split fallback (DEDICATED ITER - schema change)
 - W4 admin bulk actions
 - VPS SSH unblock CRITICAL (101 ciclos - 33.7h)
+
+============================================================
+PASS 269 (2026-05-28) - W17 vault seller provision atomicity
+============================================================
+
+OBJETIVO: 3 workers (W10/W15 audits clean)
+- W17 vault-svc: /keys/me seller provision tx() wrap atomicity
+
+============================================================
+1. W17 - seller provision tx() paridade pass 261
+============================================================
+FILE: services/vault-svc/src/server.js:1040-1056
+
+PROBLEMA (compliance gap):
+- INSERT vault_api_keys + INSERT audit_log em 2 queries separadas
+- SEM tx() wrapper
+- Pass 261 W17 ja fixou /usage endpoint - paridade missing em provision
+- Se key INSERT commit mas audit fail (DB transient, deadlock):
+  * vault_api_keys tem row (key ativa em uso)
+  * audit_log SEM trail forense
+  * LGPD/SOC2 compliance gap: "quem provisionou key X?" sem resposta
+- Critical em audit/forense pos-incident (key leak, fraud investigation)
+
+POST-FIX:
+- tx() wrap atomic - INSERT vault + INSERT audit all-or-nothing
+- Mesmo pattern de pass 261 W17 (/usage)
+- Pattern V8: ALL vault writes precisam atomicity (compliance critical)
+
+============================================================
+2. W10/W15 - audits clean
+============================================================
+W10 aiops audit:
+- /metrics + /metrics/latest shared cache key intentional (same handler)
+- /alerts cached 10s + COUNT window pass 202
+- /audit-log cached 30s + DLP mask
+Sem gap critico esta iter.
+
+W15 mobile audit:
+- nav.tsx flex-shrink-0 logo + responsive sm:inline correto
+- checkout grid grid-cols-1 sm:grid-cols-3 - mobile-first OK
+- Installments grid-cols-2 + max-h-72 overflow-y-auto - safe mobile
+Sem gap critico esta iter.
+
+============================================================
+SUMARIO PASS 269
+============================================================
+Files: 1 modificado
+  - services/vault-svc/src/server.js (tx wrap provision)
+Lines: ~30 added
+
+VPS SSH BLOQUEADO (102 ciclos - 34h sem deploy).
+Migs 069-077 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_vault-svc --force
+- W17: forcar audit_log INSERT fail (DROP audit_log tem) ->
+  vault_api_keys ALSO rollback (tx atomic)
+  No mais audit gap em provisions
+
+PROXIMA ITER:
+- W11 split fallback iter (deferred pass 268)
+- W4 admin bulk QA
+- VPS SSH unblock CRITICAL (102 ciclos - 34h!!!)
