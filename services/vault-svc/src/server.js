@@ -102,11 +102,12 @@ const provisionRateLimit = rateLimit({
   message: { error: 'rate_limit_exceeded' },
 });
 
+// FIX-WORKER-17 pass 254: plain_key DoS prevention (max 500 chars - cobre todos providers)
 const provisionSchema = z.object({
   seller_id: z.string().uuid().nullable().optional(),
   provider: z.enum(['openai','anthropic','gemini','groq','cohere','mistral','azure-openai','custom']),
   key_alias: z.string().min(3).max(100),
-  plain_key: z.string().min(10),
+  plain_key: z.string().min(10).max(500),
   monthly_quota_usd_cents: z.number().int().positive().nullable().optional(),
   is_platform_pool: z.boolean().default(true),
   expires_at: z.string().datetime().optional(),
@@ -779,7 +780,7 @@ app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
 //   mas PG rejeita?". POST-FIX: reason max=140 garante total <=200 com
 //   overhead "rotated: ... (-> uuid)".
 const rotateSchema = z.object({
-  plain_key: z.string().min(10),  // nova chave
+  plain_key: z.string().min(10).max(500),  // nova chave (FIX-WORKER-17 pass 254 max DoS)
   reason: z.string().min(3).max(140),  // motivo audit - 140 cabe c/ overhead em revoked_reason VARCHAR(200)
   rotation_days: z.number().int().min(1).max(365).optional(),  // novo prazo
 });
@@ -938,10 +939,19 @@ app.post('/usage', vaultUseGuard,
 // - Provision rate-limit reused (provisionRateLimit existing)
 // - Audit log INSERT em provision + revoke (forense seller-led changes)
 
+// FIX-WORKER-17 pass 254 (plain_key DoS prevention):
+//   PRE-FIX: plain_key z.string().min(10) sem upper bound. Atacante seller
+//   poderia enviar 100MB string -> AES-256-GCM encrypt processa todo o
+//   buffer em memoria -> svc OOM kill.
+//   Real API keys tamanhos:
+//     OpenAI sk-... ~51 chars, Anthropic sk-ant-... ~100, Gemini AIza... ~39
+//     Groq gsk_... ~56, Cohere/Mistral similar. Custom max 500.
+//   POST-FIX: .max(500) cobre todos providers + future + previne DoS.
+//   Provision endpoint admin tambem fix (paridade).
 const sellerKeyProvisionSchema = z.object({
   provider: z.enum(['openai','anthropic','gemini','groq','cohere','mistral','azure-openai','custom']),
   key_alias: z.string().min(3).max(100),
-  plain_key: z.string().min(10),
+  plain_key: z.string().min(10).max(500),
   monthly_quota_usd_cents: z.number().int().positive().nullable().optional(),
   // Seller NUNCA pode setar is_platform_pool (so admin):
   // is_platform_pool: z.boolean()  REMOVED p/ seller schema

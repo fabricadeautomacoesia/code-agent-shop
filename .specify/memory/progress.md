@@ -26184,3 +26184,88 @@ PROXIMA ITER:
 - W2 checkout: cupom + redeem cumulativo validation
 - W6 auth: 2fa setup QR code regenerate
 - VPS SSH unblock URGENTISSIMO (86 ciclos - 28.7h)
+
+============================================================
+PASS 254 (2026-05-28) - W1 + W3 + W17 frontend/backend/security
+============================================================
+
+OBJETIVO: 3 workers paralelos
+- W1 storefront: register pwScore regex parity backend
+- W3 storefront: PDP review date defensive render
+- W17 vault-svc: plain_key DoS prevention (3 schemas)
+
+============================================================
+1. W1 - register pwScore regex backend parity
+============================================================
+FILE: apps/storefront/src/app/register/page.tsx:25-33
+
+PROBLEMA:
+- pwScore regex /[!@#$%^&*]/ - apenas 8 special chars whitelisted
+- Backend Zod (auth.js:775) aceita /[^\w\s]/ (qualquer non-word non-space)
+- User digita "Senha123-" (hyphen) -> pwScore=3, backend ACEITA
+- UI mostra "Bom" enquanto backend considera "Forte" - UX confuso
+- redefinir-senha (pass 233) ja foi paridade fix - register lagged
+
+POST-FIX:
+- /[^\w\s]/.test(v) - paridade exata com backend Zod
+- Score 4 atingivel com qualquer special (hyphen, semicolon, etc)
+
+============================================================
+2. W3 - PDP review date defensive render
+============================================================
+FILE: apps/storefront/src/components/product-tabs.tsx:195-208
+
+PROBLEMA:
+- new Date(r.created_at).toLocaleDateString sem null guard
+- r.created_at=null -> new Date(null) = epoch -> "01/01/1970"
+- r.created_at=undefined -> "Invalid Date" literal
+- Edge case raro (backend NOT NULL constraint) mas defesa em camada
+
+POST-FIX:
+- {r.created_at && !isNaN(new Date(r.created_at).getTime()) ? formatado : '-'}
+- Pattern V8 defensive UI render
+
+============================================================
+3. W17 - vault plain_key DoS prevention (3 schemas)
+============================================================
+FILE: services/vault-svc/src/server.js:97, 109, 763
+
+PROBLEMA (DoS via crypto):
+- plain_key z.string().min(10) SEM upper bound em 3 schemas:
+  * provisionSchema (admin POST /keys)
+  * sellerKeyProvisionSchema (seller POST /keys/me)
+  * rotateSchema (admin POST /keys/:id/rotate)
+- Atacante seller envia 100MB string -> AES-256-GCM encrypt processa
+  todo buffer em memoria -> svc OOM kill -> outage vault
+- Real API keys tamanhos:
+  OpenAI sk-... ~51, Anthropic sk-ant-... ~100, Gemini AIza... ~39
+  Groq gsk_... ~56, Cohere/Mistral similar
+- Max 500 chars cobre todos + future + previne DoS
+
+POST-FIX:
+- plain_key z.string().min(10).max(500) nos 3 schemas
+- Pattern: defesa em profundidade + rate-limit ja existente
+
+============================================================
+SUMARIO PASS 254
+============================================================
+Files: 3 modificados
+  - apps/storefront/src/app/register/page.tsx (pwScore parity)
+  - apps/storefront/src/components/product-tabs.tsx (date defensive)
+  - services/vault-svc/src/server.js (3 schemas DoS guard)
+Lines: ~40 added
+
+VPS SSH BLOQUEADO (87 ciclos - 29h sem deploy).
+Migs 069-075 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_storefront cas_vault-svc --force
+- W1 test: /register digite "Senha123-" -> pwScore=4 "Forte" (era 3 "Bom")
+- W3 test: review com created_at=null no PDP -> render "-" (era 1970)
+- W17 test: POST /api/vault/keys com plain_key=1MB -> 400 string_too_long
+  (era OOM/timeout)
+
+PROXIMA ITER:
+- W4 admin: bulk select multiple payouts
+- W11 payment: dispute auto-create trigger
+- VPS SSH unblock URGENTISSIMO (87 ciclos - 29h!!)

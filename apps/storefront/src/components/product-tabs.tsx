@@ -196,7 +196,15 @@ export function ProductTabs({ product, reviews, qna }: Props) {
                     {/* FIX-WORKER-3: fallback "Usuario CAS" quando user sem display_name */}
                     <span>{r.buyer_name || 'Usuario CAS'}</span>
                     <span>-</span>
-                    <span>{new Date(r.created_at).toLocaleDateString('pt-BR')}</span>
+                    {/* FIX-WORKER-3 pass 254 (defensive date render):
+                        PRE-FIX: new Date(r.created_at).toLocaleDateString sem guard
+                        - r.created_at=null -> new Date(null) -> "01/01/1970"
+                        - r.created_at=undefined -> "Invalid Date" literal
+                        Edge case raro (backend deveria garantir NOT NULL) mas defesa
+                        em camada. Pattern V8: render '-' se data invalida. */}
+                    <span>{r.created_at && !isNaN(new Date(r.created_at).getTime())
+                      ? new Date(r.created_at).toLocaleDateString('pt-BR')
+                      : '-'}</span>
                     {Number(r.helpful_count) > 0 && (
                       <>
                         <span>-</span>

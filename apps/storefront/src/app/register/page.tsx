@@ -24,11 +24,19 @@ function RegisterInner() {
 
   function onPass(v: string) {
     setForm({ ...form, password: v });
+    // FIX-WORKER-1 pass 254 (pwScore regex parity backend):
+    //   PRE-FIX: /[!@#$%^&*]/ restringia special chars a apenas 8 caracteres
+    //   Backend (auth.js:775 Zod) aceita /[^\w\s]/ (qualquer non-word non-space)
+    //   User com "Senha123-" (hyphen) ou "Senha123;" via pwScore=3 mas backend
+    //   considera valido (special char presente). UI mostra strip "Bom" quando
+    //   na verdade e "Forte" pelo backend. Inconsistencia confunde users.
+    //   POST-FIX: paridade regex - /[^\w\s]/ accepting any special.
+    //   Same logic redefinir-senha pass 233 ja aplicou.
     let s = 0;
     if (v.length >= 8) s++;
     if (/[A-Z]/.test(v)) s++;
     if (/[0-9]/.test(v)) s++;
-    if (/[!@#$%^&*]/.test(v)) s++;
+    if (/[^\w\s]/.test(v)) s++;
     setPwScore(s);
   }
 
