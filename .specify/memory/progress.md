@@ -17373,7 +17373,30 @@ REVIEW-SVC PROGRESS 9/N endpoints:
 - ✅ alertDialog + /disputes 4 nativos eliminados (pass 153)
 - ✅ Vault admin form a11y + autoComplete PII (pass 154)
 - ✅ Admin reports + payouts filter a11y (pass 155)
-- ✅ Storefront nav buttons type=button + focus-visible (pass 156 esta iter)
+- ✅ Storefront nav buttons type=button + focus-visible (pass 156)
+- ✅ Cart-drawer 4 buttons a11y rico (pass 157 esta iter)
+
+W7 PASS 157 RESUMO - W1+W15 CART-DRAWER A11Y RICO:
+- AUDIT cart-drawer.tsx: 4 botoes UI sem type='button' (V8 Regra 23 defensive)
+- BUGS encontrados:
+  * 4 botoes sem type='button' (Fechar, +/- qty, Remover)
+  * qty +/- aria-label generico ('Diminuir' / 'Aumentar')
+    -> SR nao distinguia qual produto/quantidade entre multiplos itens
+  * Remover button (Trash) SEM aria-label
+  * 4 icones (X, Minus, Plus, Trash2) sem aria-hidden (ruido SR)
+  * qty number sem aria-live (mudanca silenciosa)
+- FIXES (4 buttons + a11y rico):
+  * Fechar carrinho: type='button' (label OK)
+  * Diminuir qty: type='button' + aria-label DINAMICO
+    'Diminuir quantidade de {produto} (atual: {N})'
+    + focus-visible:outline-magenta
+  * Aumentar qty: idem dinamico
+  * Remover item: type='button' + 'Remover {produto} do carrinho'
+    + focus-visible:outline-red-400 (acao destrutiva)
+  * qty span: aria-live='polite' (anuncia mudancas N->N+1)
+  * 4 icones aria-hidden=true (decorativos)
+- BUILD storefront OK + service converged
+- COMMIT 5a0562a pushed GitHub main + deployed prod
 
 W7 PASS 156 RESUMO - W1 STOREFRONT NAV BUTTONS A11Y + DEFENSIVE:
 - AUDIT nav.tsx (root global storefront): 4 botoes UI sem type='button'
