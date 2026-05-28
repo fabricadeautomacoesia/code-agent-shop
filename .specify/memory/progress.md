@@ -30849,3 +30849,43 @@ PROXIMA ITER:
 - W4 admin DLP audit-log viewer (consume passes 282-345 work)
 - W18 perf final consolidation
 - VPS SSH unblock URGENTISSIMO (178 ciclos - 59.3h)
+
+
+============================================================
+PASS 346 - 2026-05-28 - MARCO DLP cross-svc RESPONSE message
+============================================================
+Files: 2 modificados
+  - services/seller-svc/src/routes/admin.js (mv_seller_kpi response)
+  - services/product-svc/src/routes/upload.js (upload_error response)
+Lines: ~10 changed
+
+W4/W7 (DLP response.message leak):
+- PRE-FIX: 2 endpoints retornavam e.message raw para client
+- Admin frontend Network tab capturava raw stack traces
+- mv_seller_kpi.refresh: PG/MV refresh errors com schema/credentials
+- upload_error: multer errors com file paths internos /var/lib/...
+- POST-FIX: mask.text() defensive antes do res.json
+- Pattern V8 DLP cross-svc agora cobre TODOS canais:
+  - log.error/warn (Pino + datadog)
+  - audit_log payload_after JSONB
+  - notifications payload JSONB
+  - product_qa_runs reasons[]
+  - notifications.body
+  - HTTP RESPONSE messages <- ADD pass 346
+
+MARCO DLP CROSS-SVC ABSOLUTE 100%:
+TODO canal de error leak agora masked - ~92 paths cross-svc
+Final grep: 0 raw err/message variants restantes
+
+VPS SSH BLOQUEADO (179 ciclos - 59.7h sem deploy).
+Migs 069-084 pendentes apply.
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_seller-svc cas_product-svc --force
+- Admin trigger mv_seller_kpi.refresh fail -> response msg masked
+- Seller upload large file fail -> response masked
+
+PROXIMA ITER:
+- W18 perf final
+- W4 admin DLP audit-log viewer dashboard
+- VPS SSH unblock URGENTISSIMO (179 ciclos - 59.7h)

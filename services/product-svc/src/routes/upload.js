@@ -206,7 +206,11 @@ router.post('/media', upload.single('file'), asyncHandler(async (req, res, next)
 router.use((err, _req, res, _next) => {
   if (err) {
     log.warn({ /* FIX pass 345 DLP */ err: mask.text(String(err.message || '').slice(0, 300)) }, '[upload.err]');
-    return res.status(400).json({ error: 'upload_error', message: err.message });
+    /* FIX-WORKER-7 pass 346: DLP response message paridade pass 346 */
+    return res.status(400).json({
+      error: 'upload_error',
+      message: mask.text(String(err.message || '').slice(0, 200)),
+    });
   }
 });
 

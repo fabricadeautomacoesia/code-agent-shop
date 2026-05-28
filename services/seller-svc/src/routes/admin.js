@@ -871,7 +871,14 @@ router.post('/mv-kpi/refresh',
         [req.user.sub, req.user.role,
          JSON.stringify({ error: /* FIX pass 345 DLP */ require('@cas/shared').mask.text(String(e.message || '').slice(0, 500)), ip: req.ip })]
       ).catch(() => {});
-      return res.status(500).json({ error: 'refresh_failed', message: e.message });
+      /* FIX-WORKER-4 pass 346: DLP response message - admin frontend Network tab
+         capturava raw e.message com PG_PASS/Bearer/stack traces.
+         POST-FIX: mask.text() defensive antes do response.
+         Pattern V8 cross-svc DLP coverage agora inclui CLIENT RESPONSE messages. */
+      return res.status(500).json({
+        error: 'refresh_failed',
+        message: require('@cas/shared').mask.text(String(e.message || '').slice(0, 200)),
+      });
     }
   })
 );
