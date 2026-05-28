@@ -32592,3 +32592,33 @@ POST-FIX:
 
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
+
+## PASS 407 W12 QA-WORKER: download_and_extract DoS memory exhaustion fix
+commit 0a4ff57
+BUG memory exhaustion DoS via large download
+PRE-FIX:
+- cli.get(url) carrega body inteiro RAM
+- 1GB URL = 1GB allocated antes len check
+- 10 paralel = 10GB RAM = worker OOM
+- Slow-loris timeout 120s
+
+POST-FIX streaming:
+- cli.stream() chunks 64KB
+- Content-Length early check
+- aiter_bytes running total
+- Cleanup tmp em exceeder
+- Timeout breakdown (30/60/30/60)
+
+Memory: O(file_size) -> O(64KB) constant
+Pattern V8 W12: streaming size-bounded
+
+W12 hardening series:
+  pass 387 parse_score
+  pass 394 N8N fallback
+  pass 407 download DoS <- ESTE
+
+140 passes acumulados (268->407) sem deploy VPS
+5 CRITICAL + 23 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
