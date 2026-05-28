@@ -21031,3 +21031,65 @@ PROXIMA ITER:
 - W18: cache /products/:slug/related ou /:slug/also-bought
 - W14: audit indices para vault_key_usage (hot table cron)
 - 🚨 VPS SSH unblock URGENTE (21 ciclos - ~7h sem deploy!)
+
+PASS 189 (W7 review-svc COUNT window + 2 total bugs) - 2026-05-28:
+- W7 audit review-svc dashboard descobriu 2 BUGS de pagination total:
+
+BUG 1 em /admin/reports (admin moderacao queue):
+- 'total: reports.length' reportava paginated count (max LIMIT 50)
+- Cenario: 200 reports open, limit=50 -> response 'total=50'
+- UI admin '50 de 50' (deveria ser '50 de 200')
+- 'Carregar mais' disabled erroneamente quando havia 150 pendentes
+
+BUG 2 em /qna/seller/pending (seller queue perguntas):
+- Same pattern: 'total: qna.length' reportava paginated count
+- 100 unanswered, seller via 'voce tem 50 perguntas' (real: 100)
+- Seller pensava estar updated mas tinha 50 hidden
+
+FIX (consolidation pattern - mesmo W18-187):
+- COUNT(*) OVER()::INT AS _total window aggregate
+- Strip _total interno + has_more boolean response
+- Total absoluto correto + UI 'Carregar mais' funciona
+
+ENDPOINTS REVIEW-SVC AGORA CORRETOS:
+- /admin/reports: total + has_more
+- /qna/seller/pending: total + has_more
+- /seller/received: NAO mudado (count semantica diferente, sem offset)
+
+LGPD mask preserved em ambos (admin full, staff/seller masked).
+
+Commit 5c1a60e pushed origin/main
+VPS SSH ainda bloqueado (22 ciclos consecutivos)
+
+CONSOLIDADO N+1 + COUNT WINDOW (passes 178-189):
+- 178: product-svc /wishlist
+- 179: notification-svc /me + migration 059
+- 180: vault-svc /keys LATERAL + COUNT
+- 181: search-svc /categories CTE GROUP BY
+- 187: product-svc 3 endpoints (products + reviews + qna)
+- 188: vault-svc rotation cron bulk (N+1 750 -> 2)
+- 189: review-svc /admin/reports + /qna/seller/pending
+
+PADRAO V8 PAGINATION:
+- Sempre COUNT(*) OVER()::INT AS _total
+- Response: { items, total, limit, offset, has_more }
+- 'has_more = (offset + items.length) < total'
+- Total = ABSOLUTE, NUNCA items.length em listas paginadas
+
+CODIGO ACUMULADO ORIGIN/MAIN (22 ciclos):
+- 168-188: documentados
+- 189: review-svc /admin/reports + /qna/seller/pending COUNT window
+
+LINKS PARA TESTE (apos VPS unblock):
+- Rebuild: docker service update cas_review-svc --force
+- Validar:
+  curl -H "Bearer $ADMIN" /api/reviews/admin/reports?status=open
+  -> Esperado: total !== reports.length (se >50 reports)
+  curl -H "Bearer $SELLER" /api/qna/seller/pending
+  -> Esperado: total !== qna.length
+
+PROXIMA ITER:
+- W14: indices para vault_key_usage (hot cron table)
+- W18: cache /products/:slug/related ou /:slug/also-bought
+- W17: vault auto-rotation (ate aqui so warn - implementar swap)
+- 🚨 VPS SSH unblock URGENTE (22 ciclos - ~7.3h sem deploy!)
