@@ -6,7 +6,7 @@ const express = require('express');
 const cron = require('node-cron');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache, rateLimiter, maskPII, mask, notifCache } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache, rateLimiter, maskPII, mask, notifCache, withRetry } = require('@cas/shared');
 
 const log = logger.child({ svc: 'review-svc' });
 const app = express();
@@ -51,9 +51,10 @@ app.post('/', reviewLimiter, jwt.requireAuth(), validate({ body: reviewSchema })
   // BUG 4 (acima): rate-limit anti-spam.
   const b = req.body;
 
+  // FIX-WORKER-13 pass 666 (withRetry review create deadlock defense - cadeia consolidacao)
   let outcome;
   let review;
-  await tx(async (c) => {
+  await withRetry('review.create.tx', async () => await tx(async (c) => {
     // Validacao consolidada SELECT FOR UPDATE (anti-race)
     const oi = await c.query(
       `SELECT oi.product_id, oi.seller_id
@@ -127,7 +128,7 @@ app.post('/', reviewLimiter, jwt.requireAuth(), validate({ body: reviewSchema })
     }
     outcome = outcome || {};
     outcome.notified_seller_user_id = reviewSellerUserId;
-  });
+  }));
 
   if (outcome?.error === 'not_a_verified_purchase') {
     return next(errorHandler.forbidden('not_a_verified_purchase'));
@@ -203,9 +204,10 @@ app.post('/:id/vote', voteLimiter, jwt.requireAuth(),
       return next(errorHandler.notFound('review_not_found'));
     }
 
+    // FIX-WORKER-13 pass 667 (withRetry review vote deadlock defense)
     let outcome;
     let result;
-    await tx(async (c) => {
+    await withRetry('review.vote.tx', async () => await tx(async (c) => {
       // FIX bug 1+4+5: SELECT FOR UPDATE review valido + is_hidden check
       const rev = await c.query(
         `SELECT id, is_hidden FROM product_reviews
@@ -250,7 +252,7 @@ app.post('/:id/vote', voteLimiter, jwt.requireAuth(),
         helpful_count: counts.rows[0].helpful,
         unhelpful_count: counts.rows[0].unhelpful,
       };
-    });
+    }));
 
     if (outcome?.error === 'review_not_found') return next(errorHandler.notFound('review_not_found'));
     if (outcome?.error === 'review_hidden') {
