@@ -34867,3 +34867,56 @@ W18 query reduction series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 461 W7 PRODUCT-SVC: ua_prefix forensic em 4 audit_log seller-mgmt (paridade pass 438+443+458)
+commit pendente
+GAP product-svc seller-mgmt 4 audit_log INSERTs sem ua_prefix
+PRE-FIX:
+- Pass 282 estabeleceu pattern ua_prefix em auth-svc
+- Pass 296 review-svc, 408 seller-svc, 438 vault-svc, 443 auth-svc gap-fill
+- Pass 458 vault.invalid_internal_token (CRITICAL)
+- product-svc seller-mgmt lagged em 4 endpoints:
+  1. linha 365 product.draft.create
+  2. linha 521 product.patch
+  3. linha 658 product.submit
+  4. linha 843 product.version_publish
+  (5: deprecated_route.qna_answer JA tinha user_agent mask pass 323 - OK)
+
+SCOPE forensic gap:
+- Seller pwned account (XSS/phishing) -> mass draft.create / submit / patch
+- audit_log mostra IP mas SEM device fingerprint
+- Admin forensic investigation:
+  - "Foi mesmo browser do seller logado pre-incident?"
+  - "Multiple devices coordinating attack?"
+  - Sem ua_prefix -> nao consegue match patterns
+- LGPD direito-acesso: histórico mudancas seller-led precisa contexto completo
+
+POST-FIX (4 endpoints):
+- + ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60))
+- Paridade pass 438 vault + pass 443 auth (mesmo formato 60 chars)
+- Mantido mask em deprecated_route (linha 988 - field user_agent 200 chars
+  legacy paridade pass 323, sem churn)
+
+W7 ua_prefix audit_log series consolidada:
+  pass 323 user_agent mask deprecated_route
+  pass 461 ua_prefix em 4 endpoints active <- ESTE (consolidacao seller-mgmt)
+
+W17 ua_prefix audit_log cross-svc consolidada (definitive):
+  pass 282 auth-svc base pattern
+  pass 296 review-svc
+  pass 408 seller-svc
+  pass 323 product-svc deprecated route (legacy field)
+  pass 438 vault-svc cross-endpoints
+  pass 443 refresh_banned + 2fa.decrypt
+  pass 458 vault.invalid_internal_token
+  pass 461 product-svc seller-mgmt 4 active endpoints <- ESTE
+
+Pattern V8 W7+W17: TODA audit_log severity info+ em sec-relevant endpoint
+DEVE ter ua_prefix masked (60 chars) - forensic admin investigation.
+
+194 passes acumulados (268->461) sem deploy VPS
+8 CRITICAL + 29 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 ALTA PRIORIDADE

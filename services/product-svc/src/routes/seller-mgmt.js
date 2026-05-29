@@ -374,6 +374,8 @@ router.post('/',
            currency: b.currency,
            slug: product.slug,
            ip: req.ip,
+           // FIX-WORKER-7 pass 461 (ua_prefix forensic paridade pass 438 vault + pass 443 auth)
+           ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
          })]
       );
     });
@@ -528,6 +530,8 @@ router.patch('/:id', validate({ body: patchSchema }), asyncHandler(async (req, r
          old_price_cents: priceChanged ? prevState.old_price : null,
          new_price_cents: priceChanged ? req.body.price_cents : null,
          ip: req.ip,
+         // FIX-WORKER-7 pass 461: ua_prefix forensic paridade
+         ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
        })]
     );
 
@@ -664,6 +668,8 @@ router.post('/:id/submit',
            previous_status: p.status,
            title: p.title,
            ip: req.ip,
+           // FIX-WORKER-7 pass 461: ua_prefix forensic paridade
+           ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
          })]
       );
 
@@ -846,6 +852,8 @@ router.post('/:id/versions',
            breaking_changes: req.body.breaking_changes,
            has_package_url: !!req.body.package_url,
            ip: req.ip,
+           // FIX-WORKER-7 pass 461: ua_prefix forensic paridade
+           ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
          })]
       );
     });
