@@ -36623,3 +36623,52 @@ Cadeia W1 AUTH a11y consolidation:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 493 - W17 VAULT/SECURITY: atomic revoke seller (paridade pass 269 provision)
+
+PRE-FIX BUG (compliance LGPD/SOC2 gap):
+- vault-svc /keys/me/:id/revoke (seller endpoint)
+- UPDATE + INSERT audit_log em 2 queries separadas SEM tx():
+    const r = await query('UPDATE ... RETURNING id', [...])
+    if (!r.rows.length) return next(notFound)
+    await query('INSERT INTO audit_log ...').catch(() => {})  // <- swallow
+    res.json({ ok, revoked })
+
+Cenarios de falha:
+- UPDATE commit (key revoked em DB)
+- INSERT audit_log falha (DB transient/lock/deadlock 40P01)
+- .catch(() => {}) SILENT SWALLOW -> audit gap
+- vault_api_keys.revoked_reason armazena reason MAS sem actor trail forense
+
+Compliance impact:
+- LGPD Art 37: registro de tratamento dados (revoke = critical event)
+- SOC2 CC7.3: monitoring deletes/changes em PII assets
+- Vault keys = secret material (AES-256-GCM encrypted) - revoke audit
+  mandatory para incident response forensic
+
+Divergencia cross-endpoint:
+- Admin /keys/:id/revoke (linha 825): JA tem tx() atomic (pass 25 BUG 4)
+- Seller /keys/me/:id/revoke (este): LAGGED em paridade
+- Pass 269 fixou provision seller atomic - revoke ficou sem fix
+
+POST-FIX:
+- tx() wrapping UPDATE + INSERT audit_log atomico
+- withRetry para deadlock 40P01 defesa (paridade pass 310 /use pool)
+- Throw NOT_FOUND code dentro tx -> rollback se UPDATE 0 rows
+- .catch SWALLOW removido - errors propagam corretamente
+- 404 handler movido p/ catch externa (preserva semantica)
+
+Cadeia W17 VAULT atomicity:
+- pass 25 admin /revoke tx() (BUG 4 audit_log dentro tx)
+- pass 269 seller /keys/me provision tx() (paridade)
+- pass 310 /use pool withRetry deadlock
+- pass 433 DLP write path revoked_reason mask
+- pass 438 ua_prefix forensic cross-endpoints
+- pass 493 (este) seller /keys/me/:id/revoke atomic
+
+226 passes acumulados (268->493) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply

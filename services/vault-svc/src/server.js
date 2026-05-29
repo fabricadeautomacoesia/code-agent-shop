@@ -1367,45 +1367,74 @@ app.post('/keys/me/:id/revoke',
     //   Paridade /keys/:id/rotate pass 433 (mask antes revoked_reason concatenado).
     //   Pattern V8 W17: DLP DEVE ocorrer em WRITE, nao apenas READ.
     const reasonMasked = mask.text(String(req.body.reason || '').slice(0, 500));
-    const r = await query(
-      isAdmin
-        ? `UPDATE vault_api_keys
-              SET is_active = FALSE, revoked_at = NOW(), revoked_reason = $1
-            WHERE id = $2 AND is_active = TRUE
-            RETURNING id`
-        : `UPDATE vault_api_keys
-              SET is_active = FALSE, revoked_at = NOW(), revoked_reason = $1
-            WHERE id = $2 AND is_active = TRUE
-              AND seller_id IN (SELECT id FROM sellers WHERE user_id = $3)
-            RETURNING id`,
-      isAdmin ? [reasonMasked, req.params.id]
-              : [reasonMasked, req.params.id, req.user.sub]
-    );
-    if (!r.rows.length) {
-      return next(errorHandler.notFound('key_not_found_or_already_revoked'));
-    }
-    /* FIX-WORKER-17 pass 295 (DLP mask em reason audit):
-       PRE-FIX: req.body.reason armazenado raw no audit_log payload_after.
-       Reason eh user-input livre (z.string().min(3).max(500)) - pode conter:
-       - Acidental: copia/pasta de API key, JWT token, Bearer header
-       - PII: numero CPF mencionado em justificativa
-       - Outros secrets: PG_PASS em error message colado
-       Pass 282 estabeleceu mask.text() pattern para ua_prefix em audit_log.
-       POST-FIX: mask.text() em reason antes do JSONB store.
-       Paridade query list /keys revoked_reason (linha 495 ja aplicava). */
-    await query(
-      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-       VALUES ($1, $2, 'vault.seller_revoke', 'vault_api_key', $3, 'warn', $4::JSONB)`,
-      [req.user.sub, req.user.role, req.params.id,
-       JSON.stringify({
-         reason: mask.text(req.body.reason.slice(0, 200)),
-         ip: req.ip,
-         // FIX-WORKER-17 pass 438 (ua_prefix forensic - paridade cross-endpoints vault)
-         ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
-       })]
-    ).catch(() => {});
+    /* FIX-WORKER-17 pass 493 (atomic UPDATE + audit_log paridade pass 269 provision):
+       PRE-FIX: UPDATE + INSERT audit_log em 2 queries separadas sem tx().
+       Pass 269 corrigiu PROVISION seller (atomicity). REVOKE seller endpoint
+       (este) ficou LAGGED:
+       - UPDATE commit (key revoked em DB)
+       - INSERT audit_log falha (DB transient/lock/deadlock)
+       - .catch(() => {}) SWALLOWS error -> audit gap silente
+       Compliance impact:
+       - LGPD Art 37: registro de tratamento dados (revoke = critical event)
+       - SOC2 CC7.3: monitoring deletes/changes em PII assets
+       - vault_api_keys.revoked_reason armazena reason mas SEM trail forense
+         de QUEM revogou (actor_user_id no audit_log apenas)
+       Admin endpoint /keys/:id/revoke (linha 825-) ja tem tx() atomic
+       (pass 25 BUG 4 fix). Seller endpoint (este) ficou divergente.
+       POST-FIX:
+       - tx() wrapping UPDATE + INSERT audit_log atomico
+       - withRetry para deadlock 40P01 defesa (paridade pass 310 /use pool)
+       - .catch swallow removido (rollback se audit falhar e correcao real)
+       - Compliance LGPD/SOC2 garantido: revoke + trail forensic atomic. */
+    let revoked = null;
+    await withRetry('vault.seller_revoke', async () => {
+      await tx(async (c) => {
+        const r = await c.query(
+          isAdmin
+            ? `UPDATE vault_api_keys
+                  SET is_active = FALSE, revoked_at = NOW(), revoked_reason = $1
+                WHERE id = $2 AND is_active = TRUE
+                RETURNING id`
+            : `UPDATE vault_api_keys
+                  SET is_active = FALSE, revoked_at = NOW(), revoked_reason = $1
+                WHERE id = $2 AND is_active = TRUE
+                  AND seller_id IN (SELECT id FROM sellers WHERE user_id = $3)
+                RETURNING id`,
+          isAdmin ? [reasonMasked, req.params.id]
+                  : [reasonMasked, req.params.id, req.user.sub]
+        );
+        if (!r.rows.length) {
+          // throw para rollback + handler 404 fora do tx
+          const err = new Error('key_not_found_or_already_revoked');
+          err.code = 'NOT_FOUND';
+          throw err;
+        }
+        revoked = r.rows[0].id;
+        /* FIX-WORKER-17 pass 295 (DLP mask em reason audit):
+           Reason eh user-input livre (z.string().min(3).max(500)) - pode conter:
+           - Acidental: copia/pasta de API key, JWT token, Bearer header
+           - PII: numero CPF mencionado em justificativa
+           - Outros secrets: PG_PASS em error message colado
+           POST-FIX: mask.text() em reason antes do JSONB store. */
+        await c.query(
+          `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+           VALUES ($1, $2, 'vault.seller_revoke', 'vault_api_key', $3, 'warn', $4::JSONB)`,
+          [req.user.sub, req.user.role, req.params.id,
+           JSON.stringify({
+             reason: mask.text(req.body.reason.slice(0, 200)),
+             ip: req.ip,
+             // FIX-WORKER-17 pass 438 (ua_prefix forensic - paridade cross-endpoints vault)
+             ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+           })]
+        );
+      });
+    }).catch((e) => {
+      if (e?.code === 'NOT_FOUND') return next(errorHandler.notFound('key_not_found_or_already_revoked'));
+      throw e; // bubble up para errorHandler middleware (500 generico mascarado)
+    });
+    if (!revoked) return; // already responded via next() above
 
-    res.json({ ok: true, revoked: r.rows[0].id });
+    res.json({ ok: true, revoked });
   })
 );
 
