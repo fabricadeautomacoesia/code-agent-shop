@@ -34813,3 +34813,57 @@ ambos caches list + count (paridade)
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 460 W18 PERFORMANCE: /loyalty/me query reduction (N+1 elimination)
+commit pendente
+BUG perf 2-3 queries em GET /loyalty/me path (pode reduzir p/ 1)
+PRE-FIX paths:
+1. Existing user path:
+   - SELECT user_loyalty (1)
+   - SELECT loyalty_transactions (1)
+   = 2 queries
+2. First-visit path (new user):
+   - SELECT user_loyalty (0 rows)
+   - INSERT ON CONFLICT DO NOTHING (1)
+   - SELECT user_loyalty (re-fetch)
+   - SELECT loyalty_transactions (0 rows)
+   - tx: INSERT loyalty_transactions + UPDATE user_loyalty (2 statements)
+   - SELECT user_loyalty (re-fetch pos bonus)
+   - SELECT loyalty_transactions (re-fetch)
+   = 5+ DB roundtrips
+
+OPPORTUNITY:
+- SELECT + ON CONFLICT INSERT + re-SELECT = 3 queries → 1 INSERT...RETURNING
+- UPDATE + SELECT re-fetch = 2 queries → 1 UPDATE...RETURNING
+
+POST-FIX 2 partes:
+1. Initial path: INSERT ... ON CONFLICT DO UPDATE SET updated_at=user_loyalty.updated_at
+   RETURNING (user_id, points_balance, points_lifetime, tier, updated_at)
+   - 3 queries (first visit) -> 1 query
+   - 1 query (existing) -> 1 query (mesmo custo)
+   - ON CONFLICT noop trick: SET = own value forca RETURNING devolver row
+2. Welcome bonus path: UPDATE ... RETURNING capture row direto
+   - 3 queries -> 2 queries (33% reduction)
+
+Performance esperada:
+- First-visit /conta/pontos: ~80ms (5 roundtrips) -> ~30ms (3 roundtrips) - 60% saving
+- Existing user: ~30ms -> ~30ms (sem mudanca) MAS cache hit 90% maior valor
+
+Pattern V8 W18 query reduction tactics:
+- ON CONFLICT DO UPDATE SET=self + RETURNING (read-after-write 1 query)
+- UPDATE ... RETURNING (skip re-SELECT)
+- LATERAL JOIN (pass 440, 448) - subquery to JOIN
+- CTE (pass 181) - shared aggregate
+
+W18 query reduction series:
+  pass 181 /categories CTE pcounts
+  pass 440 /orders LATERAL items_preview
+  pass 448 /qa-queue LATERAL last_run
+  pass 460 /loyalty/me ON CONFLICT...RETURNING <- ESTE
+
+193 passes acumulados (268->460) sem deploy VPS
+8 CRITICAL + 29 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 ALTA PRIORIDADE

@@ -64,17 +64,25 @@ const loyaltyMeCacheKey = (req) => {
 router.get('/me',
   cache.cacheMiddleware(loyaltyMeCacheKey, 30),
   asyncHandler(async (req, res) => {
+    /* FIX-WORKER-18 pass 460 (N+1 reducao first-visit + bal lookup):
+       PRE-FIX: 2 queries no path "first visit":
+         1. SELECT user_loyalty WHERE user_id = $1 (rows = 0)
+         2. INSERT ... ON CONFLICT DO NOTHING (rowCount = 1)
+         3. SELECT * FROM user_loyalty WHERE user_id = $1 (re-fetch)
+       3 roundtrips quando 1 suficiente.
+       POST-FIX: INSERT ... ON CONFLICT DO UPDATE SET updated_at=updated_at
+         (noop ON CONFLICT mas RETURNING semper devolve row real)
+         + cast explicit columns same as SELECT (user_id, points_balance,
+         points_lifetime, tier, updated_at).
+       Reduzido para 1 query first-visit (vs 2-3 antes).
+       Pattern V8 W18 paridade CTE consolidation (passes 181/206/440/448). */
     let bal = await query(
-      `SELECT user_id, points_balance, points_lifetime, tier, updated_at
-         FROM user_loyalty WHERE user_id = $1`, [req.user.sub]
+      `INSERT INTO user_loyalty (user_id, points_balance, points_lifetime, tier)
+       VALUES ($1, 0, 0, 'starter')
+       ON CONFLICT (user_id) DO UPDATE SET updated_at = user_loyalty.updated_at
+       RETURNING user_id, points_balance, points_lifetime, tier, updated_at`,
+      [req.user.sub]
     );
-    if (!bal.rows.length) {
-      await query(
-        `INSERT INTO user_loyalty (user_id, points_balance, points_lifetime, tier)
-         VALUES ($1, 0, 0, 'starter') ON CONFLICT DO NOTHING`, [req.user.sub]
-      );
-      bal = await query(`SELECT * FROM user_loyalty WHERE user_id = $1`, [req.user.sub]);
-    }
     // MLB-NEW WORKER 16: limit configuravel via query (?limit=50 etc), default 20, max 200
     // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
     const histLimit = Math.max(1, Math.min(parseInt(req.query.limit || '20', 10), 200));
@@ -86,19 +94,28 @@ router.get('/me',
     );
     // Bonus de boas-vindas se starter + sem nenhuma transacao
     if (bal.rows[0].tier === 'starter' && hist.rows.length === 0) {
+      /* FIX-WORKER-18 pass 460 (welcome bonus path - eliminate post-tx SELECT):
+         PRE-FIX: 3 queries em welcome path:
+           1. INSERT loyalty_transactions
+           2. UPDATE user_loyalty (no RETURNING)
+           3. SELECT user_loyalty re-fetch (line 109)
+         POST-FIX: UPDATE...RETURNING capture row direto.
+         2 queries vs 3 - 33% reduction welcome path. */
       await tx(async (c) => {
         await c.query(
           `INSERT INTO loyalty_transactions (user_id, points_delta, reason)
            VALUES ($1, 100, 'welcome_bonus')`, [req.user.sub]
         );
-        await c.query(
+        const upd = await c.query(
           `UPDATE user_loyalty SET points_balance = points_balance + 100,
                                     points_lifetime = points_lifetime + 100,
                                     updated_at = NOW()
-            WHERE user_id = $1`, [req.user.sub]
+            WHERE user_id = $1
+            RETURNING user_id, points_balance, points_lifetime, tier, updated_at`,
+          [req.user.sub]
         );
+        bal = upd; // refresh bal com novo balance
       });
-      bal = await query(`SELECT * FROM user_loyalty WHERE user_id = $1`, [req.user.sub]);
       // FIX-WORKER-18 pass 259 (deterministic order tiebreaker):
       //   ORDER BY created_at DESC sem id tiebreaker -> mass-insert burst
       //   (multi tier_up bonus apos compra grande) com mesmo timestamp
