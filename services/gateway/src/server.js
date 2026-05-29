@@ -425,15 +425,41 @@ app.use('/api/search',        fail2ban.middleware(), proxy(UPSTREAMS.search,    
 //   Trade-off: vault-svc layer-2 (vaultUseGuard) preservado p/ internal mesh.
 //   Cross-svc calls via Docker network direct nao passam pelo gateway publico -
 //   ZERO regressao funcional para fluxos legitimos.
+/* FIX-WORKER-6 pass 627 (CRITICAL extend pass 567 - bloquear /api/vault/usage tambem):
+   PRE-FIX (pass 567): bloqueio apenas '/use' (read AES key)
+   - Mas '/usage' (POST internal-only) ficou EXPOSTO via gateway publico
+   - vault-svc POST /usage (server.js linha 1220) tambem usa vaultUseGuard
+     (x-internal-token + JWT admin/staff/service fallback)
+   - SCOPE CRITICAL diferenca /use vs /usage:
+     /use: read AES key (LEAK key compromise)
+     /usage: write vault_key_usage records (FALSIFY usage = billing fraud +
+             audit pollution + UPDATE vault_api_keys.usage_this_month_cents)
+   - Cenarios attack /api/vault/usage via gateway publico:
+     1. Admin JWT leaked (real or via 2FA bypass) -> spam INSERT vault_key_usage
+        com cost_usd_cents fake -> infla billing seller competidor
+     2. Atacante probe x-internal-token (timingSafe brute) -> mesma threat /use
+   - Internal calls (qa-worker -> vault /usage) usam Docker network direct
+     (tasks.cas_vault-svc:3020) - ZERO regressao funcional fluxos legitimos
+   POST-FIX: regex /^\/use(?:\/?$|\/.*$)|\/usage(?:\/?$|\/.*$)/i
+   - Match /use exact + /use/anything (defesa trailing path injection)
+   - Match /usage exact + /usage/anything (defesa trailing path injection)
+   - Case-insensitive (paridade pass 514 + 567)
+   - normalizedPath ja faz lowercase + trailing slash strip
+   Pattern V8 W6 layer-1 defense-in-depth: gateway bulletproof + svc layer-2 reforco. */
 app.use('/api/vault', fail2ban.middleware(), (req, res, next) => {
   const normalizedPath = req.path.replace(/\/+$/, '').toLowerCase();
-  if (normalizedPath === '/use') {
+  // /use, /usage (exato) ou /use/X, /usage/X (sub-paths defensive)
+  const isBlockedVaultPath = normalizedPath === '/use'
+    || normalizedPath === '/usage'
+    || normalizedPath.startsWith('/use/')
+    || normalizedPath.startsWith('/usage/');
+  if (isBlockedVaultPath) {
     log.warn({
       ip: req.realIp || req.ip,
       path: req.originalUrl,
       normalized: normalizedPath,
       method: req.method,
-    }, '[gateway.vault_use_blocked] LAYER-1 defense - vault /use not available via public gateway');
+    }, '[gateway.vault_blocked] LAYER-1 defense - vault /use|/usage not available via public gateway');
     return res.status(403).json({
       error: 'internal_only_endpoint',
       message: 'Este endpoint nao esta disponivel via gateway publico.',
