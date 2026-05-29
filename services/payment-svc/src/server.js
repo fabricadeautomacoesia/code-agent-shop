@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup, cache, mask, rateLimiter, withRetry } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, fail2ban, startup, cache, mask, rateLimiter, withRetry, notifCache } = require('@cas/shared');
 const asaas = require('./asaas');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
@@ -955,6 +955,7 @@ async function processWebhookEvent(evt) {
                 AND is_active = TRUE AND is_banned = FALSE
                 AND deleted_at IS NULL LIMIT 10`
       );
+      const adminIds = [];
       for (const admin of admins.rows) {
         await c.query(
           `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
@@ -964,7 +965,16 @@ async function processWebhookEvent(evt) {
           [admin.id, order.id.slice(0, 8),
            `Asaas evento ${evt.event} para order ${order.id.slice(0, 8)} (payment ${paymentId}). Estado pagamento mantido como '${order.payment_status}'. Investigue motivos no painel Asaas.`]
         ).catch(() => {});
+        adminIds.push(admin.id);
       }
+      /* FIX-WORKER-11 pass 468 (notifCache cross-svc invalidation consume pass 467):
+         PRE-FIX: INSERT notifications admin SEM invalidate cache notification-svc
+         - asaas_refund_failed e CRITICAL priority 3 - admin precisa ver IMEDIATO
+         - Cache 20s TTL atrasa delivery em janela onde refund failure ainda
+           pode ser revertido em tempo (Asaas async retry)
+         - Pass 467 estabeleceu helper notifCache.invalidate cross-svc
+         POST-FIX: invalidateBulk(adminIds) apos for loop, fora do tx() */
+      notifCache.invalidateBulk(adminIds);
       return;  // Skip UPDATE orders completely - estado preserved
     }
 
@@ -1113,6 +1123,7 @@ async function processWebhookEvent(evt) {
            FROM order_items oi JOIN sellers s ON s.id = oi.seller_id JOIN products p ON p.id = oi.product_id
           WHERE oi.order_id = $1 AND oi.seller_id IS NOT NULL`, [order.id]
       );
+      const sellerUserIds = [];
       for (const seller of newSaleSellers.rows) {
         // FIX-WORKER-11 pass 259 (priority p/ seller_new_sale):
         //   PRE-FIX: SEM priority -> default 0 (baixa prio em processOutbox)
@@ -1125,7 +1136,19 @@ async function processWebhookEvent(evt) {
           [seller.user_id, `Voce vendeu "${seller.title}". Liquido: R$ ${(seller.seller_payout_cents/100).toFixed(2)}`,
            JSON.stringify({ title: seller.title, payout: (seller.seller_payout_cents/100).toFixed(2) })]
         );
+        sellerUserIds.push(seller.user_id);
       }
+      /* FIX-WORKER-11 pass 468 (notifCache cross-svc invalidation - paridade pass 467):
+         PRE-FIX: PAYMENT_RECEIVED INSERT notifications buyer + sellers SEM
+         invalidate notification-svc cache:
+         - Buyer aguarda confirmacao paid no /conta -> cache 20s atrasa
+         - Seller espera "nova venda" - cash flow critical timing
+         - Cadeia pass 467 estabeleceu helper notifCache
+         POST-FIX: invalidate(buyer) + invalidateBulk(sellers) post-tx commits
+         Note: chamado DENTRO do tx aqui pq cache.del Redis aceita pre-commit
+         (worst-case: extra cache miss apos rollback - ZERO risk). */
+      notifCache.invalidate(order.buyer_user_id);
+      notifCache.invalidateBulk(sellerUserIds);
     }
 
     // FIX-WORKER-11: PAYMENT_REFUNDED precisa reverter TUDO que paid criou

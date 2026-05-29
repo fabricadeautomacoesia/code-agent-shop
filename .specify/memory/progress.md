@@ -35290,3 +35290,62 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096+097+098 ALTA PRIORIDADE
 - Apply notifCache em 29+ sites cross-svc remanescentes
+
+## PASS 468 W11 PAYMENT: notifCache consume PAYMENT_RECEIVED + refund_failed (cadeia pass 467)
+commit pendente
+GAP cross-svc cache invalidation em payment-svc 7 INSERT sites notifications
+PRE-FIX:
+- Pass 467 criou notifCache helper + applied auth-svc 2fa.activate (1 site)
+- payment-svc 7 INSERT sites notifications SEM invalidate cache:
+  - PAYMENT_REFUND_FAILED admin notif (line 960)
+  - PAYMENT_RECEIVED buyer + sellers (line 1116+1133)
+  - PAYMENT_OVERDUE seller (line 1209+1223)
+  - Outros payouts (line 1474+1480+1058)
+- Resultado:
+  - Buyer pos-payment aguarda confirmacao /conta cache 20s atrasa
+  - Seller "nova venda" notif delayed = cash flow timing critical
+  - Admin refund_failed alert delayed = janela acao perdida
+
+SCOPE CRITICAL:
+- PAYMENT_RECEIVED = HOT PATH (toda compra dispara)
+- Multi-recipient: 1 buyer + N sellers (split orders)
+- Cache miss CRITICAL = pior UX cross-svc
+- pass 282/315 anti-takeover signals (refresh reuse) MESMO problema
+
+POST-FIX (2 sites consume - hot path priority):
+1. payment-svc line 960 (PAYMENT_REFUND_FAILED admin notif):
+   - Capture adminIds[] no for loop
+   - notifCache.invalidateBulk(adminIds) post-loop
+   - 5-10 admins notificados imediato cache cleared
+2. payment-svc line 1116/1133 (PAYMENT_RECEIVED buyer + sellers):
+   - Capture sellerUserIds[] no for loop
+   - notifCache.invalidate(buyer_user_id) + invalidateBulk(sellerUserIds)
+   - Buyer + N sellers cache cleared - real-time UX
+
+Import: notifCache adicionado ao require @cas/shared
+
+Cadeia consume pass 467 cross-svc:
+  pass 467 helper module + auth-svc 2fa.activate (1 site)
+  pass 468 payment-svc PAYMENT_RECEIVED + refund_failed (2 main sites) <- ESTE
+
+PROXIMOS PASSES (~27 sites pendentes consume notifCache):
+  - payment-svc: PAYMENT_OVERDUE, payouts (5 sites restantes)
+  - order-svc: dispute, free_order (2 sites)
+  - qa-svc: callback notif seller (1 site)
+  - review-svc: qna_new + answered (1+ sites)
+  - product-svc: version_publish (1 site)
+  - seller-svc loyalty: tier_up bonus (1 site)
+  - auth-svc: refresh_reuse_breach, /recovery, /disable, /reset (5 sites)
+
+Pattern V8 W11+W13 webhook UX:
+- HOT PATH endpoints (PAYMENT_RECEIVED) precisam invalidacao IMEDIATA
+- Multi-recipient: capture IDs array + invalidateBulk (vs N calls separadas)
+- Inside tx OK pq cache.del Redis tolera rollback worst-case (zero risk)
+
+201 passes acumulados (268->468) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096+097+098 ALTA PRIORIDADE
+- Continuar consume notifCache 27+ sites pendentes
