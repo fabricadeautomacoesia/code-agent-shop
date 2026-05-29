@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Star, MessageSquare, Send, ExternalLink } from 'lucide-react';
@@ -23,7 +23,17 @@ export default function SellerReviewsPage() {
     total: 0, avg_rating: null, pending_reply_count: 0,
   });
 
-  async function load() {
+  /* FIX-WORKER-5 pass 749 (useCallback stable closure - cadeia 12 sites):
+     PRE-FIX BUG: async function load() recriada cada render.
+     - useSellerAction(load) recebe nova ref cada render -> action.run re-criada
+     - Reputation-critical: seller responses reviews afetam avg_rating + total
+     - Cascading re-renders durante reply mutations
+     POST-FIX (paridade cadeia 738-748):
+     - useCallback wrap em load com [] deps -> stable reference
+     - useSellerAction recebe stable callback -> action.run estavel
+     - useEffect deps [load] - paridade ESLint exhaustive-deps
+     Pattern V8 React stability cadeia 12 sites cross-dashboard. */
+  const load = useCallback(async () => {
     try {
       const r = await sellerFetch<{
         reviews: any[]; total: number; avg_rating: number | null; pending_reply_count: number;
@@ -37,8 +47,8 @@ export default function SellerReviewsPage() {
       });
       setLoadError('');
     } catch (e: any) { setLoadError(e.message); }
-  }
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   // FIX-WORKER-5 pass 7: substitui alert(e.message) browser-blocking + setLoading
   // global. Mesmo pattern de W5 passes 1-6 (products, qna, loja, products/[id],

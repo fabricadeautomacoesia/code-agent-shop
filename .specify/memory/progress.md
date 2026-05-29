@@ -41123,3 +41123,37 @@ preview WhatsApp/Telegram/Twitter funcionais.
 CADEIA cumulative cross-svc:
 - 16 cache hygiene + storage normalize bugs (618, 719-737)
 - 10 React stability fixes cross-dashboard (738-747)
+
+## PASS 748+749 (W5 SELLER /qna + /reviews useCallback - cadeia 11-12 sites)
+
+apps/dashboard-seller/src/app/qna/page.tsx + reviews/page.tsx
+
+PASS 748 /qna (cadeia 11 sites):
+- useCallback wrap em load com [] deps -> stable reference
+- useSellerAction recebe stable callback -> action.run estavel
+- SLA-CRITICAL: seller responses QnA tem 24h deadline
+- Cascading re-renders durante mutations (reply, mark-answered) remediados
+
+PASS 749 /reviews (cadeia 12 sites):
+- useCallback wrap em load com [] deps -> stable reference
+- useSellerAction recebe stable callback -> action.run estavel
+- REPUTATION-CRITICAL: seller responses afetam avg_rating + total
+- Cascading re-renders durante reply mutations remediados
+
+Pattern V8 React stability cadeia 12 sites cross-dashboard:
+738 disputes, 739 payouts-pending, 740 financeiro, 741 loja,
+742 alerts (15s poll), 743 orders (state-stale FIX), 744 vault (security),
+745 sellers (debounced search), 746 qa-queue (force-approve), 747 payouts (Asaas),
+748 qna seller (SLA 24h), 749 reviews seller (REPUTATION)
+
+W2 CHECKOUT / W10 SEARCH/AIOPS / W12 QA / W13 NOTIFICATION / W18 PERF
+todos consolidados em sessoes anteriores (passes 712-737):
+- cart.js storage normalize (734)
+- search-svc facets normalize (cadeia 612+)
+- qa-svc UUID case (736)
+- notification-svc template_code LGPD (737)
+- product-svc reviews sort (733) + GET / 11-param normalize (612)
+
+CADEIA cumulative cross-svc:
+- 16 cache hygiene + storage normalize bugs (618, 719-737)
+- 12 React stability fixes cross-dashboard (738-749)

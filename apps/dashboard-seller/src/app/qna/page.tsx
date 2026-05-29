@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { sellerFetch, fmtDate } from '@/lib/seller-api';
@@ -17,14 +17,24 @@ export default function SellerQnaPage() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [loadError, setLoadError] = useState('');
 
-  async function load() {
+  /* FIX-WORKER-5 pass 748 (useCallback stable closure - cadeia 11 sites):
+     PRE-FIX BUG: async function load() recriada cada render.
+     - useSellerAction(load) recebe nova ref cada render -> action.run re-criada
+     - SLA-critical: seller responses QnA tem 24h deadline (notificacoes + UX)
+     - Cascading re-renders durante mutations (reply, mark-answered)
+     POST-FIX (paridade cadeia 738-747):
+     - useCallback wrap em load com [] deps -> stable reference
+     - useSellerAction recebe stable callback -> action.run estavel
+     - useEffect deps [load] - paridade ESLint exhaustive-deps
+     Pattern V8 React stability cadeia 11 sites cross-dashboard. */
+  const load = useCallback(async () => {
     try {
       const r = await sellerFetch<{ qna: any[] }>('/qna/seller/pending');
       setQna(r.qna || []);
       setLoadError('');
     } catch (e: any) { setLoadError(e.message); }
-  }
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   // FIX-WORKER-5 pass 2: useSellerAction hook substitui alert() browser-blocking.
   // Bonus: busyKey per-row corrige bug "loading global" (W5 pass 1 baseline)
