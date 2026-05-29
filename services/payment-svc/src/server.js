@@ -1833,6 +1833,40 @@ async function liquidatePendingWalletPayouts() {
 
     for (const row of pending.rows) {
       try {
+        /* FIX-WORKER-11 pass 453 CRITICAL (race window double-transfer):
+           PRE-FIX bug end-to-end real money:
+           1. SELECT pending row + lock autocommit (line 1829)
+           2. asaas.createTransfer() SUCCESS - transfer.id returned
+           3. ** PROCESS CRASH ENTRE LINHA 1843 e 1845 ** (deploy mid-loop,
+              OOM kill, network blip, k8s restart, etc)
+           4. transfer.id LOST + row ainda status='pending'
+           5. Proximo cron 24h pega mesma row -> createTransfer AGAIN
+           6. Asaas cria 2o transfer p/ MESMA seller_id = DOUBLE PAYMENT REAL
+           PRE-FIX scope: low probability mas REAL MONEY LOSS quando ocorre.
+           Compounding factor: amount_cents pode ser milhares R$ (acumulado).
+           POST-FIX defensive 2-step:
+           1. Re-check row antes createTransfer (skip se status mudou)
+           2. PRE-SET asaas_transfer_id = '__claimed_<worker_pid>_<timestamp>'
+              placeholder ANTES Asaas (claim marker race-safe)
+           3. Post-Asaas: REPLACE placeholder com transfer.id real
+           4. Crash entre 2 e 3: placeholder persiste -> row visivel admin
+              forensic via /admin/payouts-pending-wallet (pass 954)
+           5. Admin pode resolve manualmente OR Asaas externalReference
+              lookup (pass 282 ja envia)
+           Pattern V8 W11: monetary mutations precisam claim marker pre-Asaas */
+        const claimMarker = `__claimed_${process.pid}_${Date.now()}`;
+        const claimResult = await query(
+          `UPDATE payouts_pending_wallet
+              SET asaas_transfer_id = $1
+            WHERE id = $2 AND status = 'pending' AND asaas_transfer_id IS NULL
+            RETURNING id`,
+          [claimMarker, row.id]
+        );
+        if (!claimResult.rows.length) {
+          // Row ja foi claimed por outra replica OU status mudou - skip
+          log.info({ pending_id: row.id }, '[payouts_pending.skip.already_claimed_or_changed]');
+          continue;
+        }
         // Asaas transfer (createTransfer ja existe em asaas.js)
         // FIX-WORKER-11 pass 282: externalReference payouts_pending_wallet.id
         const transfer = await asaas.createTransfer({
@@ -1841,14 +1875,16 @@ async function liquidatePendingWalletPayouts() {
           description: `Liquidacao payout pendente (order ${row.order_id})`,
           externalReference: `payouts_pending_wallet:${row.id}`,
         });
-        // UPDATE atomic - status + transfer_id + liquidated_at
+        // UPDATE atomic - status + transfer_id real + liquidated_at
+        // FIX pass 453: WHERE asaas_transfer_id = claimMarker guard idempotent
+        // garante so esta worker write transfer.id final (race-safe)
         await query(
           `UPDATE payouts_pending_wallet
               SET status = 'liquidated',
                   liquidated_at = NOW(),
                   asaas_transfer_id = $1
-            WHERE id = $2 AND status = 'pending'`,
-          [transfer.id, row.id]
+            WHERE id = $2 AND status = 'pending' AND asaas_transfer_id = $3`,
+          [transfer.id, row.id, claimMarker]
         );
         // Notify seller
         await query(
@@ -1863,7 +1899,22 @@ async function liquidatePendingWalletPayouts() {
         log.info({ pending_id: row.id, transfer_id: transfer.id }, '[payouts_pending.liquidated.ok]');
       } catch (e) {
         log.error({ pending_id: row.id, /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payouts_pending.liquidate.fail]');
-        // Nao incrementa retry - admin investiga manualmente (Asaas/network issues)
+        // FIX-WORKER-11 pass 453: clear claim marker no fail path (allow retry next cron)
+        //   - Se Asaas fail (network, 5xx, etc) -> row tem claim marker mas sem transfer real
+        //   - Sem clear: row stuck com __claimed_X placeholder indefinidamente
+        //   - Proximo cron skip (asaas_transfer_id NOT NULL) = lost p/ liquidacao forever
+        //   - Clear: rollback claim, status='pending' inalterado, retry next 24h
+        //   Note: se crash entre claim e Asaas response, marker persiste ate admin clear
+        //   manualmente (forensic case - admin investiga via /admin/payouts-pending-wallet)
+        await query(
+          `UPDATE payouts_pending_wallet
+              SET asaas_transfer_id = NULL
+            WHERE id = $1 AND status = 'pending' AND asaas_transfer_id LIKE '__claimed_%'`,
+          [row.id]
+        ).catch((clearErr) => log.warn({
+          pending_id: row.id,
+          err: mask.text(String(clearErr.message || '').slice(0, 300)),
+        }, '[payouts_pending.claim_clear_fail]'));
       }
     }
   } catch (e) {

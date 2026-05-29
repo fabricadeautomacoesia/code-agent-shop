@@ -34400,3 +34400,65 @@ TODA admin listing page com mutation CRITICAL deve ter:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 ALTA PRIORIDADE
+
+## PASS 453 W11 PAYMENT CRITICAL: pending_wallet liquidator race window double-transfer (8º CRITICAL)
+commit pendente
+BUG CRITICAL REAL MONEY: race window double-transfer Asaas em liquidatePendingWalletPayouts
+PRE-FIX trace end-to-end:
+1. liquidatePendingWalletPayouts cron 24h SELECT pending rows FOR UPDATE SKIP LOCKED
+2. Lock autocommit SELECT -> released imediatamente (~ms)
+3. async asaas.createTransfer() (line 1838) executa FORA do lock
+4. PROCESS CRASH entre Asaas SUCCESS e UPDATE status='liquidated':
+   - Deploy mid-loop
+   - OOM kill
+   - k8s/Swarm restart
+   - Network blip aborta sync
+5. transfer.id LOST + row ainda status='pending'
+6. Proximo cron 24h pega mesma row -> createTransfer AGAIN
+7. Asaas cria 2o transfer p/ MESMA seller_id = DOUBLE PAYMENT REAL
+
+SCOPE:
+- Low probability mas REAL MONEY LOSS quando ocorre
+- Compounding: amount_cents pode ser milhares R$ (acumulado debt)
+- Recovery dificil: Asaas refund + admin investigation manual
+- audit_log mostraria 2 transferencias mas SEM rastro de double-payment intencional
+
+POST-FIX defensive 3-step claim marker pattern:
+1. PRE-Asaas: UPDATE asaas_transfer_id = '__claimed_<pid>_<timestamp>' placeholder
+   - Race-safe: WHERE asaas_transfer_id IS NULL guard (atomic claim)
+   - Outras replicas/runs skip se ja claimed
+2. asaas.createTransfer() executa
+3. POST-Asaas SUCCESS: REPLACE placeholder com transfer.id real
+   - WHERE asaas_transfer_id = claimMarker guard idempotent
+4. POST-Asaas FAIL (catch): clear placeholder
+   - UPDATE asaas_transfer_id = NULL WHERE LIKE '__claimed_%'
+   - Allow retry next 24h
+5. CRASH entre claim e Asaas response: marker persiste
+   - Row visivel /admin/payouts-pending-wallet (pass 954)
+   - Admin investigates manually + clear via psql/UI
+
+Pattern V8 W11: monetary mutations external API precisam claim marker pre-call.
+
+CRITICAL #8 cumulativo:
+  pass 289 cancelPayment missing
+  pass 304 gateway rateLimit keyGen
+  pass 354 gateway body limit order
+  pass 359 vault+auth keyGen
+  pass 384 dispute refund dispatch
+  pass 439 refundPayment value=0 guard
+  pass 445 free order flow broken
+  pass 453 pending_wallet race double-transfer <- NOVO (8º CRITICAL)
+
+W11 monetary safety series:
+  pass 282 externalReference em createTransfer (forensic)
+  pass 371 TRANSFER webhook handler
+  pass 418 idempotent UPDATE guards
+  pass 447 TRANSFER idempotency table-aware
+  pass 453 claim marker pre-Asaas <- ESTE
+
+186 passes acumulados (268->453) sem deploy VPS
+8 CRITICAL + 28 migrations pendentes apply (era 7)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE
