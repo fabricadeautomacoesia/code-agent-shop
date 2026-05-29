@@ -349,9 +349,22 @@ const metricsHandler = asyncHandler(async (req, res) => {
     has_more: (offset + metrics.length) < total,
   });
 });
+// FIX-WORKER-10 pass 572 (cache key normalization paridade cadeia W7+W18 cache hygiene):
+//   PRE-FIX BUG: metricsCacheKey usa raw q.limit / q.offset sem normalize.
+//   Handler clamps Math.max/Math.min (linhas 327-328) [1,500] e [0,inf).
+//   Cenarios pollution cross-svc paridade pass 558/566:
+//   - ?limit=99999 -> cache key 'lim=99999', handler clamp 500
+//   - ?limit=500 -> cache key 'lim=500' SAME response
+//   - 2 entries cache pollution (mesmo dado, keys diferentes)
+//   - ?limit=NaN -> cache key 'lim=NaN', handler parseInt fail -> default 60
+//   - ?limit=-5 -> cache key 'lim=-5', handler Math.max(1, ...) -> 1
+//   POST-FIX: normalize cache key SAME way handler normalizes.
+//   Pattern V8 cache hygiene invariante (passes 520/530/533/551/558/566).
 const metricsCacheKey = (req) => {
   const q = req.query;
-  return `aiops:metrics:lim=${q.limit||60}:off=${q.offset||0}`;
+  const lim = Math.max(1, Math.min(500, parseInt(q.limit, 10) || 60));
+  const off = Math.max(0, parseInt(q.offset, 10) || 0);
+  return `aiops:metrics:lim=${lim}:off=${off}`;
 };
 app.get('/metrics',
   jwt.requireAuth({ roles: ['admin','staff'] }),
