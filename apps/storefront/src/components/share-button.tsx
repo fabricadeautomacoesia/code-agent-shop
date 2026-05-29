@@ -113,6 +113,15 @@ export function ShareButton({ title, productSlug, productId: _productId }: {
       </button>
 
       {open && (
+        /* FIX-WORKER-3 pass 562 (a11y menu items keyboard navigation):
+           PRE-FIX: 4 menuitems (WhatsApp/Twitter/LinkedIn/Copy) sem focus-visible.
+           - Keyboard users tab para item -> sem indicador visual qual focused
+           - Pattern V8 W3 cadeia focus-visible magenta (passes 549/552/553/556/561)
+           - menu role exige visual focus marker (WAI-ARIA spec)
+           POST-FIX: focus-visible:outline-2 outline-magenta + outline-inset
+           (outline inset porque items dentro do dropdown sem padding outer).
+           Copy button + aria-label + aria-live='polite' span p/ announce
+           state change 'Link copiado!' (paridade PIX copy pass 552). */
         <div role="menu" aria-label="Compartilhar em redes sociais"
           className="absolute z-30 left-0 right-0 mt-2 glass-strong rounded-xl overflow-hidden shadow-2xl">
           <a
@@ -120,7 +129,7 @@ export function ShareButton({ title, productSlug, productId: _productId }: {
             href={`https://wa.me/?text=${waText}%20${encodeURIComponent(urlWith('whatsapp'))}`}
             target="_blank" rel="noopener noreferrer"
             onClick={() => setOpen(false)}
-            className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-sm"
+            className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-magenta"
           >
             <MessageCircle className="w-4 h-4 text-green-400" aria-hidden="true" />
             <span>WhatsApp</span>
@@ -130,7 +139,7 @@ export function ShareButton({ title, productSlug, productId: _productId }: {
             href={`https://twitter.com/intent/tweet?text=${xText}&url=${encodeURIComponent(urlWith('twitter'))}`}
             target="_blank" rel="noopener noreferrer"
             onClick={() => setOpen(false)}
-            className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-sm border-t border-white/5"
+            className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-sm border-t border-white/5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-magenta"
           >
             <Twitter className="w-4 h-4 text-sky-400" aria-hidden="true" />
             <span>X (Twitter)</span>
@@ -140,7 +149,7 @@ export function ShareButton({ title, productSlug, productId: _productId }: {
             href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(urlWith('linkedin'))}`}
             target="_blank" rel="noopener noreferrer"
             onClick={() => setOpen(false)}
-            className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-sm border-t border-white/5"
+            className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-sm border-t border-white/5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-magenta"
           >
             <Linkedin className="w-4 h-4 text-blue-400" aria-hidden="true" />
             <span>LinkedIn</span>
@@ -149,14 +158,15 @@ export function ShareButton({ title, productSlug, productId: _productId }: {
             role="menuitem"
             type="button"
             onClick={handleCopy}
-            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-sm border-t border-white/5 text-left"
+            aria-label={copied ? 'Link copiado para a area de transferencia' : 'Copiar link do produto para a area de transferencia'}
+            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-sm border-t border-white/5 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-magenta"
           >
             {copied ? (
               <Check className="w-4 h-4 text-green-400" aria-hidden="true" />
             ) : (
               <Copy className="w-4 h-4 text-magenta" aria-hidden="true" />
             )}
-            <span>{copied ? 'Link copiado!' : 'Copiar link'}</span>
+            <span aria-live="polite">{copied ? 'Link copiado!' : 'Copiar link'}</span>
           </button>
         </div>
       )}
