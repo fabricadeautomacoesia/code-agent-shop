@@ -39058,3 +39058,48 @@ CADEIA W6 gateway block defense-in-depth:
 - pass 627 /api/vault/usage (este - CRITICAL billing fraud vector)
 
 358 passes acumulados (268->628) sem deploy VPS
+
+============================================================================
+SESSAO 629-631 (W7 PDP subqueries tiebreaker + W18 cache + W14 mig 122)
+============================================================================
+
+Pass 629 (W7 PDP /:slug 2 subqueries tiebreaker - paridade Regra D):
+- DESCOBERTA: 2 outras subqueries PDP sem tiebreaker (pass 628 cobriu versions)
+- product_media ORDER BY pm.sort_order sem id ASC:
+  - Seller upload bulk multi-file -> N rows sort_order=0 default
+  - PDP carousel ordem variavel + thumbnails trocam posicao aleatoria
+  - POST-FIX: + pm.id ASC (FIFO insert order preservado em ties)
+- tags subquery SEM ORDER BY:
+  - PG default heap order arbitrario
+  - PDP badge bar pisca refresh + SEO schema.org keywords unstable
+  - POST-FIX: + ORDER BY t.slug ASC (alfabetico previsivel UX)
+
+Pass 630 (W18 wishlist cache key kind normalize - 31 sites cadeia):
+- DESCOBERTA: wishlistCacheKey raw req.query.kind sem WISHLIST_KIND_ENUM check
+- Handler valida (linha 65-67) - cache key vs handler mismatch
+- Atacante probe ?kind=junkN -> N cache pollution Redis (HEAD request rejection)
+- POST-FIX: normalize ANTES key generation (WISHLIST_KIND_ENUM whitelist)
+- 31st site cache hygiene cross-svc cadeia consolidacao paridade
+
+Pass 631 (W14 mig 122 idx_alerts_severity_created_id):
+- mig 008 PRE-FIX: idx_alerts_severity (severity, created_at DESC) SEM id DESC
+- aiops-svc /alerts + /alerts/recent ORDER created_at DESC, id DESC = External Sort
+- Cron monitoring tick mass-insert -> 10+ alerts mesma created_at second-precision
+- dashboard-admin /alerts polling 10s = hot path
+- POST-FIX: (severity, created_at DESC, id DESC) direction parity Regra D V8
+- Latency: ~3-8ms External Sort eliminado -> ~1-3ms
+
+CADEIA W14 direction parity DESC+DESC migrations cumulative:
+- mig 102-118 (17 indexes sessao previas)
+- mig 119 idx_qa_runs_product_started_id (pass 625)
+- mig 120 idx_orders_buyer_created_id (pass 626)
+- mig 121 idx_pv_product_created_id (pass 628)
+- mig 122 idx_alerts_severity_created_id (pass 631 este)
+- 21 indexes total apply pending VPS SSH
+
+CADEIA cache hygiene cross-svc invariante V8:
+- 31 sites cache key normalization paridade handler (passes 520-630)
+- 1 site CRITICAL cacheMiddleware shape fix (pass 618 admin/reports)
+- 2 sites post-mutation invalidation (passes 620 reports + 567 vault)
+
+361 passes acumulados (268->631) sem deploy VPS
