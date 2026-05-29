@@ -17,6 +17,20 @@ export const metadata: Metadata = {
     locale: 'pt_BR',
     siteName: 'Code & Agent Shop',
   },
+  /* FIX-WORKER-9 pass 637 (twitter card paridade cadeia auth+conta pages 10 sites):
+     PRE-FIX: openGraph presente mas SEM twitter card.
+     - User compartilha link /cart em chat (WhatsApp/Slack/X) - preview cross-platform
+       respeita twitter card primariamente, openGraph fallback (assimetria preview)
+     - Paridade cadeia 9 sites previas (/login, /esqueci-senha, /redefinir-senha,
+       /register + /conta/* downloads/seguranca/perfil/pontos/pedidos)
+     - Pagina protegida (noindex+nofollow), mas preview link compartilhado deve ser
+       consistente independente platform - sem twitter explicit = fallback degraded
+     POST-FIX: twitter card summary (sem image - cart pages sem hero static). */
+  twitter: {
+    card: 'summary',
+    title: 'Carrinho - Code & Agent Shop',
+    description: 'Seus produtos selecionados, prontos para finalizar a compra.',
+  },
   robots: { index: false, follow: false },
 };
 
