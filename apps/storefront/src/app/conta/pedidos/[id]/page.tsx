@@ -75,27 +75,46 @@ export default function PedidoPage() {
     /* FIX-WORKER-2 pass 238 (UX dead-end error): page mostrava "Erro: X" sem
        CTAs. User stuck - sem voltar, retry ou navegar. Comum: pedido de outro
        user (403), id inexistente (404), session expired pos-load (401).
-       POST-FIX: role=alert + 2 CTAs (Voltar conta + Tentar novamente refresh). */
+       POST-FIX: role=alert + 2 CTAs (Voltar conta + Tentar novamente refresh).
+       FIX-WORKER-2 pass 571 (a11y CTAs focus-visible - paridade cadeia 549/552):
+       Adicionado focus-visible outline magenta em ambos CTAs (kbd nav). */
     <div className="container mx-auto px-6 py-16 max-w-md text-center">
       <div role="alert" className="glass p-6">
         <AlertCircle className="w-12 h-12 mx-auto mb-3 text-red-400" aria-hidden="true" />
         <h1 className="font-display font-bold text-xl mb-2 text-red-400">Erro ao carregar pedido</h1>
         <p className="text-sm text-white/70 mb-4">{err}</p>
         <div className="flex gap-2 justify-center">
-          <Link href="/conta" className="btn-ghost text-sm">Voltar para conta</Link>
+          <Link href="/conta"
+            className="btn-ghost text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
+            Voltar para conta
+          </Link>
           <button type="button" onClick={() => { setErr(''); router.refresh(); }}
-            className="btn-primary text-sm">Tentar novamente</button>
+            className="btn-primary text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
+            Tentar novamente
+          </button>
         </div>
       </div>
     </div>
   );
-  if (!order) return <div className="container mx-auto px-6 py-16 text-center text-white/60">Carregando...</div>;
+  if (!order) return (
+    /* FIX-WORKER-2 pass 571 (a11y loading state - paridade pass 556 /conta/pedidos):
+        role=status + aria-live polite p/ SR announce loading. */
+    <div role="status" aria-live="polite"
+      className="container mx-auto px-6 py-16 text-center text-white/60">
+      Carregando...
+    </div>
+  );
 
   const badge = STATUS_BADGE[order.status] || STATUS_BADGE.cart;
 
   return (
     <div className="container mx-auto px-6 py-8 max-w-3xl">
-      <Link href="/conta" className="text-sm text-white/60 hover:text-white">&larr; Voltar para conta</Link>
+      {/* FIX-WORKER-2 pass 571 (a11y - paridade pass 561 /sobre + pass 549 esqueci-senha):
+          Top 'Voltar' link kbd focus-visible outline magenta. */}
+      <Link href="/conta"
+        className="text-sm text-white/60 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta rounded">
+        &larr; Voltar para conta
+      </Link>
 
       {/* FIX-WORKER-15 pass 245 (mobile 375px overflow):
           Header tinha flex items-center justify-between sem flex-wrap. Em mobile
@@ -118,8 +137,10 @@ export default function PedidoPage() {
       {/* PAGAMENTO PENDENTE */}
       {order.status === 'pending_payment' && (
         <div className="glass p-6 mb-6 border-l-4 border-yellow-500">
+          {/* FIX-WORKER-2 pass 571 (a11y - paridade pass 541/561):
+              Clock heading icon decorativo + 'Conclua o pagamento' descritivo. */}
           <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
-            <Clock className="w-5 h-5 text-yellow-400" /> Conclua o pagamento
+            <Clock className="w-5 h-5 text-yellow-400" aria-hidden="true" /> Conclua o pagamento
           </h2>
           {order.payment_method === 'pix' && order.asaas_pix_qrcode && (
             <div className="text-center">
@@ -156,13 +177,18 @@ export default function PedidoPage() {
               Pass 230 W1 ja aplicou rel="noopener noreferrer" em notification-bell.
               2 instances aqui (boleto + credit_card external links) ficaram desatualizadas.
               Pattern V8: TODOS target="_blank" precisam rel=noopener noreferrer. */}
+          {/* FIX-WORKER-2 pass 571 (a11y external CTAs focus-visible - paridade cadeia):
+              Boleto + cartao Asaas external links sem focus-visible outline.
+              Kbd users perdem affordance ao tabular. */}
           {order.payment_method === 'boleto' && order.asaas_boleto_url && (
-            <a href={order.asaas_boleto_url} target="_blank" rel="noopener noreferrer" className="btn-primary block text-center max-w-md mx-auto">
+            <a href={order.asaas_boleto_url} target="_blank" rel="noopener noreferrer"
+              className="btn-primary block text-center max-w-md mx-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
               Abrir boleto
             </a>
           )}
           {order.payment_method === 'credit_card' && order.asaas_invoice_url && (
-            <a href={order.asaas_invoice_url} target="_blank" rel="noopener noreferrer" className="btn-primary block text-center max-w-md mx-auto">
+            <a href={order.asaas_invoice_url} target="_blank" rel="noopener noreferrer"
+              className="btn-primary block text-center max-w-md mx-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
               Pagar com cartao
             </a>
           )}
@@ -177,8 +203,9 @@ export default function PedidoPage() {
       {/* PAGO/ENTREGUE - DOWNLOADS */}
       {(order.status === 'paid' || order.status === 'fulfilled') && (
         <div className="glass p-6 mb-6 border-l-4 border-green-500">
+          {/* FIX-WORKER-2 pass 571 (a11y - CheckCircle heading icon aria-hidden) */}
           <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
-            <CheckCircle className="w-5 h-5 text-green-400" /> Pagamento confirmado
+            <CheckCircle className="w-5 h-5 text-green-400" aria-hidden="true" /> Pagamento confirmado
           </h2>
           <p className="text-sm text-white/70">Seus produtos estao disponiveis para download abaixo.</p>
         </div>
