@@ -37770,3 +37770,56 @@ Cadeia W14 PARTIAL indexes (cron-driven W14/18 fusion):
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)
+
+## Pass 516 - W13 NOTIFICATION: sendTelegram desc DLP mask (paridade pass 347)
+
+PRE-FIX BUG (DLP gap em Telegram API error description):
+- notification-svc sendTelegram linha 244-250:
+    const desc = body.description || `HTTP ${r.status}`;
+    const e = new Error(`telegram_api_error_${r.status}: ${desc}...`);
+- desc raw embedded em error.message
+
+Telegram API descriptions podem incluir secrets:
+- "Bad Request: chat not found (chat_id: -1001234567890)"
+- "Forbidden: bot was blocked by the user 123456789"
+- "Bad Request: message text is empty (chat_id: -1001234)"
+
+TELEGRAM_CHAT_ID = secret (admin's private chat) - exposure paths:
+1. notifications.failed_reason DB persisted
+   - backup pg_dump LGPD leak (export contendo chat_id)
+2. audit_log payload (cross-admin /admin/audit-log visible)
+3. log.warn outbox processor (Pino/Loki/CloudWatch logs)
+4. AIOPS Telegram alerts pode dispatch error -> echo chat_id in chat
+   (infinite loop ou exposure cross-admin chat)
+
+Comparacao com pass 347:
+- Pass 347 aplicou mask.text() em network errors (fetchErr.message) - linha 239
+- API description errors (body.description) ficaram raw - paridade lagged
+- Padrao V8 W13 DLP: ALL error messages embedding external content precisam mask
+
+Impact:
+- LGPD violation se chat_id privado vazado em logs
+- Operacional risk: admin debug + 3rd party log services receive secret
+- Mitigation pre-fix: log.warn outbox pass 343 mask AGAIN no log path
+  MAS DB column failed_reason direto Pino skip - sem mask defensive
+
+POST-FIX:
+- const safeDesc = mask.text(String(desc).slice(0, 300));
+- Embed safeDesc em error.message (mantem informativo apos sanitize)
+- Trade-off ZERO: mask.text patterns ja capturam chat_id-like numericos
+- Paridade completa pass 347 sendEmail + 220 nodemailer classification
+
+Cadeia W13 NOTIFICATION DLP defense-in-depth:
+- pass 219 Telegram error classification (transient vs permanent)
+- pass 220 nodemailer error classification (EAUTH/EENVELOPE etc)
+- pass 251 Telegram transient flag parity (env misconfig)
+- pass 343 outbox processor log.warn mask catch path
+- pass 347 sendEmail/sendTelegram fetchErr.message mask (network errors)
+- pass 516 (este) sendTelegram body.description mask (API errors)
+
+248 passes acumulados (268->516) sem deploy VPS
+9 CRITICAL + 37 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)

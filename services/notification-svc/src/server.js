@@ -247,7 +247,26 @@ async function sendTelegram(message) {
     const retryAfter = body.parameters?.retry_after;
     const desc = body.description || `HTTP ${r.status}`;
     // FIX bug 3: token NUNCA em error message (apenas status code + desc)
-    const e = new Error(`telegram_api_error_${r.status}: ${desc}${retryAfter ? ` retry_after=${retryAfter}s` : ''}`);
+    /* FIX-WORKER-13 pass 516 (DLP mask em desc - paridade pass 347 network errors):
+       PRE-FIX BUG: desc raw embedded em error.message:
+         - Telegram API descriptions podem incluir chat_id/message_id sensitive:
+           * "Bad Request: chat not found (chat_id: -1001234567890)"
+           * "Forbidden: bot was blocked by the user 123456789"
+           * "Bad Request: message text is empty (chat_id: -1001234)"
+         - TELEGRAM_CHAT_ID e secret (admin's private chat) - exposure paths:
+           1. notifications.failed_reason DB persisted (backup pg_dump LGPD leak)
+           2. audit_log payload (cross-admin /admin/audit-log visible)
+           3. log.warn outbox processor (Pino/Loki/CloudWatch logs)
+           4. Telegram alerts AIOPS pode dispatch error -> echo chat_id in chat
+         - Pass 347 aplicou mask em network errors (fetchErr.message) MAS API
+           description errors (body.description) ficaram raw - paridade lagged
+       POST-FIX: mask.text(desc) defensive antes embed em error.message
+         - mask.text() ja sanitiza patterns Bearer/JWT/sk-/CPF/IPv4/etc
+         - chat_id Telegram (numeric -100*) tambem capturado se contiver "chat_id"
+         - Trade-off ZERO: error message ainda informativo apos mask
+       Paridade pass 347 sendEmail + pass 220 nodemailer error classification */
+    const safeDesc = mask.text(String(desc).slice(0, 300));
+    const e = new Error(`telegram_api_error_${r.status}: ${safeDesc}${retryAfter ? ` retry_after=${retryAfter}s` : ''}`);
     // FIX bug 2: error classification
     // 429 rate-limit / 500-599 server error -> transient (retry safe)
     // 400/401/403/404 -> permanent (deve nao retry - schema/config bug)
