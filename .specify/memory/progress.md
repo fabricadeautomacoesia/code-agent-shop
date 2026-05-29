@@ -39103,3 +39103,24 @@ CADEIA cache hygiene cross-svc invariante V8:
 - 2 sites post-mutation invalidation (passes 620 reports + 567 vault)
 
 361 passes acumulados (268->631) sem deploy VPS
+
+============================================================================
+SESSAO 632 (W17 vault rotationAlertCron tiebreaker direction parity)
+============================================================================
+
+Pass 632 (W17 vault rotationAlertCron ORDER ASC+ASC tiebreaker):
+- DESCOBERTA: rotationAlertCron ORDER BY rotation_due_at ASC sem id ASC tiebreaker
+- Cron diario LIMIT 50 - normalmente N<50 mas edge case mass-provision keys
+  mesmo rotation_days (90d default) -> 5+ keys mesma rotation_due_at second-precision
+- Sem id ASC: PG heap order arbitrario -> audit_log payload_after.keys[] ordem
+  inverte entre cron runs -> forensic non-deterministic
+- LIMIT 50 + 51+ keys ties -> drift mensal qual subset notificado
+- POST-FIX: + id ASC tiebreaker direction parity Regra D V8 ASC+ASC variant
+- Cron output deterministic + audit trail estavel
+
+CADEIA Regra D direction parity consolidacao cross-svc:
+- DESC+DESC variant: 30+ sites admin listings (orders, payouts, reports, ...)
+- ASC+ASC variant: cron FIFO operacional (qa stuck, vault rotation este)
+- Mixed direction OK quando intencional (priority DESC, created_at ASC FIFO outbox)
+
+362 passes acumulados (268->632) sem deploy VPS
