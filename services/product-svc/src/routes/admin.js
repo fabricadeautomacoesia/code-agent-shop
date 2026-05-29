@@ -88,10 +88,22 @@ async function invalidateProductCache(productId) {
 // Usa idx_qa_runs_product_started (W14 pass 6) - 1 scan por product_id ordenado DESC.
 const QA_QUEUE_STATUS = new Set(['qa_pending','qa_running','rejected']);
 
+/* FIX-WORKER-4 pass 710 (qa-queue case-insensitive status param paridade cadeia 30+ sites cache hygiene):
+   PRE-FIX BUG: req.query.status raw case-sensitive whitelist check
+   - ?status=Qa_Pending (mixed case) -> QA_QUEUE_STATUS.has() = false -> 'all'
+   - ?status=QA_PENDING (caps) -> idem
+   - User links direto + admin dashboard URL bar drift -> case variance
+   - Handler logic linha 103 mesmo pattern (consistent MAS UX case-sensitive)
+   - Cache key separate de handler -> 3 entries Redis para mesma logical query
+     ?status=qa_pending, ?status=Qa_Pending, ?status=QA_PENDING
+   POST-FIX: normalize trim+lowercase ANTES whitelist check
+   - Cache key matches handler normalize ANTES check
+   - UX case-insensitive (paridade cadeia consolidacao W7+W18 30+ sites cache key) */
 const qaQueueCacheKey = (req) => {
   const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
   const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
-  const st = QA_QUEUE_STATUS.has(req.query.status) ? req.query.status : 'all';
+  const statusRaw = (req.query.status || '').toString().trim().toLowerCase();
+  const st = QA_QUEUE_STATUS.has(statusRaw) ? statusRaw : 'all';
   return `products:qa_queue:st=${st}:lim=${lim}:off=${off}`;
 };
 
@@ -100,7 +112,9 @@ router.get('/qa-queue',
   asyncHandler(async (req, res) => {
     const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-    const statusFilter = QA_QUEUE_STATUS.has(req.query.status) ? req.query.status : null;
+    // FIX pass 710: normalize trim+lowercase paridade cacheKey acima (case-insensitive UX)
+    const statusRaw = (req.query.status || '').toString().trim().toLowerCase();
+    const statusFilter = QA_QUEUE_STATUS.has(statusRaw) ? statusRaw : null;
 
     // Status filter optional - se passado, restringe; senao retorna todos 3 estados
     const whereParts = statusFilter
