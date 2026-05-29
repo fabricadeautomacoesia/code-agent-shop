@@ -469,9 +469,39 @@ const alertsHandler = asyncHandler(async (req, res) => {
 // para reagir rapido) mas 10s cache aceita pequena stale window vs
 // proteger DB pool. SLO admin <15s noticing new critical alert preserved.
 // FIX-WORKER-10 pass 432: cache key vary inclui severity+source+ack
+// FIX-WORKER-10 pass 558 (cache key normalization paridade pass 520/530/533):
+//   PRE-FIX BUGS (3 issues cache pollution + inconsistency):
+//   1. Raw q.severity sem trim/lowercase. Handler valida + normaliza (linha 411)
+//      mas cache key usava raw value. Cenarios pollution:
+//      - ?severity=Critical (capital) -> cache key 'sev=Critical', handler
+//        VALID_SEV.has('Critical')=false -> SEM filter aplicado
+//      - ?severity=critical (lower) -> cache key 'sev=critical', handler filtra
+//      - 2 cache entries diferentes para queries equivalentes
+//   2. Raw q.source sem trim/lowercase. Handler aplica SOURCE_RE check + lower
+//      em linha 413-414 mas cache key usava raw.
+//      ?source=AIOPS vs ?source=aiops = 2 entries cache pollution.
+//   3. Raw q.acknowledged sem trim/lowercase. Handler aplica em 415-417.
+//      ?acknowledged=True vs ?acknowledged=true = 2 entries.
+//
+//   POST-FIX: normalize cache key SAME way handler normalizes.
+//   - .toString().trim().toLowerCase() em severity/source/acknowledged
+//   - Validation pre-cache (severity not VALID_SEV -> empty for cache key)
+//   - paridade pattern V8 W10 pass 520 (/audit-log) + 530 + 533 cache normalize.
+//
+//   Pattern V8 cache hygiene: cache key MUST mirror handler normalization.
 const alertsCacheKey = (req) => {
   const q = req.query;
-  return `aiops:alerts:d=${q.days||7}:sev=${q.severity||''}:src=${q.source||''}:ack=${q.acknowledged||''}:lim=${q.limit||100}:off=${q.offset||0}`;
+  // Normalize same way handler does (linhas 411-417)
+  const sev = (q.severity || '').toString().trim().toLowerCase();
+  const sevNorm = ['info','warn','error','critical'].includes(sev) ? sev : '';
+  const src = (q.source || '').toString().trim().toLowerCase();
+  const srcNorm = /^[a-z0-9_-]{1,60}$/.test(src) ? src : '';
+  const ack = (q.acknowledged || '').toString().trim().toLowerCase();
+  const ackNorm = (ack === 'true' || ack === 'false') ? ack : '';
+  const days = Math.min(Math.max(1, parseInt(q.days || '7', 10) || 7), 90);
+  const lim = Math.max(1, Math.min(200, parseInt(q.limit, 10) || 100));
+  const off = Math.max(0, parseInt(q.offset, 10) || 0);
+  return `aiops:alerts:d=${days}:sev=${sevNorm}:src=${srcNorm}:ack=${ackNorm}:lim=${lim}:off=${off}`;
 };
 app.get('/alerts',
   jwt.requireAuth({ roles: ['admin','staff'] }),
