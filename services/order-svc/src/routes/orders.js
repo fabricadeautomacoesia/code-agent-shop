@@ -4,7 +4,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, maskPII, rateLimiter, cache, mask, notifCache } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, maskPII, rateLimiter, cache, mask, notifCache, withRetry } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 71: rate-limiter anti-spam dispute.
 // PRE-FIX: POST /:id/dispute SEM rate-limit. Atacante com conta legitima:
@@ -62,7 +62,8 @@ router.post('/checkout',
     // FIX-WORKER-18 pass 176: flag p/ invalidar cache loyalty:me pos-tx
     // se loyalty pts foram debitados (UPDATE user_loyalty linha ~99).
     let loyaltyDebited = false;
-    const result = await tx(async (c) => {
+    // FIX-WORKER-2 pass 674 (withRetry checkout deadlock defense - CRITICAL real money flow)
+    const result = await withRetry('order.checkout.tx', async () => await tx(async (c) => {
       const cart = await c.query(
         `SELECT * FROM carts WHERE user_id = $1 FOR UPDATE`, [req.user.sub]
       );
@@ -238,7 +239,7 @@ router.post('/checkout',
                     [cart.rows[0].id]);
 
       return order.rows[0];
-    });
+    }));
 
     res.status(201).json({ ok: true, order: result });
 
@@ -280,7 +281,8 @@ router.post('/checkout',
       // FREE ORDER PATH - skip Asaas, auto-fulfill
       setImmediate(async () => {
         try {
-          await tx(async (c) => {
+          // FIX-WORKER-2 pass 675 (withRetry free order auto-fulfill deadlock defense)
+          await withRetry('order.free_fulfill.tx', async () => await tx(async (c) => {
             // UPDATE order para paid + fulfilled (status terminal free flow)
             await c.query(
               `UPDATE orders SET payment_status = 'paid', status = 'fulfilled',
@@ -314,7 +316,7 @@ router.post('/checkout',
                'Sua compra gratuita foi processada. Acesse seus produtos em Minha Conta.',
                JSON.stringify({ order_id: result.id, order_number: result.order_number, free: true })]
             );
-          });
+          }));
           log.info({ order_id: result.id, free: true }, '[order.free_auto_fulfill]');
           // Re-invalida cache p/ refletir status paid/fulfilled
           // FIX pass 469: + notifCache invalidate (consume pass 467 cross-svc cadeia)
@@ -731,9 +733,10 @@ router.post('/:id/dispute',
       return next(errorHandler.notFound('order_not_found'));
     }
 
+    // FIX-WORKER-2 pass 676 (withRetry dispute create deadlock defense)
     let outcome;
     let dispute;
-    await tx(async (c) => {
+    await withRetry('order.dispute_create.tx', async () => await tx(async (c) => {
       // FIX bug 1+2+4 (Regra M+A+cross-table): validacao consolidada
       // - order existe + buyer = req.user (ownership)
       // - order status valido p/ disputa
@@ -810,7 +813,7 @@ router.post('/:id/dispute',
            ip: req.ip,
          })]
       );
-    });
+    }));
 
     if (outcome?.error === 'order_or_item_not_found') {
       return next(errorHandler.notFound('order_or_item_not_found'));
@@ -997,8 +1000,9 @@ router.post('/admin/disputes/:id/resolve',
       return next(errorHandler.badRequest('invalid_uuid'));
     }
 
+    // FIX-WORKER-4 pass 677 (withRetry admin dispute resolve deadlock defense)
     let outcome;
-    await tx(async (c) => {
+    await withRetry('order.dispute_resolve.tx', async () => await tx(async (c) => {
       // Regra K: SELECT FOR UPDATE + Regra Q idempotent terminal guard
       const cur = await c.query(
         `SELECT id, status, against_seller_id, order_id, order_item_id, opened_by_user_id
@@ -1106,7 +1110,7 @@ router.post('/admin/disputes/:id/resolve',
       if (sellerUserId) notifCache.invalidate(sellerUserId);
 
       outcome = { ok: true, dispute_id: req.params.id, new_status: req.body.next_status };
-    });
+    }));
 
     if (outcome?.error === 'not_found') return next(errorHandler.notFound('dispute_not_found'));
     if (outcome?.error === 'already_resolved') {
