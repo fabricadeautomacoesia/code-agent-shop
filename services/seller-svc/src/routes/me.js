@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, crypto, cache, logger, rateLimiter, mask } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, crypto, cache, logger, rateLimiter, mask, withRetry } = require('@cas/shared');
 
 const log = logger.child({ svc: 'seller-svc', mod: 'me' });
 const router = express.Router();
@@ -160,9 +160,19 @@ router.patch('/',
     const entries = Object.entries(req.body).filter(([k]) => ALLOWED_PATCH_FIELDS.has(k));
     if (!entries.length) return res.json({ ok: true, noop: true });
 
+    /* FIX-WORKER-5 pass 661 (withRetry deadlock defense seller PATCH /me - cadeia atomicity):
+       PRE-FIX: tx() sem withRetry wrap.
+       - Cenarios deadlock 40P01:
+         1. Seller double-click "Salvar perfil" -> 2 concurrent PATCH lock contention
+         2. Race com /upload product -> UPDATE sellers concurrent (SLA timer reset)
+         3. Race com admin /suspend (admin acao + seller mid-update)
+       - Cadeia consolidacao cross-svc atomicity: auth 6/6, vault 8/8,
+         product admin 3/3, seller admin 5/5 COMPLETA (passes 656-660)
+       - seller-svc me.js 3 tx + loyalty.js 2 tx LAGGED
+       POST-FIX: withRetry('seller.patch_me.tx') wrap (3 attempts backoff) */
     let outcome;
     let sellerId;
-    await tx(async (c) => {
+    await withRetry('seller.patch_me.tx', async () => await tx(async (c) => {
       // BUG 5 + BUG 4 (Regra K): SELECT FOR UPDATE seller existence + status
       const cur = await c.query(
         `SELECT id, status FROM sellers
@@ -212,7 +222,7 @@ router.patch('/',
          VALUES ($1, 'seller', 'seller.profile_update', 'seller', $2, 'info', $3::JSONB)`,
         [req.user.sub, s.id, JSON.stringify({ ...auditPayload, ip: req.ip })]
       );
-    });
+    }));
 
     if (outcome?.error === 'seller_not_found') return next(errorHandler.notFound('seller_not_found'));
     if (outcome?.error === 'seller_status_blocks_update') {
@@ -307,8 +317,9 @@ router.post('/kyc',
     }
     const fp = crypto.sha256(docDigits);  // hash digit-only canonico
 
+    // FIX-WORKER-5 pass 662 (withRetry kyc submit deadlock defense paridade pass 661)
     let outcome;
-    await tx(async (c) => {
+    await withRetry('seller.kyc_submit.tx', async () => await tx(async (c) => {
       // BUG 4+6 (Regra K + 404): SELECT FOR UPDATE seller (anti-race) + existence
       const sr = await c.query(
         `SELECT id, status FROM sellers WHERE user_id = $1::UUID FOR UPDATE`,
@@ -361,7 +372,7 @@ router.post('/kyc',
            ip: req.ip,
          })]
       );
-    });
+    }));
 
     if (outcome?.error === 'seller_not_found') return next(errorHandler.notFound('seller_not_found'));
     if (outcome?.error === 'invalid_state') {
@@ -521,9 +532,10 @@ router.post('/payout',
   payoutLimiter,
   validate({ body: z.object({ amount_cents: z.number().int().positive() }) }),
   asyncHandler(async (req, res, next) => {
+    // FIX-WORKER-5 pass 663 (withRetry payout request deadlock defense - CRITICAL real money flow)
     let outcome;
     let payout;
-    await tx(async (c) => {
+    await withRetry('seller.payout_request.tx', async () => await tx(async (c) => {
       // BUG 5 Regra K: SELECT FOR UPDATE seller (serializa concorrencia)
       // BUG 3+4 Regras A+KYC: status='active' filter (pending_kyc/suspended blocked)
       // BUG 2 inflight: total_revenue - SUM payouts non-final
@@ -603,7 +615,7 @@ router.post('/payout',
            ip: req.ip,
          })]
       );
-    });
+    }));
 
     if (outcome?.error === 'seller_not_found') return next(errorHandler.notFound('seller_not_found'));
     if (outcome?.error === 'seller_not_active') {
