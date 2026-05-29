@@ -436,9 +436,31 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 //   Compare hot path em MLB-7 feature. Combinatoria IDs grande mas
 //   keys mais usadas (top products) repetem. Cache 60s vary by IDs.
 //   FIX: cache.cacheMiddleware com key ordenada (canonical IDs sorted).
+/* FIX-WORKER-7 pass 490 (cache key normalization + UUID filter):
+   PRE-FIX BUG 1 (cache pollution case-sensitivity):
+     - .sort() default ASCII case-sensitive
+     - ?ids=AAA-BBB,ccc-ddd vs ?ids=aaa-bbb,CCC-DDD criavam keys diferentes
+     - PG UUID = case-insensitive -> mesmos produtos retornados
+     - Redis ate 2 entries per logical query (cache miss x2)
+   PRE-FIX BUG 2 (junk pollution):
+     - .filter(Boolean) so descartava empty strings
+     - ?ids=lixo1,lixo2,lixo3 (3 invalid junk) -> cache key valida criada
+     - Atacante hammer com varied junk -> cache MIRA infinita (DoS amplification
+       mesmo com listLimiter 60/min - 4 UUIDs combinatoria por req)
+     - Handler depois rejeita 400 mas cache key ja persisted
+   POST-FIX:
+     - .toLowerCase() normaliza UUID case (PG-compatible)
+     - .filter(UUID_RE) so UUIDs validos entram na key
+     - Junk descartado pre-cache -> nao pollui Redis
+     - 4 IDs limit + sort canonical preservados
+   Paridade pass 291 search-svc cache key normalization. */
 const compareCacheKey = (req) => {
   const idsRaw = (req.query.ids || '').toString();
-  const ids = idsRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 4).sort();
+  const ids = idsRaw.split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(s => UUID_RE.test(s))
+    .slice(0, 4)
+    .sort();
   return `products:compare:${ids.join('|')}`;
 };
 

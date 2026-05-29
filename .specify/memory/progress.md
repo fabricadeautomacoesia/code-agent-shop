@@ -36492,3 +36492,52 @@ Cadeia W3 PDP UX consistency:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 490 - W7 PRODUCT-SVC: /compare cache key normalization + UUID filter
+
+PRE-FIX (product-svc /compare cache key linha 439):
+- compareCacheKey funcao:
+    const ids = idsRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 4).sort();
+    return `products:compare:${ids.join('|')}`;
+
+BUG 1 (cache pollution case-sensitivity):
+- .sort() default ASCII case-sensitive (capital A-Z < lowercase a-z)
+- ?ids=AAA-BBB,ccc-ddd vs ?ids=aaa-bbb,CCC-DDD criavam keys diferentes:
+  - Key 1: products:compare:AAA-BBB|ccc-ddd
+  - Key 2: products:compare:CCC-DDD|aaa-bbb (sorted different)
+- PG UUID = case-insensitive -> mesmos produtos
+- Redis 2 entries per logical query (cache miss x2)
+
+BUG 2 (junk pollution DoS amplification):
+- .filter(Boolean) so descartava empty strings
+- ?ids=lixo1,lixo2,lixo3 (3 invalid junk) -> cache key valida criada
+  com strings nao-UUID
+- Atacante hammer com varied junk -> cache MIRA infinita
+- listLimiter 60/min limita req mas 4 UUIDs combinatoria = milhares
+  variants possiveis
+- Handler depois rejeita 400 (linhas 457-463 UUID_RE check) mas cache
+  key ja persisted
+
+POST-FIX:
+- .toLowerCase() normaliza UUID case (PG-compatible)
+- .filter(s => UUID_RE.test(s)) so UUIDs validos entram na key
+- Junk descartado pre-cache -> nao pollui Redis
+- 4 IDs limit + sort canonical preservados
+
+Paridade pass 291 search-svc cache key normalization (cat lowercase).
+Paridade pass 232 autocomplete short-circuit pre-cache (skip Redis pollution).
+
+Cadeia W7 cache hygiene:
+- pass 232 autocomplete q<2 short-circuit
+- pass 291 search top-sellers cat lowercase
+- pass 374 search_log filter tracking
+- pass 411 cat is_active filter cross-svc
+- pass 487 is_top_seller NULL category guard
+- pass 490 (este) /compare cache key UUID filter
+
+223 passes acumulados (268->490) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply
