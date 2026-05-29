@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII, mask } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII, mask, notifCache } = require('@cas/shared');
 
 const router = express.Router();
 const log = logger.child({ svc: 'product-svc', mod: 'admin' });
@@ -279,14 +279,21 @@ router.post('/:id/force-approve',
          })]
       );
 
-      // BUG 7: notify seller (atomic - mesma tx)
+      /* FIX-WORKER-7 pass 473 (notifCache cross-svc - consume cadeia pass 467-472):
+         PRE-FIX: force-approve notification seller SEM invalidate cache.
+         - Admin override LLM verdict -> priority 1 importante
+         - Seller esperando approval (waiting on admin) -> bell delay 20s
+         - UX gap: admin manual approve = special action, deserves immediate visibility
+         POST-FIX: RETURNING user_id + notifCache.invalidate. */
+      let sellerNotifiedUserId = null;
       if (productMeta.seller_id) {
-        await c.query(
+        const notifRes = await c.query(
           `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
            SELECT s.user_id, 'in_app'::notification_channel, 'product_force_approved',
                   $1::text, $2::text, $3::JSONB, 1
              FROM sellers s WHERE s.id = $4::UUID
-            LIMIT 1`,
+            LIMIT 1
+            RETURNING user_id`,
           [
             `Produto aprovado por admin: ${productMeta.title}`,
             `Seu produto foi aprovado por override admin. Motivo: ${String(req.body.reason).slice(0, 300)}`,
@@ -298,7 +305,11 @@ router.post('/:id/force-approve',
             productMeta.seller_id,
           ]
         );
+        sellerNotifiedUserId = notifRes.rows[0]?.user_id || null;
       }
+      // expose user_id p/ post-tx cache invalidate
+      outcome = outcome || {};
+      outcome.notified_user_id = sellerNotifiedUserId;
     });
 
     if (outcome?.error === 'not_found') return next(errorHandler.notFound('product_not_found'));
@@ -312,7 +323,11 @@ router.post('/:id/force-approve',
     }
 
     // FIX-WORKER-7 pass 5: passa productId p/ invalidacao especifica detail/reviews/qna
+    // FIX pass 473: + notifCache.invalidate post-tx p/ seller notification
     await invalidateProductCache(req.params.id);
+    if (outcome?.notified_user_id) {
+      notifCache.invalidate(outcome.notified_user_id);
+    }
     res.json({ ok: true, product_id: req.params.id, previous_status: productMeta?.previous_status });
   })
 );

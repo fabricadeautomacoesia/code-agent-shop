@@ -6,7 +6,7 @@ const express = require('express');
 const cron = require('node-cron');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache, rateLimiter, maskPII, mask } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, cache, rateLimiter, maskPII, mask, notifCache } = require('@cas/shared');
 
 const log = logger.child({ svc: 'review-svc' });
 const app = express();
@@ -495,11 +495,18 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
         //   POST-FIX: qna_id = r.rows[0].id (RETURNING ja capturava linha 470)
         //   Combined com inferCtaUrl pass 434 que usa payload.qna_id para criar
         //   #qna-{uuid} hash anchor functional - PDP abre tab QNA + scroll smooth.
-        await c.query(
+        /* FIX-WORKER-7 pass 473 (notifCache cross-svc - consume cadeia 467-472):
+           PRE-FIX: product_qna_new INSERT SEM cache invalidate.
+           - Buyer faz pergunta -> seller bell delay 20s
+           - SLA admin reviews QNA pending - delay = SLA miss potential
+           - Pass 425+426+434 deep-link infra ja funcional - falta cache invalidation
+           POST-FIX: + RETURNING user_id -> notifCache.invalidate post-tx. */
+        const notifSellerRes = await c.query(
           `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
            SELECT user_id, 'in_app', 'product_qna_new',
                   $1, $2, $3::JSONB, 1
-             FROM sellers WHERE id = $4::UUID`,
+             FROM sellers WHERE id = $4::UUID
+            RETURNING user_id`,
           [
             `Nova pergunta: ${productTitle}`,
             `"${questionExcerpt}${req.body.question.length > 200 ? '...' : ''}"`,
@@ -507,8 +514,10 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
             p.rows[0].seller_id,
           ]
         );
+        outcome = { ok: true, slug: p.rows[0].slug, notified_seller_user_id: notifSellerRes.rows[0]?.user_id || null };
+      } else {
+        outcome = { ok: true, slug: p.rows[0].slug };
       }
-      outcome = { ok: true, slug: p.rows[0].slug };
     });
 
     if (outcome?.error === 'product_not_found') {
@@ -532,6 +541,10 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
     // FIX-WORKER-18 pass 361: invalidate seller pending queue cache
     //   Nova qna -> queue do seller incrementa -> dashboard mostra realtime
     cache.del('qna:seller:pending:*').catch(() => {});
+    // FIX-WORKER-7 pass 473: notifCache invalidate seller (consume cadeia pass 467+472)
+    if (outcome?.notified_seller_user_id) {
+      notifCache.invalidate(outcome.notified_seller_user_id);
+    }
     res.status(201).json({ qna });
   })
 );
