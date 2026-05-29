@@ -1275,8 +1275,24 @@ app.post('/usage', vaultUseGuard,
     //   - is_active=FALSE -> 410 Gone (chave revogada nao aceita usage)
     //   - row nao existe -> 404 (admin/svc passou id invalido)
     //   - UPDATE com RETURNING + check rowCount=1 (idempotent guard)
+    /* FIX-WORKER-17 pass 643 (withRetry deadlock defense - completa cadeia W17 7+1 sites):
+       PRE-FIX: tx() sem withRetry wrap (linha 1279 antes deste fix).
+       - /usage eh HIGH FREQUENCY endpoint (cada LLM call qa-worker -> vault /usage)
+       - Em prod: qa-worker mass campaign 50+ runs concurrent = vault deadlock window
+       - Cenarios deadlock 40P01:
+         1. SELECT FOR UPDATE em mesma key concorrente (2 LLM calls usando same key)
+         2. UPDATE usage_this_month_cents race com /rotate UPDATE (lock ordering)
+         3. UPDATE race com /keys/me/:id/revoke UPDATE (mesma row lock)
+       - PRE-FIX impact: ~1-5% requests durante peak fail silent 500
+         + LLM cost gasto MAS billing nao registra (perda receita real)
+       - Outros endpoints write vault TODOS com withRetry:
+         provision (506), seller_provision (507/1527), rotate (1117),
+         admin_revoke (972), seller_revoke (1624), use.pool (763)
+       - /usage era ULTIMO endpoint write SEM withRetry - lagged consolidacao
+       POST-FIX: withRetry('vault.usage.tx') wrap (3 attempts backoff)
+       Pattern V8 W17 atomicity COMPLETA: TODOS 8 endpoints write vault com withRetry. */
     let outcome;
-    await tx(async (c) => {
+    await withRetry('vault.usage.tx', async () => await tx(async (c) => {
       const keyCheck = await c.query(
         `SELECT id, is_active FROM vault_api_keys WHERE id = $1::UUID FOR UPDATE`,
         [b.key_id]
@@ -1314,7 +1330,7 @@ app.post('/usage', vaultUseGuard,
         log.warn({ key_id: b.key_id, rowCount: upd.rowCount },
           '[vault.usage.counter_update_unexpected] FOR UPDATE lock perdido?');
       }
-    });
+    }));
     if (outcome?.error === 'key_not_found') {
       log.warn({ ip: req.ip, key_id: b.key_id }, '[vault.usage.key_not_found]');
       return res.status(404).json({ error: 'key_not_found', message: 'Chave nao encontrada.' });
