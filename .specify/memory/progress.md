@@ -39305,3 +39305,40 @@ CADEIA W17 vault security defense-in-depth status:
 - withRetry deadlock defense 8/8 endpoints write (pass 643 ESTE FINAL)
 
 373 passes acumulados (268->643) sem deploy VPS
+
+============================================================================
+SESSAO 644 (W17 CRITICAL /refund timing-attack + audit_log gap)
+============================================================================
+
+Pass 644 (W17 CRITICAL /payments/asaas/refund 2 SEC bugs - REAL MONEY endpoint):
+- DESCOBERTA 1: TIMING ATTACK plain === comparison (linha 522)
+  PRE-FIX: req.headers['x-internal-token'] !== expected
+  - Atacante mede latencia varying chars - prefix correto demora ligeiramente mais
+  - Permite reconstruir PAYMENT_INTERNAL_TOKEN char-by-char ~256 * N tentativas
+  - W17 pass 4 ja estabeleceu timingSafeEqual cross-svc - /refund FICOU LAGGED
+  
+- DESCOBERTA 2: AUDIT_LOG MISSING (REAL MONEY endpoint critical severity)
+  - Atacante bypass success = REFUND ARBITRARIO
+    (atacante recebe dinheiro + buyer original perde acesso produto)
+  - log.warn Pino 7d retention - NAO queryable forensic cross-svc
+  - Cadeia W17 audit_log critical HMAC bypass 6 sites prior:
+    pass 458 vault.use, pass 462 qa.run, pass 463 asaas.webhook,
+    pass 523 qa.callback, pass 591 payment.create, pass 555 vault.use FALLBACK
+  - /refund era ULTIMO bypass endpoint lagged
+
+- POST-FIX:
+  1. crypto.timingSafeEqual (paridade vault pass 4 + asaasCreateGuard pass 591)
+  2. audit_log critical 'payment.refund.invalid_internal_token' severity=critical
+  3. fail2ban reportFailure (anti brute-force escalation)
+  4. actor NULL + actor_role 'anonymous' (bypass attempt - JWT nao rodou)
+
+CADEIA W17 HMAC bypass critical defense COMPLETA 7/7 endpoints:
+- vault.use.invalid_internal_token (pass 458)
+- qa.run.invalid_internal_token (pass 462)
+- asaas.webhook.invalid_signature (pass 463)
+- qa.callback.invalid_signature (pass 523)
+- vault.use.audit_fail FALLBACK (pass 555)
+- payment.create.invalid_internal_token (pass 591)
+- payment.refund.invalid_internal_token (pass 644 ESTE)
+
+374 passes acumulados (268->644) sem deploy VPS
