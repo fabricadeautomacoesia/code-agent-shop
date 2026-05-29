@@ -234,6 +234,22 @@ app.post('/keys', provisionRateLimit, adminOnly, validate({ body: provisionSchem
        })]
     );
   })); // close withRetry pass 506
+  /* FIX-WORKER-17 pass 578 (admin path cache invalidation - completa cadeia pass 574):
+     PRE-FIX (pass 489): GET /keys cached 60s + pass 409 idx admin cache.
+     Pass 574 corrigiu seller path (POST /keys/me + revoke). Admin path lagged:
+     - Admin provisiona key via POST /keys -> dashboard reload mostra lista STALE
+     - /admin/vault page polling = nova key invisible ate 60s TTL
+     - Bonus: rotation_due alerts cache (300s pass 409) tambem precisa invalidate
+       (key recem-provisionada com rotation_due_at futuro pode aparecer em alerts cache stale)
+     POST-FIX: cache.del wildcard 2 keys:
+     - 'vault:keys_list:*' (GET /keys admin list cache pass 489)
+     - 'vault:rotation_due:*' (GET /keys/rotation-due cache pass 409)
+     Fire-and-forget catch (Redis down nao bloquear response 201).
+     Paridade pass 574 seller path + pass 569 notif-svc /prefs invalidation. */
+  Promise.all([
+    cache.del('vault:keys_list:*'),
+    cache.del('vault:rotation_due:*'),
+  ]).catch(() => {});
   log.info({ provisioned: r.rows[0].id, provider, fp, rotation_due_at: r.rows[0].rotation_due_at },
     '[vault.provision]');
   res.status(201).json(r.rows[0]);
@@ -962,6 +978,12 @@ app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
         revoked_reason: outcome.revoked_reason,
       });
     }
+    /* FIX-WORKER-17 pass 578: admin revoke cache invalidation paridade admin provision.
+       cache.del vault:keys_list:* + vault:rotation_due:* pos-tx commit. */
+    Promise.all([
+      cache.del('vault:keys_list:*'),
+      cache.del('vault:rotation_due:*'),
+    ]).catch(() => {});
     res.json({ ok: true });
   })
 );
@@ -1133,6 +1155,14 @@ app.post('/keys/:id/rotate',
         'Chave ja foi revogada. Provisione uma nova via POST /keys (sem swap).'));
     }
 
+    /* FIX-WORKER-17 pass 578: rotate cache invalidation - admin path paridade.
+       Rotate = ATOMIC swap (revoke antiga + provision nova). Cache lists
+       precisam refresh: keys_list (status changes) + rotation_due (new
+       rotation_due_at de nova key). cache.del wildcard pos-tx commit. */
+    Promise.all([
+      cache.del('vault:keys_list:*'),
+      cache.del('vault:rotation_due:*'),
+    ]).catch(() => {});
     log.info({
       rotated_by: req.user.sub,
       old_key_id: result.old_key_id,
