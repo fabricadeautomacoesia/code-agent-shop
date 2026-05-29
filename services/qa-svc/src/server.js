@@ -764,9 +764,22 @@ app.post('/qa/callback',
       }
 
       // 5. Audit
+      /* FIX-WORKER-12 pass 563 (audit_log actor_role gap - forensic alignment):
+         PRE-FIX BUG: INSERT audit_log SEM actor_user_id + actor_role.
+         - Schema audit_log (mig 002): actor_user_id NULLABLE + actor_role NULLABLE
+         - INSERT succeeds com NULL/NULL nestes campos
+         - PROBLEMA: forensic queries cross-svc nao incluem qa.callback entries:
+           SELECT * FROM audit_log WHERE actor_role = 'service'
+           -> qa.approved/rejected MISSING (actor_role NULL nao matcha 'service')
+         - aiops-svc /audit-log filter ?actor_role nao implementado mas pode ser
+         - Outros service-initiated audit entries (payment, vault, notif) usam
+           actor_role='service' consistently (paridade pass 282/438/438/548)
+         - qa-svc era lagged - audit entries qa.* difficult to filter forensic
+         POST-FIX: + actor_user_id=NULL + actor_role='service' explicit.
+         Paridade pattern V8 W12+W6+W11+W17 cross-svc service-initiated audits. */
       await c.query(
-        `INSERT INTO audit_log (action, target_type, target_id, severity, payload_after)
-         VALUES ($1, 'product', $2, $3, $4::JSONB)`,
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES (NULL, 'service', $1, 'product', $2, $3, $4::JSONB)`,
         [`qa.${verdict}`, product_id, approved ? 'info' : 'warn',
          JSON.stringify({ confidence: b.confidence_score, reasons: b.reasons, provider: b.llm_provider })]
       );
