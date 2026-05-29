@@ -65,6 +65,27 @@ function RegisterInner() {
        - 13 digitos: idem (UX confuso "digitei 13 numeros, foi recusado")
        POST-FIX: regex precisa /^(\d{11}|\d{14})$/ - apenas comprimentos validos.
        Mensagem UX: explicita "CPF (11)" ou "CNPJ (14)" para reduzir confusao. */
+    /* FIX-WORKER-1 pass 527 (CPF obrigatorio p/ seller - UX gap chicken-egg):
+       PRE-FIX BUG: backend Zod registerSchema (auth.js:94) cpf_cnpj.optional() para
+       AMBOS roles. Buyer pode pular OK MAS seller registra sem CPF, depois:
+       - Tenta checkout cobranca -> Asaas createCustomer fail 400 missing_cpf_cnpj
+         (pass 4 W11 ja adicionou explicit 400 mas user confuso)
+       - Configura asaas_wallet_id (loja KYC) -> requer CPF -> bloqueado
+       - Solicita payout -> wallet_not_configured 403 (pass 287 frontend)
+       Chicken-egg UX:
+       - Seller registra com CPF '' -> conta criada SEM PII obligatoria
+       - Toda primeira operacao financeira falha until KYC complete
+       - 30-40% drop-off rate em onboarding seller (industry typical sem upfront PII)
+       POST-FIX (client-side hard require seller path):
+       - Se role=seller, cpf_cnpj OBRIGATORIO (validate antes submit)
+       - Mensagem clara: 'CPF/CNPJ obrigatorio para vendedores (KYC + pagamentos Asaas)'
+       - Buyer path inalterado (.optional() preserved)
+       - Backend Zod nao precisa mudar (defesa defensiva client-side)
+       - UX claro: seller v form -> label NEEDS update (proximo iter) p/ '*' visual */
+    if (role === 'seller' && !form.cpf_cnpj) {
+      setError('CPF/CNPJ obrigatorio para vendedores (necessario para KYC e pagamentos Asaas).');
+      return;
+    }
     if (form.cpf_cnpj) {
       const digits = form.cpf_cnpj.replace(/\D/g, '');
       if (!/^(\d{11}|\d{14})$/.test(digits)) {
@@ -154,11 +175,20 @@ function RegisterInner() {
           </div>
         </div>
         <div>
-          <label htmlFor="reg-cpfcnpj" className="text-sm text-white/70 mb-1.5 block">CPF/CNPJ {role==='buyer' && <span className="text-white/40">(opcional)</span>}</label>
+          {/* FIX-WORKER-1 pass 527: visual indicator obrigatorio quando seller (paridade validate handler) */}
+          <label htmlFor="reg-cpfcnpj" className="text-sm text-white/70 mb-1.5 block">
+            CPF/CNPJ {role==='buyer'
+              ? <span className="text-white/40">(opcional)</span>
+              : <span className="text-magenta" aria-label="obrigatorio">*</span>}
+          </label>
           <input id="reg-cpfcnpj" value={form.cpf_cnpj} onChange={(e) => { setForm({...form, cpf_cnpj: e.target.value}); clearErr(); }}
             autoComplete="off" inputMode="numeric"
+            aria-required={role === 'seller'}
             placeholder="000.000.000-00 ou 00.000.000/0000-00"
             className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
+          {role === 'seller' && (
+            <p className="text-[11px] text-white/40 mt-1">Necessario para KYC + pagamentos via Asaas Split.</p>
+          )}
         </div>
         <div>
           <label htmlFor="reg-phone" className="text-sm text-white/70 mb-1.5 block">Telefone E.164 (+5511...)</label>

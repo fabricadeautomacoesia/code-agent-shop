@@ -38412,3 +38412,58 @@ Cadeia W6 AUTH-SVC security/atomicity:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
+
+## Pass 527 - W1 AUTH: /register CPF obrigatorio seller (chicken-egg UX gap)
+
+PRE-FIX BUG (UX onboarding seller flow):
+- Backend Zod registerSchema (auth.js:94):
+    cpf_cnpj: z.preprocess(emptyToUndef, z.string().min(11).max(20).optional())
+- .optional() para AMBOS roles (buyer + seller)
+- Frontend register page: label '(opcional)' para buyer, SEM indicator para seller
+- Seller pode registrar sem CPF -> conta criada SEM PII obligatoria
+- Toda primeira operacao financeira falha until KYC complete:
+  1. Checkout cobranca Asaas -> 400 missing_cpf_cnpj (pass 4 W11 explicit)
+  2. Configura asaas_wallet_id loja KYC -> requer CPF -> bloqueado
+  3. Solicita payout -> 403 wallet_not_configured (pass 287)
+- Chicken-egg: 30-40% drop-off rate seller onboarding industry typical
+
+POST-FIX (client-side hard require seller path):
+1. Validate handler (linha 58+):
+   if (role === 'seller' && !form.cpf_cnpj) {
+     setError('CPF/CNPJ obrigatorio para vendedores...');
+     return;
+   }
+2. Visual label indicator (linha 157):
+   buyer: '(opcional)' (preserved)
+   seller: '<span class=magenta>*</span>' + aria-label='obrigatorio'
+3. input aria-required={role === 'seller'} (a11y proper)
+4. Hint text seller: 'Necessario para KYC + pagamentos via Asaas Split'
+5. Backend Zod nao precisa mudar (defesa defensiva client-side)
+
+Trade-off:
+- Buyer flow preserved (.optional()) - quick signup
+- Seller flow now upfront PII collection (industry standard pattern)
+- Reduces post-registration friction + ticket support load
+
+Comparacao Pattern V8 W1/W11 PII collection:
+- pass 4 W11 missing_cpf_cnpj explicit 400 (checkout) - reactive
+- pass 287 W5 wallet_warning explicit (payout) - reactive
+- pass 527 (este) cpf_cnpj proactive client validate seller path
+
+Cadeia W1 AUTH /register UX:
+- pass 2 phone E.164 validate preventive
+- pass 51 Pattern W7 5 bugs (tx atomic + dedup + Zod)
+- pass 139 a11y htmlFor + autoComplete
+- pass 183 role toggle aria-pressed + dismiss button
+- pass 233 password regex paridade backend
+- pass 254 pwScore regex backend parity
+- pass 294 CPF length strict 11 OR 14
+- pass 424 clearErr cross-fields paridade
+- pass 527 (este) CPF obrigatorio seller proactive
+
+259 passes acumulados (268->527) sem deploy VPS
+9 CRITICAL + 38 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
