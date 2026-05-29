@@ -437,9 +437,17 @@ const ORDER_STATUS_ENUM = new Set([
 //      ?offset=-5 -> cache key 'off=-5', handler -> 0
 //   POST-FIX: normalize cache key SAME way handler normalizes.
 //   Pattern V8 cache hygiene invariante cross-svc consolidacao 19 sites.
+/* FIX-WORKER-2 pass 717 (orders /conta/pedidos case-insensitive - paridade 32+ sites):
+   PRE-FIX: ordersListCacheKey + handler ambos case-sensitive (.trim() apenas)
+   - User digita URL ?status=Paid (mixed case) -> bad UX (handler 400 invalid_status)
+   - Browser back/forward retro-capitaliza em alguns user agents
+   - URL share entre devices -> capitalization drift
+   - Cache key + handler ambos case-sensitive MAS UX broken
+   POST-FIX: + .toLowerCase() ANTES whitelist check (cache + handler consistent)
+   33rd site cadeia cache key case-insensitive cross-svc consolidacao. */
 const ordersListCacheKey = (req) => {
   const userId = req.user?.sub || 'anon';
-  const statusRaw = (req.query.status || '').toString().trim();
+  const statusRaw = (req.query.status || '').toString().trim().toLowerCase();
   const statusNorm = ORDER_STATUS_ENUM.has(statusRaw) ? statusRaw : '';
   const lim = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 30));
   const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
@@ -451,7 +459,10 @@ router.get('/',
   asyncHandler(async (req, res) => {
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 30));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-    const statusFilter = req.query.status ? String(req.query.status) : null;
+    // FIX pass 717: + .trim().toLowerCase() paridade cacheKey case-insensitive
+    const statusFilter = req.query.status
+      ? String(req.query.status).trim().toLowerCase()
+      : null;
     if (statusFilter && !ORDER_STATUS_ENUM.has(statusFilter)) {
       return res.status(400).json({
         error: 'invalid_status',
