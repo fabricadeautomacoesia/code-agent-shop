@@ -593,8 +593,9 @@ router.post('/:id/kyc/approve',
       return next(errorHandler.badRequest('invalid_uuid'));
     }
 
+    // FIX-WORKER-4 pass 658 (withRetry kyc/approve deadlock defense paridade pass 656/657)
     let outcome;
-    await tx(async (c) => {
+    await withRetry('seller.kyc_approve.tx', async () => await tx(async (c) => {
       // Regra K FOR UPDATE + Regra Q idempotent terminal
       const cur = await c.query(
         `SELECT id, status, document_type, legal_name FROM sellers
@@ -651,7 +652,7 @@ router.post('/:id/kyc/approve',
       );
       outcome = outcome || {};
       outcome.notified_user_id = kycNotifRes.rows[0]?.user_id || null;
-    });
+    }));
 
     // FIX-WORKER-4 pass 477 (notifCache - kyc_approved engagement critical)
     if (outcome?.notified_user_id) notifCache.invalidate(outcome.notified_user_id);
@@ -677,8 +678,9 @@ router.post('/:id/kyc/reject',
       return next(errorHandler.badRequest('invalid_uuid'));
     }
 
+    // FIX-WORKER-4 pass 659 (withRetry kyc/reject deadlock defense paridade pass 656-658)
     let outcome;
-    await tx(async (c) => {
+    await withRetry('seller.kyc_reject.tx', async () => await tx(async (c) => {
       const cur = await c.query(
         `SELECT id, status, document_type FROM sellers
           WHERE id = $1::UUID FOR UPDATE`,
@@ -729,7 +731,7 @@ router.post('/:id/kyc/reject',
       );
       outcome = outcome || {};
       outcome.notified_user_id = kycRejectNotifRes.rows[0]?.user_id || null;
-    });
+    }));
 
     // FIX-WORKER-4 pass 477 (notifCache - kyc_rejected priority 3 critical)
     if (outcome?.notified_user_id) notifCache.invalidate(outcome.notified_user_id);
@@ -1156,8 +1158,9 @@ router.post('/payouts-pending-wallet/:id/force-liquidate',
       return next(errorHandler.badRequest('invalid_uuid'));
     }
 
+    // FIX-WORKER-4 pass 660 (withRetry force-liquidate deadlock defense - COMPLETA 5/5 seller-svc admin tx)
     let outcome;
-    await tx(async (c) => {
+    await withRetry('seller.force_liquidate.tx', async () => await tx(async (c) => {
       // Lock + state machine guard (only pending -> can be processed)
       const cur = await c.query(
         `SELECT pw.id, pw.seller_id, pw.amount_cents, pw.status,
@@ -1196,7 +1199,7 @@ router.post('/payouts-pending-wallet/:id/force-liquidate',
       // pegar no proximo ciclo. Alternativa async safe sem service-to-service call.
       // Audit log indica admin acionou.
       outcome = { ok: true, id: req.params.id, seller_id: p.seller_id };
-    });
+    }));
 
     if (outcome?.error === 'not_found') return next(errorHandler.notFound('payout_not_found'));
     if (outcome?.error === 'invalid_state') {
