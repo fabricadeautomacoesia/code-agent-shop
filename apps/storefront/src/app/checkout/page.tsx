@@ -133,11 +133,18 @@ export default function CheckoutPage() {
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-sm text-white/70">Codigo PIX Copia e Cola</label>
+                  {/* FIX-WORKER-2 pass 552 (a11y - paridade pass 541 PDP icons):
+                      Check + Copy icons decorativos precisam aria-hidden.
+                      SR anunciava 'imagem Check' + 'Copiado!' duplicado.
+                      + focus-visible outline magenta (kbd nav paridade pass 549). */}
                   <button type="button"
                     onClick={() => copyPix(o.asaas_pix_copy_paste || '')}
                     disabled={!o.asaas_pix_copy_paste}
-                    className="text-xs flex items-center gap-1.5 px-2.5 py-1 rounded-md glass hover:border-magenta transition-colors disabled:opacity-40">
-                    {pixCopied ? <><Check className="w-3.5 h-3.5 text-green-400" /> Copiado!</> : <><Copy className="w-3.5 h-3.5" /> Copiar</>}
+                    aria-label={pixCopied ? 'Codigo PIX copiado para a area de transferencia' : 'Copiar codigo PIX para a area de transferencia'}
+                    className="text-xs flex items-center gap-1.5 px-2.5 py-1 rounded-md glass hover:border-magenta transition-colors disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
+                    {pixCopied
+                      ? <><Check className="w-3.5 h-3.5 text-green-400" aria-hidden="true" /> Copiado!</>
+                      : <><Copy className="w-3.5 h-3.5" aria-hidden="true" /> Copiar</>}
                   </button>
                 </div>
                 <textarea readOnly data-pix-code value={o.asaas_pix_copy_paste || ''}
@@ -269,15 +276,26 @@ export default function CheckoutPage() {
         </div>
       )}
 
+      {/* FIX-WORKER-2 pass 552 (a11y CTA paridade pass 549 esqueci-senha):
+          + aria-busy={loading} (SR announce 'busy' state)
+          + focus-visible outline magenta (kbd nav affordance) */}
       <button type="button" onClick={pay} disabled={loading || !cart?.items_count || hasCpf === false}
+        aria-busy={loading}
         aria-label={loading ? 'Processando pagamento' : 'Finalizar pagamento'}
-        className="btn-primary w-full text-base disabled:opacity-50">
+        className="btn-primary w-full text-base disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
         {loading ? 'Processando...' : (hasCpf === false ? 'Complete cadastro para pagar' : 'Confirmar e pagar')}
       </button>
+      {/* FIX-WORKER-2 pass 552 (a11y - dismiss button paridade pass 492 login/esqueci/register):
+          PRE-FIX: erro banner sem dismiss action. User precisava recarregar
+          page p/ limpar erro (UX friction). Padrao V8 W1 AUTH = erros sempre
+          dismissable com botao fechar. */}
       {err && (
         <div role="alert" aria-live="assertive"
-          className="text-sm text-red-400 mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-          {err}
+          className="text-sm text-red-400 mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start justify-between gap-2">
+          <span className="flex-1">{err}</span>
+          <button type="button" onClick={() => setErr('')}
+            aria-label="Fechar mensagem de erro"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded shrink-0">fechar</button>
         </div>
       )}
 
