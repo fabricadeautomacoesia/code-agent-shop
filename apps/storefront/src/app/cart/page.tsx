@@ -417,7 +417,29 @@ export default function CartPage() {
               className="btn-primary w-full text-base focus-visible:outline-2 focus-visible:outline-magenta">
               Finalizar compra
             </button>
-            {err && <div className="text-sm text-red-400 mt-3">{err}</div>}
+            {/* FIX-WORKER-2 pass 457 (a11y + UX paridade pass 456 WishlistButton):
+                PRE-FIX: <div className="text-sm text-red-400 mt-3">{err}</div>
+                - SEM role=alert -> screen reader nao anuncia falhas (LGPD a11y)
+                - SEM aria-live -> assistive tech silenciado em error states
+                - Sem close button -> err persiste ate user refresh OR fix
+                - Cart checkout = critical financial flow - error UX worst place silent
+                POST-FIX paridade pass 456:
+                - role=alert + aria-live=assertive (announce SR)
+                - dismiss button (clear err) - paridade login pass 5
+                - Visual icon AlertCircle (paridade add-to-cart pass 67)
+                Pattern V8 W2: TODO error display em payment-critical flow precisa
+                role=alert + aria-live + dismiss button */}
+            {err && (
+              <div role="alert" aria-live="assertive"
+                className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg p-3 mt-3 flex items-start justify-between gap-2">
+                <span className="flex-1">{err}</span>
+                <button type="button" onClick={() => setErr('')}
+                  aria-label="Fechar mensagem de erro"
+                  className="text-xs text-red-200 hover:text-white px-1 focus-visible:outline-2 focus-visible:outline-red-400 rounded">
+                  fechar
+                </button>
+              </div>
+            )}
           </aside>
         </div>
         </>

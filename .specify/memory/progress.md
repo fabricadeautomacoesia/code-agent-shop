@@ -34646,3 +34646,59 @@ Pattern V8 W3: TODO interactive button com fetch deve ter:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 457 W2 CHECKOUT: cart err banner a11y + dismiss (paridade pass 456)
+commit pendente
+GAP /cart finalizar compra error sem role=alert + dismiss
+PRE-FIX:
+- err shown via <div className="text-sm text-red-400 mt-3">{err}</div>
+- SEM role=alert -> SR nao anuncia falhas
+- SEM aria-live -> assistive tech silenciado em error
+- Sem close button -> err persiste ate user refresh
+- Cart checkout = critical financial flow - WORST place sem a11y feedback
+
+CONTEXT cadeia consume pass 456:
+- Pass 456 WishlistButton: errorMsg contextual + role=alert + aria-live
+- Pattern V8 W3 fechou interactive buttons
+- /cart finalizar compra ainda lagged sem same treatment
+- Other UI pages tinha role=alert ja (admin pass 427, etc)
+- /cart era ultimo critical financial flow sem a11y feedback
+
+CENARIO:
+- User finaliza compra apos preencher cart + cupom
+- Backend 400/500 error (e.g. coupon expired, payment failed)
+- Banner red aparece SEM SR announce -> user invisual nao sabe
+- Banner persiste indefinidamente (sem close)
+- User: "tentei finalizar - nao sei se aconteceu"
+
+POST-FIX (paridade pass 456 WishlistButton + login pass 5):
+- role=alert + aria-live=assertive
+- + dismiss button "fechar"
+- + aria-label dismiss
+- visual layout consistent (red bg + border + padding)
+- Pattern V8 W2: TODO error em payment-critical flow precisa a11y completo
+
+W2 a11y banner series:
+  pass 5 login error banner role=alert
+  pass 67 add-to-cart friendly error
+  pass 152 notification-bell error
+  pass 240 financeiro seller role=alert
+  pass 427 admin pages role=alert
+  pass 428 /conta/pedidos role=alert
+  pass 456 WishlistButton errorMsg contextual + a11y
+  pass 457 /cart finalizar compra role=alert + dismiss <- ESTE
+
+Pattern V8 W2 a11y financial flows consolidado:
+- TODO error display em payment/cart/checkout precisa:
+  - role=alert
+  - aria-live=assertive (announce immediately)
+  - dismiss button (paridade login pattern)
+  - Visual icon (AlertCircle decorative)
+  - text-sm + adequate contrast WCAG AA
+
+190 passes acumulados (268->457) sem deploy VPS
+8 CRITICAL + 29 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 ALTA PRIORIDADE
