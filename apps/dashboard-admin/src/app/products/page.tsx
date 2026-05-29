@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import Image from 'next/image';
 import { adminFetch, fmtBRL, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
@@ -69,13 +70,18 @@ export default function AdminProductsPage() {
         </div>
       </div>
 
-      {/* FIX-WORKER-4 pass 13: filter UI funcional (state era morto sem UI) */}
-      <div className="flex gap-2 mb-6 overflow-x-auto">
+      {/* FIX-WORKER-4 pass 13: filter UI funcional (state era morto sem UI)
+          FIX-WORKER-4 pass 580 (a11y - type=button + focus-visible paridade cadeia 543/565):
+          PRE: filter buttons sem type='button' explicit + sem focus-visible outline
+          POST: type='button' defensive (V8 R23) + focus-visible magenta (kbd nav) */}
+      <div role="tablist" aria-label="Filtrar produtos por status"
+        className="flex gap-2 mb-6 overflow-x-auto">
         {(['approved','qa_pending','qa_running','rejected','draft','archived','paused'] as const).map((s) => (
-          <button key={s} onClick={() => setFilter(s)}
+          <button key={s} type="button" onClick={() => setFilter(s)}
+            role="tab"
             aria-label={`Filtrar status ${s}`}
-            aria-pressed={filter === s}
-            className={`px-3 py-1.5 rounded-lg text-xs uppercase font-semibold whitespace-nowrap transition-colors ${
+            aria-selected={filter === s}
+            className={`px-3 py-1.5 rounded-lg text-xs uppercase font-semibold whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta ${
               filter === s
                 ? 'bg-gradient-to-r from-magenta to-violet-deep text-white'
                 : 'glass hover:border-white/30'
@@ -113,8 +119,9 @@ export default function AdminProductsPage() {
 
       <div className="glass p-6 overflow-x-auto">
         {products.length === 0 ? (
-          /* FIX-WORKER-4 pass 13: empty state condicional (era tabela vazia silenciosa) */
-          <p className="text-white/60 text-center py-12">
+          /* FIX-WORKER-4 pass 13: empty state condicional (era tabela vazia silenciosa)
+              FIX-WORKER-4 pass 580 (a11y - role=status paridade pass 544/556/565). */
+          <p role="status" className="text-white/60 text-center py-12">
             {loadError
               ? 'Nao foi possivel carregar produtos.'
               : `Nenhum produto com status "${filter}".`}
@@ -148,7 +155,29 @@ export default function AdminProductsPage() {
                       <div className="w-12 h-12 bg-white/5 rounded flex-shrink-0" aria-hidden="true" />
                     )}
                     <div>
-                      <div className="font-medium">{p.title}</div>
+                      {/* FIX-WORKER-4 pass 580 (product forensic audit link cadeia
+                          consolidacao admin CRITICAL pages COMPLETO 6/6):
+                          PRE-FIX: product row sem investigation flow.
+                          - Products = qa.approved/qa.rejected (pass 563), platform_take,
+                            archive audit_log entries cross-svc
+                          - Admin via title/status mas SEM:
+                            a. Trail forense qa transitions + admin force_approve
+                            b. One-click drill-down ao audit_log
+                          POST-FIX: + Link 'audit' target_type=product
+                          Pattern V8 W4 admin CRITICAL forensic flow 6/6 pages:
+                            pass 451 orders + 452 sellers + 455 payouts
+                            pass 543 vault + 565 disputes
+                            pass 580 (este) products */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="font-medium">{p.title}</div>
+                        <Link
+                          href={`/audit-log?target_id=${p.id}&target_type=product`}
+                          aria-label={`Audit log do produto ${p.title}`}
+                          title="Ver audit log do produto"
+                          className="text-[10px] text-white/30 hover:text-magenta-glow underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                          audit
+                        </Link>
+                      </div>
                       <div className="text-xs text-white/40 font-mono">{p.slug}</div>
                     </div>
                   </div>
