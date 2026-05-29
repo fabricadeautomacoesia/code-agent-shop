@@ -39823,3 +39823,49 @@ CADEIA CONSOLIDADA Blueprint V8 Pattern Atomicity:
 - 3 attempts default - 100ms/200ms/400ms backoff
 
 417 passes acumulados (268->687) sem deploy VPS
+
+============================================================================
+SESSAO 688-689 (W12 qa-svc qa.run_dispatch + qa.timeout_stuck - COMPLETA 5/5)
+============================================================================
+
+Pass 688 (W12 qa.run_dispatch withRetry):
+- tx() SELECT FOR UPDATE products + INSERT product_qa_runs + UPDATE products status
+- Race: admin force-approve + cron dispatch concorrente
+- HIGH FREQUENCY: cron + admin manual dispatches
+
+Pass 689 (W12 qa.timeout_stuck cron withRetry - COMPLETA qa-svc):
+- tx() UPDATE product_qa_runs verdict=timeout + UPDATE products + notification seller
+- Race: callback chega DURANTE timeout cron (5min stuck = legitimate retry race)
+
+CADEIA qa-svc atomicity COMPLETA 5/5 tx:
+- qa.callback (pass historico 593)
+- qa.dispatch_failed (pass historico 404)
+- qa.run_dispatch (pass 688 ESTE)
+- qa.timeout_stuck (pass 689 ESTE) - cron 5min interval
+- (mais 1 tx em handler internal route)
+
+CADEIA CROSS-SVC withRetry ATOMICITY 100% TOTAL ALL SERVICES (FINAL STATUS):
+- auth-svc: 6/6 ✅
+- vault-svc: 8/8 ✅
+- product-svc: 7/7 ✅
+- seller-svc: 10/10 ✅
+- payment-svc: 6/6 ✅
+- review-svc: 8/8 ✅
+- order-svc: 10/10 ✅
+- qa-svc: 5/5 ✅ (passes 688-689 ESTA SESSAO)
+- aiops-svc: read-only (sem tx writes)
+- notification-svc: outbox claimRow pattern (sem tx ACID)
+- TOTAL: ~64 endpoints/tx cross-svc atomicity defense
+
+419 passes acumulados (268->689) sem deploy VPS
+
+============================================================================
+MILESTONE FINAL: Blueprint V8 Pattern Atomicity 100% Consolidacao
+============================================================================
+- Pattern padronizado: withRetry('svc.action.tx', async () => await tx(async (c) => {...}))
+- Triple defense layer:
+  1. SELECT FOR UPDATE (pessimistic lock)
+  2. tx() ACID atomicity
+  3. withRetry 40P01 backoff (3 attempts: 100/200/400ms)
+- Resilient PostgreSQL deadlock auto-recovery cross-svc
+- TODA mutation write path em TODOS svcs com defesa ANTIDEADLOCK
