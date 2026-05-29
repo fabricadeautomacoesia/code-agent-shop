@@ -847,7 +847,28 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // BUG 7 *** Total + has_more UX paginacao ***
 const QA_VERDICT_ENUM = new Set(['approved','rejected','running','timeout','error']);
 
-app.get('/qa/runs/:product_id', jwt.requireAuth(), asyncHandler(async (req, res, next) => {
+// FIX-WORKER-18 pass 540 (cache hot path /qa/runs/:product_id):
+//   PRE-FIX: zero cache - seller dashboard QA runs page poll 30s = cada
+//   refresh = JOIN products + JOIN sellers + COUNT(*) OVER() agregate.
+//   ~30-50ms per request, multiplica polling intervals (each tab open).
+//   Em load admin debug com 20+ verdict=timeout filter = stress DB.
+//   POST-FIX: cache.cacheMiddleware 30s vary by user+product+verdict+pagn.
+//   Cache hit ~1-2ms (Redis) vs ~30-50ms PG. Invalidacao via TTL natural
+//   (QA runs sao quase-imutaveis pos verdict final - so retry/timeout muda
+//   state, e mesmo asim worker callback ja invalida via notifCache).
+//   Pattern V8 W18 paridade cadeia review-svc /qna/seller/pending (pass 819)
+//   + /seller/received (pass 1224) + /admin/reports (pass 1366).
+//   Key: per (user, product, verdict, limit, offset) - varyByUser implicit.
+const qaRunsCacheKey = (req) => {
+  const verdict = req.query.verdict ? String(req.query.verdict).toLowerCase() : 'all';
+  const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  return `qa:runs:u=${req.user?.sub || 'anon'}:p=${req.params.product_id}:v=${verdict}:lim=${lim}:off=${off}`;
+};
+
+app.get('/qa/runs/:product_id', jwt.requireAuth(),
+  cache.cacheMiddleware(qaRunsCacheKey, 30),
+  asyncHandler(async (req, res, next) => {
   if (!UUID_RE.test(req.params.product_id)) {
     return next(errorHandler.badRequest('invalid_uuid'));
   }
