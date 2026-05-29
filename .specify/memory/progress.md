@@ -38353,3 +38353,62 @@ Cadeia W3 PDP UX/i18n:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
+
+## Pass 526 - W6 AUTH-SVC: /refresh banned user atomicity paridade refresh_reuse_breach
+
+PRE-FIX BUG (atomicity gap - paridade lagged):
+- auth-svc /refresh linha 612-647 (banned user path):
+    UPDATE user_sessions cascade revoke (commit)
+    INSERT audit_log critical .catch(() => {}) (fire-and-forget swallow)
+
+Cenario falha:
+1. UPDATE succeeds - sessions all revoked (banned user kicked out)
+2. audit_log INSERT fail (DB transient/lock/deadlock 40P01)
+3. .catch swallow silent -> audit gap forense
+4. Compliance impact:
+   - SOC2 CC7.3: banned user access attempts sem trail queryable
+   - LGPD Art 37: registro de tratamento dados criticos
+   - Admin /admin/audit-log filter severity=critical perde estes events
+
+Comparacao com refresh_reuse_breach (mesma path /refresh linha 547-578):
+- JA usa tx() atomic - audit_log + cascaded + notification atomic
+- Both events severity='critical' - merecem mesma atomicity guarantee
+- banned path lagged paridade (este pass corrige)
+
+Pattern V8 W6 cross-svc atomicity consolidated (12 endpoints):
+- vault-svc 6/6 (passes 25/269/310/493/506/507)
+- payment-svc webhook (pass 503)
+- qa-svc dispatch_failed (pass 498)
+- product-svc archive (pass 512)
+- auth-svc refresh_reuse_breach (existing tx)
+- auth-svc refresh_banned (pass 526 este - NOVO)
+
+POST-FIX:
+- tx() wraps UPDATE cascade revoke + INSERT audit_log atomic
+- Sem .catch swallow - errors propagam corretamente
+- Sem withRetry (lock contention rare - banned user nao tem traffic legitimate)
+- Comment expansivo paridade com refresh_reuse_breach
+
+Bonus observado (defer proxima iter):
+- /refresh rotation path linhas 656-671 tem tx() MAS sem withRetry
+- Hot path (every 15min per active user) - withRetry seria defesa adicional
+- Trade-off: deadlock 40P01 raro entre /refresh diferentes sessions
+- Decision: defer pass futuro se logs mostrarem deadlock retry events
+
+Cadeia W6 AUTH-SVC security/atomicity:
+- pass 3 logout clearCookie idempotente
+- pass 53 /refresh FOR UPDATE anti-race
+- pass 233 banned user cascade revoke (este pass corrige atomicity)
+- pass 282 ua_prefix forensic
+- pass 315 refresh_reuse_breach DLP mask
+- pass 363 logout audit per session (UNNEST)
+- pass 403 user_sessions.user_agent storage DLP
+- pass 443 banned user audit ua_prefix
+- pass 526 (este) banned user tx() atomic
+
+258 passes acumulados (268->526) sem deploy VPS
+9 CRITICAL + 38 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)

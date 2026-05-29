@@ -616,33 +616,53 @@ router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
     //   gerando access tokens 15min ate proxima rotation. Bypass parcial.
     // POST-FIX: cascade revoke WHERE user_id=$1 (mesmo pattern refresh_reuse
     // breach detection linha 444-451). Banned user perde TODOS dispositivos.
-    const cascaded = await query(
-      `UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(),
-                                 revoked_reason = 'user_banned_on_refresh'
-        WHERE user_id = $1 AND is_revoked = FALSE
-        RETURNING id`,
-      [user.id]
-    );
-    /* FIX-WORKER-6 pass 443 (ua_prefix forensic gap - paridade refresh_reuse_breach + pass 438):
-       PRE-FIX (pass 233): banned cascade revoke audit_log SEM ua field.
-       - refresh_reuse_breach (linha 504-509) JA incluia ua: safeUa masked
-       - refresh_banned_user_blocked lagged - mesmo path critical sem fingerprint
-       - Forensic admin investigation banned-user-bypass attempts:
-         * IP visivel (correlaciona com login forense)
-         * SEM ua_prefix -> nao consegue match device de ban event original
-       POST-FIX: + ua field masked (paridade safeUa ja computed acima linha 482).
-       Pattern V8 W6 consolidado pass 438 cross-svc - TODO audit critical = ip + ua. */
-    // Audit critical (admin precisa saber que banned user tentou access)
-    query(
-      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-       VALUES ($1, 'system', 'auth.refresh_banned_user_blocked', 'user', $1, 'critical', $2::JSONB)`,
-      [user.id, JSON.stringify({
-        ip: req.ip,
-        ua: mask.text((req.headers['user-agent'] || '').slice(0, 200)),
-        session_id: s.rows[0].id,
-        cascaded_sessions: cascaded.rowCount,
-      })]
-    ).catch(() => {});
+    /* FIX-WORKER-6 pass 526 (atomicity cascade revoke + audit_log - paridade refresh_reuse_breach):
+       PRE-FIX BUG: 2 queries separadas sem tx():
+         1. UPDATE user_sessions cascade revoke (commit)
+         2. INSERT audit_log critical fire-and-forget .catch(() => {})
+       Cenario falha:
+         - UPDATE succeeds (sessions all revoked)
+         - audit_log INSERT fail (DB transient/lock/deadlock)
+         - .catch swallow silent -> audit gap
+         - Compliance SOC2 CC7.3 + LGPD Art 37: banned user access attempt
+           sem trail forense queryable
+       Comparacao com refresh_reuse_breach (linha 547-578):
+         - JA usa tx() atomic - audit_log + cascaded + notification
+         - banned path (este) lagged paridade
+       Both events sao CRITICAL severity (severity='critical') - merecem
+       mesma atomicity guarantee. Pattern V8 W6 consolidated:
+       passes 269/493/506/507 (vault), 503 (payment), 498 (qa), 512 (product).
+       POST-FIX: tx() wrap UPDATE + audit_log INSERT atomic.
+       Sem withRetry (lock contention rare - banned user nao tem traffic legitimate). */
+    let cascadedCount = 0;
+    await tx(async (c) => {
+      const cascaded = await c.query(
+        `UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(),
+                                   revoked_reason = 'user_banned_on_refresh'
+          WHERE user_id = $1 AND is_revoked = FALSE
+          RETURNING id`,
+        [user.id]
+      );
+      cascadedCount = cascaded.rowCount;
+      /* FIX-WORKER-6 pass 443 (ua_prefix forensic gap - paridade refresh_reuse_breach + pass 438):
+         PRE-FIX (pass 233): banned cascade revoke audit_log SEM ua field.
+         - refresh_reuse_breach (linha 504-509) JA incluia ua: safeUa masked
+         - refresh_banned_user_blocked lagged - mesmo path critical sem fingerprint
+         POST-FIX: + ua field masked (paridade safeUa ja computed acima).
+         Pattern V8 W6 consolidado pass 438 cross-svc - TODO audit critical = ip + ua. */
+      // Audit critical (admin precisa saber que banned user tentou access)
+      // FIX pass 526: agora dentro tx() - atomic guarantee (sem .catch swallow)
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'system', 'auth.refresh_banned_user_blocked', 'user', $1, 'critical', $2::JSONB)`,
+        [user.id, JSON.stringify({
+          ip: req.ip,
+          ua: mask.text((req.headers['user-agent'] || '').slice(0, 200)),
+          session_id: s.rows[0].id,
+          cascaded_sessions: cascaded.rowCount,
+        })]
+      );
+    });
     res.clearCookie(REFRESH_COOKIE, { path: '/' });
     return next(errorHandler.forbidden('user_banned', 'Conta banida.'));
   }
