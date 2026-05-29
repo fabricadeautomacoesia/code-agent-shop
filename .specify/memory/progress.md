@@ -39545,3 +39545,45 @@ CADEIA W1 NotificationBell consolidacao a11y:
 = 7 fixes a11y/UX cumulative NotificationBell consolidacao
 
 383 passes acumulados (268->653) sem deploy VPS
+
+============================================================================
+SESSAO 654-655 (W6 auth-svc forgot+reset password withRetry - COMPLETA 5/5 tx)
+============================================================================
+
+Pass 654 (W6 auth-svc forgot-password withRetry deadlock defense):
+- DESCOBERTA: tx() em forgot-password (linha 977) sem withRetry wrap
+- Cenarios deadlock 40P01:
+  - User clica "Enviar email" 3x rapido sequential (slow network ansiedade)
+  - 3 concurrent tx() lock contention: UPDATE password_resets pendentes +
+    INSERT novo + UPDATE audit_log lock ordering conflict
+  - PRE-FIX impact: 1 dos 3 requests fail silent 500 -> user reabre form +5 clicks
+- POST-FIX: withRetry('auth.forgot_password.tx') wrap (3 attempts backoff)
+
+Pass 655 (W6 auth-svc reset-password withRetry - completa 5/5 tx):
+- DESCOBERTA: tx() em reset-password (linha 1088) sem withRetry wrap
+- Cenarios deadlock 40P01:
+  1. User double-click "Reset password" submit btn
+     -> 2 tx() lock contention: UPDATE password_resets + UPDATE users +
+        UPDATE user_sessions cascade revoke + INSERT audit_log
+  2. Race com /login mesmo user (atacante exploit token compromised)
+  3. Race com cron expirePasswordResets (5min interval cleanup)
+- POST-FIX: withRetry('auth.password_reset.tx') wrap (3 attempts backoff)
+
+CADEIA W6 auth-svc atomicity COMPLETA 5/5 tx writes:
+- /register tx (pass historico)
+- /login tx (pass historico)
+- /refresh rotation tx (pass 546 withRetry)
+- /forgot-password tx (pass 654 ESTE)
+- /reset-password tx (pass 655 ESTE)
++ banned cascade revoke tx (pass 526 withRetry)
+- 5/5 + 1 cron = 6 tx auth-svc consolidacao atomicity
+
+CADEIA cross-svc withRetry atomicity status:
+- auth-svc: 6/6 tx consolidacao (este completou)
+- vault-svc: 8/8 endpoints write (pass 643 completou)
+- payment-svc: refund + create + webhooks
+- product-svc admin: 3/3 force-approve + archive + platform-take
+- order-svc: dispute resolve + checkout
+- seller-svc admin: 5 tx LAGGED (proxima micro-tarefa)
+
+385 passes acumulados (268->655) sem deploy VPS
