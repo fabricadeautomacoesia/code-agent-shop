@@ -61,10 +61,27 @@ export default function SellerProductsPage() {
         </Link>
       </div>
 
-      <div className="flex gap-2 mb-6 overflow-x-auto">
+      {/* FIX-WORKER-5 pass 509 (a11y radiogroup + type=button paridade pass 508 /admin/payouts):
+          PRE-FIX (3 issues):
+          1. <button> SEM type='button' - WCAG R23 + Pattern V8 cross-app
+             (em forms ancestors poderia disparar submit acidental)
+          2. SEM role='radiogroup' wrapper - SR nao anuncia grupo semantico
+          3. SEM role='radio' + aria-checked - SR nao indica selecao atual
+          4. SEM focus-visible:outline-2 - keyboard nav perde foco em dark mode
+          Pattern V8 /admin/payouts pass 155 + pass 508 ja estabeleceu este pattern.
+          /admin/orders + /admin/qa-queue + /admin/sellers tem similar.
+          /seller/products era unico filter bar sem radiogroup semantic.
+          POST-FIX (paridade pass 155):
+          - role='radiogroup' + aria-labelledby
+          - role='radio' + aria-checked per button
+          - type='button' explicit (a11y defensive)
+          - focus-visible:outline-2 outline-magenta keyboard ring */}
+      <h2 id="products-filter-label" className="sr-only">Filtrar produtos por status</h2>
+      <div role="radiogroup" aria-labelledby="products-filter-label" className="flex gap-2 mb-6 overflow-x-auto">
         {['all','draft','qa_pending','qa_running','approved','rejected','archived'].map((s) => (
-          <button key={s} onClick={() => setFilter(s)}
-            className={`px-3 py-1.5 rounded-lg text-xs uppercase font-semibold whitespace-nowrap ${
+          <button key={s} type="button" onClick={() => setFilter(s)}
+            role="radio" aria-checked={filter === s}
+            className={`px-3 py-1.5 rounded-lg text-xs uppercase font-semibold whitespace-nowrap focus-visible:outline-2 focus-visible:outline-magenta ${
               filter === s ? 'bg-gradient-to-r from-magenta to-violet-deep text-white' : 'glass hover:border-white/30'
             }`}>
             {s === 'all' ? 'Todos' : s}
@@ -72,7 +89,19 @@ export default function SellerProductsPage() {
         ))}
       </div>
 
-      {loadError && <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">Erro carregando lista: {loadError}</div>}
+      {/* FIX-WORKER-5 pass 509 (a11y loadError + retry paridade pass 427 cross-admin):
+          PRE-FIX: <div> sem role=alert + sem retry button + sem dismiss button
+          - SR nao anunciava falha load (silent UX)
+          - User sem opcao 'retry' sem refresh page inteiro
+          - Pattern V8 cross-admin/seller pages todos com role=alert + retry */}
+      {loadError && (
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>Erro carregando lista: {loadError}</span>
+          <button type="button" onClick={() => { setLoadError(''); load(); }}
+            aria-label="Tentar carregar produtos novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">retry</button>
+        </div>
+      )}
 
       {/* FIX-WORKER-5 pass 1 + 172 (a11y V8 R23) */}
       {action.error && (

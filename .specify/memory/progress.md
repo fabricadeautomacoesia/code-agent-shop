@@ -37378,3 +37378,58 @@ Cadeia W4 cross-admin UX consolidacao:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply
+
+## Pass 509 - W5 SELLER DASH: /products filter a11y + loadError paridade
+
+PRE-FIX (4 a11y issues em /products list page):
+1. Filter buttons SEM type='button'
+   - Pattern V8 R23 + cross-app explicit type defensive
+   - Em forms ancestors pode disparar submit acidental
+2. Filter container SEM role='radiogroup' wrapper
+   - SR nao anuncia grupo semantico "Filtro por status"
+3. Filter buttons SEM role='radio' + aria-checked
+   - SR nao indica selecao atual entre 7 options
+4. Filter buttons SEM focus-visible:outline
+   - Keyboard nav perde foco visible em dark mode
+5. loadError <div> SEM role=alert + SEM retry button
+   - SR silent em falha load (UX confuso - page vazia sem feedback)
+   - User sem opcao retry sem refresh page inteiro
+   - Pattern V8 cross-admin/seller pass 427 consolidado
+
+Comparacao com cross-pages (todas com pattern correto):
+- /admin/payouts pass 155 + pass 508: role=radiogroup + radio
+- /admin/qa-queue + /admin/orders + /admin/sellers: role=alert + retry
+- /seller/qna pass 248: role=alert
+- /seller/financeiro pass 240: role=alert
+- /seller/loja pass 263: role=alert
+- /seller/products (este) era ULTIMO seller page sem paridade
+
+POST-FIX (paridade pass 155 + pass 427):
+- sr-only h2 label + role='radiogroup' + aria-labelledby
+- role='radio' + aria-checked per button (7 filter options)
+- type='button' explicit (WCAG R23)
+- focus-visible:outline-2 outline-magenta rounded
+- loadError: role='alert' + retry button + flex+justify-between
+- retry button: aria-label + focus-visible:outline-red-400
+
+Cadeia W5 SELLER a11y consolidacao 100%:
+- pass 5 useSellerAction hook
+- pass 145 upload 14 labels htmlFor + id
+- pass 146 KYC 9 inputs htmlFor + autoComplete
+- pass 147 qna textarea aria-label dinamico
+- pass 172 buttons aria-label + type=button (cross-pages)
+- pass 240 financeiro role=alert loadError
+- pass 248 qna role=alert + a11y parity
+- pass 263 loja loadError role=alert
+- pass 379 KYC maxLength backend Zod aligned
+- pass 425 STOREFRONT_URL env-driven cross-link
+- pass 496 upload 3 banners + buttons aria-label + focus-visible
+- pass 502 loja Clausula Master checkbox htmlFor + aria-describedby
+- pass 509 (este) /products filter radiogroup + loadError retry
+
+241 passes acumulados (268->509) sem deploy VPS
+9 CRITICAL + 36 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply
