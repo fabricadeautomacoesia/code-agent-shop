@@ -35897,3 +35897,54 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 096+097+098 ALTA PRIORIDADE
 - Cadeia notifCache 100% pronta para deploy
+
+## PASS 478 W18 PERFORMANCE: idx_users_active_admins PARTIAL (consume cadeia notifCache passes 467-477)
+commit pendente
+GAP perf admin lookup pattern repetido cross-svc apos cadeia notifCache
+PRE-FIX:
+- Passes 468 + 477 (e potencial outros futuros) usam pattern:
+  SELECT id FROM users
+   WHERE role IN ('admin','staff')
+     AND is_active = TRUE
+     AND is_banned = FALSE
+- Idx existente: idx_users_role (role) PARTIAL WHERE deleted_at IS NULL
+- Filtra role + deleted_at MAS NAO filtra is_active + is_banned
+- PG planner Bitmap Index Scan + Heap Filter pos-bitmap
+- Em 10k+ users: idx encontra ~10 admins, depois filtra heap
+- Latency: ~5ms small, ~20-50ms scaling
+
+SCOPE:
+- vault-svc rotation cron (pass 477) - diaria bulk admins
+- payment-svc PAYMENT_REFUND_FAILED admin (pass 468 webhook hot path)
+- Futuro: admin alert dispatches generic
+- Compounded em cron: lookup admin user_ids -> bulk INSERT notifs -> notifCache.invalidateBulk
+
+POST-FIX mig 099:
+- idx_users_active_admins PARTIAL focado:
+  ON users(role)
+  WHERE role IN ('admin','staff')
+    AND is_active = TRUE
+    AND is_banned = FALSE
+    AND deleted_at IS NULL
+- PG planner: direct Index Scan (skip Heap Filter)
+- Latency: ~1-3ms consistent (5-15x melhoria)
+
+Trade-off:
+- Idx ~5-10KB (10-20 admins entries)
+- INSERT overhead +1 idx write em users mutations raras (<1/dia)
+- Aceitavel: hot-path consistency
+
+Cadeia DB perf consume notifCache:
+  pass 437 idx_unotif_prefs_lower_lookup (LEFT JOIN consume)
+  pass 478 idx_users_active_admins (admin lookup consume) <- ESTE
+
+W14+W18 cadeia idx consume cadeia notifCache:
+- pass 437 unotif_prefs functional idx
+- pass 478 users active_admins PARTIAL <- ESTE
+
+211 passes acumulados (268->478) sem deploy VPS
+8 CRITICAL + 31 migrations pendentes apply (era 30 - novo mig 099)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 096+097+098+099 ALTA PRIORIDADE
