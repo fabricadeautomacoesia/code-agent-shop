@@ -476,8 +476,37 @@ app.post('/payments/asaas/refund', asyncHandler(async (req, res, next) => {
   }
   const order = r.rows[0];
   // Partial refund: value in BRL (Asaas API). Full refund: undefined.
+  // FIX-WORKER-11 pass 545 (audit_log accuracy - reports effective vs requested):
+  //   PRE-FIX BUG: audit_log logged refund_amount_cents RAW (pre-Math.min cap).
+  //   Cenario REAL: admin envia refund_amount_cents=999999 acidentalmente
+  //   (digito a mais) com order.total_cents=10000.
+  //   - Math.min cap em 10000 -> refundValueBRL=100.00 (correto)
+  //   - Asaas processa R$ 100,00 refund (correto)
+  //   - audit_log entry GRAVA refund_amount_cents=999999 (WRONG - log mente
+  //     sobre o que efetivamente aconteceu)
+  //   - Forensic + LGPD compliance: log nao confiavel ("paguei R$X" vs reality).
+  //
+  //   Edge case 2 (full vs partial semantics):
+  //   - Se admin envia refund_amount_cents = order.total_cents exato
+  //   - effectiveCents = total_cents (capped, mesmo valor)
+  //   - Asaas v3: value=total_cents -> PARTIAL refund (nao full_refund flag)
+  //   - audit_log full_refund=false (correto - flag Asaas)
+  //   - Vs admin envia refund_amount_cents=undefined (intent full refund)
+  //   - effectiveCents = total_cents (semantica equivalente)
+  //   - audit_log full_refund=true (intent diferente, mesmo valor)
+  //
+  //   POST-FIX:
+  //   - effective_refund_cents = valor EFETIVAMENTE refundado (post-cap)
+  //   - requested_refund_cents = valor solicitado RAW (forensic admin slip)
+  //   - capped_at_total = boolean (slip foi detectado)
+  //   - full_refund = !refund_amount_cents (intent original preservado)
+  //   - Auditor pode comparar requested vs effective p/ detectar admin slips.
+  const effectiveRefundCents = refund_amount_cents
+    ? Math.min(refund_amount_cents, order.total_cents)
+    : order.total_cents;
+  const cappedAtTotal = !!(refund_amount_cents && refund_amount_cents > order.total_cents);
   const refundValueBRL = refund_amount_cents
-    ? Math.min(refund_amount_cents, order.total_cents) / 100
+    ? effectiveRefundCents / 100
     : undefined;
   try {
     const refund = await asaas.refundPayment(order.asaas_payment_id, refundValueBRL,
@@ -488,13 +517,27 @@ app.post('/payments/asaas/refund', asyncHandler(async (req, res, next) => {
        VALUES (NULL, 'service', 'payment.refund.dispatched', 'order', $1, 'warn', $2::JSONB)`,
       [order.order_id, JSON.stringify({
         dispute_id, asaas_payment_id: order.asaas_payment_id,
-        refund_amount_cents: refund_amount_cents || order.total_cents,
+        // FIX pass 545: log requested + effective separately (admin slip forensic)
+        requested_refund_cents: refund_amount_cents || null,
+        effective_refund_cents: effectiveRefundCents,
+        order_total_cents: order.total_cents,
+        capped_at_total: cappedAtTotal,
         full_refund: !refund_amount_cents,
         reason: mask.text(String(reason || '').slice(0, 200)),
         asaas_refund_id: refund?.id || null,
       })]
     );
-    log.info({ dispute_id, order_id: order.order_id, asaas_refund_id: refund?.id },
+    // FIX pass 545: warn quando admin slip detectado (requested > total)
+    if (cappedAtTotal) {
+      log.warn({
+        dispute_id, order_id: order.order_id,
+        requested_cents: refund_amount_cents,
+        effective_cents: effectiveRefundCents,
+        capped_savings_cents: refund_amount_cents - effectiveRefundCents,
+      }, '[refund.admin_slip_capped] refund_amount_cents > order.total_cents - capped defensively');
+    }
+    log.info({ dispute_id, order_id: order.order_id, asaas_refund_id: refund?.id,
+      effective_cents: effectiveRefundCents, capped: cappedAtTotal },
       '[refund.dispatched]');
     res.json({ ok: true, asaas_refund_id: refund?.id, order_id: order.order_id });
   } catch (e) {
