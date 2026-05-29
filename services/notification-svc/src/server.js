@@ -637,7 +637,30 @@ app.post('/read-all',
 // Critical templates (security_*, password_reset, 2fa_*) BYPASS prefs.
 
 // GET /api/notifications/prefs - lista preferences do user logado
-app.get('/prefs', jwt.requireAuth(), asyncHandler(async (req, res) => {
+// FIX-WORKER-18 pass 569 (cache /prefs - paridade /unread-count + /list cadeia):
+//   PRE-FIX: GET /prefs sem cache.cacheMiddleware.
+//   - Endpoint called em /conta/notificacoes settings page open
+//   - Query simples user_id filter mas roundtrip DB 5-15ms per request
+//   - Sem client-side persistence state (Next.js page re-fetch on nav)
+//   - User exploring settings (toggle prefs + voltar tabs) hits DB toda navegacao
+//   - Paridade endpoints irmaos notification-svc todos cached:
+//     * /unread-count cache 20s (pass 175)
+//     * GET / (list) cache 20s (pass 322)
+//     * /prefs (este) - era ausente
+//   POST-FIX: cache.cacheMiddleware(prefsCacheKey, 60).
+//   - Key vary by user.sub (per-user prefs unique)
+//   - TTL 60s (prefs raramente mudam - default opt-in - 60s freshness aceitavel)
+//   - Latency ~5-15ms PG -> ~1-2ms (Redis hit)
+//   - Invalidacao via PATCH /prefs (linha 727+) - cache.del adicionada paralelo
+//   Pattern V8 W18 cache hot path consolidacao cross-svc:
+//   pass 540 qa-svc /qa/runs/:product_id (30s)
+//   pass 542 vault-svc /keys/me (60s)
+//   pass 554 seller-svc /sla-history (60s)
+//   pass 569 (este) notification-svc /prefs (60s)
+const prefsCacheKey = (req) => `notifs:prefs:${req.user?.sub || 'anon'}`;
+app.get('/prefs', jwt.requireAuth(),
+  cache.cacheMiddleware(prefsCacheKey, 60),
+  asyncHandler(async (req, res) => {
   const r = await query(
     `SELECT template_code, channel, is_enabled
        FROM user_notification_prefs
@@ -725,9 +748,15 @@ app.patch('/prefs', jwt.requireAuth(), asyncHandler(async (req, res) => {
      Pattern V8 W13: TODA mutation que afeta visibility = invalidate cache.
      Fire-and-forget catch (Redis down nao quebra response). */
   if (updated > 0) {
+    /* FIX-WORKER-18 pass 569: + cache.del notifs:prefs:USER paridade GET cache.
+       Sem invalidate aqui, GET /prefs serviria stale data por ate 60s pos-toggle.
+       User /conta/notificacoes toggle pref -> reload page -> ver stale state
+       (toggle visual back to pre-mutation) ate TTL expire. Pattern V8 W13:
+       TODA mutation que afeta cached read = invalidate cache. */
     Promise.all([
       cache.del(`notifs:list:${req.user.sub}:*`),
       cache.del(`notifs:unread-count:${req.user.sub}`),
+      cache.del(`notifs:prefs:${req.user.sub}`),
     ]).catch(() => {});
   }
 
