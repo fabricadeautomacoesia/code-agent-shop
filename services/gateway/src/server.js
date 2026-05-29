@@ -378,7 +378,46 @@ app.use('/api/products',      fail2ban.middleware(), proxy(UPSTREAMS.product,   
 // /api/products/upload que ja eram SLOW.
 app.use('/api/qa',            fail2ban.middleware(), proxy(UPSTREAMS.qa,           { pathRewrite: (p) => '/qa' + p, timeout: TIMEOUT_SLOW }));
 app.use('/api/orders',        fail2ban.middleware(), proxy(UPSTREAMS.order,        { pathRewrite: (p) => '/orders' + p }));
-app.use('/api/payments',      fail2ban.middleware(), proxy(UPSTREAMS.payment,      { pathRewrite: (p) => '/payments' + p, timeout: TIMEOUT_SLOW })); // inclui MLB-5 /payments/installments/preview
+/* FIX-WORKER-6 pass 693 (CRITICAL gateway block internal payment endpoints - paridade pass 627 vault):
+   PRE-FIX BUG: /api/payments/asaas/create + /api/payments/asaas/refund expostos via gateway
+   - Ambos endpoints sao INTERNAL-ONLY (asaasCreateGuard + refund timingSafe x-internal-token):
+     - /asaas/create: cria charges Asaas (REAL MONEY OUT direction)
+     - /asaas/refund: estorna pagamentos (REAL MONEY OUT direction - pass 644 timingSafe)
+   - Layer 2 defense (svc-side guards) JA protege MAS:
+     - Atacante probe gateway publico amplifica fail2ban counter waste
+     - Internal cross-svc calls (order-svc -> payment-svc) usam Docker network
+       direct (tasks.cas_payment-svc:port) - bypass gateway
+   - SCOPE CRITICAL:
+     - asaas/create bypass success = denial-of-wallet (atacante cria charges
+       para victims arbitrarios + PII leak invoice URL)
+     - asaas/refund bypass success = refund arbitrario (atacante recebe dinheiro
+       + buyer original perde acesso produto)
+   POST-FIX: gateway block /asaas/create + /asaas/refund + sub-paths defensive
+   - regex match exact OR sub-paths (trailing slash + case-insensitive normalize)
+   - log.warn '[gateway.payment_blocked]' forensic trail
+   - 403 + 'internal_only_endpoint' (paridade pass 567 vault block response)
+   Pattern V8 W6 layer-1 defense-in-depth COMPLETA cross-svc real-money endpoints. */
+app.use('/api/payments', fail2ban.middleware(), (req, res, next) => {
+  const normalizedPath = req.path.replace(/\/+$/, '').toLowerCase();
+  // /asaas/create, /asaas/refund (exato) OR /asaas/create/X, /asaas/refund/X (sub-paths)
+  const isBlockedPaymentPath = normalizedPath === '/asaas/create'
+    || normalizedPath === '/asaas/refund'
+    || normalizedPath.startsWith('/asaas/create/')
+    || normalizedPath.startsWith('/asaas/refund/');
+  if (isBlockedPaymentPath) {
+    log.warn({
+      ip: req.realIp || req.ip,
+      path: req.originalUrl,
+      normalized: normalizedPath,
+      method: req.method,
+    }, '[gateway.payment_blocked] LAYER-1 defense - /asaas/create|/asaas/refund internal-only via Docker mesh');
+    return res.status(403).json({
+      error: 'internal_only_endpoint',
+      message: 'Este endpoint nao esta disponivel via gateway publico.',
+    });
+  }
+  next();
+}, proxy(UPSTREAMS.payment, { pathRewrite: (p) => '/payments' + p, timeout: TIMEOUT_SLOW })); // inclui MLB-5 /payments/installments/preview
 // FIX-WORKER-6 pass 207: fail2ban em /api/reviews + /api/qna (mutations spam vector)
 // reviews POST + qna POST sao buyer-facing - sem fail2ban gateway:
 // 1. Buyer compromised conta -> mass spam reviews/perguntas
