@@ -1098,7 +1098,19 @@ router.get('/:slug/reviews',
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
 
   // BUG 4: sort enum whitelist
-  const sort = req.query.sort || 'helpful';
+  /* FIX-WORKER-7 pass 733 (cache key normalization paridade - 13o MISMATCH cadeia):
+     PRE-FIX BUG: cacheKey linha 1092 normalize .toLowerCase() MAS handler raw.
+     - User ?sort=Helpful -> cacheKey 'helpful' MAS handler 'Helpful'
+     - REVIEW_SORT_ENUM.has('Helpful') = false -> 400 invalid_sort
+     - Cache MISS para case-variants (sprawl Redis storage + UX inconsistency)
+     - Cadeia 13 cache hygiene MISMATCH bugs cumulative (passes 618, 722-732):
+       aiops alerts severity (722), aiops audit_log severity (721) + target_id (732),
+       seller payouts (723), seller all status+class (724), review reports (729),
+       review qna seller (730), review seller received (731), product me (719),
+       product admin seller_id (728), wishlist kind (726), qa verdict (727).
+     POST-FIX: .trim().toLowerCase() paridade EXATA cacheKey linha 1092.
+     Pattern V8 invariante: cacheKey MUST mirror handler normalization. */
+  const sort = (req.query.sort || 'helpful').toString().trim().toLowerCase();
   if (!REVIEW_SORT_ENUM.has(sort)) {
     return res.status(400).json({ error: 'invalid_sort', allowed: Array.from(REVIEW_SORT_ENUM) });
   }
