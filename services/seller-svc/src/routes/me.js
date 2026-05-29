@@ -686,11 +686,24 @@ const PAYOUT_STATUS_ENUM = new Set([
 // Fix1: cache.cacheMiddleware vary by user+status+limit+offset
 // Fix2: window COUNT(*) OVER() elimina segunda query duplicada
 // TTL 30s: payouts state muda apos admin approve/process. Stale ate 30s OK.
+// FIX-WORKER-18 pass 610 (cache key normalization paridade cadeia 23 sites
+// W7+W10+W12+W13+W17+W18 cache hygiene cross-svc consolidacao - 24 sites total):
+//   PRE-FIX BUGS (3 issues cache pollution vs handler):
+//   1. Raw q.status sem PAYOUT_STATUS_ENUM whitelist check. Handler valida
+//      (linha 704). Invalid stored 400 response cached em chave invalida.
+//   2. Raw q.limit. Handler clamps Math.max/Math.min [1, 200] (linha 701).
+//      ?limit=99999 -> cache key 'l99999', handler clamp 200 SAME response.
+//   3. Raw q.offset. Handler Math.max(0, ...) (linha 702).
+//      ?offset=-5 -> cache key 'o-5', handler -> 0.
+//   POST-FIX: normalize cache key SAME way handler normalizes (paridade
+//   cadeia 23 sites pre-cache: 520-609 consolidacao).
 const payoutsCacheKey = (req) => {
   const userId = req.user?.sub || 'anon';
-  const status = req.query.status || 'all';
-  const lim = req.query.limit || '50';
-  const off = req.query.offset || '0';
+  // Normalize status: PAYOUT_STATUS_ENUM whitelist check or 'all'
+  const statusRaw = (req.query.status || '').toString().trim();
+  const status = PAYOUT_STATUS_ENUM.has(statusRaw) ? statusRaw : 'all';
+  const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
   return `seller:payouts:${userId}:${status}:l${lim}:o${off}`;
 };
 
