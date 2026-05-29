@@ -218,18 +218,35 @@ export default function CheckoutPage() {
           <p className="text-xs text-white/50 mb-4">Ate 3x sem juros - 4x a 12x com juros de 2,99% a.m.</p>
           <div role="radiogroup" aria-labelledby="installments-label"
             className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-72 overflow-y-auto pr-1">
+            {/* FIX-WORKER-15 pass 449 (mobile text overflow defensive):
+                PRE-FIX: button content text-xs/text-[10px] sem truncate/min-w-0
+                - Container grid-cols-2 em mobile 375px:
+                  - 375 - 48 (container px-6) - 48 (inner p-6) - 8 (gap-2) / 2 = ~135px/button
+                - p.per_cents pode ser 'R$ 1.250,06/mes' (15 chars)
+                - p.total_cents 12x grande pode ser 'Total R$ 15.000,00' (18 chars)
+                - text-xs 12px * 15 chars = ~108px - fits 135px
+                - text-[10px] 10px * 18 chars = ~108px - fits 135px - TIGHT
+                - Edge cases: produtos R$50.000+ -> 'Total R$ 60.000,00' overflows
+                POST-FIX:
+                - min-w-0 no button p/ permitir shrink dentro grid
+                - truncate em divs com pricing (defesa overflow)
+                - title attr p/ tooltip valor completo se truncate */}
             {installments.map((p) => (
               <button key={p.count} type="button" onClick={() => setInstallmentCount(p.count)}
                 role="radio" aria-checked={installmentCount === p.count}
                 aria-label={`${p.count}x de ${Api.formatBRL(p.per_cents)} por mes${p.interest_pct > 0 ? `, juros ${p.interest_pct.toFixed(1)}% ao mes, total ${Api.formatBRL(p.total_cents)}` : ', sem juros'}`}
-                className={`p-3 rounded-lg border-2 text-left transition-all focus-visible:outline-2 focus-visible:outline-magenta ${installmentCount === p.count ? 'border-magenta bg-magenta/10' : 'border-white/10 bg-white/5 hover:border-white/30'}`}>
+                className={`min-w-0 p-3 rounded-lg border-2 text-left transition-all focus-visible:outline-2 focus-visible:outline-magenta ${installmentCount === p.count ? 'border-magenta bg-magenta/10' : 'border-white/10 bg-white/5 hover:border-white/30'}`}>
                 <div className="font-display font-semibold text-sm">{p.count}x</div>
-                <div className="text-xs text-white/70">{Api.formatBRL(p.per_cents)}/mes</div>
-                <div className={`text-[10px] mt-1 ${p.interest_pct > 0 ? 'text-orange-300' : 'text-green-400'}`}>
+                <div className="text-xs text-white/70 truncate" title={`${Api.formatBRL(p.per_cents)}/mes`}>
+                  {Api.formatBRL(p.per_cents)}/mes
+                </div>
+                <div className={`text-[10px] mt-1 truncate ${p.interest_pct > 0 ? 'text-orange-300' : 'text-green-400'}`}>
                   {p.interest_pct > 0 ? `+${p.interest_pct.toFixed(1)}% juros` : 'sem juros'}
                 </div>
                 {p.interest_pct > 0 && (
-                  <div className="text-[10px] text-white/40 mt-0.5">Total {Api.formatBRL(p.total_cents)}</div>
+                  <div className="text-[10px] text-white/40 mt-0.5 truncate" title={`Total ${Api.formatBRL(p.total_cents)}`}>
+                    Total {Api.formatBRL(p.total_cents)}
+                  </div>
                 )}
               </button>
             ))}

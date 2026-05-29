@@ -34203,3 +34203,46 @@ W18 LATERAL JOIN series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 ALTA PRIORIDADE
+
+## PASS 449 W15 MOBILE RESPONSIVE: checkout installments overflow defensive
+commit pendente
+BUG mobile installments button text overflow em produtos R$ alto valor
+PRE-FIX:
+- grid grid-cols-2 md:grid-cols-3 (mobile 2 cols)
+- 375px viewport math: 135px content per button
+- p.per_cents pode ser 'R$ 1.250,06/mes' (15 chars * 12px = 108px) - fits TIGHT
+- text-[10px] Total label 12x grande 'Total R$ 15.000,00' (18 chars * 10px = 108px) - TIGHT
+- Edge case produtos R$50.000+ -> 'Total R$ 60.000,00' overflows + wraps
+- Sem min-w-0 no button -> grid item nao shrink corretamente
+- Sem truncate -> text wraps em 2-3 linhas quebrando button height
+- Visual broken: 1 button maior que outros = grid misaligned
+
+CENARIO:
+- User compra produto premium R$5000 (LLM enterprise license)
+- Mobile checkout 375px
+- 12 parcelas 12x R$416,67/mes total R$5000,02
+- Total label "Total R$ 5.000,02" (16 chars * 10px = 96px) fits OK
+- Mas em produto R$45000 (raro premium): "Total R$ 50.000,00" overflows
+- Buttons misaligned -> UX broken professional impression
+
+POST-FIX:
+- min-w-0 no button (permite shrink em grid)
+- truncate em 3 divs com pricing/labels
+- title attr fallback p/ tooltip valor completo
+- aria-label ja tem valor completo (preservado SR)
+
+Pattern V8 W15 mobile defensive:
+- Grid items DEVEM ter min-w-0 + truncate em values dinamicos
+- title attr p/ valor truncated (acessivel via hover desktop / long-press mobile)
+- aria-label sempre full value (SR)
+
+W15 mobile responsive series:
+  pass 194 checkout payment-method grid-cols-1 sm:grid-cols-3
+  pass 449 checkout installments overflow defensive <- ESTE
+
+182 passes acumulados (268->449) sem deploy VPS
+7 CRITICAL + 28 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE
