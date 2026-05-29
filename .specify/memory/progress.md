@@ -39943,3 +39943,30 @@ CADEIA W14 direction parity DESC+DESC migrations cumulative:
 - 26 indexes total apply pending VPS SSH
 
 423 passes acumulados (268->693) sem deploy VPS
+
+============================================================================
+SESSAO 694 (W6 CRITICAL gateway block /api/qa/run - LLM cost spam vector)
+============================================================================
+
+Pass 694 (W6 gateway block /api/qa/run internal-only):
+- DESCOBERTA: /api/qa/run exposto via gateway publico
+- qa-svc /qa/run INTERNAL-ONLY: qaRunGuard (x-internal-token + admin JWT)
+- Dispatched by product-svc /products/:id/submit (cross-svc Docker mesh)
+  + admin manual via dashboard-admin /admin/qa-queue force-rerun
+- Layer 2 (svc guard) JA protege MAS gateway expoe = bypass vectors:
+  - LLM cost spam: atacante dispara N QA runs gerando $$ OpenAI/Gemini bills
+  - Token leaked admin -> mass dispatch produtos rivais DDoS
+  - Internal token bruteforce via gateway probing
+- Internal cross-svc (product-svc -> qa-svc) usa Docker network direct
+- /qa/callback NAO bloqueada (publica - qa-worker HMAC-protected externamente)
+- POST-FIX: regex block /qa/run + sub-paths defensive + log.warn forensic + 403
+
+CADEIA W6 gateway block defense-in-depth COMPLETA cross-svc:
+- pass 514 /api/loyalty/earn (trailing-slash bypass + case)
+- pass 567 /api/vault/use (crypto key)
+- pass 627 /api/vault/usage (billing fraud)
+- pass 693 /api/payments/asaas/create + /asaas/refund (REAL MONEY)
+- pass 694 /api/qa/run (LLM cost spam) - este
+= 6 endpoints layer-1 defense gateway block consolidacao
+
+424 passes acumulados (268->694) sem deploy VPS
