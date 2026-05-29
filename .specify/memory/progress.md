@@ -37071,3 +37071,62 @@ Cadeia W5 SELLER a11y:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
 - Mig 094-103 ALTA PRIORIDADE apply
+
+## Pass 503 - W11 PAYMENT/ASAAS: notifCache deferral pos-tx (paridade pass 204)
+
+PRE-FIX BUG (cache != DB consistency drift):
+- payment-svc webhook processWebhookEvent() tinha 3 notifCache calls
+  DENTRO de tx() callback:
+  1. Linha 990 (logOnly admin): notifCache.invalidateBulk(adminIds)
+  2. Linha 1275 (refund buyer): notifCache.invalidate(order.buyer_user_id)
+  3. Linha 1276 (refund sellers): notifCache.invalidateBulk(refundSellerIds)
+- Comments diziam "apos for loop, fora do tx()" mas codigo estava DENTRO
+
+Cenarios de drift:
+1. Cache invalidate ANTES tx commit:
+   - Outro request le DB stale durante tx aberto -> repopulate cache stale
+   - Apos tx commit, cache reflete PRE-tx state (stale)
+2. Tx rollback (deadlock 40P01 - pass 311 withRetry mitiga):
+   - Cache invalidated mas DB unchanged
+   - Cache fica vazio quando deveria ter old value (suboptimal mas safe)
+3. Inconsistencia com pattern V8 ja estabelecido:
+   - Pass 204 explicitly defer loyaltyUsersToInvalidate post-tx
+   - notifCache calls divergem do pattern (regressao silente)
+
+Comment incorreto:
+- Pass 468 (asaas_refund_failed admin notif): "fora do tx()" mas DENTRO
+- Pass 474 (refund buyer + sellers): sem comment claim mas DENTRO
+
+POST-FIX (paridade pass 204 loyalty):
+- 3 novos Sets capturam user_ids dentro tx():
+  - notifAdminsToInvalidate
+  - notifBuyerToInvalidate
+  - notifSellersToInvalidate
+- forEach add IDs em vez de notifCache.invalidate direto
+- Post-tx commit: Promise.all(invalidateBulk) com try/catch defensive
+- Cache fail nao afeta webhook 200 ack
+- Comment explicito linkando pass 204 + 468 + 474
+
+Pattern V8 W11 invariant:
+- TODOS cache invalidations (loyalty, notifs, order:detail, sla, payouts)
+  DEVEM ocorrer POS-COMMIT do tx()
+- Capture user_ids/order_ids em Sets dentro tx(), execute post-tx
+- Pattern consolidado: pass 174 (sla), 175 (payouts), 176 (loyalty checkout),
+  191 (earn), 204 (loyalty refund), 216 (order:detail), 503 (este notif)
+
+Cadeia W11 PAYMENT cache invalidation cross-svc:
+- pass 174 seller-svc sla-status post-tx
+- pass 191 loyalty earn post-tx
+- pass 204 loyaltyUsersToInvalidate Set deferral refund
+- pass 216 order:detail cross-svc invalidation
+- pass 311 withRetry deadlock webhook
+- pass 468 asaas_refund_failed admin notifCache (inside-tx bug)
+- pass 474 refund notifCache buyer+sellers (inside-tx bug)
+- pass 503 (este) notifCache deferral pos-tx all 3 paths
+
+235 passes acumulados (268->503) sem deploy VPS
+9 CRITICAL + 35 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
+- Mig 094-103 ALTA PRIORIDADE apply

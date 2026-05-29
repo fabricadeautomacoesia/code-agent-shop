@@ -888,6 +888,23 @@ async function processWebhookEvent(evt) {
   // FIX-WORKER-18 pass 216: capture order.id p/ invalidate order:detail cache cross-svc
   // (webhook PAYMENT_RECEIVED muda paid_at + status - buyer /conta/pedidos/[id] ve stale)
   let orderIdToInvalidate = null;
+  /* FIX-WORKER-11 pass 503 (notifCache deferral pos-tx commit - paridade pass 204):
+     PRE-FIX: notifCache.invalidate calls EM DENTRO de tx() callback:
+       - Linha 990 (logOnly admin notif): notifCache.invalidateBulk(adminIds)
+       - Linha 1275 (refund buyer): notifCache.invalidate(order.buyer_user_id)
+       - Linha 1276 (refund sellers): notifCache.invalidateBulk(refundSellerIds)
+     Risk: cache invalidate ANTES tx commit:
+       1. Outro request le DB stale durante tx aberto -> repopulate cache
+       2. Apos tx commit, cache reflete PRE-tx state (stale)
+       3. Tx rollback (deadlock 40P01): cache invalidated mas DB unchanged
+     Comment do pass 468 ja dizia "fora do tx()" mas codigo estava DENTRO.
+     POST-FIX paridade pass 204 (loyaltyUsersToInvalidate): capturar
+     user_ids em Sets dentro tx(), executar invalidateBulk APOS tx commit.
+     Pattern V8 W11: cache invalidations DEVEM ocorrer post-commit
+     (cache != DB consistency window). */
+  const notifAdminsToInvalidate = new Set();
+  const notifBuyerToInvalidate = new Set();
+  const notifSellersToInvalidate = new Set();
 
   /* FIX-WORKER-11 pass 311 (webhook deadlock retry):
      PRE-FIX: tx() webhook handler sem withRetry wrap. Cenarios deadlock 40P01:
@@ -980,14 +997,11 @@ async function processWebhookEvent(evt) {
         ).catch(() => {});
         adminIds.push(admin.id);
       }
-      /* FIX-WORKER-11 pass 468 (notifCache cross-svc invalidation consume pass 467):
-         PRE-FIX: INSERT notifications admin SEM invalidate cache notification-svc
-         - asaas_refund_failed e CRITICAL priority 3 - admin precisa ver IMEDIATO
-         - Cache 20s TTL atrasa delivery em janela onde refund failure ainda
-           pode ser revertido em tempo (Asaas async retry)
-         - Pass 467 estabeleceu helper notifCache.invalidate cross-svc
-         POST-FIX: invalidateBulk(adminIds) apos for loop, fora do tx() */
-      notifCache.invalidateBulk(adminIds);
+      /* FIX-WORKER-11 pass 468 + pass 503 (notifCache deferral pos-tx):
+         Pass 468 estabeleceu helper notifCache.invalidate cross-svc.
+         Pass 503 (este): deferral pos-tx para evitar cache != DB drift.
+         Capture adminIds em Set - invalidateBulk executado apos withRetry/tx commit. */
+      adminIds.forEach((id) => notifAdminsToInvalidate.add(id));
       return;  // Skip UPDATE orders completely - estado preserved
     }
 
@@ -1265,21 +1279,45 @@ async function processWebhookEvent(evt) {
         );
         refundSellerIds.push(seller.user_id);
       }
-      /* FIX-WORKER-11 pass 474 (notifCache cross-svc - PAYMENT_REFUNDED/CHARGEBACK):
-         PRE-FIX: refund notif buyer + sellers SEM cache invalidate.
-         - Refund = priority 2 - financial event critical
-         - Buyer needs IMMEDIATE feedback (esperando refund processou?)
-         - Seller cash flow critical (sale revertida)
-         - Cache 20s delay = ansiedade pos-refund pra ambos lados
-         POST-FIX: invalidate(buyer) + invalidateBulk(sellers) post-INSERT */
-      notifCache.invalidate(order.buyer_user_id);
-      notifCache.invalidateBulk(refundSellerIds);
+      /* FIX-WORKER-11 pass 474 + pass 503 (notifCache deferral pos-tx):
+         Pass 474 estabeleceu invalidation refund. Pass 503 deferral pos-tx
+         para evitar cache != DB drift (mesmo motivo loyalty pass 204).
+         Capture user_ids em Sets - invalidations executadas post-tx commit. */
+      notifBuyerToInvalidate.add(order.buyer_user_id);
+      refundSellerIds.forEach((id) => notifSellersToInvalidate.add(id));
       log.warn({ event: evt.event, order_id: order.id, revoked_items: earnTx.rows.length },
         '[refund.processed]');
     }
 
   });
   }); // close withRetry pass 311
+
+  /* FIX-WORKER-11 pass 503 (notifCache post-tx commit - paridade pass 204):
+     Defer notifCache invalidations capturadas em Sets dentro tx():
+     - notifAdminsToInvalidate: PAYMENT_REFUND_FAILED admin alerts
+     - notifBuyerToInvalidate: PAYMENT_REFUNDED/CHARGEBACK buyer notif
+     - notifSellersToInvalidate: PAYMENT_REFUNDED/CHARGEBACK seller notif
+     Executa APOS tx commit (mesmo pattern loyaltyUsersToInvalidate).
+     try/catch defensive - cache fail nao deve afetar webhook ack. */
+  try {
+    const notifTasks = [];
+    if (notifAdminsToInvalidate.size > 0) {
+      notifTasks.push(notifCache.invalidateBulk([...notifAdminsToInvalidate]));
+    }
+    if (notifBuyerToInvalidate.size > 0) {
+      notifTasks.push(notifCache.invalidateBulk([...notifBuyerToInvalidate]));
+    }
+    if (notifSellersToInvalidate.size > 0) {
+      notifTasks.push(notifCache.invalidateBulk([...notifSellersToInvalidate]));
+    }
+    if (notifTasks.length > 0) await Promise.all(notifTasks);
+  } catch (e) {
+    log.warn({ err: mask.text(String(e.message || '').slice(0, 300)),
+      admins: notifAdminsToInvalidate.size,
+      buyer: notifBuyerToInvalidate.size,
+      sellers: notifSellersToInvalidate.size,
+    }, '[notifCache.invalidate_fail.webhook]');
+  }
 
   // FIX-WORKER-11 pass 204: invalidate loyalty:me cache cross-svc apos refund tx commit
   // (PAYMENT_REFUNDED/CHARGEBACK estornam loyalty - seller-svc cache stale sem isso)
