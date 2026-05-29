@@ -396,15 +396,16 @@ router.get('/all',
     const where = ['1=1'];
     const params = [];
     let i = 1;
+    // FIX pass 724: + .trim() paridade cacheKey linha 366/368 (cache hygiene mismatch)
     if (req.query.status) {
-      const st = String(req.query.status).toLowerCase();
+      const st = String(req.query.status).trim().toLowerCase();
       if (!VALID_STATUS.has(st)) {
         return res.status(400).json({ error: 'invalid_status', allowed: Array.from(VALID_STATUS) });
       }
       where.push(`s.status = $${i++}`); params.push(st);
     }
     if (req.query.seller_class) {
-      const sc = String(req.query.seller_class).toLowerCase();
+      const sc = String(req.query.seller_class).trim().toLowerCase();
       if (!VALID_CLASS.has(sc)) {
         return res.status(400).json({ error: 'invalid_seller_class', allowed: Array.from(VALID_CLASS) });
       }
