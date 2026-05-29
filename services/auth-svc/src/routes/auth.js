@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, validate, asyncHandler, fail2ban, errorHandler, logger, htmlEscape, rateLimiter, mask } = require('@cas/shared');
+const { jwt, validate, asyncHandler, fail2ban, errorHandler, logger, htmlEscape, rateLimiter, mask, notifCache } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 98: rate-limit /logout anti-spam.
 // PRE-FIX: zero limit em /logout. Vetores:
@@ -246,6 +246,15 @@ router.post('/register', registerLimiter, validate({ body: registerSchema }), as
     throw e;
   }
 
+  /* FIX-WORKER-1 pass 471 (notifCache cross-svc - consume cadeia pass 467+468+469+470):
+     PRE-FIX: welcome notif INSERT em tx() pos-register SEM cache invalidate.
+     - User logs in immediately apos register -> bell badge mostra 0 ate 20s TTL
+     - Welcome bonus + KYC alert (seller) NAO chegam imediato
+     - UX gap onboarding critical: primeiro contato user com plataforma stale
+     POST-FIX: notifCache.invalidate(user.id) pos-tx commit.
+     Fire-and-forget (Redis down nao bloqueia register response).
+     Cadeia: 467+468+469+470 -> 471 auth.js register <- ESTE */
+  notifCache.invalidate(user.id);
   log.info({ userId: user.id, role }, '[register]');
   res.status(201).json({ ok: true, user });
 }));
@@ -526,6 +535,13 @@ router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
         [userId, JSON.stringify({ ip: req.ip, cascaded_sessions: cascaded.rowCount })]
       );
     });
+    /* FIX-WORKER-1 pass 471 (notifCache cross-svc - CRITICAL security alert):
+       security_refresh_reuse e priority 3 (maior) - anti-takeover signal.
+       Cache 20s TTL = janela aberta atacante completar takeover.
+       User precisa ver IMEDIATO em outras tabs/devices ativas.
+       Critical templates (security_*) bypass user prefs opt-out (pass 227).
+       MAS cache layer ainda atrasa visibility - notifCache invalidate cobre. */
+    notifCache.invalidate(userId);
     res.clearCookie(REFRESH_COOKIE, { path: '/' });
     return next(errorHandler.unauthorized('refresh_reuse_breach',
       'Token compromise detectado. Todas sessoes revogadas. Faca login novamente.'));
@@ -851,6 +867,12 @@ router.post('/forgot-password',
           })]
         );
       });
+      /* FIX-WORKER-1 pass 471 (notifCache cross-svc - password_reset critical):
+         password_reset notif priority 1 - user requested reset, espera email
+         + bell badge. Cache 20s atrasa visualizacao em outras tabs ativas.
+         User triggers reset desktop -> espera ver bell badge em outra tab.
+         POST-FIX: notifCache.invalidate(userId) post-tx commit (path success). */
+      notifCache.invalidate(userId);
     } else {
       // FIX bug 2: audit tambem fail attempts (atacante enumerando emails)
       // NAO bloqueia response (anti-enumeration - timing same)

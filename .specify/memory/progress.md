@@ -35475,3 +35475,69 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096+097+098 ALTA PRIORIDADE
 - Continuar consume notifCache 22+ sites pendentes
+
+## PASS 471 W1 AUTH: notifCache consume auth-svc 4 sites (paridade pass 467-470)
+commit pendente
+GAP auth-svc 4 INSERT sites notifications restantes lagged consume notifCache
+PRE-FIX:
+- Pass 467 helper criado + applied auth-svc 2fa.activate (1 site)
+- Pass 468 payment-svc (2 sites)
+- Pass 469 order-svc (2 sites)
+- Pass 470 qa-svc (1 site - dual path)
+- auth-svc remanesia 4 sites lagged:
+  - register welcome notif (auth.js:232)
+  - refresh_reuse_breach security alert (auth.js:529)
+  - reset-password notif (auth.js:824)
+  - 2fa.recovery (two-factor.js:321)
+  - 2fa.disable (two-factor.js:425)
+
+SCOPE WHY:
+- ALL 4 sites tem priority 1-3 (warn-critical):
+  - welcome priority 2 (onboarding first impression)
+  - security_refresh_reuse priority 3 (CRITICAL anti-takeover)
+  - password_reset priority 1 (user requested)
+  - 2fa_recovery_regen priority 2 (security event)
+  - 2fa_disabled priority 3 (CRITICAL anti-takeover)
+- Cache 20s delay = security window onde atacante pode completar takeover
+- pass 282/315 anti-takeover signals critical paths
+
+POST-FIX (5 sites em 2 arquivos auth-svc):
+1. auth.js register (linha 248): notifCache.invalidate(user.id) pos-tx welcome
+2. auth.js refresh_reuse_breach (linha 538): security_refresh_reuse
+3. auth.js reset-password (linha 869): password_reset path success
+4. two-factor.js 2fa.recovery: notifCache.invalidate pos-tx
+5. two-factor.js 2fa.disable: Promise.all auth:me + notifCache
+
+Import: notifCache adicionado em both auth.js e two-factor.js requires
+
+Cadeia consume pass 467 cross-svc CONSOLIDATED:
+  pass 467 helper module + auth-svc 2fa.activate (1 site)
+  pass 468 payment-svc PAYMENT_RECEIVED + refund_failed (2 sites)
+  pass 469 order-svc dispute resolve + free_order gap (2 sites)
+  pass 470 qa-svc qa.callback approved+rejected (1 site dual)
+  pass 471 auth-svc 5 sites consolidacao (register + refresh_reuse +
+    password_reset + 2fa.recovery + 2fa.disable) <- ESTE
+
+Total sites consume agora: 11/30+ (~37% consolidation)
+
+PROXIMOS PASSES (~19 sites pendentes):
+  - payment-svc: PAYMENT_OVERDUE seller, payouts (5 sites)
+  - review-svc: qna_new + answered (2 sites)
+  - product-svc: version_publish + admin force-approve + seller-mgmt drafts (3 sites)
+  - seller-svc loyalty: tier_up bonus (1 site)
+  - notification-svc admin /test (1 site)
+  - search-svc/aiops alerts admin notif (~5 sites)
+
+Pattern V8 W1 + cross-svc:
+- ALL critical security paths (priority 2+) precisam invalidate notifCache
+- Anti-takeover: 2fa events bypass cache delay 100%
+- Promise.all unifica multiple invalidations (auth:me + notifCache + outros)
+- Fire-and-forget catch p/ nao bloquear response
+
+204 passes acumulados (268->471) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096+097+098 ALTA PRIORIDADE
+- Continuar consume notifCache 19+ sites pendentes

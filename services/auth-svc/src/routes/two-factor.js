@@ -326,6 +326,8 @@ router.post('/recovery',
         [req.user.sub]
       );
     });
+    // FIX-WORKER-1 pass 471 (notifCache cross-svc - 2fa_recovery_regen anti-takeover)
+    notifCache.invalidate(req.user.sub);
     res.json({ recovery_codes: recovery, warn: 'Codigos antigos invalidados. Guarde os novos com seguranca.' });
   })
 );
@@ -428,8 +430,15 @@ router.post('/disable',
         [req.user.sub]
       );
     });
-    // FIX-WORKER-18 pass 211: invalida cache auth:me (twofa_enabled=false)
-    await cache.del(`auth:me:${req.user.sub}`).catch(() => {});
+    /* FIX-WORKER-1 pass 471 (notifCache cross-svc 2fa_disabled - priority 3 critical):
+       2fa_disabled e priority 3 (maximo) - anti-takeover signal.
+       User outras sessoes (revogadas) precisam ver IMEDIATO em outras tabs ativas
+       que ainda nao receberam re-login force (rare race window).
+       Promise.all unified com auth:me invalidation existing. */
+    await Promise.all([
+      cache.del(`auth:me:${req.user.sub}`),
+      notifCache.invalidate(req.user.sub),
+    ]).catch(() => {});
     // Clear cookie current session (force re-login)
     res.clearCookie(REFRESH_COOKIE, { path: '/' });
     res.json({ enabled: false, sessions_revoked: revokedCount, warn: 'Todas suas sessoes foram encerradas. Faca login novamente.' });
