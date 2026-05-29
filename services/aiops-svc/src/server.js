@@ -484,6 +484,82 @@ app.get('/alerts/recent',
   alertsHandler
 );
 
+/* FIX-WORKER-10 pass 482 (POST /alerts/:id/acknowledge - admin workflow):
+   PRE-FIX: pass 432 adicionou filter ?acknowledged=true|false em GET /alerts
+   - Admin podia LISTAR unacked alerts (forensic) MAS NAO podia ack via UI
+   - Workflow incompleto: ver alerts -> SEM acao -> alerts pilam unacked forever
+   - admin via /admin/alerts queue cresce indefinidamente em prod (10-50 alerts/dia)
+   - psql direto UPDATE acknowledged_at = NOW() era unico path (slow, error-prone)
+   POST-FIX: endpoint POST /alerts/:id/acknowledge
+   - UPDATE acknowledged_at + acknowledged_by (req.user.sub) + idempotent guard
+   - audit_log INSERT compliance (admin acknowledged criticality - paridade pass 479)
+   - cache.del alerts (invalida lista pos-mutation)
+   - 409 conflict se ja acked (forense preservado)
+   - Rate-limit 30/min/admin (paridade outros admin endpoints)
+   Pattern V8 W4+W10 admin workflow completeness: list endpoints precisam
+   matching mutation endpoint p/ workflow loop fechar. */
+const ALERT_UUID_RE = /^[0-9]+$/; // alerts.id e BIGSERIAL (numeric)
+const ackAlertLimiter = rateLimiter.createLimiter({
+  windowMs: 60 * 1000, max: 30,
+  message: 'Muitas acknowledges recentes. Aguarde 1 minuto.',
+});
+app.post('/alerts/:id/acknowledge',
+  jwt.requireAuth({ roles: ['admin','staff'] }),
+  ackAlertLimiter,
+  asyncHandler(async (req, res, next) => {
+    const id = String(req.params.id);
+    if (!ALERT_UUID_RE.test(id)) {
+      return next(errorHandler.badRequest('invalid_alert_id'));
+    }
+    // UPDATE idempotent guard: WHERE acknowledged_at IS NULL
+    const r = await query(
+      `UPDATE alerts
+          SET acknowledged_at = NOW(), acknowledged_by = $1::UUID
+        WHERE id = $2 AND acknowledged_at IS NULL
+        RETURNING id, severity, source, code, title, acknowledged_at`,
+      [req.user.sub, parseInt(id, 10)]
+    );
+    if (!r.rows.length) {
+      // Check if exists OR already acked
+      const exists = await query(
+        `SELECT id, acknowledged_at, acknowledged_by FROM alerts WHERE id = $1`,
+        [parseInt(id, 10)]
+      );
+      if (!exists.rows.length) {
+        return next(errorHandler.notFound('alert_not_found'));
+      }
+      return res.status(409).json({
+        error: 'already_acknowledged',
+        message: 'Alert ja foi acknowledged anteriormente.',
+        acknowledged_at: exists.rows[0].acknowledged_at,
+        acknowledged_by: exists.rows[0].acknowledged_by,
+      });
+    }
+    /* audit_log critical-info paridade pass 479 (admin action compliance):
+       admin acknowledging alert = decision logged forensic. */
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'aiops.alert.acknowledge', 'alert', NULL, 'info', $3::JSONB)`,
+      [req.user.sub, req.user.role,
+       JSON.stringify({
+         alert_id: r.rows[0].id,
+         alert_severity: r.rows[0].severity,
+         alert_source: r.rows[0].source,
+         alert_code: r.rows[0].code,
+         ip: req.ip,
+         ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+       })]
+    ).catch(() => {});
+    // Invalida cache alerts (paridade /audit-log pos-mutation pattern)
+    cache.del('aiops:alerts:*').catch(() => {});
+    res.json({
+      ok: true,
+      alert_id: r.rows[0].id,
+      acknowledged_at: r.rows[0].acknowledged_at,
+    });
+  })
+);
+
 // FIX-WORKER-4 pass 12: GET /audit-log - admin lista acoes auditadas
 // Consume W14 pass 9 idx_audit_action_created (action, created_at DESC) para
 // filtros por action sem sort externo. Filtros opcionais:
@@ -528,11 +604,13 @@ const auditLogHandler = asyncHandler(async (req, res) => {
      - 'order_item' (review-svc dispute pass 29) */
   /* FIX-WORKER-17 pass 458: + 'vault_internal' (vault-svc audit critical)
      FIX-WORKER-12 pass 462: + 'qa_callback' (qa-svc invalid_signature audit critical)
-     FIX-WORKER-11 pass 463: + 'asaas_webhook' (payment-svc invalid_signature audit critical) */
+     FIX-WORKER-11 pass 463: + 'asaas_webhook' (payment-svc invalid_signature audit critical)
+     FIX-WORKER-10 pass 482: + 'alert' (aiops-svc alert acknowledge audit) */
   const VALID_TT = new Set([
     'user','seller','product','order','order_item',
     'seller_payout','pending_wallet_payout','payouts_pending_wallet',
     'vault_api_key','vault_key','vault_internal','user_session','qa_callback','asaas_webhook',
+    'alert',
     'category','review','qna','dispute',
   ]);
   const targetIdFilter = (targetId && UUID_RE.test(targetId)) ? targetId : null;

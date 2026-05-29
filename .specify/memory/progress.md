@@ -36108,3 +36108,48 @@ W14 idx PARTIAL series consolidacao:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 096+097+098+099+100 ALTA PRIORIDADE
+
+## PASS 482 W10 AIOPS: POST /alerts/:id/acknowledge endpoint (workflow completeness)
+commit pendente
+GAP /admin/alerts workflow incompleto - filter unacked SEM mutation acknowledge
+PRE-FIX:
+- Pass 432 adicionou filter ?acknowledged=true|false em GET /alerts
+- Admin podia LISTAR unacked alerts MAS NAO podia ack via UI
+- Workflow incompleto: ver alerts -> SEM acao -> alerts pilam unacked forever
+- /admin/alerts queue cresce indefinidamente em prod (10-50 alerts/dia)
+- psql direto UPDATE acknowledged_at = NOW() era unico path
+
+POST-FIX endpoint POST /alerts/:id/acknowledge:
+- rate-limit 30/min/admin (paridade vault ackLimiter)
+- UPDATE acknowledged_at + acknowledged_by + idempotent guard:
+  WHERE id = $2 AND acknowledged_at IS NULL
+- RETURNING alert metadata (severity, source, code)
+- 409 conflict se ja acked (preserva forensic timestamp + by)
+- 404 not_found se alert nao existe
+- audit_log INSERT compliance (paridade pass 479 admin action audit-first)
+- cache.del 'aiops:alerts:*' invalidate post-mutation
+- ip + ua_prefix masked (paridade pass 282/443/480 cross-svc)
+
+VALID_TT enum aiops-svc expand:
+- + 'alert' p/ filter forensic /audit-log?target_type=alert
+- Pass 430 (10) -> 455 (13) -> 458 (14) -> 462 (15) -> 463 (16) -> 482 (17) <- ESTE
+
+W10 admin workflow series:
+  pass 178 alerts cache + window
+  pass 202 alerts cache 10s
+  pass 432 alerts filter severity+source+acknowledged
+  pass 482 POST /alerts/:id/acknowledge endpoint <- ESTE (workflow loop fechado)
+
+Pattern V8 W10+W4 admin workflow completeness:
+- TODO endpoint que lista state pendente (?status=pending OR ?ack=false)
+  DEVE ter matching mutation endpoint (POST /:id/acknowledge OR similar)
+- Workflow loop fechado: list -> mutate -> invalidate cache -> re-list
+- audit_log compliance em mutations (admin action forensic)
+- Rate-limit anti-abuse cross-endpoint pattern
+
+215 passes acumulados (268->482) sem deploy VPS
+8 CRITICAL + 32 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 096+097+098+099+100 ALTA PRIORIDADE
