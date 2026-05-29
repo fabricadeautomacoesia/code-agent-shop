@@ -38234,3 +38234,73 @@ Cadeia W12 QA security/forensic:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-105 ALTA PRIORIDADE apply
+
+## Pass 524 - W14 DB SCHEMA: idx_audit_anonymous_critical PARTIAL (mig 106)
+
+PRE-FIX (HMAC bypass forensic gap):
+- Cross-svc cadeia consolidated insertou audit_log com actor_role='anonymous':
+  - pass 458 vault.invalid_internal_token (severity critical)
+  - pass 462 qa.callback.invalid_signature
+  - pass 463 asaas.webhook.invalid_signature
+  - pass 523 qa.run.invalid_internal_token
+- Admin investigation forensic query padrao:
+    WHERE actor_role='anonymous' AND severity='critical'
+    ORDER BY created_at DESC
+
+Existing indexes audit_log (9 indexes):
+- idx_audit_actor (actor_user_id)
+- idx_audit_action + idx_audit_action_created
+- idx_audit_target + idx_audit_target_created PARTIAL
+- idx_audit_severity PARTIAL (error+critical)
+- idx_audit_severity_created PARTIAL (warn+)
+- idx_audit_target_type_severity PARTIAL critical
+- idx_audit_created + idx_audit_payload_gin
+
+GAP: NENHUM idx em actor_role coluna!
+- Planner usa idx_audit_severity (filter critical) + Heap Filter actor_role
+- Em prod 100k+ rows ~5% critical (5k) + filter heap p/ anonymous
+- ~30ms scan p/ forensic query
+
+POST-FIX mig 106:
+- idx_audit_anonymous_critical PARTIAL composite:
+    ON audit_log (created_at DESC, id DESC)
+    WHERE actor_role = 'anonymous' AND severity = 'critical'
+- Predicate literal immutable (actor_role + severity enums)
+- Idx physical TINY (<1% audit_log rows em prod healthy)
+- 0 rows em prod ideal (sem HMAC attacks)
+- Direct Index Scan pre-sorted DESC (sem Sort node)
+- Tiebreaker id DESC (Regra D pass 251)
+
+Trade-off:
+- Storage minimal (~1KB para 100 anonymous critical rows)
+- INSERT cost: +1 idx write APENAS quando predicate match
+- Throughput audit_log INSERTs 99%+ nao impactado
+
+Coverage queries:
+- Admin /admin/audit-log forensic anonymous critical
+- AIOPS alert detection cron HMAC bypass spike (futuro)
+- SOC2 + LGPD compliance reports
+
+Latencia esperada:
+- Pre-fix: ~30ms (heap filter 5k critical rows)
+- Post-fix: ~2ms (Direct Index Scan PARTIAL)
+- 15x improvement em forensic queries
+
+Cadeia W14 PARTIAL com literal predicates (9 indexes consolidated):
+- pass 086 audit_severity_created warn+
+- pass 094 audit_target_created NOT NULL
+- pass 098 audit_target_type_severity critical
+- pass 100 pwreset_pending_unused used_at IS NULL
+- pass 102 notif_user_inapp_unread channel+is_read
+- pass 103 qa_runs_product_timeout verdict='timeout'
+- pass 104 price_alerts_unnotified last_notified_at IS NULL
+- pass 105 products_sales_public W7 whitelist
+- pass 106 (este) audit_anonymous_critical actor+severity
+
+38 migrations pendentes apply (era 37)
+256 passes acumulados (268->524) sem deploy VPS
+9 CRITICAL pendentes deploy
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
