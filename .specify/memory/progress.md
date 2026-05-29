@@ -40062,3 +40062,33 @@ CADEIA Regra D direction parity FINAL bifurcacao:
 - alphabetic tiebreaker intencional: audit_log_actions count DESC + action ASC (UX dropdown)
 
 429 passes acumulados (268->699) sem deploy VPS
+
+============================================================================
+SESSAO 700 (MILESTONE W7 /products listing SORT_OPTIONS - 8 sites cross-svc)
+============================================================================
+
+Pass 700 (W7 /products listing 6 sorts direction parity - 8th SORT_OPTIONS site):
+- DESCOBERTA: product-svc /products listing publico 7 sorts (paridade search-svc)
+- 6 sorts MIXED direction (DESC chain + p.id ASC):
+  relevance, newest, price_desc, rating, sales, recent_sales
+- price_asc paridade OK (ASC + ASC)
+- HOT PATH /products homepage + categoria pages
+- External Sort obligatorio (idx composite nao bate)
+- POST-FIX: 6 sorts DESC chains com p.id DESC explicit
+
+CADEIA Regra D SORT_OPTIONS direction parity FINAL - 8 sites cross-svc:
+1. /search 6 sorts (pass 648)
+2. /admin/sellers (pass 624)
+3. /sellers public 3 sorts (pass 691)
+4. /products/:slug/related (pass 696)
+5. /products/:slug/also-bought outer + CTE inner (passes 696/697)
+6. /seller/:slug/products 5 sorts (pass 699)
+7. /products listing publico 6 sorts (pass 700 este - MILESTONE)
+8. /search/top-sellers (pass historico)
+
+MILESTONE: pass 700 - 8 SORT_OPTIONS sites COMPLETOS cross-svc consolidacao
+- Eliminado External Sort obligatorio em ALL major listing endpoints
+- Direction parity DESC+DESC universal em DESC chains
+- ASC+ASC preserved para FIFO operacional + price_asc UX
+
+430 passes acumulados (268->700 MILESTONE)
