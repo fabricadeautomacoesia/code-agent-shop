@@ -103,7 +103,8 @@ export default function FinanceiroPage() {
         </div>
       )}
       {/* FIX-WORKER-5 pass 287: wallet_not_configured alert com CTA /seller/loja
-          (consome backend pass 286). Aparece DEPOIS de payout request 403. */}
+          (consome backend pass 286). Aparece DEPOIS de payout request 403.
+          FIX-WORKER-5 pass 568: Link CTA focus-visible outline (paridade cadeia 549/552). */}
       {walletAlert && (
         <div role="alert" className="bg-orange-500/10 border border-orange-500/30 text-orange-200 p-4 rounded-lg mb-4 flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 text-orange-300 flex-shrink-0 mt-0.5" aria-hidden="true" />
@@ -112,7 +113,7 @@ export default function FinanceiroPage() {
             <p className="text-sm text-white/70 mb-3">{walletAlert.msg}</p>
             <div className="flex gap-2">
               <Link href={walletAlert.actionUrl}
-                className="btn-primary text-xs px-3 py-1.5 inline-flex items-center gap-1">
+                className="btn-primary text-xs px-3 py-1.5 inline-flex items-center gap-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
                 Configurar carteira
               </Link>
               <button type="button" onClick={() => setWalletAlert(null)}
@@ -140,10 +141,14 @@ export default function FinanceiroPage() {
         </div>
       )}
 
+      {/* FIX-WORKER-5 pass 568 (a11y - paridade cadeia pass 541/561 icons consolidacao):
+          KPI/CTA icons decorativos (Wallet/TrendingUp/ArrowDownToLine) + texto
+          descritivo = aria-hidden. SR (NVDA/JAWS) anunciava 'imagem Wallet'
+          antes de 'Receita bruta' = noise audio per page load. */}
       <div className="grid md:grid-cols-3 gap-4 mb-8">
         <div className="glass p-6">
           <div className="text-xs text-white/50 uppercase mb-1 flex items-center gap-2">
-            <Wallet className="w-3 h-3" /> Receita bruta
+            <Wallet className="w-3 h-3" aria-hidden="true" /> Receita bruta
           </div>
           <div className="font-display font-bold text-3xl">{fmtBRL(kpi?.gross_revenue_cents || 0)}</div>
         </div>
@@ -153,7 +158,7 @@ export default function FinanceiroPage() {
         </div>
         <div className="glass p-6 border-magenta border-2">
           <div className="text-xs text-magenta-glow uppercase mb-1 flex items-center gap-2">
-            <TrendingUp className="w-3 h-3" /> Receita liquida (82%)
+            <TrendingUp className="w-3 h-3" aria-hidden="true" /> Receita liquida (82%)
           </div>
           <div className="font-display font-bold text-3xl text-magenta-glow">{fmtBRL(kpi?.net_payout_cents || 0)}</div>
         </div>
@@ -161,7 +166,7 @@ export default function FinanceiroPage() {
 
       <div className="glass p-6 max-w-lg">
         <h3 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
-          <ArrowDownToLine className="w-5 h-5 text-magenta" /> Solicitar saque
+          <ArrowDownToLine className="w-5 h-5 text-magenta" aria-hidden="true" /> Solicitar saque
         </h3>
         <p className="text-sm text-white/60 mb-4">
           Saque minimo R$ 50,00. Apos aprovacao do admin, a transferencia e processada via Asaas.
@@ -178,10 +183,16 @@ export default function FinanceiroPage() {
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-lg font-mono focus:border-magenta focus:outline-none disabled:opacity-50" />
             <div className="text-[11px] text-white/40 mt-1">Saque liquido disponivel: <strong className="text-white/70">{fmtBRL(kpi?.net_payout_cents || 0)}</strong></div>
           </div>
-          {/* FIX pass 405: paridade comma normalization no disabled check */}
+          {/* FIX pass 405: paridade comma normalization no disabled check
+              FIX-WORKER-5 pass 568 (a11y CTA - paridade cadeia 549/552/553):
+              + aria-busy={busy} (SR announce processing state)
+              + aria-label dinamico contextual rich
+              + focus-visible:outline magenta (kbd nav affordance) */}
           <button type="submit"
             disabled={action.busyKey === 'payout' || !amount || parseFloat(amount.replace(',', '.')) < 50}
-            className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed">
+            aria-busy={action.busyKey === 'payout'}
+            aria-label={action.busyKey === 'payout' ? 'Solicitando saque' : 'Solicitar saque do valor digitado'}
+            className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
             {action.busyKey === 'payout' ? 'Solicitando...' : 'Solicitar saque'}
           </button>
         </form>
@@ -191,7 +202,9 @@ export default function FinanceiroPage() {
       <div className="glass p-6 mt-8">
         <h3 className="font-display font-bold text-xl mb-4">Historico de saques</h3>
         {payouts.length === 0 ? (
-          <p className="text-white/60 text-center py-8 text-sm">
+          /* FIX-WORKER-5 pass 568 (a11y empty state - paridade pass 544/556/565):
+             role=status + sem icon aqui (text-only zero state). */
+          <p role="status" className="text-white/60 text-center py-8 text-sm">
             Nenhum saque solicitado ainda.
           </p>
         ) : (
@@ -201,8 +214,12 @@ export default function FinanceiroPage() {
               const Icon = info.icon;
               return (
                 <div key={p.id} className="flex items-center gap-3 py-3">
+                  {/* FIX-WORKER-5 pass 568 (a11y - Icon status payout aria-hidden):
+                      Icon decorativo (Clock/CheckCircle2/Banknote/XCircle) + texto
+                      info.label ('Aguardando aprovacao' etc) descritivo proximo.
+                      SR duplicava 'imagem Clock' + 'Aguardando aprovacao'. */}
                   <div className={`w-9 h-9 rounded-full bg-white/5 flex items-center justify-center flex-shrink-0 ${info.color}`}>
-                    <Icon className="w-4 h-4" />
+                    <Icon className="w-4 h-4" aria-hidden="true" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-semibold">{info.label}</div>
