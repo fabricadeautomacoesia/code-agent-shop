@@ -35948,3 +35948,47 @@ W14+W18 cadeia idx consume cadeia notifCache:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 096+097+098+099 ALTA PRIORIDADE
+
+## PASS 479 W13 NOTIFICATION: /test admin audit_log em AMBOS paths (success + fail)
+commit pendente
+GAP /test admin endpoint sem audit em fail path (compliance LGPD/SOC2)
+PRE-FIX:
+- sendEmail throw -> express asyncHandler catch -> 500 SEM audit_log
+- Admin compromised tenta /test 100x (spam vector) -> SMTP fail
+- Zero audit trail das tentativas (so log.warn em sendEmail interno)
+- Compliance gap: admin actions DEVE ter audit_log
+- Forensic post-incident: "admin tentou enviar 100 emails fake spam?"
+  -> Sem audit_log entries (so SMTP success path tinha)
+
+SCOPE:
+- /test endpoint = admin-only (jwt.requireAuth role=admin)
+- Pass 30 (W7) ja hardening BUG 2 (whitelist destinations anti-spam)
+- Pass 30 BUG 3 (audit AWAIT) cobriu success path mas LAGGED fail path
+- Pattern V8 compliance: TODO admin action precisa audit ANTES de response
+
+POST-FIX:
+- try/catch sendEmail -> info | sendErr
+- audit_log INSERT em AMBOS paths:
+  - Success: action 'notification.test_email_sent' severity 'info'
+  - Fail: action 'notification.test_email_failed' severity 'warn'
+    + err masked + transient flag
+- Re-throw sendErr APOS audit gravado (preserva 500 response semantica)
+- Audit-first pattern paridade pass 230 vault.use
+
+W13 audit_log forensic series:
+  pass 30 /test 4 BUGS hardening (W7)
+  pass 479 /test fail path audit (LGPD compliance) <- ESTE
+
+Pattern V8 W13 admin endpoints:
+- TODO admin action endpoint (POST/PATCH/DELETE) precisa audit_log em:
+  - Success path (action + severity info)
+  - Fail path (action + severity warn + err masked)
+- try/catch wrap + re-throw POS audit grav
+- Compliance LGPD/SOC2: zero blind spots em admin actions
+
+212 passes acumulados (268->479) sem deploy VPS
+8 CRITICAL + 31 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 096+097+098+099 ALTA PRIORIDADE

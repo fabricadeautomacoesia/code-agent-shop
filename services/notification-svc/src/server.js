@@ -774,7 +774,24 @@ app.post('/test',
       ));
     }
 
-    const info = await sendEmail(req.body.to, req.body.subject, req.body.body);
+    /* FIX-WORKER-13 pass 479 (audit log fail path - admin compliance trail):
+       PRE-FIX: sendEmail throw -> express asyncHandler catch -> 500 SEM audit_log
+       - Admin compromised tenta /test 100x (spam vector) -> SMTP fail
+       - Zero audit trail das tentativas (so log.warn em sendEmail interno)
+       - Compliance gap: admin actions DEVE ter audit_log (LGPD/SOC2)
+       - Forensic post-incident: "admin tentou enviar 100 emails fake spam?"
+         - Sem audit_log entries (so SMTP success path tinha)
+       POST-FIX: try/catch sendEmail + audit_log em AMBOS paths.
+       - Success path: 'notification.test_email_sent' severity info
+       - Fail path: 'notification.test_email_failed' severity warn + err masked
+       Re-throw catch p/ preservar 500 response semantica. */
+    let info;
+    let sendErr;
+    try {
+      info = await sendEmail(req.body.to, req.body.subject, req.body.body);
+    } catch (e) {
+      sendErr = e;
+    }
 
     // FIX bug 3: AWAIT audit log INSERT - se falhar, response inclui warning
     // sendEmail ja aconteceu (nao rollback), mas operador sabe via warning + log.
@@ -784,23 +801,33 @@ app.post('/test',
         `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
          VALUES ($1, $2, $3, $4, $5, $6, $7::JSONB)`,
         [
-          req.user.sub, req.user.role, 'notification.test_email_sent',
-          'email', null, 'info',
+          req.user.sub, req.user.role,
+          sendErr ? 'notification.test_email_failed' : 'notification.test_email_sent',
+          'email', null,
+          sendErr ? 'warn' : 'info',
           JSON.stringify({
             to_masked: mask.text(req.body.to),
             subject: req.body.subject.slice(0, 100),
-            message_id: info.messageId,
+            message_id: info?.messageId || null,
             ip: req.ip,
             self_test: isSelfTest,
             domain: toDomain,
+            ...(sendErr ? {
+              err: mask.text(String(sendErr.message || '').slice(0, 300)),
+              transient: sendErr.transient !== false,
+            } : {}),
           })
         ]
       );
     } catch (e) {
       auditOk = false;
-      log.error({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), admin_id: req.user.sub, message_id: info.messageId },
+      log.error({ /* FIX pass 344 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), admin_id: req.user.sub, message_id: info?.messageId },
         '[notif.test.audit_fail] email sent but audit_log INSERT failed - investigar subsystem');
     }
+
+    // FIX pass 479: re-throw sendEmail error apos audit_log gravado
+    if (sendErr) throw sendErr;
+
     res.json({
       ok: true,
       messageId: info.messageId,
