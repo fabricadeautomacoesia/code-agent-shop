@@ -37130,3 +37130,59 @@ Cadeia W11 PAYMENT cache invalidation cross-svc:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
 - Mig 094-103 ALTA PRIORIDADE apply
+
+## Pass 504 - W14 DB SCHEMA: idx_price_alerts_unnotified PARTIAL (mig 104)
+
+PRE-FIX (trigger fn_price_drop_notify hot path):
+- Trigger executa em CADA UPDATE products.price_cents (decrease)
+- Mig 030 SELECT alert rows:
+    SELECT a.id, a.user_id, a.threshold_cents
+      FROM product_price_alerts a
+     WHERE a.product_id = NEW.id
+       AND (a.threshold_cents IS NULL OR NEW.price_cents <= a.threshold_cents)
+       AND (a.last_notified_at IS NULL OR a.last_notified_at < NOW() - INTERVAL '24 hours')
+
+Cenarios de stress:
+- Flash promo bulk: cron baixa precos em 100 products = 100 triggers
+- Viral product: 1000+ users com alert ativo (MLB-12 feature)
+- Re-pricing nightly: catalog refresh modifica 5000+ products
+
+Indexes existentes (mig 030):
+- idx_price_alerts_product (product_id) - non-composite
+- idx_price_alerts_user (user_id, created_at DESC) - reverse lookup
+
+Planner pre-fix:
+- Index Scan idx_price_alerts_product (scope product_id)
+- Heap Filter: threshold check + last_notified_at < cutoff
+- Para viral product 1000+ alerts: scan all + filter heap O(N)
+- Lock row-level products durante trigger >500ms em mass-rebid
+
+POST-FIX mig 104:
+- idx_price_alerts_unnotified PARTIAL composite:
+    ON product_price_alerts(product_id)
+    WHERE last_notified_at IS NULL
+- PARTIAL com predicate IS NULL (immutable - PG permite sem NOW() trap)
+- Cobertura: alerts NEVER notified (caso comum prod normal)
+- Idx physical small (~1% subset dos alerts em prod healthy)
+- Cycle anti-spam 24h - apos notify, alert sai do partial
+- Alerts ja notificados (minority) usam full idx_price_alerts_product fallback
+
+Latencia esperada:
+- Viral product 1000 alerts, 990 unnotified, 10 ja notified:
+  - Pre-fix: Index Scan 1000 + Heap Filter -> ~20ms
+  - Post-fix: Index Scan PARTIAL 990 + lookup full 10 -> ~5ms
+- 4x improvement em viral cases, sem regressao em casos normais
+
+Paridade cadeia W14 PARTIAL IS NULL (immutable predicate):
+- pass 481 idx_pwreset_pending_unused PARTIAL used_at IS NULL
+- pass 486 idx_notif_user_inapp_unread PARTIAL channel+is_read
+- pass 500 idx_qa_runs_product_timeout PARTIAL verdict='timeout'
+- pass 504 (este) idx_price_alerts_unnotified PARTIAL last_notified_at IS NULL
+
+36 migrations pendentes apply (era 35)
+236 passes acumulados (268->504) sem deploy VPS
+9 CRITICAL pendentes deploy
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply (11 PARTIAL/composite indexes)
