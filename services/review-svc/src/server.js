@@ -109,14 +109,24 @@ app.post('/', reviewLimiter, jwt.requireAuth(), validate({ body: reviewSchema })
        WHERE id = $1`, [b.product_id]
     );
 
+    /* FIX-WORKER-5 pass 475 (notifCache cross-svc - review_received):
+       PRE-FIX: review_received notif seller SEM cache invalidate
+       - Seller espera ver "nova avaliacao" para responder review
+       - Cache 20s atrasa engagement (review_response SLA importante)
+       POST-FIX: RETURNING user_id -> outcome capture -> notifCache.invalidate post-tx */
     // FIX bug 2: notification dentro do mesmo tx (atomicity all-or-nothing)
+    let reviewSellerUserId = null;
     if (oi.rows[0].seller_id) {
-      await c.query(
+      const notifRes = await c.query(
         `INSERT INTO notifications (user_id, channel, template_code, title, body)
-         SELECT user_id, 'in_app', 'review_received', $1, $2 FROM sellers WHERE id = $3`,
+         SELECT user_id, 'in_app', 'review_received', $1, $2 FROM sellers WHERE id = $3
+         RETURNING user_id`,
         [`Nova avaliacao: ${b.rating} estrelas`, b.body || `Voce recebeu ${b.rating} estrelas`, oi.rows[0].seller_id]
       );
+      reviewSellerUserId = notifRes.rows[0]?.user_id || null;
     }
+    outcome = outcome || {};
+    outcome.notified_seller_user_id = reviewSellerUserId;
   });
 
   if (outcome?.error === 'not_a_verified_purchase') {
@@ -141,6 +151,10 @@ app.post('/', reviewLimiter, jwt.requireAuth(), validate({ body: reviewSchema })
       cache.del(`products:reviews:${slugNorm}:*`).catch(() => {}),
       cache.del(`products:detail:${slugNorm}`).catch(() => {}),
     ]);
+  }
+  // FIX pass 475: + notifCache invalidate seller post-tx (consume cadeia pass 467-474)
+  if (outcome?.notified_seller_user_id) {
+    notifCache.invalidate(outcome.notified_seller_user_id);
   }
   res.status(201).json({ review });
 }));
@@ -359,7 +373,8 @@ app.post('/:id/reply',
 
       // Cache slug fetch dentro tx
       const slugRow = await c.query(`SELECT slug FROM products WHERE id = $1::UUID`, [r.product_id]);
-      result = { ok: true, slug: slugRow.rows[0]?.slug, reply_by_admin: isAdmin };
+      // FIX pass 475: expose buyer_user_id p/ post-tx notifCache invalidate
+      result = { ok: true, slug: slugRow.rows[0]?.slug, reply_by_admin: isAdmin, notified_buyer_user_id: r.buyer_user_id || null };
     });
 
     if (outcome?.error === 'review_not_found' || outcome?.error === 'not_found_or_not_owner') {
@@ -382,6 +397,10 @@ app.post('/:id/reply',
       // FIX-WORKER-18 pass 350: slug normalization paridade public.js linha 796
       const slugNorm = String(result.slug || '').trim().toLowerCase();
       await cache.del(`products:reviews:${slugNorm}:*`).catch(() => {});
+    }
+    // FIX pass 475: notifCache invalidate buyer post-tx (review_replied)
+    if (result?.notified_buyer_user_id) {
+      notifCache.invalidate(result.notified_buyer_user_id);
     }
     res.json({ ok: true, reply_by_admin: result.reply_by_admin });
   })
@@ -968,7 +987,8 @@ app.post('/qna/:id/answer',
 
       // Cache slug fetch dentro tx p/ ter no outcome
       const slugRow = await c.query(`SELECT slug FROM products WHERE id = $1::UUID`, [q.product_id]);
-      result = { ok: true, slug: slugRow.rows[0]?.slug, answered_by_admin: isAdmin };
+      // FIX pass 475: expose asker_user_id p/ post-tx notifCache invalidate qna_answered
+      result = { ok: true, slug: slugRow.rows[0]?.slug, answered_by_admin: isAdmin, notified_asker_user_id: q.asked_by_user_id || null };
     });
 
     if (outcome?.error === 'qna_not_found' || outcome?.error === 'not_found_or_not_owner') {
@@ -994,6 +1014,10 @@ app.post('/qna/:id/answer',
     // FIX-WORKER-18 pass 361: invalidate seller pending queue cache
     //   Resposta -> queue do seller decrementa -> dashboard mostra realtime
     cache.del('qna:seller:pending:*').catch(() => {});
+    // FIX-WORKER-5 pass 475: notifCache invalidate asker post-tx (qna_answered)
+    if (result?.notified_asker_user_id) {
+      notifCache.invalidate(result.notified_asker_user_id);
+    }
     res.json({ ok: true, answered_by_admin: result.answered_by_admin });
   })
 );
@@ -1508,6 +1532,8 @@ app.post('/reports/:id/resolve', jwt.requireAuth({ roles: ['admin','staff'] }),
            VALUES ($1::UUID, 'in_app', 'report_resolved', $2, $3)`,
           [r.reporter_user_id, title, body]
         );
+        outcome = outcome || {};
+        outcome.notified_reporter_user_id = r.reporter_user_id;
       }
     });
 
@@ -1521,6 +1547,10 @@ app.post('/reports/:id/resolve', jwt.requireAuth({ roles: ['admin','staff'] }),
         message: 'Esta denuncia ja foi resolvida anteriormente.',
         current_status: outcome.current_status,
       });
+    }
+    // FIX-WORKER-5 pass 475: notifCache invalidate reporter post-tx (report_resolved)
+    if (outcome?.notified_reporter_user_id) {
+      notifCache.invalidate(outcome.notified_reporter_user_id);
     }
     res.json({ ok: true });
   })

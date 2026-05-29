@@ -35728,3 +35728,64 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096+097+098 ALTA PRIORIDADE
 - Continuar consume notifCache 12+ sites pendentes
+
+## PASS 475 W5 SELLER DASH: notifCache consume review-svc 4 sites (review/qna/report)
+commit pendente
+GAP 4 sites lagged review-svc consume notifCache cadeia:
+1. review_received seller (linha 115) - pos-review buyer escreve
+2. review_replied buyer (linha 366) - pos-resposta seller
+3. qna_answered asker (linha 982) - pos-resposta pergunta
+4. report_resolved reporter (linha 1531) - pos-admin acao
+
+PRE-FIX:
+- Pass 473 cobriu qna_new (linha 505) hot path
+- 4 sites remaining em review-svc lagged
+- ALL priority default 0-1 mas TODOS engagement-critical:
+  - review_received: seller cash flow + reputation signal
+  - review_replied: buyer feedback positivo engagement
+  - qna_answered: asker re-engagement (info chegou)
+  - report_resolved: reporter trust signal (admin tomou acao)
+- Cache 20s delay = UX miss em todos
+
+POST-FIX 4 sites:
+1. review POST (linha 115): RETURNING user_id -> outcome.notified_seller_user_id ->
+   notifCache.invalidate post-tx
+2. review reply (linha 366): result.notified_buyer_user_id capture r.buyer_user_id
+   -> notifCache.invalidate post-tx
+3. qna answer (linha 982): result.notified_asker_user_id capture q.asked_by_user_id
+   -> notifCache.invalidate post-tx
+4. report resolve (linha 1530): outcome.notified_reporter_user_id capture
+   -> notifCache.invalidate post-tx
+
+ALL 4 patterns identical: capture user_id em outcome/result + post-tx invalidate.
+
+Cadeia consume pass 467 cross-svc CONSOLIDATED:
+  pass 467 helper + auth 2fa.activate (1)
+  pass 468 payment hot path (2)
+  pass 469 order dispute + free (2)
+  pass 470 qa.callback dual (1)
+  pass 471 auth-svc 5 sites
+  pass 472 seller loyalty + product version (2)
+  pass 473 product force-approve + review qna_new (2)
+  pass 474 payment refund + payout_paid + pending (3)
+  pass 475 review-svc 4 sites (review_received + replied + qna_answered + report) <- ESTE
+
+Total sites consume agora: 22/30+ (~73% consolidation)
+
+PROXIMOS PASSES (~8 sites pendentes):
+  - notification-svc admin /test (1 site)
+  - aiops-svc alerts admin notif (~5 sites)
+  - product-svc seller-mgmt drafts/patches (4 sites)
+
+Pattern V8 W5+W7+cross-svc:
+- TODOS 4 padroes idem: capture user_id em outcome/result + post-tx invalidate
+- engagement-critical signals (review/qna/report) precisam cache invalidate
+- Refactor outcome assignment p/ expose user_id (paridade pass 473)
+
+208 passes acumulados (268->475) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096+097+098 ALTA PRIORIDADE
+- Continuar consume notifCache 8+ sites pendentes
