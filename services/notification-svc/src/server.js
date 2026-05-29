@@ -972,6 +972,16 @@ async function reclaimOrphanLocks() {
 async function processOutbox() {
   // FIX-13-1 (race condition): claim atomico via UPDATE ... RETURNING.
   // Apenas um worker (entre varias replicas) consegue setar locked_by.
+  /* FIX-WORKER-13 pass 712 (outbox claim tiebreaker id ASC - forensic FIFO + 5th cron site):
+     PRE-FIX: ORDER BY priority DESC, created_at ASC LIMIT 25 sem id ASC tiebreaker
+     - Mass-insert burst: 50+ notifs mesma priority + mesma created_at second-precision
+       (system-wide event cascade: payment webhook ressonance, security alert broadcast)
+     - LIMIT 25 picks ARBITRARY 25 entre ties -> 25 remaining delayed para next cron tick
+     - Multi-worker race (claim parallel via SKIP LOCKED) compounded non-determinism
+     - Forensic: 'qual subset foi delivered antes?' sem trail estavel
+     POST-FIX: + id ASC tiebreaker (paridade pass 632 vault + 698 payment +
+     711 qa timeout - 5th cron site forensic determinism)
+     mig 070 idx_notif_outbox_ready PARTIAL ja cobre direction asc fallback */
   const claimed = await query(
     `UPDATE notifications
         SET locked_by = $1, locked_at = NOW()
@@ -982,7 +992,7 @@ async function processOutbox() {
            AND retry_count < 5
            AND next_retry_at <= NOW()
            AND locked_by IS NULL
-         ORDER BY priority DESC, created_at ASC
+         ORDER BY priority DESC, created_at ASC, id ASC
          LIMIT 25
          FOR UPDATE SKIP LOCKED
       )
