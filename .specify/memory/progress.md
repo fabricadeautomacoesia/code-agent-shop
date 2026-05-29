@@ -36723,3 +36723,48 @@ Cadeia W2 CHECKOUT busy guard consolidacao:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 495 - W4 ADMIN: /admin/reports audit link BROKEN regression do pass 485
+
+PRE-FIX BUG (regressao pass 485 self-introduced):
+- /admin/reports/page.tsx linha 161:
+    <a href={`/admin/audit-log?target_type=report&target_id=${r.id}`}>
+- dashboard-admin NAO tem basePath /admin (Next.js config sem basePath)
+- Rota correta: /audit-log (root-relative)
+- Outros admin pages cross-investigation usam /audit-log:
+  - /admin/sellers linha 154: href={`/audit-log?...`} ✓
+  - /admin/orders linha 155: href={`/audit-log?...`} ✓
+  - /admin/payouts linha 148: href={`/audit-log?...`} ✓
+  - /admin/webhooks linhas 77, 211: href="/audit-log?..." ✓
+  - /admin/reports linha 161: /admin/audit-log?... ✗ (PASS 485 BUG)
+- Admin clicava 'audit' em /reports -> 404 (Next.js not_found)
+- Broken investigation flow (mesma feature que pass 485 tentava habilitar)
+
+Cenarios de impacto:
+- Admin investigando denuncia clica audit -> 404 -> frustration
+- Loop investigation cross-admin quebrado especificamente em reports
+- Pass 485 testou apenas backend (VALID_TT + 'report') - frontend link broken
+
+POST-FIX:
+- /admin/audit-log -> /audit-log (root-relative paridade cross-admin)
+- Comment expansivo explicando regression cause + lesson learned
+- Pattern V8: ALWAYS use root-relative paths em dashboard-admin (no basePath)
+
+Lesson learned:
+- Pass 485 introduziu inconsistencia sem verificar paridade com cross-admin
+- Self-audit cross-pages cadeia (sellers/orders/payouts/webhooks) revelou
+- Importancia de grep cross-app antes de adicionar nova rota
+
+Cadeia W4 cross-admin investigation flow (corrigida agora):
+- pass 451 sellers audit link /audit-log ✓
+- pass 452 orders audit link /audit-log ✓
+- pass 455 payouts audit link /audit-log ✓
+- pass 485 reports audit link /admin/audit-log ✗ (regressao)
+- pass 495 (este) reports audit link /audit-log ✓ (CORRIGIDO)
+
+228 passes acumulados (268->495) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply

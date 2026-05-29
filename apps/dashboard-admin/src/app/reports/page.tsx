@@ -158,7 +158,15 @@ export default function AdminReportsPage() {
                             - per-row "audit" link -> ?target_type=report&target_id=$id (paridade
                               sellers/orders/payouts/qa-queue cross-admin investigation workflow).
                           Loop investigacao fechado: lista report -> audit trail -> actor/severity/payload. */}
-                      <a href={`/admin/audit-log?target_type=report&target_id=${r.id}`}
+                      {/* FIX-WORKER-4 pass 495 (BROKEN LINK regression do pass 485):
+                          PRE-FIX (pass 485): href="/admin/audit-log?..." - PATH 404
+                          - dashboard-admin NAO tem basePath /admin (Next.js config)
+                          - Rota correta: /audit-log (root-relative)
+                          - Outros admin pages (sellers/orders/payouts/webhooks) usam
+                            /audit-log corretamente - pass 485 introduziu inconsistencia
+                          - Admin clicava 'audit' em /reports -> 404 (broken investigation flow)
+                          POST-FIX: paridade cross-admin /audit-log root-relative */}
+                      <a href={`/audit-log?target_type=report&target_id=${r.id}`}
                         className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 bg-magenta/10 text-magenta hover:bg-magenta/20 hover:underline border border-magenta/20"
                         aria-label={`Ver audit trail da denuncia ${r.id?.slice?.(0, 8) || ''}`}
                         title="Ver audit log (quem/quando/payload)">
