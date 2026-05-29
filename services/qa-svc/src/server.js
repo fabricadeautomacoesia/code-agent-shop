@@ -872,11 +872,29 @@ const QA_VERDICT_ENUM = new Set(['approved','rejected','running','timeout','erro
 //   Pattern V8 W18 paridade cadeia review-svc /qna/seller/pending (pass 819)
 //   + /seller/received (pass 1224) + /admin/reports (pass 1366).
 //   Key: per (user, product, verdict, limit, offset) - varyByUser implicit.
+// FIX-WORKER-12 pass 609 (cache key normalization paridade cadeia 22 sites
+// W7+W10+W12+W13+W17+W18 cache hygiene cross-svc consolidacao - 23 sites total):
+//   PRE-FIX BUGS (2 issues cache pollution vs handler):
+//   1. verdict raw .toLowerCase() sem QA_VERDICT_ENUM whitelist check.
+//      Handler valida QA_VERDICT_ENUM (linha 879). Cenarios:
+//      - ?verdict=INVALID -> cache key 'v=invalid', handler 400 invalid_verdict
+//      - Multiple invalid attempts pollution + 400 response cached em chave
+//   2. product_id raw sem UUID_RE validation. Handler valida UUID_RE
+//      (linha 887). Invalid UUIDs poluem cache.
+//      ?product_id=abc-invalid -> cache key 'p=abc-invalid', handler 400
+//   POST-FIX: normalize cache key SAME way handler normalizes (paridade
+//   cadeia 22 sites pre-cache: 520-608 consolidacao).
+const QA_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const qaRunsCacheKey = (req) => {
-  const verdict = req.query.verdict ? String(req.query.verdict).toLowerCase() : 'all';
+  // Normalize verdict: whitelist check pre-cache
+  const verdictRaw = req.query.verdict ? String(req.query.verdict).trim().toLowerCase() : '';
+  const verdict = QA_VERDICT_ENUM.has(verdictRaw) ? verdictRaw : 'all';
+  // Normalize product_id: UUID_RE validation pre-cache
+  const productIdRaw = String(req.params.product_id || '').trim().toLowerCase();
+  const productId = QA_UUID_RE.test(productIdRaw) ? productIdRaw : 'invalid';
   const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
   const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
-  return `qa:runs:u=${req.user?.sub || 'anon'}:p=${req.params.product_id}:v=${verdict}:lim=${lim}:off=${off}`;
+  return `qa:runs:u=${req.user?.sub || 'anon'}:p=${productId}:v=${verdict}:lim=${lim}:off=${off}`;
 };
 
 app.get('/qa/runs/:product_id', jwt.requireAuth(),
