@@ -420,8 +420,17 @@ const alertsHandler = asyncHandler(async (req, res) => {
      - idx_alerts_severity (mig 008)
      - idx_alerts_source (mig 008)
      - idx_alerts_unack PARTIAL (mig 008) - usado quando ack=unack */
+  /* FIX-WORKER-10 pass 722 (alerts severity case-insensitive paridade alertsCacheKey linha 508):
+     PRE-FIX BUG: cacheKey aplica .toLowerCase() MAS handler aqui case-sensitive
+     - cacheKey + handler MISMATCH -> ?severity=Critical:
+       cacheKey 'sev=critical' (lowercase) MAS handler reject (returns null)
+     - cache hit retorna response sem filter MAS user achou que filtrava 'Critical'
+     - UX broken: user filtra critical, ve TODOS severities (cache hit stale)
+     - Pattern V8 cache hygiene invariante: cache key MUST mirror handler
+     POST-FIX: + .toLowerCase() paridade cacheKey linha 508 */
   const VALID_SEV = new Set(['info','warn','error','critical']);
-  const sevFilter = VALID_SEV.has((req.query.severity || '').toString().trim()) ? req.query.severity.toString().trim() : null;
+  const sevRaw = (req.query.severity || '').toString().trim().toLowerCase();
+  const sevFilter = VALID_SEV.has(sevRaw) ? sevRaw : null;
   const SOURCE_RE = /^[a-z0-9_-]{1,60}$/;
   const srcRaw = (req.query.source || '').toString().trim().toLowerCase();
   const sourceFilter = SOURCE_RE.test(srcRaw) ? srcRaw : null;
