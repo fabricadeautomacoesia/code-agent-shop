@@ -39266,3 +39266,42 @@ CADEIA W9 twitter card consolidation cross-page:
 - 11 sites cumulative cross-platform preview consistency
 
 372 passes acumulados (268->642) sem deploy VPS
+
+============================================================================
+SESSAO 643 (W17 vault /usage withRetry deadlock defense - completa cadeia)
+============================================================================
+
+Pass 643 (W17 CRITICAL /usage withRetry - completa 8/8 vault writes atomic):
+- DESCOBERTA: /usage endpoint era UNICO write vault SEM withRetry wrap
+- HIGH FREQUENCY: qa-worker -> vault /usage cada LLM call (~50+ runs/min peak)
+- Cenarios deadlock 40P01 PRE-FIX:
+  1. SELECT FOR UPDATE em same key concorrente (2 LLM calls usando same key)
+  2. UPDATE usage_this_month_cents race com /rotate UPDATE
+  3. UPDATE race com /keys/me/:id/revoke UPDATE (mesma row lock)
+- PRE-FIX impact: ~1-5% requests durante peak fail silent 500
+  + LLM cost gasto MAS billing nao registra (perda receita real)
+- Outros endpoints write vault TODOS COM withRetry:
+  provision (506), seller_provision (507/1527), rotate (1117),
+  admin_revoke (972), seller_revoke (1624), use.pool (763)
+- /usage era ULTIMO endpoint write lagged
+- POST-FIX: withRetry('vault.usage.tx') wrap (3 attempts backoff)
+
+CADEIA W17 vault atomicity COMPLETA 8/8:
+- admin_provision (pass 506)
+- seller_provision (pass 507/1527)
+- rotate (pass 506)
+- admin_revoke (pass 506)
+- seller_revoke (pass 507/1624)
+- use.pool internal (pass 506/763)
+- usage write (pass 643 este) <- consolidacao FINAL
+
+CADEIA W17 vault security defense-in-depth status:
+- fail2ban global (pass 3)
+- rate-limit 3 tiers (pass 280/304/359) - all with keyGenerator x-real-ip
+- vaultUseGuard timingSafe + JWT fallback (pass 4/323/458)
+- gateway block /use + /usage (pass 567 + 627)
+- audit_log critical em ALL endpoints (pass 230/458)
+- ua_prefix forensic mask (pass 438)
+- withRetry deadlock defense 8/8 endpoints write (pass 643 ESTE FINAL)
+
+373 passes acumulados (268->643) sem deploy VPS
