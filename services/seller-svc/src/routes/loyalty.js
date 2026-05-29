@@ -4,7 +4,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache, mask } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, mask, notifCache } = require('@cas/shared');
 
 const log = logger.child({ svc: 'seller-svc', mod: 'loyalty' });
 const router = express.Router();
@@ -308,8 +308,19 @@ router.post('/earn',
 
     // FIX-WORKER-18 pass 176: invalida cache /loyalty/me apos earn
     // (W18-176 cache 30s do GET /me)
+    /* FIX-WORKER-5 pass 472 (notifCache cross-svc - tier_up + earn notification):
+       PRE-FIX: cache.del SO loyalty:me, MAS tier_up notification (priority default 0)
+       NAO invalidava notifs:list + notifs:unread-count.
+       - User compra produto -> tier upgrades -> notif "Voce subiu para GOLD!"
+       - Bell badge demora 20s -> celebracao tier-up perde momento
+       - UX engagement loss: tier-up = key engagement signal MLB pattern
+       POST-FIX: Promise.all loyalty:me + notifCache.invalidate.
+       Cadeia consume pass 467+468+469+470+471 -> 472 seller-svc loyalty <- ESTE */
     try {
-      await cache.del(`loyalty:me:${user_id}:*`);
+      await Promise.all([
+        cache.del(`loyalty:me:${user_id}:*`),
+        notifCache.invalidate(user_id),
+      ]);
     } catch (e) {
       log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), user: user_id }, '[cache.invalidate_fail]');
     }

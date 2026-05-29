@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache, rateLimiter, mask } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, rateLimiter, mask, notifCache } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 82: rate-limit anti-spam drafts.
 // PRE-FIX: POST /products/me SEM rate-limit. Seller pwned/bot pode spawn
@@ -878,8 +878,15 @@ router.post('/:id/versions',
       const ver   = req.body.version;
       const bcWarn = req.body.breaking_changes ? ' (BREAKING CHANGES - revise antes de atualizar)' : '';
 
+      /* FIX-WORKER-5 pass 472 (notifCache cross-svc - product_new_version bulk):
+         PRE-FIX: bulk INSERT notifications wishlist+buyers SEM invalidate cache.
+         - Subscribers podem ser dezenas/centenas users
+         - Bell badge delay 20s = lost engagement signal MLB
+         - "Nova versao" notif e key re-engagement (buyer queria saber updates)
+         POST-FIX: + RETURNING user_id -> notifCache.invalidateBulk
+         (helper pass 467 handles batch eficient Promise.all). */
       // BUG 7 defesa: body texto plano slice 500 + body_html omitido
-      await query(
+      const notifResult = await query(
         `INSERT INTO notifications (user_id, channel, template_code, title, body, payload, priority)
          SELECT DISTINCT u.id, 'in_app'::notification_channel, 'product_new_version', $1::text, $2::text, $3::JSONB, 0
            FROM (
@@ -890,7 +897,8 @@ router.post('/:id/versions',
               WHERE oi.product_id = $4::UUID AND o.status IN ('paid','fulfilled')
            ) AS subs
            JOIN users u ON u.id = subs.user_id
-          WHERE u.deleted_at IS NULL AND u.is_active = TRUE AND u.id != $5::UUID`,
+          WHERE u.deleted_at IS NULL AND u.is_active = TRUE AND u.id != $5::UUID
+          RETURNING user_id`,
         [
           `Nova versao v${ver}: ${title}`,
           `O produto "${title}" recebeu uma atualizacao v${ver}${bcWarn}.\nChangelog: ${req.body.changelog.slice(0, 500)}`,
@@ -899,6 +907,11 @@ router.post('/:id/versions',
           req.user.sub,
         ]
       );
+      // FIX pass 472: invalidateBulk para todos subscribers notificados
+      const subscriberIds = notifResult.rows.map((r) => r.user_id);
+      if (subscriberIds.length) {
+        notifCache.invalidateBulk(subscriberIds);
+      }
     } catch (e) {
       // Nao bloqueia o create de version se notification falhar
       log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), product_id: req.params.id }, '[version.notify_failed]');

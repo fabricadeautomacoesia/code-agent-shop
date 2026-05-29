@@ -35541,3 +35541,62 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096+097+098 ALTA PRIORIDADE
 - Continuar consume notifCache 19+ sites pendentes
+
+## PASS 472 W5 SELLER DASH: notifCache consume seller-svc loyalty + product-svc version_publish
+commit pendente
+GAP 2 sites lagged consume notifCache cadeia:
+- seller-svc loyalty.js earn endpoint (tier_up notification)
+- product-svc seller-mgmt.js version_publish (bulk subscribers notif)
+
+PRE-FIX issue 1 (loyalty tier_up):
+- Pass 176 cache.del loyalty:me apos earn
+- MAS tier_up notification (linha 271) NAO invalidava notifs:list
+- User compra -> tier upgrades -> notif "Voce subiu para GOLD!"
+- Bell badge demora 20s -> celebracao tier-up perde momento
+- UX engagement loss: tier-up = key engagement signal MLB pattern
+
+PRE-FIX issue 2 (product_new_version bulk):
+- Bulk INSERT subscribers (wishlist + buyers) SEM invalidate cache
+- Subscribers podem ser dezenas/centenas users
+- "Nova versao" notif = key re-engagement (buyer queria saber updates)
+- Sem RETURNING user_id -> impossivel invalidateBulk
+
+POST-FIX 2 sites:
+1. seller-svc loyalty.js earn:
+   - Promise.all unified loyalty:me + notifCache.invalidate
+2. product-svc seller-mgmt.js version_publish:
+   - + RETURNING user_id no bulk INSERT
+   - subscriberIds.map() + notifCache.invalidateBulk()
+   - Helper pass 467 handles batch (Promise.all eficiente)
+
+Import notifCache em ambos arquivos
+
+Cadeia consume pass 467 cross-svc CONSOLIDATED:
+  pass 467 helper + auth 2fa.activate (1 site)
+  pass 468 payment hot path (2 sites)
+  pass 469 order dispute + free (2 sites)
+  pass 470 qa.callback (1 site dual)
+  pass 471 auth-svc 5 sites
+  pass 472 seller-svc loyalty + product-svc version_publish (2 sites) <- ESTE
+
+Total sites consume agora: 13/30+ (~43% consolidation)
+
+PROXIMOS PASSES (~17 sites pendentes):
+  - payment-svc: PAYMENT_OVERDUE, payouts admin notifs (5 sites)
+  - review-svc: qna_new + answered (2 sites)
+  - product-svc admin force-approve + seller-mgmt drafts (2 sites)
+  - notification-svc admin /test (1 site)
+  - aiops-svc alerts admin notif (~5 sites)
+
+Pattern V8 W5+W7+cross-svc:
+- Bulk INSERT subscribers DEVE retornar user_id RETURNING p/ invalidateBulk
+- notifCache.invalidateBulk paraleliza Promise.all (vs N calls separadas)
+- Engagement-critical notifs (tier_up, version_publish) precisam invalidacao imediata
+
+205 passes acumulados (268->472) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096+097+098 ALTA PRIORIDADE
+- Continuar consume notifCache 17+ sites pendentes
