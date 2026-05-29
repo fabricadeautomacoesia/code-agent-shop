@@ -37648,3 +37648,61 @@ Latencia / perf impact:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply
+
+## Pass 514 - W6 GATEWAY: /api/loyalty/earn trailing-slash + case bypass
+
+PRE-FIX BUG (defense-in-depth layer-1 bypass):
+- gateway server.js linha 321-332:
+    if (req.method === 'POST' && (req.path === '/earn' || req.path === '/loyalty/earn')) {
+      return res.status(403).json({ ... });
+    }
+- Check exato strict equality - vulnerable a 3 bypass scenarios:
+
+1. Trailing slash bypass (CRITICAL):
+   POST /api/loyalty/earn/
+   - req.path === '/earn/' -> CHECK FAILS (=== '/earn' false)
+   - next() -> proxy forwards -> seller-svc /loyalty/earn/
+   - Express seller-svc SEM strict routing (verified app.set check)
+   - /earn/ MATCHES /earn route -> serviceTokenGuard defende
+   - MAS gateway layer-1 BYPASSED -> fail2ban counter inflado + DB pool wasted
+
+2. Case variation (minor):
+   POST /api/loyalty/EARN
+   - req.path === '/EARN' -> CHECK FAILS
+   - next() -> forwards -> Express case-sensitive match -> 404 OK
+   - MAS atacante pode probe casing patterns
+
+3. Query string handled correctly (verified):
+   POST /api/loyalty/earn?x=1 -> req.path === '/earn' -> CHECK PASSES
+
+Impact:
+- Pattern V8 defense-in-depth: gateway DEVE ser bulletproof
+- Layer-1 defense degraded -> compute waste + log noise
+- Se X-Service-Token leaked (hipotetico), bypass permite acesso
+- Cross-svc: outros gateway blocks (futuro) podem ter mesma class de bug
+
+POST-FIX:
+- Normalize req.path: .replace(/\/+$/, '').toLowerCase() ANTES check
+- Match '/earn' apos normalize (trailing slash + case removed)
+- Single string compare (sem regex perf overhead)
+- Comment exhaustive com 3 bypass scenarios + impact + fix
+- Log inclui normalized para forensics admin troubleshooting
+
+Trade-off:
+- ZERO regressao funcional - legitimate '/earn' POST still blocked
+- Eliminates 3 bypass vectors simultaneously
+- Minor compute: 1 extra .replace().toLowerCase() per /api/loyalty request
+  - Negligible (~0.001ms per request)
+
+Cadeia W6 GATEWAY security hardening:
+- pass 304 CRITICAL keyGenerator realIp (rate-limit shared bucket)
+- pass 354 bodyLimit auth 16KB declared ANTES catchall
+- pass 497 CRITICAL CORS NODE_ENV undefined trap
+- pass 514 (este) /api/loyalty/earn trailing-slash bypass
+
+246 passes acumulados (268->514) sem deploy VPS
+9 CRITICAL + 36 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply

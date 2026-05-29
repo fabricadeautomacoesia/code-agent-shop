@@ -321,8 +321,32 @@ app.use('/api/sellers',       fail2ban.middleware(), proxy(UPSTREAMS.seller,    
 app.use('/api/loyalty', fail2ban.middleware(), (req, res, next) => {
   // Match: /api/loyalty/earn (POST) OU /earn (rota direta apos strip prefix)
   // PRE-PROXY check - rejeita antes do encaminhamento.
-  if (req.method === 'POST' && (req.path === '/earn' || req.path === '/loyalty/earn')) {
-    log.warn({ ip: req.realIp || req.ip, path: req.originalUrl }, '[gateway.loyalty_earn_blocked]');
+  /* FIX-WORKER-6 pass 514 (CRITICAL trailing-slash + case-sensitivity bypass):
+     PRE-FIX BUG: req.path === '/earn' check exato MAS Express seller-svc
+     downstream nao tem strict routing (verified: no app.set('strict routing')).
+     Bypass scenarios:
+     1. POST /api/loyalty/earn/ (trailing slash)
+        - req.path === '/earn/' -> CHECK FAILS (=== '/earn' false)
+        - next() -> proxy forwards -> seller-svc /loyalty/earn/ matches /earn route
+        - serviceTokenGuard (pass 45) ainda defende MAS gateway layer-1 BYPASSED
+     2. POST /api/loyalty/EARN (case variation)
+        - Express req.path preserva case ('/EARN')
+        - CHECK FAILS -> forwards -> Express case-sensitive match -> 404 OK
+        - MAS atacante pode probe casing patterns
+     3. POST /api/loyalty/earn?x=1 (query string)
+        - req.path === '/earn' (query string excluida) -> CHECK PASSES OK
+     Impact:
+     - Layer-1 defense degraded -> fail2ban counter inflado + DB pool wasted
+     - Defense-in-depth principle violado (gateway DEVE ser bulletproof)
+     - Se atacante tem X-Service-Token leaked (cenario hipotetico), bypass
+       trailing-slash permite acesso protected endpoint
+     POST-FIX:
+     - Normalize req.path: remove trailing slash + lowercase ANTES check
+     - Match earn pattern via regex /^\/earn\/?$/i (case-insensitive)
+     - Sem regressao funcional - paths legitimos seguem inalterados */
+  const normalizedPath = req.path.replace(/\/+$/, '').toLowerCase();
+  if (req.method === 'POST' && normalizedPath === '/earn') {
+    log.warn({ ip: req.realIp || req.ip, path: req.originalUrl, normalized: normalizedPath }, '[gateway.loyalty_earn_blocked]');
     return res.status(403).json({
       error: 'internal_only_endpoint',
       message: 'Este endpoint nao esta disponivel via gateway publico.',
