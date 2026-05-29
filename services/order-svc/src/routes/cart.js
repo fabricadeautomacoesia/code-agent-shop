@@ -41,6 +41,18 @@ router.get('/', asyncHandler(async (req, res) => {
   const c = await query(
     `SELECT c.id, c.user_id, c.subtotal_cents, c.discount_cents,
             c.loyalty_points_redeemed, c.coupon_code, c.updated_at,
+      /* FIX-WORKER-2 pass 640 (cart items json_agg ORDER BY ASC+ASC determinism):
+         PRE-FIX: cart_items json_agg sem ORDER BY - PG heap order arbitrario.
+         - User adiciona prodA, prodB, prodC ao carrinho (3 cliques sequenciais)
+         - Refresh /cart page tab 1: items [A, B, C]
+         - Refresh tab 2 (cache evict): items [C, A, B]
+         - UX CRITICO: user mentally tracks "primeiro item = prod A"
+         - Mudanca arbitraria de ordem = confusao + remove item errado clicando trash icon
+         - Buyer pode duplicar acidentalmente removendo wrong item -> rebuy CTA -> double-charge risk
+         POST-FIX: + ORDER BY ci.created_at, ci.id ASC+ASC determinism FIFO.
+         - cart_items.created_at chronologic - mais antigo primeiro (insert order natural)
+         - tiebreaker ci.id ASC dentro mesmo timestamp (anti race-add)
+         - mig 010 idx_cart_items_cart_id cobre WHERE filter, ORDER inline ok p/ <20 items typical */
       COALESCE(
         (SELECT json_agg(json_build_object(
            'id', ci.id, 'product_id', ci.product_id, 'quantity', ci.quantity,
@@ -54,7 +66,7 @@ router.get('/', asyncHandler(async (req, res) => {
                 Boolean explicito - true=split direto, false=fallback queue. */
              'seller_wallet_configured', (s.asaas_wallet_id IS NOT NULL AND s.asaas_wallet_id <> '')
            )
-         ))
+         ) ORDER BY ci.created_at, ci.id)
          FROM cart_items ci
          JOIN products p ON p.id = ci.product_id
                        AND p.status IN ('approved','platform_owned')
