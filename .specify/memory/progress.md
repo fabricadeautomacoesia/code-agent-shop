@@ -40206,3 +40206,40 @@ CADEIA W14 direction parity + PARTIAL composite cumulative:
 - 28 indexes total apply pending VPS SSH
 
 435 passes acumulados (268->705) sem deploy VPS
+
+============================================================================
+SESSAO 706-707 (W14 audit_log trilogy COMPLETA - migrations 130 + 131)
+============================================================================
+
+Pass 706 (W14 mig 130 idx_audit_target_created_id PARTIAL):
+- mig 094 PRE-FIX: PARTIAL (target_id, created_at DESC) WHERE target_id IS NOT NULL
+  sem id DESC tiebreaker
+- Forensic drill-down /admin/{sellers,products,disputes,payouts,vault}/:id audit link
+  consolidacao W4 (passes 543/565/580/586/614)
+- POST-FIX: PARTIAL composite (target_id, created_at DESC, id DESC)
+- Latency: ~5-15ms External Sort eliminado
+
+Pass 707 (W14 mig 131 idx_audit_action_created_id - audit_log trilogy COMPLETA):
+- mig 037 PRE-FIX: (action, created_at DESC) sem id DESC tiebreaker
+- Common queries:
+  WHERE action = 'vault.use.invalid_internal_token' (HMAC bypass)
+  WHERE action = 'auth.login.user_not_found' (email enumeration)
+  WHERE action = 'payment.refund.dispatched' (financial trail)
+  WHERE action LIKE 'qa.%' (LLM pipeline events)
+- POST-FIX: composite (action, created_at DESC, id DESC)
+- Latency: ~5-15ms External Sort eliminado -> ~1-3ms
+
+CADEIA W14 audit_log trilogy direction parity COMPLETA:
+- mig 129 idx_audit_actor_created_id PARTIAL (pass 705)
+- mig 130 idx_audit_target_created_id PARTIAL (pass 706)
+- mig 131 idx_audit_action_created_id (pass 707)
+= 3 forensic queries dimensions (actor + target + action) DESC+DESC consolidacao
+
+CADEIA W14 direction parity + PARTIAL composite cumulative:
+- mig 102-128 (27 indexes consolidacao previa)
+- mig 129 audit_actor_created_id PARTIAL
+- mig 130 audit_target_created_id PARTIAL
+- mig 131 audit_action_created_id
+- 30 indexes total apply pending VPS SSH
+
+437 passes acumulados (268->707) sem deploy VPS
