@@ -443,7 +443,22 @@ app.get('/top-sellers',
   }, 120),
   asyncHandler(async (req, res) => {
   const perCategory = Math.min(parseInt(req.query.per_category || '4', 10), 12);
-  const catFilter = (req.query.category || '').toString().trim();
+  /* FIX-WORKER-10 pass 577 (cache key vs query case-mismatch fake empty results):
+     PRE-FIX BUG: Cache key (linha 441) normaliza .toLowerCase() MAS handler
+     usava .trim() apenas sem lowercase. Cenario fake empty:
+     - GET /top-sellers?category=AI-AGENTS (capital):
+       * cache MISS (key 'cat=ai-agents' nao existe)
+       * handler catFilter='AI-AGENTS' (lowercase nao aplicado)
+       * query c.slug = 'AI-AGENTS' -> 0 rows (categories.slug DB lowercase)
+       * Response { categories: {}, filter: 'AI-AGENTS' } stored sob key 'cat=ai-agents'
+     - GET /top-sellers?category=ai-agents (lower):
+       * cache HIT (key 'cat=ai-agents' poluida com empty result)
+       * Response: { categories: {}, filter: 'AI-AGENTS' } - WRONG (empty)
+       * User ve top-sellers vazio para uma categoria existente!
+     - 'fake empty page' UX critico - hurt conversion
+     POST-FIX: paridade pass 533 (/top-sellers/:category) - normalize end-to-end
+     (cache key + query + response). Match DB canonical lowercase. */
+  const catFilter = (req.query.category || '').toString().trim().toLowerCase();
   // FIX-WORKER-7 pass 11: 2 bugs (pattern W7 pass 9/10):
   // 1. status = 'approved' ignorava platform_owned (Clausula Master Revenda copy)
   //    -> produtos da plataforma INVISIVEIS em top-sellers global
