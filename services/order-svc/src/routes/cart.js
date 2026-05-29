@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, cache } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, cache, withRetry } = require('@cas/shared');
 
 const router = express.Router();
 router.use(jwt.requireAuth());
@@ -112,7 +112,8 @@ router.post('/items',
     const product = p.rows[0];
     const line_total = product.price_cents * req.body.quantity;
 
-    await tx(async (c) => {
+    // FIX-WORKER-2 pass 678 (withRetry cart add item deadlock defense)
+    await withRetry('cart.add_item.tx', async () => await tx(async (c) => {
       const cart = await c.query(
         `INSERT INTO carts (user_id) VALUES ($1)
          ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
@@ -128,7 +129,7 @@ router.post('/items',
         [cart_id, product.id, req.body.quantity, product.price_cents, line_total]
       );
       await recalcCart(c, cart_id);
-    });
+    }));
     res.status(201).json({ ok: true });
   })
 );
@@ -152,8 +153,9 @@ router.delete('/items/:id', asyncHandler(async (req, res, next) => {
     return next(errorHandler.notFound('cart_item_not_found'));
   }
 
+  // FIX-WORKER-2 pass 679 (withRetry cart delete item deadlock defense)
   let removed = false;
-  await tx(async (c) => {
+  await withRetry('cart.delete_item.tx', async () => await tx(async (c) => {
     const r = await c.query(
       `DELETE FROM cart_items WHERE id = $1 AND cart_id IN (SELECT id FROM carts WHERE user_id = $2) RETURNING cart_id`,
       [req.params.id, req.user.sub]
@@ -162,7 +164,7 @@ router.delete('/items/:id', asyncHandler(async (req, res, next) => {
       removed = true;
       await recalcCart(c, r.rows[0].cart_id);
     }
-  });
+  }));
 
   if (!removed) return next(errorHandler.notFound('cart_item_not_found'));
   res.json({ ok: true });
@@ -191,8 +193,9 @@ router.patch('/items/:id',
       return next(errorHandler.notFound('cart_item_not_found'));
     }
 
+    // FIX-WORKER-2 pass 680 (withRetry cart PATCH qty deadlock defense)
     let cartId;
-    await tx(async (c) => {
+    await withRetry('cart.patch_qty.tx', async () => await tx(async (c) => {
       // BUG 2: UPDATE com JOIN products check (Regra A+B)
       // Cart_item WHERE id matches MAS product NAO mais available -> rowcount=0
       const r = await c.query(
@@ -213,7 +216,7 @@ router.patch('/items/:id',
       if (!r.rows.length) return;
       cartId = r.rows[0].cart_id;
       await recalcCart(c, cartId);
-    });
+    }));
     if (!cartId) return next(errorHandler.notFound('cart_item_not_found_or_product_unavailable'));
     res.json({ ok: true });
   })
@@ -413,8 +416,9 @@ router.post('/coupon',
     }
 
     // BUG 3 Regra K: tx() + SELECT FOR UPDATE em carts (anti-race /coupon vs /items)
+    // FIX-WORKER-2 pass 681 (withRetry coupon apply deadlock defense)
     let cartId;
-    await tx(async (cli) => {
+    await withRetry('cart.coupon.tx', async () => await tx(async (cli) => {
       const cartR = await cli.query(
         `SELECT id FROM carts WHERE user_id = $1::UUID FOR UPDATE`,
         [req.user.sub]
@@ -437,7 +441,7 @@ router.post('/coupon',
       }
       // recalcCart dentro do tx() - atomic + lock liberado em commit
       await recalcCart(cli, cartId);
-    });
+    }));
 
     // BUG 4 Regra P: audit_log best-effort (nao bloqueia response success)
     query(
@@ -462,8 +466,9 @@ router.post('/coupon',
 router.post('/loyalty/redeem',
   validate({ body: z.object({ points: z.number().int().min(500).max(1000000) }) }),
   asyncHandler(async (req, res, next) => {
+    // FIX-WORKER-16 pass 682 (withRetry loyalty redeem deadlock defense - CRITICAL real money)
     let result;
-    await tx(async (c) => {
+    await withRetry('cart.loyalty_redeem.tx', async () => await tx(async (c) => {
       // FIX-WORKER-7 pass 19 (RACE CONDITION CRITICAL):
       // PRE-FIX: SELECT points_balance SEM FOR UPDATE -> 2 requests simultaneas
       // viam mesmo balance, ambas validavam points<balance, ambas UPDATEs.
@@ -506,7 +511,7 @@ router.post('/loyalty/redeem',
       );
       await recalcCart(c, cart.rows[0].id);
       result = { ok: true, applied_points: effectivePoints, discount_cents: effectivePoints, cap_cents: cap, balance };
-    });
+    }));
     // FIX-WORKER-7 pass 19: error handling defensive fallback.
     // PRE-FIX: if result.error encadeados - novo error string futuro caia em
     // res.json(result) STATUS 200 com error field. Frontend confuso.
@@ -523,8 +528,9 @@ router.post('/loyalty/redeem',
 );
 
 // DELETE /cart/loyalty/redeem - remove resgate (libera pontos)
+// FIX-WORKER-16 pass 683 (withRetry loyalty unredeem - COMPLETA order-svc 10/10 atomicity)
 router.delete('/loyalty/redeem', asyncHandler(async (req, res) => {
-  await tx(async (c) => {
+  await withRetry('cart.loyalty_unredeem.tx', async () => await tx(async (c) => {
     const cart = await c.query(`SELECT id FROM carts WHERE user_id = $1::UUID`, [req.user.sub]);
     if (!cart.rows.length) return;
     await c.query(
@@ -532,7 +538,7 @@ router.delete('/loyalty/redeem', asyncHandler(async (req, res) => {
       [cart.rows[0].id]
     );
     await recalcCart(c, cart.rows[0].id);
-  });
+  }));
   res.json({ ok: true });
 }));
 
