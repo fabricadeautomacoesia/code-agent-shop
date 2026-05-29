@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { sellerFetch } from '@/lib/seller-api';
 import { useSellerAction } from '@/lib/use-seller-action';
 import { Save, Shield } from 'lucide-react';
@@ -18,7 +18,19 @@ export default function LojaPage() {
   const [status, setStatus] = useState<string>('');
   const [loadError, setLoadError] = useState('');
 
-  async function load() {
+  /* FIX-WORKER-5 pass 741 (useCallback stable closure - paridade pass 738/739/740 cadeia 4 sites):
+     PRE-FIX BUG: async function load() recriada cada render.
+     - useSellerAction(load) recebe nova reference cada render
+     - useCallback dentro de useSellerAction tem deps [busyKey, reload]
+       -> reload muda cada render -> `run` re-criada per render
+     - useEffect deps [] ignora load completamente (mount-only intentional)
+     - useSellerAction reload stale per render race window
+     POST-FIX (paridade cadeia W4 738/739 + W5 740 + 741 este):
+     - useCallback wrap em load com [] deps -> stable reference (sem state externo dependente)
+     - useSellerAction recebe stable callback -> action.run estavel
+     - useEffect deps [load] - paridade ESLint exhaustive-deps
+     Pattern V8 React stability cadeia 4 sites cross-dashboard. */
+  const load = useCallback(async () => {
     try {
       const r = await sellerFetch<{ seller: any }>('/sellers/me');
       const s = r.seller;
@@ -33,8 +45,8 @@ export default function LojaPage() {
       setStatus(s.status);
       setLoadError('');
     } catch (e: any) { setLoadError(e.message); }
-  }
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   // FIX-WORKER-5 pass 3: useSellerAction hook unifica feedback save + KYC
   const action = useSellerAction(load);

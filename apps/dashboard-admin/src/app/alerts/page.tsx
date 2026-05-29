@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
 import { CheckCircle2, Filter, X } from 'lucide-react';
@@ -36,7 +36,23 @@ export default function AlertsPage() {
   // Default oculta ja acked - admin foca em pendentes
   const [showAcked, setShowAcked] = useState(false);
 
-  async function load() {
+  /* FIX-WORKER-4 pass 742 (useCallback stable closure - paridade cadeia 738-741 React stability):
+     PRE-FIX BUG: async function load() recriada cada render referencia 3 filter states.
+     - setInterval(load, 15000) captura closure stale - cron 15s usa SNAPSHOT
+       de filter state da render que criou interval
+     - useEffect deps [filterSeverity, filterSource, showAcked] re-roda cleanup+create
+       interval per filter change - OK funcional MAS:
+       * useAdminAction(load) recebe nova reference cada render -> action.run re-criada
+       * useAdminAction useCallback deps [busyKey, reload] -> reload muda -> run muda
+     - Hot path /alerts dashboard poll 15s + filter mutations -> cascading re-renders
+     POST-FIX:
+     - useCallback wrap em load com [filterSeverity, filterSource, showAcked] deps
+     - useEffect deps [load] (paridade ESLint exhaustive-deps)
+     - setInterval captura load atual (useCallback referencia mantida)
+     - useAdminAction recebe stable callback -> action.run estavel
+     Pattern V8 React stability cadeia 5 sites cross-dashboard:
+     - 738 disputes, 739 payouts-pending, 740 financeiro, 741 loja, 742 alerts. */
+  const load = useCallback(async () => {
     try {
       const qs = new URLSearchParams();
       if (filterSeverity) qs.set('severity', filterSeverity);
@@ -51,13 +67,13 @@ export default function AlertsPage() {
       setLoadError(e?.message || 'Erro carregando alertas');
       setAlerts([]);
     }
-  }
+  }, [filterSeverity, filterSource, showAcked]);
 
   useEffect(() => {
     load();
     const i = setInterval(load, 15000);
     return () => clearInterval(i);
-  }, [filterSeverity, filterSource, showAcked]);
+  }, [load]);
 
   // FIX pass 483: acknowledge action (consume pass 482 POST endpoint)
   const action = useAdminAction(load);

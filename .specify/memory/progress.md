@@ -40973,3 +40973,45 @@ Status: search-svc 100% Blueprint V8 cache hygiene compliant.
 CADEIA cumulative cross-svc:
 - 16 cache hygiene + storage normalize bugs (618, 719-737)
 - 3 React stability fixes cross-dashboard (738 disputes, 739 payouts-pending, 740 financeiro)
+
+## PASS 741 (W5 SELLER /loja useCallback stable closure)
+
+apps/dashboard-seller/src/app/loja/page.tsx linhas 21-37
+
+PRE-FIX BUG (paridade cadeia 738-740):
+- async function load() recriada cada render
+- useSellerAction(load) recebe nova reference cada render -> action.run re-criada
+- useEffect deps [] mount-only intentional (ignora load)
+- reload stale per render race window
+
+POST-FIX:
+- useCallback wrap em load com [] deps -> stable reference
+- useSellerAction recebe stable callback -> action.run estavel
+- useEffect deps [load] - paridade ESLint exhaustive-deps
+- import { useCallback } adicionado
+
+## PASS 742 (W4 ADMIN /alerts useCallback stable + hot path 15s poll)
+
+apps/dashboard-admin/src/app/alerts/page.tsx linhas 39-60
+
+PRE-FIX BUG (hot path mais impactado da cadeia):
+- async function load() referencia 3 filter states (severity, source, showAcked)
+- setInterval(load, 15000) captura closure stale - cron 15s usa SNAPSHOT
+  de filter state da render que criou interval
+- useEffect re-roda em filter change cria novo interval MAS:
+  * useAdminAction(load) recebe nova ref cada render
+  * action.run cascading re-criada per render
+- Hot path 15s poll + filter mutations -> mais cascading re-renders
+
+POST-FIX:
+- useCallback wrap em load com [filterSeverity, filterSource, showAcked] deps
+- useEffect deps [load] (paridade ESLint exhaustive-deps)
+- setInterval captura load atual via useCallback ref
+- useAdminAction recebe stable callback -> action.run estavel
+
+Pattern V8 React stability cadeia 5 sites cross-dashboard:
+- 738 disputes, 739 payouts-pending, 740 financeiro, 741 loja, 742 alerts
+
+CADEIA cumulative cross-svc:
+- 16 cache hygiene + storage normalize bugs (618, 719-737)
+- 5 React stability fixes cross-dashboard (738-742)
