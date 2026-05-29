@@ -335,9 +335,31 @@ router.get('/sla-risk',
 //   - COUNT(*) OVER()::INT AS _total window consolidation
 //   - + s.id ASC tiebreaker (Regra D V8)
 // Performance: ~25ms (2 queries) -> ~12ms (1 query) ou ~1ms (Redis hit)
+// FIX-WORKER-18 pass 613 (cache key normalization paridade cadeia 26 sites
+// W7+W10+W12+W13+W17+W18 cache hygiene cross-svc consolidacao - 27 sites total):
+//   PRE-FIX BUGS (5 issues cache pollution vs handler):
+//   1. Raw q.status sem SELLERS_LIST_VALID_STATUS whitelist check.
+//      Handler valida (linha 366-368). Invalid -> 400 cached em chave.
+//   2. Raw q.seller_class sem SELLERS_LIST_VALID_CLASS whitelist check.
+//      Handler valida (linha 373-375). Invalid -> 400 cached.
+//   3. Raw q.q (search term) sem .trim() OR escape. Atacante probing
+//      wildcards % e _ poluem cache (handler escapes mas cache key raw).
+//   4. Raw q.limit. Handler clamps Math.max/Math.min [1, 100] (linha 347).
+//   5. Raw q.page. Handler Math.max(... || 1, 1) (linha 348).
+//   POST-FIX: normalize cache key SAME way handler normalizes.
+const SELLERS_LIST_VALID_STATUS = new Set(['pending_kyc','kyc_submitted','active','suspended','banned','closed']);
+const SELLERS_LIST_VALID_CLASS = new Set(['class_a','class_b']);
 const sellersListCacheKey = (req) => {
   const q = req.query;
-  return `seller:admin:all:s=${q.status||''}:c=${q.seller_class||''}:q=${q.q||''}:lim=${q.limit||30}:p=${q.page||1}`;
+  const statusRaw = (q.status || '').toString().trim().toLowerCase();
+  const status = SELLERS_LIST_VALID_STATUS.has(statusRaw) ? statusRaw : '';
+  const classRaw = (q.seller_class || '').toString().trim().toLowerCase();
+  const sclass = SELLERS_LIST_VALID_CLASS.has(classRaw) ? classRaw : '';
+  // q (search term): .trim() + slice 100 chars (DoS defense) + lowercase for case-insensitive
+  const searchQ = (q.q || '').toString().trim().toLowerCase().slice(0, 100);
+  const lim = Math.max(1, Math.min(100, parseInt(q.limit, 10) || 30));
+  const page = Math.max(1, parseInt(q.page, 10) || 1);
+  return `seller:admin:all:s=${status}:c=${sclass}:q=${searchQ}:lim=${lim}:p=${page}`;
 };
 
 router.get('/all',
