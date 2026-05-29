@@ -40032,3 +40032,33 @@ CADEIA Regra D direction parity cross-svc TOTAL:
 - Mixed direction intencional: outbox processor priority DESC + created_at ASC
 
 428 passes acumulados (268->698) sem deploy VPS
+
+============================================================================
+SESSAO 699 (W7 /seller/:slug/products 5 sorts direction parity)
+============================================================================
+
+Pass 699 (W7 /seller/:slug/products 5 sorts direction parity DESC+DESC):
+- DESCOBERTA: 6 SORT_OPTIONS analisados, 5 com MIXED direction:
+  - relevance/newest/price_desc/rating/sales: DESC chain + vp.id ASC = MIXED
+  - price_asc: ASC + ASC paridade OK
+- HOT PATH /seller/:slug/products dashboard polling
+- External Sort obligatorio (idx composite nao bate)
+- POST-FIX: 5 sorts DESC chains com vp.id DESC explicit
+- price_asc preserva ASC chain consistency
+
+CADEIA Regra D direction parity SORT_OPTIONS cross-svc COMPLETA:
+- /search 6 sorts (pass 648)
+- /admin/sellers (pass 624)
+- /sellers public 3 sorts (pass 691)
+- /products/:slug/related + also-bought (passes 696/697 + outer/CTE inner)
+- /seller/:slug/products 5 sorts (pass 699 este)
+- /search/top-sellers (pass historico)
+= 7 sites SORT_OPTIONS direction parity cross-svc consolidacao
+
+CADEIA Regra D direction parity FINAL bifurcacao:
+- DESC+DESC variant: 30+ admin listings + 7 SORT_OPTIONS sites + cross-svc consolidacao
+- ASC+ASC variant: 3 crons FIFO (qa stuck + vault rotation + payment reconcile)
+- Mixed direction intencional: outbox processor priority DESC + created_at ASC
+- alphabetic tiebreaker intencional: audit_log_actions count DESC + action ASC (UX dropdown)
+
+429 passes acumulados (268->699) sem deploy VPS
