@@ -518,6 +518,23 @@ app.post('/:id/read',
         WHERE user_id = $1 AND channel = 'in_app' AND is_read = FALSE`,
       [req.user.sub]
     );
+    /* FIX-WORKER-13 pass 534 (cache invalidation paridade success path):
+       PRE-FIX BUG: already_read branch computa unread_count_remaining FRESH
+       (SELECT COUNT), MAS NAO invalida cache notifs:unread-count + notifs:list.
+       - Success path (linha 530-532) invalida ambos caches pos-UPDATE
+       - Already_read path (este) computa fresh count mas deixa cache stale
+       - Cenario: 2 tabs open, user clica notif tab 1 (success) -> caches OK
+         tab 2 ainda polling stale -> chega ao mesmo /:id/read -> idempotent
+         retorna fresh count MAS cache de outras tabs continua stale
+       - Outras tabs cache notifs:unread-count com valor OUTDATED ate TTL 20s
+       - UX inconsistency: response diz X mas cache pode estar Y
+       POST-FIX: invalidate cache em AMBAS paths (success + idempotent).
+       - Mesma robustez UX cross-tab cache coherence
+       - Trade-off ZERO: cache.del em re-clicks raros (idempotent path)
+       - Pattern V8 W13 invariant: ALL paths que computam fresh data DEVEM
+         invalidate cache que cobre essa data. */
+    await cache.del(`notifs:unread-count:${req.user.sub}`).catch(() => {});
+    await cache.del(`notifs:list:${req.user.sub}:*`).catch(() => {});
     return res.json({ ok: true, already_read: true, unread_count_remaining: remaining.rows[0]?.n || 0 });
   }
   // Success path - BUG 3: + unread_count_remaining

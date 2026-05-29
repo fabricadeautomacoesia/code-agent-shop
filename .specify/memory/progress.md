@@ -38800,3 +38800,51 @@ W7 W10 W18 cache key/query consistency = 100% paridade COMPLETE.
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-107 ALTA PRIORIDADE apply (14 PARTIAL/composite indexes)
+
+## Pass 534 - W13 NOTIFICATION: /:id/read already_read path cache invalidation paridade success
+
+PRE-FIX BUG (cache invalidation paridade lagged):
+- POST /:id/read endpoint tem 2 response paths:
+  1. Success (linha 533): UPDATE OK + cache.del (pass 212 + pass 404)
+  2. Already_read (linha 521): SELECT idempotent + fresh COUNT but NO cache.del
+
+Inconsistency:
+- Success path: fresh data + invalidate cache ✓
+- Already_read path: fresh data MAS cache stale ✗
+
+Cenario cross-tab:
+- User 2 tabs abertas com bell mostrando '3 unread'
+- Tab 1: clica notif #1 -> success -> DB updated + cache invalidated -> tab 1 polling proximo ciclo ve count=2
+- Tab 2: ainda pollings cache (idle ate proxima janela 30s)
+- Tab 2 polling expira -> re-fetch unread-count -> miss + reload OK
+- Mas se Tab 2 re-clica MESMA notif #1 dentro 30s:
+  - DB ja updated -> idempotent path
+  - Response retorna count fresh OK
+  - MAS cache notifs:unread-count + notifs:list NAO invalidated
+  - Outras tabs (Tab 3+) continuam vendo cache stale ate TTL 20s
+- Lock UX: response info diz X mas cache cross-tab pode mostrar Y
+
+POST-FIX (paridade success path):
+- cache.del notifs:unread-count + notifs:list em AMBAS paths
+- Idempotent path tambem invalida (re-click defensive)
+- Pattern V8 W13 invariant: ALL paths que computam fresh data DEVEM
+  invalidate cache que cobre essa data
+
+Trade-off ZERO:
+- cache.del calls em re-clicks raros (idempotent path)
+- Redis ops barata (Promise.all <1ms typical)
+- Cache coherence cross-tab guaranteed
+
+Cadeia W13 NOTIFICATION cache coherence consolidation:
+- pass 212 /:id/read success cache.del unread-count
+- pass 404 /:id/read success cache.del notifs:list
+- pass 422 /read-all cache.del paridade
+- pass 459 /prefs PATCH cache.del LEFT JOIN invalidate
+- pass 534 (este) /:id/read already_read path paridade success
+
+266 passes acumulados (268->534) sem deploy VPS
+9 CRITICAL + 39 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-107 ALTA PRIORIDADE apply (14 PARTIAL/composite indexes)
