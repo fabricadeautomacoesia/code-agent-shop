@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII, mask, notifCache } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII, mask, notifCache, withRetry } = require('@cas/shared');
 
 const router = express.Router();
 const log = logger.child({ svc: 'product-svc', mod: 'admin' });
@@ -473,8 +473,22 @@ router.post('/:id/archive',
        - mask.text(reason) defensive (Bearer/CPF/secrets sanitize)
        - + ua_prefix mask.text(headers.UA).slice(0,60) (paridade pass 438)
        - Cache invalidation pos-tx commit (paridade pass 503 pattern V8) */
+    /* FIX-WORKER-7 pass 650 (withRetry deadlock defense paridade vault/payment/order cadeia):
+       PRE-FIX: tx() sem withRetry wrap (linha 477).
+       - Cenarios deadlock 40P01:
+         1. Admin mass-archive batch (10+ products selecionados) -> tx() concurrent
+            lock products row + audit_log row em lock ordering conflict
+         2. Race com /force-approve mesmo product (admin double-click race)
+         3. Race com cron auto_archive_inactive (5min interval)
+       - Pattern V8 cadeia consolidacao:
+         vault-svc: 8/8 endpoints write (pass 643 completou)
+         payment-svc: refund + create (pass 644 + cross-svc)
+         order-svc: dispute resolve + checkout (pass historico)
+         product-svc admin: lagged - este endpoint sem withRetry defense
+       POST-FIX: withRetry('product.archive.tx') wrap (3 attempts backoff)
+       Pattern V8 W7 atomicity defense expand cross-svc consolidation */
     let archivedRow = null;
-    await tx(async (c) => {
+    await withRetry('product.archive.tx', async () => await tx(async (c) => {
       // State machine: arquivar product ja archived = no-op (idempotent friendly)
       const r = await c.query(
         `UPDATE products SET status = 'archived', archived_at = NOW(), updated_at = NOW()
@@ -509,7 +523,7 @@ router.post('/:id/archive',
           ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
         })]
       );
-    }).catch((e) => {
+    })).catch((e) => {
       if (e?.code === 'NOT_FOUND') return next(errorHandler.notFound('product_not_found'));
       throw e; // bubble up errorHandler middleware
     });
