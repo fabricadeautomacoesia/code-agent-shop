@@ -39194,3 +39194,44 @@ CADEIA W9 twitter card consolidation cross-page:
 - 10 sites cumulative cross-platform preview consistency
 
 367 passes acumulados (268->637) sem deploy VPS
+
+============================================================================
+SESSAO 638-640 (W14 mig 124 + W2 json_agg ORDER cart + orders CRITICAL UX)
+============================================================================
+
+Pass 638 (W14 mig 124 idx_notif_user_channel_created_id):
+- mig 020 PRE-FIX: (user_id, channel, created_at DESC) SEM id DESC tiebreaker
+- notification-svc GET / inbox ORDER created_at DESC, id DESC = External Sort
+- NotificationBell HOT PATH polling 30s + multi-tab amplification
+- POST-FIX: (user_id, channel, created_at DESC, id DESC) direction parity Regra D V8
+- Latency: ~3-8ms External Sort eliminado -> ~1-2ms
+
+Pass 639 (W2 /conta/pedidos items_preview json_agg ORDER ASC+ASC):
+- DESCOBERTA: order listing items_preview json_agg sem ORDER BY
+- Order detail (/:id linha 659) JA tinha ORDER BY oi.created_at, oi.id determinism
+- Listing path INCONSISTENT vs detail path: thumbnails reordenam refresh
+- POST-FIX: + ORDER BY oi.created_at, oi.id ASC+ASC paridade detail
+
+Pass 640 (W2 cart items json_agg ORDER ASC+ASC - CRITICAL UX bug):
+- DESCOBERTA: cart.js json_agg sem ORDER BY - cart items order ARBITRARIO
+- CENARIO REAL CRITICAL:
+  - User adiciona prodA, prodB, prodC sequencial
+  - Refresh /cart tab 1: [A, B, C]
+  - Refresh tab 2 (cache evict): [C, A, B]
+  - User clica trash no "primeiro item" (mentalmente prod A) mas remove prod C
+  - Rebuy CTA -> double-charge risk
+- POST-FIX: + ORDER BY ci.created_at, ci.id ASC+ASC determinism FIFO insert
+- mig 010 idx_cart_items_cart_id cobre WHERE filter
+
+CADEIA W14 direction parity DESC+DESC migrations cumulative:
+- mig 102-123 (22 indexes consolidacao previa)
+- mig 124 idx_notif_user_channel_created_id (pass 638 este)
+- 23 indexes total apply pending VPS SSH
+
+CADEIA W2 json_agg ORDER determinism:
+- order detail items (pass historical /:id linha 659)
+- order listing items_preview (pass 639 este)
+- cart items (pass 640 este - CRITICAL UX)
+- 3 sites cumulative determinism consolidacao /conta/pedidos + /cart UX
+
+370 passes acumulados (268->640) sem deploy VPS
