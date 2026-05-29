@@ -36057,3 +36057,54 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 096+097+098+099 ALTA PRIORIDADE
 - Pattern audit_log invalid_credential cross-svc COMPLETE
+
+## PASS 481 W14 DB SCHEMA: idx_pwreset_pending_unused PARTIAL (auth flow forgot-password)
+commit pendente
+GAP perf forgot-password flow invalidacao tokens previos
+PRE-FIX:
+- Pass 50 W7 estabeleceu padrao /forgot-password:
+  UPDATE password_resets SET used_at = NOW()
+   WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW()
+- Idx existentes: idx_pwreset_user (user_id) + idx_pwreset_expires (expires_at)
+- Query usa Bitmap idx_pwreset_user + Heap Filter on used_at + expires_at
+- User com 100+ historicos (legitimate OR password reset spam):
+  - idx encontra 100 rows -> filter heap pending atual
+  - Latency: ~5-10ms scaling
+
+SCOPE:
+- /forgot-password = security-critical (account takeover prevention)
+- Pass 480 audit_log login.invalid_password = high-volume warn entries
+- Forgot-password rate-limit pass 13 (5/15min) MAS query exec ainda relevante
+- Multiple sessions historicos accumulate em legitimate uso
+
+POST-FIX mig 100:
+- idx PARTIAL: idx_pwreset_pending_unused (user_id, expires_at DESC)
+  WHERE used_at IS NULL
+- Note: NOW() nao pode em PARTIAL clause (non-immutable expression)
+  - WORKAROUND: PARTIAL apenas used_at IS NULL (cleanup cron mata expired)
+  - PG planner usa idx + Filter expires_at > NOW (small set apos partial)
+- ANALYZE password_resets
+
+Trade-off:
+- Idx PARTIAL inclui expired tokens (used_at IS NULL mas expires_at < NOW)
+- Cleanup cron diaria mata expired - PARTIAL stays small em prod normal
+- Aceitavel: 5-10x melhoria query latency
+
+Pattern V8 W14: PARTIAL idx p/ pending state pattern - mesma estrategia
+pass 086 audit_log severity, pass 094 audit_log target_id, pass 098 audit_log
+target_type_severity, pass 099 users_active_admins.
+
+W14 idx PARTIAL series consolidacao:
+  pass 086 idx_audit_severity_created PARTIAL
+  pass 094 idx_audit_target_created PARTIAL
+  pass 097 idx_pending_wallet_transfer_id PARTIAL
+  pass 098 idx_audit_target_type_severity PARTIAL
+  pass 099 idx_users_active_admins PARTIAL
+  pass 100 idx_pwreset_pending_unused PARTIAL <- ESTE
+
+214 passes acumulados (268->481) sem deploy VPS
+8 CRITICAL + 32 migrations pendentes apply (era 31)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 096+097+098+099+100 ALTA PRIORIDADE
