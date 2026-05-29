@@ -38467,3 +38467,49 @@ Cadeia W1 AUTH /register UX:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
+
+## Pass 528 - W8 VISUAL/UX: redefinir-senha pw-confirm Lock icon alignment paridade pw-new
+
+PRE-FIX VISUAL BUG (input padding mismatch):
+- redefinir-senha page tem 2 password fields stacked:
+  - pw-new (linhas 114-121): <Lock> icon + input px-10
+  - pw-confirm (linhas 142-146): SEM Lock + input px-3
+- Visual: 2 inputs verticais visualmente desalinhados
+  * pw-new text starts ~40px from left (Lock w-4 + left-3 + px-10)
+  * pw-confirm text starts ~12px from left (px-3 only)
+- Dark mode + glass panel: misalignment muito visivel
+- Pattern V8 W8 consistency violado: stacked similar fields DEVEM ter same padding
+
+Comparacao cross-page input pattern:
+- login.tsx email + password + 2FA: TODOS px-10 com icones (Mail, Lock, Key)
+- esqueci-senha email: px-10 com Mail icon
+- redefinir-senha pw-new: px-10 com Lock icon ✓
+- redefinir-senha pw-confirm: px-3 SEM icon ✗ (este corrige)
+- register.tsx 5 inputs: px-4 SEM icones (consistent layout differente OK)
+
+POST-FIX (paridade pw-new + login pattern):
+- + <div className="relative"> wrapper
+- + <Lock className="w-4 h-4 absolute left-3 top-3.5 text-white/40" aria-hidden="true" />
+- input px-3 -> px-10 (paridade pw-new)
+- Visual symmetry restored - text alignment match vertically
+- aria-hidden em icon decorativo (a11y paridade pw-new linha 115)
+
+Impact UX:
+- Dark mode glass panel: visual alignment crucial p/ trust signal
+- Password fields stacked: user expects symmetric visual treatment
+- Industry standard (LinkedIn/Google reset password): both pw fields same layout
+
+Cadeia W8 visual consistency consolidacao:
+- pass 2 prose-invert + glass paridade
+- pass 3 /comparar hover affordance + cover responsive
+- pass 231 visual hover consistency wishlist
+- pass 236 Tailwind class conflict (flex hidden sm:flex)
+- pass 505 /comparar token vs hex inconsistency
+- pass 528 (este) redefinir-senha pw-confirm Lock icon symmetry
+
+260 passes acumulados (268->528) sem deploy VPS
+9 CRITICAL + 38 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)

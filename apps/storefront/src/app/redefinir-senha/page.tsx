@@ -139,11 +139,28 @@ function ResetInner() {
         </div>
         <div>
           <label htmlFor="pw-confirm" className="text-sm text-white/70 mb-1.5 block">Confirmar senha</label>
-          <input id="pw-confirm" type="password" required value={confirm}
-            onChange={(e) => { setConfirm(e.target.value); clearErr(); }}
-            aria-describedby="pw-confirm-hint"
-            autoComplete="new-password"
-            className="w-full px-3 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
+          {/* FIX-WORKER-8 pass 528 (visual alignment - pw-new vs pw-confirm padding mismatch):
+              PRE-FIX VISUAL BUG:
+              - pw-new (linhas 114-121): <Lock icon left-3> + input px-10
+              - pw-confirm (este): SEM Lock icon + input px-3
+              - 2 password fields stacked - text alignment SHIFT visual:
+                * pw-new text starts at ~40px from left (Lock + px-10)
+                * pw-confirm text starts at ~12px from left (px-3 only)
+              - Dark mode + glass panel: visual misalignment very noticeable
+              - Pattern V8 W8 consistency: stacked similar inputs DEVEM ter same
+                padding profile (paridade login email+password both with icons)
+              POST-FIX: + Lock icon wrapper + px-10 padding paridade pw-new
+              - Visual symmetry restored
+              - aria-hidden em icon decorativo (paridade pw-new linha 115)
+              - relative wrapper para absolute positioning Lock */}
+          <div className="relative">
+            <Lock className="w-4 h-4 absolute left-3 top-3.5 text-white/40" aria-hidden="true" />
+            <input id="pw-confirm" type="password" required value={confirm}
+              onChange={(e) => { setConfirm(e.target.value); clearErr(); }}
+              aria-describedby="pw-confirm-hint"
+              autoComplete="new-password"
+              className="w-full px-10 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
+          </div>
           {confirm.length > 0 && password !== confirm && (
             <div id="pw-confirm-hint" className="text-xs text-yellow-400 mt-1">Senhas ainda nao coincidem</div>
           )}
