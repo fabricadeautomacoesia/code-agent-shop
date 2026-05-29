@@ -399,7 +399,48 @@ app.use('/api/notifications', fail2ban.middleware(), proxy(UPSTREAMS.notificatio
 // sem auth nao tem user_id - fail2ban IP eh defesa critica.
 app.use('/api/search',        fail2ban.middleware(), proxy(UPSTREAMS.search,       { pathRewrite: (p) => p })); // search root
 // FIX-WORKER-7 pass 47: vault endpoint CRITICAL crypto - fail2ban obrigatorio
-app.use('/api/vault',         fail2ban.middleware(), proxy(UPSTREAMS.vault,        { pathRewrite: (p) => p })); // vault root
+// FIX-WORKER-6 pass 567 (CRITICAL gateway block /api/vault/use - paridade pass 514):
+//   PRE-FIX BUG: /api/vault/use exposto via gateway publico.
+//   - Vault /use endpoint retorna plain AES-256-GCM crypto key
+//   - Tem vaultUseGuard (x-internal-token + admin/staff/service JWT fallback)
+//   - Layer 2 defense MAS gateway expoe rota publicamente
+//   - Atacante pode probe /api/vault/use com tokens leaked/forjados sem
+//     gate gateway layer-1 block (pass 514 loyalty/earn pattern lagged)
+//   - Internal cross-svc calls (qa-worker -> vault) usam DOCKER NETWORK
+//     direct (tasks.cas_vault-svc:3020) - bypassam gateway
+//   - Gateway publico block = defense-in-depth (LAYER-1 + LAYER-2 reforco)
+//
+//   SCOPE CRITICAL:
+//   - Vault /use boundary AES-256-GCM = plain crypto key response
+//   - Bypass success = compromise total cross-svc (OpenAI/Anthropic/Stripe keys)
+//   - Pattern V8 W17 audit_log defense passes 230/438/458/555 ja consolidated
+//     layer-2 mas LAYER-1 gateway block era unica peca faltante
+//
+//   POST-FIX: block /api/vault/use upfront (POST + GET) paridade pass 514:
+//   - Normalize req.path (.replace(/\/+$/,'').toLowerCase()) anti trailing-slash + case
+//   - Match regex /^\/use\/?$/i (case-insensitive defensive)
+//   - log.warn '[gateway.vault_use_blocked]' forensic trail
+//   - 403 'internal_only_endpoint' (paridade pass 514 loyalty/earn response)
+//
+//   Trade-off: vault-svc layer-2 (vaultUseGuard) preservado p/ internal mesh.
+//   Cross-svc calls via Docker network direct nao passam pelo gateway publico -
+//   ZERO regressao funcional para fluxos legitimos.
+app.use('/api/vault', fail2ban.middleware(), (req, res, next) => {
+  const normalizedPath = req.path.replace(/\/+$/, '').toLowerCase();
+  if (normalizedPath === '/use') {
+    log.warn({
+      ip: req.realIp || req.ip,
+      path: req.originalUrl,
+      normalized: normalizedPath,
+      method: req.method,
+    }, '[gateway.vault_use_blocked] LAYER-1 defense - vault /use not available via public gateway');
+    return res.status(403).json({
+      error: 'internal_only_endpoint',
+      message: 'Este endpoint nao esta disponivel via gateway publico.',
+    });
+  }
+  next();
+}, proxy(UPSTREAMS.vault, { pathRewrite: (p) => p })); // vault root
 // FIX-WORKER-7 pass 68: fail2ban em /api/aiops.
 // /audit-log + /db/dead-indexes + /alerts admin-only DENTRO do svc, MAS atacante
 // brute-forcing role check escala 100+ req/s antes de jwt.requireAuth() rejeitar.
