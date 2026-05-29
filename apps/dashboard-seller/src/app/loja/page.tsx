@@ -247,10 +247,27 @@ export default function LojaPage() {
               autoComplete="off" maxLength={200}
               className="w-full px-3 py-2 mt-1 rounded bg-white/5 border border-white/10 text-sm font-mono" />
           </div>
-          <label className="flex items-start gap-3 text-sm">
-            <input type="checkbox" checked={form.allow_platform_resale}
-              onChange={(e) => setForm({...form, allow_platform_resale: e.target.checked})} className="mt-0.5" />
-            <span className="text-white/70">
+          {/* FIX-WORKER-5 pass 502 (a11y checkbox htmlFor/id + focus-visible + aria-describedby):
+              PRE-FIX (3 issues):
+              1. <label> sem htmlFor + <input> sem id - inconsistencia com TODOS outros
+                 inputs neste file (linhas 138, 153, 162, 169, 178, 184, 190, 214, 220, 231, 236, 245)
+                 que usam htmlFor + id explicit binding (paridade pass 146 a11y W5).
+              2. Sem focus-visible:outline - keyboard nav perde foco em dark mode
+                 (paridade pass 492 W1 + pass 496 W5 dismiss buttons).
+              3. Sem aria-describedby p/ help text spans - SR le label mas perde context
+                 que e Clausula Master (compliance impact se desativado).
+              POST-FIX:
+              - id="loja-resale" + htmlFor binding explicit
+              - help text id="loja-resale-help" + aria-describedby
+              - focus-visible:outline-2 outline-magenta + rounded
+              Bonus: cursor-pointer no label visualmente afford clicavel.
+              Pattern V8 W5/W1 a11y consolidacao: checkboxes precisam mesma paridade. */}
+          <label htmlFor="loja-resale" className="flex items-start gap-3 text-sm cursor-pointer">
+            <input type="checkbox" id="loja-resale" checked={form.allow_platform_resale}
+              onChange={(e) => setForm({...form, allow_platform_resale: e.target.checked})}
+              aria-describedby="loja-resale-help"
+              className="mt-0.5 focus-visible:outline-2 focus-visible:outline-magenta rounded" />
+            <span id="loja-resale-help" className="text-white/70">
               Permitir Revenda Direta pela plataforma (Clausula Master). Desativar impede que CAS venda copias do seu produto sem comissao.
             </span>
           </label>

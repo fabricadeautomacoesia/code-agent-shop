@@ -37013,3 +37013,61 @@ Banner UX paridade cart page pass 457:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
 - Mig 094-103 ALTA PRIORIDADE apply (10 PARTIAL/composite indexes)
+
+## Pass 502 - W5 SELLER DASH: /loja Clausula Master checkbox a11y
+
+PRE-FIX (3 issues a11y no checkbox compliance-critical):
+- /loja/page.tsx linhas 250-256 allow_platform_resale checkbox:
+    <label className="flex items-start gap-3 text-sm">
+      <input type="checkbox" checked={form.allow_platform_resale}
+        onChange={...} className="mt-0.5" />
+      <span className="text-white/70">Permitir Revenda Direta...</span>
+    </label>
+
+Issues identificados:
+1. <label> SEM htmlFor + <input> SEM id
+   - Inconsistencia com TODOS outros inputs neste file (12+ inputs c/ htmlFor+id)
+   - Pass 146 W5 estabeleceu pattern (KYC + form fields all use htmlFor+id)
+   - Implicit label wrapping funciona em browsers MAS some SR (older NVDA/JAWS)
+     require explicit binding para anunciar associacao
+   - WCAG 1.3.1 (Info+Relationships) + 3.3.2 (Labels+Instructions)
+2. SEM focus-visible:outline-* keyboard nav
+   - Paridade pass 492 W1 + pass 496 W5 dismiss buttons / inputs
+   - Dark mode com alta absorcao visual perde foco em checkboxes
+   - Pattern V8 a11y consolidacao: TODOS interactive elements focus-visible
+3. SEM aria-describedby p/ help text
+   - SR le label mas perde context (Clausula Master = compliance impact)
+   - Help text descreve consequencia ("Desativar impede CAS venda copias")
+   - User com SR pode habilitar/desabilitar sem entender impact financeiro
+
+POST-FIX:
+- id="loja-resale" + htmlFor="loja-resale" binding explicit
+- help text id="loja-resale-help" + aria-describedby="loja-resale-help"
+- focus-visible:outline-2 outline-magenta + rounded (paridade pattern V8)
+- Bonus: cursor-pointer no label visualmente afford clicavel
+- Comment expansivo com lista 12+ outros inputs c/ pattern correto
+
+Compliance importance:
+- allow_platform_resale = Clausula Master Revenda Direta (legal contract)
+- Desativar = seller perde possibilidade de CAS revender em 100% margin
+- User com SR precisa entender impact ANTES de tick/untick
+- aria-describedby garante context anunciado junto com label
+
+Cadeia W5 SELLER a11y:
+- pass 5 useSellerAction hook
+- pass 145 upload 14 labels htmlFor + id
+- pass 146 KYC 9 inputs htmlFor + autoComplete
+- pass 147 qna textarea aria-label dinamico
+- pass 240 financeiro role=alert loadError
+- pass 248 qna role=alert + a11y parity
+- pass 263 loja loadError role=alert
+- pass 379 KYC maxLength backend Zod aligned
+- pass 496 upload 3 banners + buttons aria-label + focus-visible
+- pass 502 (este) /loja allow_platform_resale checkbox htmlFor + aria-describedby
+
+234 passes acumulados (268->502) sem deploy VPS
+9 CRITICAL + 35 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
+- Mig 094-103 ALTA PRIORIDADE apply
