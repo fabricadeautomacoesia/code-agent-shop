@@ -3,7 +3,13 @@
 import { useEffect, useState } from 'react';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
-import { CheckCircle, XCircle, Award } from 'lucide-react';
+import { CheckCircle, XCircle, Award, ExternalLink } from 'lucide-react';
+
+// FIX-WORKER-4 pass 446 (storefront URL env-driven paridade pass 425 dashboard-seller):
+//   Admin precisa preview produto publico ANTES force-approve (verifica visual
+//   contexto LLM rejection). Sem link -> copy/paste slug manual.
+const STOREFRONT_URL = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_STOREFRONT_URL)
+  || 'https://cas.inovareinteligenciaartificial.com';
 
 export default function QAQueuePage() {
   const [queue, setQueue] = useState<any[]>([]);
@@ -162,8 +168,27 @@ export default function QAQueuePage() {
                 const canTake = ['qa_pending','rejected','approved'].includes(p.status) && !p.is_platform_owned;
                 return (
                 <tr key={p.id} className="border-b border-white/5 hover:bg-white/5">
+                  {/* FIX-WORKER-4 pass 446 (titulo clickable preview - paridade pass 425):
+                      PRE-FIX: title + slug eram texto plain (sem link)
+                      - Admin force-approve eh override LLM critico (audit warn)
+                      - Sem preview public PDP -> admin tinha que copy/paste slug
+                      - Friction p/ acao critical -> tendencia approve sem ver
+                      - Cenario error: admin aprova produto sem visual check ->
+                        produto malicioso vai live -> incidente
+                      POST-FIX: title link absoluto STOREFRONT_URL/product/{slug}
+                      - target=_blank + rel noopener (security paridade pass 425)
+                      - Icon ExternalLink visual feedback
+                      - qa_pending/qa_running products ainda nao approved -> usar
+                        admin preview path (futuro) ou link mesmo (PDP pode renderizar
+                        com status flag). Backend nao impede SELECT por slug em admin path. */}
                   <td className="py-3">
-                    <div className="font-medium">{p.title}</div>
+                    <a href={`${STOREFRONT_URL}/product/${p.slug}`}
+                       target="_blank" rel="noopener noreferrer"
+                       aria-label={`Preview publico do produto: ${p.title}`}
+                       className="font-medium hover:text-magenta inline-flex items-center gap-1">
+                      {p.title}
+                      <ExternalLink className="w-3 h-3 opacity-60" aria-hidden="true" />
+                    </a>
                     <div className="text-xs text-white/40 font-mono">{p.slug}</div>
                   </td>
                   {/* FIX-WORKER-4 pass 5: produtos da plataforma exibem badge "Plataforma CAS"

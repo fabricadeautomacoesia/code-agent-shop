@@ -34071,3 +34071,47 @@ W3 PDP critical flow series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 ALTA PRIORIDADE
+
+## PASS 446 W4 ADMIN: qa-queue title preview link (paridade pass 425)
+commit pendente
+BUG admin qa-queue title sem preview link -> friction CRITICAL action
+PRE-FIX:
+- /admin/qa-queue mostra tabela produtos pending/rejected pelo LLM
+- Title + slug eram texto plain (sem link)
+- Admin force-approve eh override LLM (severity warn em audit_log)
+- Sem preview public PDP -> admin tinha que:
+  1. Copy slug manualmente
+  2. Abrir nova tab cas.inovareinteligenciaartificial.com/product/{slug}
+  3. Verificar visual contexto LLM rejection
+  4. Voltar para admin
+  5. Click "Aprovar"
+- Friction = tendencia approve sem ver -> incidente real possivel
+- Atacante seller envia produto malicioso -> LLM rejeita -> admin "lazy"
+  approves sem preview -> produto live com payload malicioso
+
+CENARIO ERROR:
+- Admin com 50 produtos pending em queue
+- Lazy approve sem preview -> produto malicioso passa
+- Audit trail mostra approve mas SEM evidencia admin verificou
+- Compliance gap (SOC2 process verification)
+
+POST-FIX:
+- + ExternalLink icon import
+- + STOREFRONT_URL const env-driven (NEXT_PUBLIC_STOREFRONT_URL paridade pass 425/444)
+- Title <span> -> <a href={STOREFRONT_URL}/product/{slug}>
+- target=_blank + rel="noopener noreferrer" (security)
+- aria-label descritivo
+- ExternalLink icon visual feedback
+
+Pattern V8 W4: CRITICAL admin actions DEVEM ter preview/context one-click
+
+W4 paridade admin/* preview series:
+  pass 425 dashboard-seller QNA "Ver no site"
+  pass 446 dashboard-admin qa-queue title preview <- ESTE
+
+179 passes acumulados (268->446) sem deploy VPS
+7 CRITICAL + 28 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE
