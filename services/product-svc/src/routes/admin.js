@@ -138,11 +138,22 @@ router.get('/qa-queue',
          FROM products p
          LEFT JOIN sellers s ON s.id = p.seller_id
          LEFT JOIN users u ON u.id = s.user_id
+         /* FIX-WORKER-7 pass 633 (LATERAL LIMIT 1 tiebreaker - paridade Regra D):
+            PRE-FIX: ORDER BY started_at DESC LIMIT 1 sem id DESC tiebreaker.
+            - Multiple qa_runs mesmo product_id same started_at second-precision:
+              cron retry burst (cada 5min) ou mass re-validation campaign
+            - LIMIT 1 picks ARBITRARY row entre ties (PG heap order)
+            - last_run_verdict mostra verdict_A em request 1, verdict_B em request 2
+              (cache evict + refetch = visualmente diferente)
+            - Admin /admin/products column "Ultimo verdict" oscila aleatoria
+            POST-FIX: + id DESC tiebreaker direction parity Regra D V8
+            - Most recent INSERT (id DESC) preserva chronologic invariant ties
+            - mig 119 idx_qa_runs_product_started_id ja cobre direction parity */
          LEFT JOIN LATERAL (
            SELECT verdict, started_at
              FROM product_qa_runs
             WHERE product_id = p.id
-            ORDER BY started_at DESC
+            ORDER BY started_at DESC, id DESC
             LIMIT 1
          ) lr ON TRUE
          LEFT JOIN LATERAL (

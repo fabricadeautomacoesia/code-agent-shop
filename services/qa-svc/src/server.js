@@ -228,12 +228,23 @@ app.post('/qa/run',
       // realizado + status='qa_running' -> ALLOWED_STATUSES nao inclui
       // 'qa_running' -> rejeita.
       // Inflight 10min window mantido como defense (worker stuck).
+      /* FIX-WORKER-12 pass 633 (LIMIT 1 tiebreaker direction parity Regra D):
+         PRE-FIX: ORDER BY started_at DESC LIMIT 1 sem id DESC tiebreaker.
+         - Cron qa-worker tem retry burst race - 2 dispatches mesmo product_id
+           podem chegar mesma started_at second-precision (extremely rare mas)
+         - LIMIT 1 picks ARBITRARY row em ties (PG heap order non-deterministic)
+         - inflight.rows[0].id reportado ao caller pode oscilar -> caller pode
+           tentar cancelar run B mas a outra run A continua rodando ate timeout
+         - existing_run_id forensic non-deterministic em audit trail
+         POST-FIX: + id DESC tiebreaker direction parity Regra D V8
+         - Most recent INSERT (id DESC) preserva most-recent semantic ties
+         - mig 119 idx_qa_runs_product_started_id ja cobre direction parity */
       const inflight = await c.query(
         `SELECT id, started_at FROM product_qa_runs
           WHERE product_id = $1
             AND verdict = 'running'
             AND started_at > NOW() - INTERVAL '10 minutes'
-          ORDER BY started_at DESC LIMIT 1`,
+          ORDER BY started_at DESC, id DESC LIMIT 1`,
         [product_id]
       );
       if (inflight.rows.length) {
