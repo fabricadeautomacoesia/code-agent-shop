@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
@@ -23,7 +23,17 @@ export default function AdminWebhooksPage() {
   const [loadError, setLoadError] = useState('');
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
-  async function load() {
+  /* FIX-WORKER-4 pass 750 (useCallback stable closure - cadeia 13 sites):
+     PRE-FIX BUG: async function load() recriada cada render.
+     - useAdminAction(load) recebe nova ref cada render -> action.run re-criada
+     - PAYMENT-CRITICAL: webhooks dead letter queue (retry > 5 = Asaas reconciliation broken)
+     - Reset action dispara reprocessamento payment - cascading re-renders risk
+     POST-FIX (paridade cadeia 738-749):
+     - useCallback wrap em load com [] deps -> stable reference
+     - useAdminAction recebe stable callback -> action.run estavel
+     - useEffect deps [load] - paridade ESLint exhaustive-deps
+     Pattern V8 React stability cadeia 13 sites cross-dashboard. */
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await adminFetch<{ webhooks: any[]; count: number }>('/payments/webhooks/dead');
@@ -34,8 +44,8 @@ export default function AdminWebhooksPage() {
       setLoadError(e.message);
       setWebhooks([]);
     } finally { setLoading(false); }
-  }
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   // FIX-WORKER-11 pass 8: botao Reset chama POST /payments/webhooks/:id/reset
   // (em vez do antigo workflow psql UPDATE retry_count=0)

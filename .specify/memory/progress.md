@@ -41157,3 +41157,34 @@ todos consolidados em sessoes anteriores (passes 712-737):
 CADEIA cumulative cross-svc:
 - 16 cache hygiene + storage normalize bugs (618, 719-737)
 - 12 React stability fixes cross-dashboard (738-749)
+
+## PASS 750+751 (W4 ADMIN /webhooks + /audit-log useCallback - cadeia 13-14 sites)
+
+PASS 750 /webhooks (cadeia 13 sites):
+- useCallback wrap em load com [] deps
+- PAYMENT-CRITICAL: dead letter queue webhooks Asaas (retry > 5)
+- Reset action dispara reprocessamento payment
+- useAdminAction stable callback -> action.run estavel
+
+PASS 751 /audit-log (cadeia 14 sites - FORENSIC CRITICAL):
+- useCallback wrap em load com 6 deps explicitas (filterAction, filterSeverity,
+  filterDays, filterTargetId, filterTargetType, offset)
+- useCallback wrap em loadActions com [] deps
+- FORENSIC-CRITICAL: audit-log usado em incident investigation
+- 6 filter mutations per session -> 6x cascading re-renders pre-fix
+- useEffect deps [load] + [loadActions] (paridade ESLint exhaustive-deps)
+
+Pattern V8 React stability cadeia 14 sites cross-dashboard:
+738 disputes, 739 payouts-pending, 740 financeiro, 741 loja,
+742 alerts (15s poll), 743 orders (state-stale FIX), 744 vault (security),
+745 sellers (debounced search), 746 qa-queue (force-approve), 747 payouts (Asaas),
+748 qna seller (SLA 24h), 749 reviews seller (REPUTATION),
+750 webhooks (PAYMENT dead letter), 751 audit-log (FORENSIC 6-filter)
+
+W1 AUTH / W3 PDP / W6 GATEWAY / W11 PAYMENT audits ja consolidados em sessoes
+anteriores (passes 137/158/183/189/267/355/375/489 storefront/components;
+304/514 gateway; 178/289/294/733/734 payment+order).
+
+CADEIA cumulative cross-svc:
+- 16 cache hygiene + storage normalize bugs (618, 719-737)
+- 14 React stability fixes cross-dashboard (738-751)

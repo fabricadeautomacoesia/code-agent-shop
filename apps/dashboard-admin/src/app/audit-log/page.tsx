@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { FileText, Filter, ChevronLeft, ChevronRight, X } from 'lucide-react';
@@ -52,7 +52,19 @@ function AuditLogInner() {
   const [filterTargetType, setFilterTargetType] = useState(initialTargetType);
   const [offset, setOffset] = useState(0);
 
-  async function load() {
+  /* FIX-WORKER-4 pass 751 (useCallback stable closure 6-filter deps - cadeia 14 sites):
+     PRE-FIX BUG: async function load() recriada cada render captura 6 filter states.
+     - useEffect deps array literais [filterAction, ..., offset] = 6 deps
+     - load recriada per render -> useEffect dep mismatch detected by ESLint?
+       (exhaustive-deps allows function references but rerun em mudanca)
+     - FORENSIC-CRITICAL: audit-log usado em incident investigation
+     - 6 filter mutations per session -> 6x cascading re-renders
+     POST-FIX:
+     - useCallback wrap em load com 6 deps explicitas
+     - useEffect deps [load] (paridade ESLint exhaustive-deps)
+     - loadActions tambem useCallback com [] deps
+     Pattern V8 React stability cadeia 14 sites cross-dashboard. */
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const qs = new URLSearchParams();
@@ -72,17 +84,17 @@ function AuditLogInner() {
       setLoadError(e.message);
       setEntries([]);
     } finally { setLoading(false); }
-  }
+  }, [filterAction, filterSeverity, filterDays, filterTargetId, filterTargetType, offset]);
 
-  async function loadActions() {
+  const loadActions = useCallback(async () => {
     try {
       const r = await adminFetch<{ actions: { action: string; count: number }[] }>('/aiops/audit-log/actions');
       setActions(r.actions || []);
     } catch { /* silent */ }
-  }
+  }, []);
 
-  useEffect(() => { load(); }, [filterAction, filterSeverity, filterDays, filterTargetId, filterTargetType, offset]);
-  useEffect(() => { loadActions(); }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadActions(); }, [loadActions]);
 
   // Reset offset quando muda filtro (FIX pass 451: + target filters)
   useEffect(() => { setOffset(0); }, [filterAction, filterSeverity, filterDays, filterTargetId, filterTargetType]);
