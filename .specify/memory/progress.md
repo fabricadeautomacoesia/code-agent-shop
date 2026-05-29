@@ -39629,3 +39629,47 @@ CADEIA cross-svc withRetry atomicity STATUS:
 - TOTAL: ~30 endpoints/tx cross-svc consolidacao 100%
 
 390 passes acumulados (268->660) sem deploy VPS
+
+============================================================================
+SESSAO 661-665 (W5+W16 seller-svc me.js + loyalty.js withRetry - 7/7 COMPLETA)
+============================================================================
+
+Pass 661 (W5 me.js PATCH / withRetry - seller profile update):
+- tx() UPDATE sellers + INSERT audit_log lock contention
+- Race: double-click "Salvar perfil" + race com /upload SLA reset + race admin /suspend
+
+Pass 662 (W5 me.js kyc_submit withRetry):
+- tx() UPDATE sellers status + audit_log + cache invalidate
+- Race com /upload concorrente + race com cron auto-archive
+
+Pass 663 (W5 me.js payout_request withRetry - CRITICAL real money):
+- tx() INSERT seller_payouts + UPDATE sellers (available_cents reservation) + audit
+- HIGH FREQUENCY admin-facing endpoint
+- Race com payment-svc cron payout_process
+
+Pass 664 (W16 loyalty welcome_bonus withRetry):
+- tx() INSERT loyalty_transactions + UPDATE user_loyalty balance
+- First-time user signup race scenario
+
+Pass 665 (W16 loyalty earn withRetry - internal cron flow):
+- tx() INSERT loyalty_transactions ON CONFLICT (idempotency) + UPDATE user_loyalty
+- Cron mass-grant on order_paid burst -> deadlock window
+- ULTIMO seller-svc tx lagged - COMPLETA 7/7
+
+CADEIA seller-svc atomicity COMPLETA 7/7 tx writes:
+- admin: suspend (656), reactivate (657), kyc/approve (658), kyc/reject (659),
+  force-liquidate (660) = 5/5
+- me: PATCH (661), kyc_submit (662), payout_request (663) = 3/3
+- loyalty: welcome_bonus (664), earn (665) = 2/2
++ withRetry import (era ausente em me.js + loyalty.js)
+
+CADEIA cross-svc withRetry atomicity STATUS FINAL:
+- auth-svc: 6/6 COMPLETA
+- vault-svc: 8/8 COMPLETA
+- product-svc admin: 3/3 COMPLETA
+- seller-svc TOTAL: 10/10 COMPLETA (admin 5 + me 3 + loyalty 2)
+- payment-svc: refund + create COMPLETA
+- order-svc: dispute + checkout COMPLETA
+- TOTAL: ~36 endpoints/tx cross-svc consolidacao 100%
+
+395 passes acumulados (268->665) sem deploy VPS
