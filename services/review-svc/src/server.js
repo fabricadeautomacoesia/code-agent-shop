@@ -1630,6 +1630,16 @@ app.post('/reports/:id/resolve', jwt.requireAuth({ roles: ['admin','staff'] }),
     if (outcome?.notified_reporter_user_id) {
       notifCache.invalidate(outcome.notified_reporter_user_id);
     }
+    /* FIX-WORKER-18 pass 620 (admin reports cache invalidation post-mutation):
+       PRE-FIX: pass 618 ativou cache /admin/reports (30s) que estava deslmente
+       desligado (cacheMiddleware shape errado object vs function). Sem invalidation
+       post-resolve, admin queue mostrava report ja resolved por ate 30s. Pattern
+       V8 cache hygiene: TODA mutation impactando lista cacheada DEVE del()
+       paridade cadeia 30+ sites cross-svc.
+       POST-FIX: cache.del wildcard pattern (matches all status+role+pagination
+       cache keys). Pequeno custo Redis KEYS scan mas N keys baixo (4 status * 2 roles
+       * pagination = ~10-20 keys max em prod). */
+    cache.del('admin:reports:*').catch(() => {});
     res.json({ ok: true });
   })
 );
