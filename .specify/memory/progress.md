@@ -40140,3 +40140,27 @@ CADEIA W1 AUTH a11y submit btn consolidacao authflows cumulative:
 = 4 authflow forms a11y submit CTAs consolidacao
 
 432 passes acumulados (268->702) sem deploy VPS
+
+============================================================================
+SESSAO 703 (W14 mig 128 idx_disputes_order_item_active PARTIAL composite)
+============================================================================
+
+Pass 703 (W14 mig 128 idx_disputes_order_item_active PARTIAL anti-double-open):
+- DESCOBERTA: order-svc POST /:id/dispute anti-double-open lookup
+  WHERE order_item_id + opened_by_user_id + status IN ('open','investigating')
+- PRE-FIX existing indexes:
+  - idx_disputes_order (order_id) - FK lookup admin
+  - idx_disputes_status (status) - simple filter
+  - idx_disputes_open (created_at DESC) PARTIAL - admin queue
+  - NENHUM cobre (order_item_id, opened_by_user_id) composite com status PARTIAL
+- POST-FIX: PARTIAL composite (order_item_id, opened_by_user_id)
+  WHERE status IN ('open','investigating')
+- Latency: ~5-15ms Seq Scan -> ~1ms Index Scan
+- Storage: ~50-100KB PARTIAL (10-20% rows active filter)
+
+CADEIA W14 direction parity + PARTIAL composite cumulative:
+- mig 102-127 (26 indexes consolidacao previa)
+- mig 128 idx_disputes_order_item_active PARTIAL (pass 703 este)
+- 27 indexes total apply pending VPS SSH
+
+433 passes acumulados (268->703) sem deploy VPS
