@@ -564,9 +564,28 @@ app.get('/keys',
     const where = ['1=1'];
     const params = [];
     let i = 1;
+    /* FIX-WORKER-17 pass 725 (cache MISMATCH bug + provider whitelist gap):
+       PRE-FIX 2 issues:
+       1. handler .toLowerCase() apenas (cacheKey linha 545 usa .trim().toLowerCase())
+          - Trailing space ?provider=openai%20 -> cache stored 'openai' MAS
+            handler WHERE provider='openai ' -> PG enum cast 22P02 -> 500 leak
+       2. handler aceita ANY value (VAULT_PROVIDER_ENUM check missing)
+          - cacheKey rejects via enum check linha 546 (becomes empty)
+          - handler accepts raw 'junk' -> WHERE provider='junk' -> 0 rows OR enum err 500
+          - VAULT_PROVIDER_ENUM ja existe linha 684 - whitelist check should mirror
+       POST-FIX: + .trim() + VAULT_PROVIDER_ENUM whitelist (paridade cacheKey)
+       - Invalid provider -> 400 explicit response (no PG error leak)
+       - Cache + handler consistent normalization */
     if (req.query.provider) {
+      const provRaw = String(req.query.provider).trim().toLowerCase();
+      if (!VAULT_PROVIDER_ENUM.has(provRaw)) {
+        return res.status(400).json({
+          error: 'invalid_provider',
+          allowed: Array.from(VAULT_PROVIDER_ENUM),
+        });
+      }
       where.push(`k.provider = $${i++}`);
-      params.push(String(req.query.provider).toLowerCase());
+      params.push(provRaw);
     }
     if (req.query.is_active != null) {
       where.push(`k.is_active = $${i++}`);
