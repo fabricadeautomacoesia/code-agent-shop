@@ -278,9 +278,16 @@ router.get('/:slug/also-bought',
      - LOWER(slug) na query? Quebra idx_products_slug (mig 003 case-sensitive)
      - Melhor: aplicar .toLowerCase() ao input do handler -> match DB canonical
      - Trade-off ZERO: slugs DB ja sao lowercase, usuario nao perde nada */
+  /* FIX-WORKER-18 pass 599 (Math.max(1, ...) clamp gap paridade pass 594):
+     PRE-FIX: cache key Math.min(parseInt(...) || 6, 12) MAS handler usa
+     Math.max(1, Math.min(... || 6, 12)) (linha 287). Cenario ?limit=-5:
+     - parseInt=-5, -5||6=-5, Math.min(-5,12)=-5 -> cache key 'lim=-5'
+     - handler Math.max(1, Math.min(... || 6, 12))=Math.max(1, -5)=1
+     - SAME response cached em key 'lim=-5' vs 'lim=1' = pollution 2 entries
+     POST-FIX: Math.max(1, ...) clamp pre-cache paridade cadeia 19 sites. */
   cache.cacheMiddleware((req) => {
     const slug = (req.params.slug || '').toString().trim().toLowerCase();
-    const lim = Math.min(parseInt(req.query.limit, 10) || 6, 12);
+    const lim = Math.max(1, Math.min(12, parseInt(req.query.limit, 10) || 6));
     return `products:also-bought:${slug}:lim=${lim}`;
   }, 600),
   asyncHandler(async (req, res, next) => {
@@ -371,9 +378,10 @@ router.get('/:slug/related',
   /* FIX-WORKER-7 pass 298: cache key normalization paridade also-bought
      FIX-WORKER-18 pass 513: normalize slug query side (case-mismatch consistency).
      Mesmo bug do also-bought pass 513 - ver comment expansivo la. */
+  /* FIX-WORKER-18 pass 599 (Math.max(1, ...) clamp gap paridade pass 594/599 also-bought) */
   cache.cacheMiddleware((req) => {
     const slug = (req.params.slug || '').toString().trim().toLowerCase();
-    const lim = Math.min(parseInt(req.query.limit, 10) || 6, 24);
+    const lim = Math.max(1, Math.min(24, parseInt(req.query.limit, 10) || 6));
     return `products:related:${slug}:lim=${lim}`;
   }, 300),
   asyncHandler(async (req, res, next) => {
@@ -578,9 +586,10 @@ router.get('/compare',
 //   FIX: LEFT JOIN sellers (mesmo pattern /compare).
 // BUG 5 *** TOTAL COUNT MISSING *** UX flash promo page sem visibility
 router.get('/flash-promo/active',
-  /* FIX-WORKER-18 pass 302: cache key normalization paridade */
+  /* FIX-WORKER-18 pass 302: cache key normalization paridade
+     FIX-WORKER-18 pass 599: + Math.max(1, ...) clamp gap (paridade also-bought + related) */
   cache.cacheMiddleware((req) => {
-    const lim = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+    const lim = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 20));
     const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
     return `products:flash-promo:active:lim=${lim}:off=${off}`;
   }, 60),
