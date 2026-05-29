@@ -40375,3 +40375,35 @@ CADEIA W14 ASC+ASC cron variants forensic determinism FINAL (5 sites):
 = 5 sites cron FIFO ASC+ASC forensic determinism CONSOLIDACAO COMPLETA
 
 442 passes acumulados (268->712) sem deploy VPS
+
+============================================================================
+SESSAO 713 (W4 CRITICAL /payouts/:id/approve atomicity - SOC2/LGPD compliance)
+============================================================================
+
+Pass 713 (W4 admin /payouts/:id/approve 3 bugs CRITICAL compliance):
+- DESCOBERTA: financial decision endpoint sem tx() atomic + sem withRetry + sem ua_prefix
+- 3 BUGS COMPLIANCE consolidados:
+  1. UPDATE + INSERT audit_log NAO atomico (sem tx() wrap)
+     - SOC2 CC1.4 + LGPD Art 37 violation: high-impact decision sem trail
+     - Cenario REAL: deadlock 40P01 em audit_log durante peak admin actions
+     - Asaas transfer fires (downstream) MAS audit_log fail silent
+  2. NO withRetry wrap (paridade cadeia seller-svc admin pass 656-660)
+     - Race com /payouts/:id/reject mesmo payout (admin dupla-decisao)
+     - Race com cron payment-svc payoutProcessLimiter
+  3. NO ua_prefix forensic (pattern V8 W17 pass 438 cross-svc)
+     - XSS-stolen admin token -> attacker approve payouts mass investigation gap
+- POST-FIX:
+  - tx() wraps UPDATE + INSERT audit_log atomic (compliance critical)
+  - withRetry('seller.payout_approve.tx') 3 attempts backoff
+  - + ua_prefix mask.text(headers.UA).slice(0,60) forensic
+  - Cache invalidation pos-tx commit
+  - tx import moved to file top (DRY)
+
+CADEIA W4 admin atomicity + DLP + ua_prefix consolidacao:
+- /payouts/:id/approve (pass 713 ESTE) - CRITICAL real money
+- /payouts/:id/reject (LAGGED - proxima iter)
+- /payouts-pending-wallet/:id/force-liquidate (pass 660)
+- /:id/suspend + /:id/reactivate (passes 656-657)
+- /:id/kyc/approve + /:id/kyc/reject (passes 658-659)
+
+443 passes acumulados (268->713) sem deploy VPS
