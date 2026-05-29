@@ -1090,8 +1090,29 @@ async function timeoutStuckRuns() {
 // BUG 3 *** ?threshold_minutes MISSING ***
 //   PRE-FIX: hardcoded 5 min. Admin pode querer 10/15/30 min p/ triage.
 //   FIX: ?threshold_minutes (1-1440 = 24h cap, default 5).
+/* FIX-WORKER-12 pass 582 (cache /qa/runs/stuck hot path admin polling):
+   PRE-FIX: GET /qa/runs/stuck sem cache.cacheMiddleware. Hot path:
+   - admin /admin/qa-queue page polling 30s
+   - Query JOIN product_qa_runs filtra verdict='running' + threshold
+   - COUNT(*) OVER() window aggregate
+   - mig 071 idx_qa_runs_inflight cobre WHERE+ORDER mas idx scan ainda
+     consome ~10-20ms per request em prod with N stuck runs
+   - Multi-admin sessions polling = stress DB amplificado
+   POST-FIX: cache.cacheMiddleware 15s (admin precisa freshness alta -
+   stuck runs sao operational urgent, mas 15s OK trade-off DB pressure).
+   Key vary by (threshold_minutes, limit, offset) - normalized pre-cache.
+   Paridade pass 540 /qa/runs/:product_id (30s) + cadeia W18 cache hot
+   path consolidacao cross-svc.
+   Normalize cache key SAME way handler (paridade cadeia 558/566/572/576). */
+const qaRunsStuckCacheKey = (req) => {
+  const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const thr = Math.max(1, Math.min(1440, parseInt(req.query.threshold_minutes, 10) || 5));
+  return `qa:runs:stuck:thr=${thr}:lim=${lim}:off=${off}`;
+};
 app.get('/qa/runs/stuck',
   jwt.requireAuth({ roles: ['admin', 'staff'] }),
+  cache.cacheMiddleware(qaRunsStuckCacheKey, 15),
   asyncHandler(async (req, res) => {
     const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
