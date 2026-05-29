@@ -40600,3 +40600,45 @@ Pattern V8 cache hygiene invariante REFORCADO:
 - audits semestrais cacheKey vs handler drift
 
 454 passes acumulados (268->724) sem deploy VPS
+
+============================================================================
+SESSAO 725-728 (W17 vault provider + W7+W12+W5 cache hygiene mismatch handler)
+============================================================================
+
+Pass 725 (W17 /keys provider whitelist + .trim() paridade cacheKey):
+- DESCOBERTA 2 bugs combinados:
+  1. handler .toLowerCase() apenas (cacheKey usa .trim() too)
+  2. handler aceita ANY value (VAULT_PROVIDER_ENUM whitelist gap)
+  - ?provider=Junk -> cacheKey rejects (empty) MAS handler accepts 'junk'
+    -> PG enum cast error 22P02 -> 500 leak
+- POST-FIX: + .trim() + VAULT_PROVIDER_ENUM whitelist + 400 explicit
+
+Pass 726 (W7 wishlist kind handler .trim().toLowerCase()):
+- cacheKey pass 630 ja .trim().toLowerCase() MAS handler raw
+- ?kind=Automation -> cache key 'automation' MAS handler reject 400
+- POST-FIX: + .trim().toLowerCase() paridade cacheKey
+
+Pass 727 (W12 qa-runs verdict handler .trim().toLowerCase()):
+- cacheKey linha 902 .trim().toLowerCase() MAS handler raw
+- ?verdict=Approved -> cache 'approved' MAS handler 400 invalid_verdict
+- POST-FIX: + .trim().toLowerCase() paridade cacheKey
+
+Pass 728 (W5 /products/me admin seller_id handler .trim().toLowerCase()):
+- cacheKey pass 719 ja .trim().toLowerCase() MAS handler raw
+- ?seller_id=AB-CD-EF (uppercase UUID) -> cache key lowercase OK
+  MAS handler UUID_RE case-insensitive check passes -> mas WHERE p.seller_id
+  busca lowercase OR uppercase dependendo de PG canonical (UUID storage)
+- POST-FIX: + .trim().toLowerCase() paridade cacheKey
+
+CADEIA cache hygiene MISMATCH bugs detected + fixed cumulative:
+- pass 618: admin/reports cache shape errado (silent disabled)
+- pass 722: aiops /alerts severity case mismatch
+- pass 723: /payouts/pending handler .trim() gap
+- pass 724: /sellers/all handler .trim() gap (2 fields)
+- pass 725: vault /keys provider whitelist gap + .trim()
+- pass 726: wishlist kind handler raw
+- pass 727: qa-runs verdict handler raw
+- pass 728: /products/me admin seller_id handler raw
+= 8 cache hygiene MISMATCH bugs detected ATIVA AUDITORIA
+
+458 passes acumulados (268->728) sem deploy VPS
