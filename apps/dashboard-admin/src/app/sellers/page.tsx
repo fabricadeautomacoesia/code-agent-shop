@@ -1,9 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
-import { Ban, CheckCircle, ArrowUp, ShieldCheck } from 'lucide-react';
+import { Ban, CheckCircle, ArrowUp, ShieldCheck, ExternalLink } from 'lucide-react';
+
+// FIX-WORKER-4 pass 452 (storefront URL paridade pass 425/446/450/451):
+//   Admin preview seller storefront context antes approve/reject KYC.
+const STOREFRONT_URL = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_STOREFRONT_URL)
+  || 'https://cas.inovareinteligenciaartificial.com';
 
 export default function SellersPage() {
   const [pending, setPending] = useState<any[]>([]);
@@ -121,8 +127,47 @@ export default function SellersPage() {
             <tbody>
               {pending.map((s) => (
                 <tr key={s.id} className="border-b border-white/5 hover:bg-white/5">
-                  <td className="py-3">{s.store_name}</td>
-                  <td className="text-white/60">{s.email}</td>
+                  {/* FIX-WORKER-4 pass 452 (KYC investigation flow paridade pass 451 orders):
+                      PRE-FIX: store_name + email = plain text
+                      - Admin via KYC pendente mas SEM:
+                        a. Preview storefront /seller/{slug} (visual context)
+                        b. Audit-log link p/ historico decisoes (suspend, etc)
+                        c. mailto p/ buyer_email contato direto
+                      - Lazy approve KYC sem contexto -> seller malicioso passa
+                      POST-FIX (paridade pass 446 qa-queue + pass 451 orders):
+                      - store_name -> link storefront /seller/{slug} target=_blank
+                      - email -> mailto link
+                      - + "audit" link forensic /admin/audit-log?target_id+target_type=seller */}
+                  <td className="py-3">
+                    {s.store_slug ? (
+                      <a href={`${STOREFRONT_URL}/seller/${s.store_slug}`}
+                         target="_blank" rel="noopener noreferrer"
+                         aria-label={`Preview loja ${s.store_name} no storefront`}
+                         className="font-medium hover:text-magenta inline-flex items-center gap-1">
+                        {s.store_name}
+                        <ExternalLink className="w-3 h-3 opacity-60" aria-hidden="true" />
+                      </a>
+                    ) : (
+                      <span className="font-medium">{s.store_name}</span>
+                    )}
+                    <Link
+                      href={`/audit-log?target_id=${s.id}&target_type=seller`}
+                      aria-label={`Audit log do seller ${s.store_name}`}
+                      title="Ver audit log"
+                      className="ml-2 text-[10px] text-white/30 hover:text-magenta-glow underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                      audit
+                    </Link>
+                  </td>
+                  <td className="text-white/60">
+                    {s.email ? (
+                      <a href={`mailto:${s.email}`}
+                         rel="noopener noreferrer"
+                         className="hover:text-magenta-glow underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded"
+                         aria-label={`Enviar email para ${s.email}`}>
+                        {s.email}
+                      </a>
+                    ) : '-'}
+                  </td>
                   <td><span className="px-2 py-0.5 rounded bg-white/5 text-xs">{s.seller_class}</span></td>
                   <td className="text-white/40 text-xs">{fmtDate(s.created_at)}</td>
                   <td className="text-right space-x-2">

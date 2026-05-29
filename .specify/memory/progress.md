@@ -34345,3 +34345,58 @@ W4 admin investigation flow series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 ALTA PRIORIDADE
+
+## PASS 452 W4 ADMIN: sellers KYC investigation flow (paridade pass 446 + 451)
+commit pendente
+GAP /admin/sellers KYC pendente sem one-click investigation
+PRE-FIX:
+- store_name + email plain text
+- Admin via KYC pendente mas SEM:
+  a. Preview storefront /seller/{slug} (visual context)
+  b. Audit-log link p/ historico decisoes (suspend, ban, etc)
+  c. mailto p/ contato seller direto
+- Backend (pending-kyc) ja envia store_slug + email mas frontend nao usava
+- Lazy approve KYC sem contexto -> seller malicioso passa por approval cego
+- Compliance gap SOC2 (process verification)
+
+CENARIO ERROR:
+- Atacante seller registra com KYC plausivel
+- Admin abre /admin/sellers ve 50+ pendentes
+- Lazy click "Aprovar KYC" sem checar storefront (loja vazia/fake)
+- Sem audit log forense seller_id -> incident dificil de tracear depois
+- Seller fraudulento ativa -> vende produto malicioso
+
+POST-FIX (paridade pass 446 qa-queue + pass 451 orders):
+- + STOREFRONT_URL const env-driven (paridade pass 425/446/450/451)
+- + Link import
+- store_name -> link storefront /seller/{slug} target=_blank
+- email -> mailto link
+- + "audit" link /admin/audit-log?target_id={uuid}&target_type=seller
+- Consume cadeia pass 430 (target filter) + pass 451 (URL params audit-log)
+
+UX flow agora:
+- Admin /admin/sellers ve KYC pendente
+- Click store_name -> preview storefront loja
+- Decide approve/reject com visual context
+- Click "audit" -> historico seller (registros prev decisoes)
+- Compliance trail SOC2 + LGPD compliance
+
+W4 admin investigation flow cadeia consolidada:
+  pass 401 orders order_number copy + buyer_email mailto
+  pass 446 qa-queue title preview link
+  pass 451 orders audit forensic link + audit URL params
+  pass 452 sellers KYC investigation flow (preview + audit + mailto) <- ESTE
+
+Pattern V8 W4 consolidado:
+TODA admin listing page com mutation CRITICAL deve ter:
+- Preview public link (target=_blank storefront)
+- Audit-log forensic link (consume pass 430 backend + pass 451 URL params)
+- Email mailto se aplicavel
+- ZERO friction one-click investigation
+
+185 passes acumulados (268->452) sem deploy VPS
+7 CRITICAL + 28 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE
