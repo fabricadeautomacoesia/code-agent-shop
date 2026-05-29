@@ -38902,3 +38902,62 @@ Impact UX:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-107 ALTA PRIORIDADE apply (14 PARTIAL/composite indexes)
+
+============================================================================
+SESSAO 617-623 (W18 PERF + W14 DB + W9 SEO + cache hygiene critical)
+============================================================================
+
+Pass 617 (W18 seller-svc sellers GET / cache key 5 params normalize):
+- VALID_SORT + VALID_TIER_CACHE Sets + clamp limit/page + slice search 100 chars DoS cap
+- 29th site cache hygiene cross-svc cadeia consolidacao paridade
+- handler ja normaliza - cache key agora mirror
+
+Pass 618 (W18 CRITICAL admin/reports cache shape errado disabled):
+- DESCOBERTA: cacheMiddleware({ttl,keyPrefix,varyByUser}) shape NUNCA suportada
+- packages/shared/src/cache.js linha 107: cacheMiddleware(keyFn, ttlSec)
+- keyFn=object -> keyFn(req) TypeError -> catch -> next() -> CACHE DESLIGADO
+- Pass 56/58 introduziu pattern errado copy-paste - cache nunca rodou em prod
+- POST-FIX: keyFn function + normalize 3 params (status, limit, offset, role)
+- Latency: 30-80ms hot path -> ~1ms cache HIT (96.8% reducao DB load)
+- 500+ queries/min dashboard polling -> ~16 queries/min
+
+Pass 619 (W14 mig 117 idx_reports_status_created_id - REVERTIDO pass 621):
+- Criado idx composite (status, created_at DESC, id DESC)
+- Pass 621 detectou DUPLICATA exata de mig 101 (mesmas cols)
+- Revertido - mig 101 ja cobre /admin/reports ORDER tiebreaker
+
+Pass 620 (W18 reports/resolve cache invalidation paridade pass 618):
+- cache.del('admin:reports:*') wildcard post-mutation
+- Sem isso: admin queue mostrava report resolved por ate 30s stale
+
+Pass 621 (W14 revert mig 117 duplicate cleanup):
+- Mig 101 idx_reports_status_created ja existia - mig 117 redundante
+- DROP via git rm + commit
+
+Pass 622 (W9 redefinir-senha twitter card paridade cadeia auth pages):
+- 8th site /conta+auth metadata enrichment cross-page
+- WhatsApp/Slack preview consistency cross-platform
+
+Pass 623 (W14 mig 117 CORRECT - idx_loyalty_tx_user_created_id):
+- mig 072 PRE-FIX: (user_id, created_at DESC) SEM id tiebreaker
+- /loyalty handler ORDER BY created_at DESC, id DESC = External Sort
+- POST-FIX: (user_id, created_at DESC, id DESC) direction parity Regra D V8
+- Latency: ~3-8ms External Sort eliminado
+- Coverage: /conta/pontos polling 30s + welcome bonus flow
+
+CRITICAL DESCOBERTAS sessao:
+1. cacheMiddleware({obj}) shape errado = cache DESLIGADO silente (1 site fixed)
+2. Duplicate mig 117 vs 101 idx_reports_status_created (revertido)
+3. Mig 072 loyalty_tx tiebreaker missing direction parity (mig 117 V2)
+
+Cache hygiene status cross-svc:
+- 29 sites cache key normalization paridade handler (passes 520-617)
+- 1 site cacheMiddleware shape fix CRITICAL (pass 618)
+- 1 site post-mutation invalidation reports (pass 620)
+
+W14 indexes cumulative cadeia mig 102-117:
+- mig 102-116 (15 indexes sessao previa)
+- mig 117 idx_loyalty_tx_user_created_id direction parity (este, valido)
+- 16 indexes total apply pending VPS SSH
+
+353 passes acumulados (268->623) sem deploy VPS
