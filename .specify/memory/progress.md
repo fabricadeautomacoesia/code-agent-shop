@@ -37706,3 +37706,67 @@ Cadeia W6 GATEWAY security hardening:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply
+
+## Pass 515 - W14 DB SCHEMA: idx_products_sales_public PARTIAL (mig 105)
+
+PRE-FIX BUG (cadeia W7 status whitelist incompleta em idx side):
+- Pattern V8 W7 (passes 9/10/11/12/13/73/77/etc) estabeleceu queries publicas:
+    WHERE p.status IN ('approved','platform_owned') AND p.deleted_at IS NULL
+- Mas TODOS existing PARTIAL indexes products ainda usam status='approved' single:
+  - mig 005:108 idx_products_rating WHERE status='approved'
+  - mig 005:109 idx_products_sales WHERE status='approved'
+  - mig 010:39 idx_products_cat_sales WHERE status='approved' (mig 093 widen partial)
+  - mig 029:43 idx_products_sales_rating WHERE status='approved'
+
+Planner para queries publicas com IN ('approved','platform_owned'):
+- NAO consegue usar PARTIAL idx (predicate so cobre 'approved')
+- Bitmap Heap Scan + Sort externo (custoso 30k+ products)
+- Em prod com 5% platform_owned: idx funciona p/ 95% approved subset
+- MAS planner pode escolher Seq Scan se IN clause stat estimate wrong
+
+POST-FIX mig 105:
+- idx_products_sales_public PARTIAL composite:
+    ON products (sales_count DESC, id)
+    WHERE status IN ('approved','platform_owned')
+      AND deleted_at IS NULL
+- Status whitelist alinhado com Pattern V8 W7 queries publicas
+- + deleted_at IS NULL pre-filter (todas queries publicas usam)
+- id tiebreaker p/ deterministic ORDER (Regra D)
+
+Coverage queries (todos com ORDER BY sales_count DESC):
+- /search?sort=sales (search-svc default sort)
+- /products?sort=sales (product-svc list)
+- /products/:slug/related (related_pool CTE)
+- /products/:slug/also-bought (co-occurrence)
+- /search/top-sellers per category
+- /products/recommendations/for-me cold-start path
+
+Latencia esperada (30k products, 5% platform_owned = 1.5k):
+- Pre-fix: Bitmap idx_products_sales (28.5k approved) + Seq Scan filter
+           platform_owned (1.5k) + Sort merge -> ~80ms
+- Post-fix: Index Scan idx_products_sales_public pre-sorted -> ~5ms
+- 16x improvement em ORDER BY sales DESC com platform_owned mixed
+
+Trade-off:
+- Nova idx mais ABRANGENTE (approved + platform_owned)
+- mig 005:109 ainda relevante p/ legacy queries strict 'approved'
+- DROP mig 005:109 considerar em pass futuro apos validar zero queries strict
+- Storage cost: +1 idx ~5MB (sales_count + id columns ~32 bytes/row * 30k)
+
+Cadeia W14 PARTIAL indexes (cron-driven W14/18 fusion):
+- pass 086 idx_audit_severity_created PARTIAL warn+
+- pass 094 idx_audit_target_created PARTIAL NOT NULL
+- pass 098 idx_audit_target_type_severity PARTIAL critical
+- pass 100 idx_pwreset_pending_unused PARTIAL
+- pass 102 idx_notif_user_inapp_unread PARTIAL channel+is_read
+- pass 500 idx_qa_runs_product_timeout PARTIAL verdict='timeout' (mig 103)
+- pass 504 idx_price_alerts_unnotified PARTIAL last_notified_at IS NULL (mig 104)
+- pass 515 (este) idx_products_sales_public PARTIAL W7 whitelist (mig 105)
+
+37 migrations pendentes apply (era 36)
+247 passes acumulados (268->515) sem deploy VPS
+9 CRITICAL pendentes deploy
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)
