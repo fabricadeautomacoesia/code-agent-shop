@@ -89,7 +89,50 @@ app.get('/payments/health', _healthHandler);
 //
 // Cache key: amount + max (parseado para int p/ canonicalizar "1000" vs "01000")
 // Sem auth = cache compartilhado entre todos users (mesmo amount = mesma resposta).
+/* FIX-WORKER-11 pass 579 (cache pollution + invalid amounts pre-cache guard):
+   PRE-FIX BUGS:
+   1. cacheMiddleware corria ANTES das validacoes amount handler.
+      Cenarios pollution Redis:
+      - ?amount_cents=abc -> parseInt NaN -> ||0 -> cache key '0:12', 400 missing
+      - ?amount_cents=99 -> cache key '99:12', 400 too_small
+      - ?amount_cents=-50 -> cache key '-50:12', 400 invalid
+      - ?amount_cents=999999999 -> cache key '999999999:12', 400 too_large
+      Cada tentativa malformada vira entry Redis - pollution + storage waste
+   2. WORST: 400 responses cached -> user transient retry hits cached 400
+      mesmo se param valid eventualmente
+   3. Cache key amount=0 collide com REAL amount=0 invalid (both 400 caso
+      missing - mas eh sub-optimal cache key sprawl)
+
+   POST-FIX (paridade pass 551 wishlist /:product_id/check guard pre-cache):
+   - skipCacheIfInvalid pre-middleware:
+     a. Validate amount_cents existe + Number.isFinite + range [100, 100M]
+     b. Bypass cacheMiddleware se invalid (handler retorna 400 sem polluir cache)
+   - Cache mantem keys validas apenas
+   Pattern V8 cache hygiene cross-svc cadeia consolidacao. */
+const validateInstallmentsAmount = (req, res, next) => {
+  const raw = req.query.amount_cents;
+  if (raw === undefined || raw === '') {
+    return res.status(400).json({ error: 'missing_amount_cents', message: 'Param amount_cents obrigatorio' });
+  }
+  const amount = parseInt(raw, 10);
+  if (!Number.isFinite(amount) || amount < 0) {
+    return res.status(400).json({ error: 'invalid_amount_cents', message: 'amount_cents deve ser inteiro >= 0' });
+  }
+  if (amount > 100_000_000) {
+    return res.status(400).json({ error: 'amount_too_large', message: 'amount_cents excede R$ 1.000.000,00' });
+  }
+  if (amount < 100) {
+    return res.status(400).json({
+      error: 'amount_too_small',
+      message: 'amount_cents deve ser >= 100 (R$ 1,00 minimo para parcelamento)',
+      amount_cents: amount,
+      min_cents: 100,
+    });
+  }
+  next();
+};
 app.get('/payments/installments/preview',
+  validateInstallmentsAmount,
   cache.cacheMiddleware((req) => {
     const amount = parseInt(req.query.amount_cents, 10) || 0;
     const max = Math.min(12, Math.max(1, parseInt(req.query.max || '12', 10)));
