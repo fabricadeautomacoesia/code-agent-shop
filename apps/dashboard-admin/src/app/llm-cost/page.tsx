@@ -111,10 +111,12 @@ export default function LlmCostPage() {
         </div>
       )}
 
+      {/* FIX-WORKER-4 pass 605 (a11y loading/empty state - paridade cadeia W4
+          pass 544/556/565/580/586/592/597 - role=status SR announce) */}
       {loading && !data ? (
-        <div className="glass p-12 text-center text-white/60">Carregando...</div>
+        <div role="status" aria-live="polite" className="glass p-12 text-center text-white/60">Carregando...</div>
       ) : !data ? (
-        <div className="glass p-12 text-center text-white/60">Sem dados disponiveis</div>
+        <div role="status" className="glass p-12 text-center text-white/60">Sem dados disponiveis</div>
       ) : (
         <>
           {/* TOTAL CARDS */}
@@ -147,7 +149,8 @@ export default function LlmCostPage() {
               Por Provider / Model
             </h2>
             {data.by_provider.length === 0 ? (
-              <p className="text-white/60 text-center py-8">Sem dados de provider nos ultimos 30 dias.</p>
+              /* FIX pass 605: role=status p/ SR empty state */
+              <p role="status" className="text-white/60 text-center py-8">Sem dados de provider nos ultimos 30 dias.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead className="text-left text-xs text-white/40 uppercase border-b border-white/10">
@@ -190,7 +193,8 @@ export default function LlmCostPage() {
           <div className="glass p-6">
             <h2 className="font-display font-bold text-xl mb-4">Gasto diario</h2>
             {data.daily.length === 0 ? (
-              <p className="text-white/60 text-center py-8">Sem dados diarios.</p>
+              /* FIX pass 605: role=status p/ SR empty state */
+              <p role="status" className="text-white/60 text-center py-8">Sem dados diarios.</p>
             ) : (
               <div className="space-y-1">
                 {data.daily.map((d) => {
