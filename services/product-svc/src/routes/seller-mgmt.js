@@ -185,13 +185,19 @@ const SELLER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 //
 //   Pattern V8 W7+W18 cache hygiene invariante: cache key MUST mirror handler
 //   normalization (passes 520/530/533/551/558).
+/* FIX-WORKER-5 pass 719 (case-insensitive status+kind paridade pass 715/717 cadeia 34 sites):
+   PRE-FIX: status + kind raw .trim() apenas (case-sensitive whitelist)
+   - Seller dashboard URL bar drift -> case variance UX
+   - ?status=Approved vs approved -> handler 400 invalid_status
+   - 2 fields case-sensitive (status + kind) - same fix pattern
+   POST-FIX: + .toLowerCase() ANTES whitelist check (cacheKey + handler) */
 const productsMeCacheKey = (req) => {
   const q = req.query;
   const isAdmin = req.user?.role === 'admin';
   // Normalize same way handler does (linhas 177-188)
-  const statusRaw = (q.status || '').toString().trim();
+  const statusRaw = (q.status || '').toString().trim().toLowerCase();
   const statusNorm = SELLER_PRODUCT_STATUS.has(statusRaw) ? statusRaw : '';
-  const kindRaw = (q.kind || '').toString().trim();
+  const kindRaw = (q.kind || '').toString().trim().toLowerCase();
   const kindNorm = SELLER_PRODUCT_KIND.has(kindRaw) ? kindRaw : '';
   // Seller_id: admin path uses UUID, normalize lowercase + validate format
   const sellerIdRaw = isAdmin ? (q.seller_id || '').toString().trim().toLowerCase() : '';
@@ -211,13 +217,18 @@ router.get('/',
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
+  // FIX pass 719: + .trim().toLowerCase() paridade cacheKey case-insensitive
   // Status filter optional
-  const statusFilter = req.query.status ? String(req.query.status) : null;
+  const statusFilter = req.query.status
+    ? String(req.query.status).trim().toLowerCase()
+    : null;
   if (statusFilter && !SELLER_PRODUCT_STATUS.has(statusFilter)) {
     return res.status(400).json({ error: 'invalid_status', allowed: Array.from(SELLER_PRODUCT_STATUS) });
   }
   // Kind filter optional
-  const kindFilter = req.query.kind ? String(req.query.kind) : null;
+  const kindFilter = req.query.kind
+    ? String(req.query.kind).trim().toLowerCase()
+    : null;
   if (kindFilter && !SELLER_PRODUCT_KIND.has(kindFilter)) {
     return res.status(400).json({ error: 'invalid_kind', allowed: Array.from(SELLER_PRODUCT_KIND) });
   }
