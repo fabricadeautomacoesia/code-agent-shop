@@ -40504,3 +40504,28 @@ CADEIA cache key case-insensitive cross-svc 33 sites:
 = 33 sites cumulative consolidacao Pattern V8 cache key normalize
 
 448 passes acumulados (268->718) sem deploy VPS
+
+============================================================================
+SESSAO 719-720 (W5 case-insensitive products/me + seller payouts - cadeia 35 sites)
+============================================================================
+
+Pass 719 (W5 /products/me case-insensitive status+kind - 2 fields):
+- DESCOBERTA: cacheKey + handler ambos case-sensitive em 2 fields
+- ?status=Approved vs approved + ?kind=Automation vs automation
+- Seller dashboard URL bar drift -> case variance UX
+- POST-FIX: + .toLowerCase() ambos campos (cache + handler)
+
+Pass 720 (W5 /me/payouts case-insensitive status):
+- DESCOBERTA: status raw .trim() apenas case-sensitive
+- Seller /financeiro URL drift -> case variance UX
+- POST-FIX: + .toLowerCase() (cacheKey + handler)
+
+CADEIA cache key case-insensitive cross-svc 35 sites cumulative:
+- W4 admin endpoints + W7 product public + W10 search + W17 vault + W18 cache
+- W2 orders + disputes (passes 715/717)
+- W4 qa-queue (pass 710)
+- W5 /products/me 2 fields (pass 719 este)
+- W5 /me/payouts (pass 720 este)
+= 35 sites Pattern V8 cache key normalize consolidacao cross-svc
+
+450 passes acumulados (268->720) sem deploy VPS
