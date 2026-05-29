@@ -40788,3 +40788,57 @@ CADEIA 14 cache hygiene MISMATCH bugs cumulative cross-svc:
 
 Pattern V8 invariante: cacheKey MUST mirror handler normalization EXACTLY
 + corollary: handler valida UMA vez (sem checks duplicados raw+normalized).
+
+## PASS 736 (W12 QA-SVC /qa/runs/:product_id UUID case mismatch handler vs cacheKey)
+
+services/qa-svc/src/server.js linhas 912-950
+
+PRE-FIX BUG: handler usa req.params.product_id RAW em:
+- Linha 915 UUID_RE.test() (OK regex case-insensitive 'i' flag - tolerante)
+- Linha 937 authz query: WHERE p.id = $1 (raw uppercase)
+- Linha 944 main WHERE: product_id = $1 (raw)
+
+MAS cacheKey (linha 905-906) ja normaliza .toLowerCase().
+
+CENARIO BREAKING (cache sprawl):
+- GET /qa/runs/ABC-DEF-... vs /qa/runs/abc-def-... vs /qa/runs/Abc-Def-...
+- Cada variant = entry Redis diferente para MESMO product
+- 3x storage waste + 30s TTL each
+- PG ::UUID cast tolera case, MAS string-compare em JS routes diverge documentalmente
+
+POST-FIX:
+- productIdNorm = String(req.params.product_id || '').trim().toLowerCase() UMA vez
+- Aplicar em UUID_RE.test, authz query, WHERE params
+- Paridade EXATA cacheKey lines 905-906
+
+CADEIA 15 cache hygiene MISMATCH bugs cumulative cross-svc:
+- pass 618 (cache shape errado)
+- pass 719-731 (10 sites case + trim mismatches)
+- pass 732-733 (target_id UUID + reviews sort)
+- pass 734 (coupon storage normalize)
+- pass 735 (sellers tier double-check)
+- pass 736 (este - qa/runs UUID case mismatch)
+
+Pattern V8 invariante: cacheKey = handler normalize EXATAMENTE.
+
+## W17 VAULT-SVC AUDIT (sem fix - 100% paridade pass 725)
+
+vault-svc:
+- /keys provider whitelist + .trim() (pass 725 ja consolidado)
+- cacheKey + handler paridade VAULT_PROVIDER_ENUM consistente
+- AES-256-GCM crypto, fail2ban global, timing-safe vaultUseGuard
+- audit_log critical para invalid_internal_token (pass 458)
+- rate-limit per-IP x-real-ip (3 limiters: useRateLimit/provisionRateLimit/readRateLimit)
+- All endpoints withRetry + tx() atomic
+Status: vault-svc 100% Blueprint V8 compliant - sem bugs detectaveis nesta sessao.
+
+## W18 PERFORMANCE AUDIT (sem fix - 100% paridade)
+
+product-svc public.js endpoints:
+- GET / : listLimiter + cacheMiddleware 11 params normalized (pass 612)
+- /flash-promo/active: cache 60s + COUNT window
+- /recommendations/for-me: cache per-user + cold-start branch
+- /:slug/related: cache 60s normalized slug
+- /:slug/reviews: cache 60s + pass 733 sort normalize
+- /compare: cache + ids normalize
+Status: public.js endpoints sem cache gap detectavel.

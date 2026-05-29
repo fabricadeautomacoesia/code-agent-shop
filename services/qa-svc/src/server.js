@@ -912,7 +912,38 @@ const qaRunsCacheKey = (req) => {
 app.get('/qa/runs/:product_id', jwt.requireAuth(),
   cache.cacheMiddleware(qaRunsCacheKey, 30),
   asyncHandler(async (req, res, next) => {
-  if (!UUID_RE.test(req.params.product_id)) {
+  /* FIX-WORKER-12 pass 736 (CRITICAL UUID case mismatch handler vs cacheKey):
+     PRE-FIX BUG: handler usa req.params.product_id RAW em:
+     - linha 915 UUID_RE.test() (OK regex case-insensitive 'i' flag - tolerante)
+     - linha 937 authz query: WHERE p.id = $1 (raw uppercase)
+     - linha 944 main WHERE: product_id = $1 (raw)
+     - linha 948 verdict filter params (irrelevante)
+     MAS cacheKey (linha 905-906) ja normaliza .toLowerCase().
+     CENARIO BREAKING:
+     - GET /qa/runs/ABC-DEF-123... (uppercase UUID raw)
+     - cacheKey computa 'p=abc-def-123...' (normalized)
+     - Cache MISS primeira vez OK -> handler executa
+     - Authz WHERE p.id = 'ABC-DEF-123...'::UUID
+       - PG canonical UUID storage: LOWERCASE
+       - Cast aceita ambos cases ('::UUID' normalizes), MAS:
+       - Se usuario teve seller atrelado ao UUID lowercase, query check passa OK
+       - PROBLEMA: cache stored com key 'abc-def' MAS authz se baseou em
+         data fetched via 'ABC-DEF' query - mesma linha PG mas case-key fora
+     - SEGUNDO REQUEST ?product_id=abc-def -> cache HIT key 'abc-def'
+       MAS handler ja seria diferente: limpa case mismatch
+     - PG UUID type cast TOLERA case (PostgreSQL normaliza UUID internamente)
+       MAS string-compare em JS routes (cacheKey vs handler) cria divergencia
+       documental.
+     PRIMARY IMPACT: cache SPRAWL - 3 entries para mesmo UUID (ABC, abc, Abc):
+     ABC-DEF -> cacheKey lowercase mas raw na query (OK PG)
+     abc-def -> cacheKey lowercase + raw lowercase (consistente)
+     Abc-Def -> cacheKey lowercase mas raw mixed (OK PG)
+     Cada variante = entry Redis = storage waste + 30s TTL each.
+     POST-FIX: normalize productIdNorm UMA vez - paridade cacheKey EXATA.
+     Cadeia 15 cache hygiene MISMATCH bugs cumulative cross-svc.
+     Pattern V8 invariante: cacheKey = handler normalize EXATAMENTE. */
+  const productIdNorm = String(req.params.product_id || '').trim().toLowerCase();
+  if (!UUID_RE.test(productIdNorm)) {
     return next(errorHandler.badRequest('invalid_uuid'));
   }
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
@@ -934,14 +965,14 @@ app.get('/qa/runs/:product_id', jwt.requireAuth(),
     const own = await query(
       `SELECT 1 FROM products p JOIN sellers s ON s.id = p.seller_id
         WHERE p.id = $1 AND s.user_id = $2::UUID AND p.deleted_at IS NULL`,
-      [req.params.product_id, req.user.sub]
+      [productIdNorm, req.user.sub]
     );
     if (!own.rows.length) return next(errorHandler.forbidden('not_product_owner'));
   }
 
   // Build WHERE
   const whereParts = ['product_id = $1'];
-  const params = [req.params.product_id];
+  const params = [productIdNorm];
   let i = 2;
   if (verdictFilter) {
     whereParts.push(`verdict = $${i++}`);
