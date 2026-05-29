@@ -1354,9 +1354,25 @@ const sellerKeyProvisionSchema = z.object({
 //   POST/revoke se UI feedback ficar slow (pattern wildcard del em cache.js).
 //   Pattern V8 W17 paridade cache: /keys admin (60s) + /keys/me (este 60s).
 //   Latency 50-100ms -> 1-2ms (Redis hit).
+// FIX-WORKER-17 pass 602 (cache key UUID validation gap pre-cache paridade pass 589):
+//   PRE-FIX BUG: sellerKey ja tinha .toLowerCase() MAS faltava UUID_RE validation.
+//   Handler valida UUID (linha 1377-1379) e retorna 400 invalid_seller_id.
+//   MAS cache key incluia raw seller_id leading to pollution:
+//   - ?seller_id=abc-invalid -> cache key 's=abc-invalid', handler 400
+//   - ?seller_id=garbage123 -> cache key 's=garbage123', handler 400
+//   - Cada tentativa malformada = entry Redis (storage waste + sprawl)
+//   - Admin probing atacker amplifica em listings cross-seller dashboard
+//   POST-FIX: + UUID validation pre-cache. Invalid -> '' (consistent cache key).
+//   Paridade pass 589 review-svc /seller/received UUID validation gap.
+const VAULT_UUID_RE_CACHE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const keysmeListCacheKey = (req) => {
   const isAdmin = req.user && ['admin','staff'].includes(req.user.role);
-  const sellerKey = isAdmin && req.query.seller_id ? String(req.query.seller_id).toLowerCase() : (req.user?.sub || 'anon');
+  // Normalize seller_id: trim + lowercase + UUID validation (paridade handler linha 1377)
+  const sellerIdRaw = isAdmin && req.query.seller_id
+    ? String(req.query.seller_id).trim().toLowerCase() : '';
+  const sellerIdNorm = (sellerIdRaw && VAULT_UUID_RE_CACHE.test(sellerIdRaw))
+    ? sellerIdRaw : '';
+  const sellerKey = sellerIdNorm || (req.user?.sub || 'anon');
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
   const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
   return `vault:keys_me:u=${req.user?.sub || 'anon'}:s=${sellerKey}:lim=${lim}:off=${off}`;
