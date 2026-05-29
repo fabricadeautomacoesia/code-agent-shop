@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
 import { AlertOctagon, Check, X, Search } from 'lucide-react';
@@ -101,9 +102,10 @@ export default function AdminReportsPage() {
 
       <div className="glass p-6">
         {reports.length === 0 ? (
-          /* FIX-WORKER-4 pass 7: msg condicional por filter (era generica "Sistema limpo"
-             mesmo em filter resolved que sugeria problema) */
-          <p className="text-white/60 text-center py-12 flex items-center justify-center gap-2">
+          /* FIX-WORKER-4 pass 7: msg condicional por filter
+              FIX-WORKER-4 pass 592 (a11y empty state role=status - paridade pass
+              544/556/565/580/586 SR announce empty state cadeia consolidacao). */
+          <p role="status" className="text-white/60 text-center py-12 flex items-center justify-center gap-2">
             <AlertOctagon className="w-5 h-5 text-green-400" aria-hidden="true" />
             {filter === 'open' && 'Nenhuma denuncia aberta. Sistema limpo.'}
             {filter === 'under_review' && 'Nenhuma denuncia em analise no momento.'}
@@ -166,12 +168,19 @@ export default function AdminReportsPage() {
                             /audit-log corretamente - pass 485 introduziu inconsistencia
                           - Admin clicava 'audit' em /reports -> 404 (broken investigation flow)
                           POST-FIX: paridade cross-admin /audit-log root-relative */}
-                      <a href={`/audit-log?target_type=report&target_id=${r.id}`}
-                        className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 bg-magenta/10 text-magenta hover:bg-magenta/20 hover:underline border border-magenta/20"
+                      {/* FIX-WORKER-4 pass 592 (Next.js Link soft-nav paridade cadeia 451/452/455/543/565/580/586):
+                          PRE-FIX (pass 495): <a href> -> hard navigation reload full page
+                          - 6 admin forensic links cadeia consolidada (pass 451+) usam Link
+                          - Reports era unico lagged com <a> raw
+                          - hard nav = perda state React + re-baixa bundle JS
+                          POST-FIX: <Link> next/navigation paridade cadeia W4 forensic flow
+                          + focus-visible outline magenta (kbd nav affordance). */}
+                      <Link href={`/audit-log?target_type=report&target_id=${r.id}`}
+                        className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 bg-magenta/10 text-magenta hover:bg-magenta/20 hover:underline border border-magenta/20 focus-visible:outline-2 focus-visible:outline-magenta"
                         aria-label={`Ver audit trail da denuncia ${r.id?.slice?.(0, 8) || ''}`}
                         title="Ver audit log (quem/quando/payload)">
                         <Search className="w-2.5 h-2.5" aria-hidden="true" /> audit
-                      </a>
+                      </Link>
                     </div>
                     {r.description && <p className="text-sm text-white/80 mb-2 break-words">{r.description}</p>}
                     {/* FIX-WORKER-4 pass 7: evidencias numeradas + rel security */}
