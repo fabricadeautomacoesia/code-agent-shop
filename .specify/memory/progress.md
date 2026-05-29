@@ -40184,3 +40184,25 @@ CADEIA W9 metadata enrichment cross-page 13 sites cumulative:
 = 13 sites W9 metadata enrichment cross-platform preview consistency
 
 434 passes acumulados (268->704) sem deploy VPS
+
+============================================================================
+SESSAO 705 (W14 mig 129 idx_audit_actor_created_id PARTIAL direction parity)
+============================================================================
+
+Pass 705 (W14 mig 129 idx_audit_actor_created_id PARTIAL DESC+DESC):
+- mig 058 PRE-FIX: PARTIAL (actor_user_id, created_at DESC) WHERE actor_user_id IS NOT NULL
+  - cobre actor filter + 1-level ORDER mas sem id DESC tiebreaker
+- aiops-svc /audit-log ORDER BY a.created_at DESC, a.id DESC = External Sort
+- HIGH WRITE VOLUME: audit_log ~5-10k rows/dia (~150-300k/month)
+- Cron + admin actions mass-insert burst -> 100+ rows mesma created_at
+- Forensic queries dashboard-admin /audit-log usam actor filter intensivo
+- POST-FIX: PARTIAL composite (actor_user_id, created_at DESC, id DESC)
+  WHERE actor_user_id IS NOT NULL
+- Latency: ~5-15ms External Sort -> ~1-3ms
+
+CADEIA W14 direction parity + PARTIAL composite cumulative:
+- mig 102-128 (27 indexes consolidacao previa)
+- mig 129 idx_audit_actor_created_id PARTIAL (pass 705 este)
+- 28 indexes total apply pending VPS SSH
+
+435 passes acumulados (268->705) sem deploy VPS
