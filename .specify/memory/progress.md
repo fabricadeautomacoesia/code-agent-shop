@@ -41058,3 +41058,27 @@ Pattern V8 React stability cadeia 7 sites cross-dashboard:
 CADEIA cumulative cross-svc:
 - 16 cache hygiene + storage normalize bugs (618, 719-737)
 - 7 React stability fixes cross-dashboard (738-744)
+
+## PASS 745+746 (W4 ADMIN /sellers + /qa-queue useCallback - cadeia 8-9 sites)
+
+apps/dashboard-admin/src/app/sellers/page.tsx + qa-queue/page.tsx
+
+PASS 745 /sellers (cadeia 8 sites):
+- useCallback wrap em load(q?) com [] deps (param q dinamico via arg)
+- 2 useEffects: mount + debounced search 300ms
+- useEffect deps [load] em ambos (paridade ESLint exhaustive-deps)
+- useAdminAction recebe stable callback -> action.run estavel
+
+PASS 746 /qa-queue (cadeia 9 sites):
+- useCallback wrap em load com [] deps -> stable reference
+- force-approve / platform-take / reject CRITICAL admin actions
+- Cascading re-renders durante operacoes critical remediados
+
+Pattern V8 React stability cadeia 9 sites cross-dashboard:
+738 disputes, 739 payouts-pending, 740 financeiro, 741 loja,
+742 alerts (15s poll), 743 orders (state-stale FIX), 744 vault (security),
+745 sellers (debounced search), 746 qa-queue (force-approve critical)
+
+CADEIA cumulative cross-svc:
+- 16 cache hygiene + storage normalize bugs (618, 719-737)
+- 9 React stability fixes cross-dashboard (738-746)

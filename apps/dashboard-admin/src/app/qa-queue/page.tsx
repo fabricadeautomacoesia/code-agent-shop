@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
 import { CheckCircle, XCircle, Award, ExternalLink } from 'lucide-react';
@@ -18,7 +18,17 @@ export default function QAQueuePage() {
   // erro real (backend down, token expirado, etc). Admin pensava sistema saudavel.
   const [loadError, setLoadError] = useState('');
 
-  async function load() {
+  /* FIX-WORKER-4 pass 746 (useCallback stable closure - cadeia 9 sites):
+     PRE-FIX BUG: async function load() recriada cada render.
+     - useAdminAction(load) recebe nova ref cada render -> action.run re-criada
+     - force-approve / platform-take / reject sao CRITICAL admin actions
+     - Cascading re-renders durante operacoes critical
+     POST-FIX (paridade cadeia W4 cross-dashboard):
+     - useCallback wrap em load com [] deps -> stable reference
+     - useAdminAction recebe stable callback -> action.run estavel
+     - useEffect deps [load] - paridade ESLint exhaustive-deps
+     Pattern V8 React stability cadeia 9 sites cross-dashboard. */
+  const load = useCallback(async () => {
     try {
       const r = await adminFetch<{ queue: any[] }>('/products/admin/qa-queue');
       // FIX-WORKER-4 pass 5: guard contra r.queue null/undefined (edge case backend)
@@ -29,8 +39,8 @@ export default function QAQueuePage() {
       setLoadError(e?.message || 'Erro carregando fila QA');
       setQueue([]); // limpa lista para nao mostrar dados stale
     }
-  }
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   // FIX-WORKER-4 pass 2: useAdminAction hook substitui try/catch repetido
   const action = useAdminAction(load);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
@@ -19,7 +19,19 @@ export default function SellersPage() {
   //   Frontend: input debounced 300ms + load() trigger
   const [searchQuery, setSearchQuery] = useState('');
 
-  async function load(q?: string) {
+  /* FIX-WORKER-4 pass 745 (useCallback stable closure - cadeia 8 sites React stability):
+     PRE-FIX BUG (paridade pass 738-744):
+     - async function load(q?) recriada cada render
+     - useAdminAction(load) recebe nova ref cada render -> action.run re-criada
+     - 2 useEffects (mount + debounced search) ambos chamam load
+     - Debounced search setTimeout captura `load` da render atual via closure
+     POST-FIX (paridade cadeia W4 cross-dashboard):
+     - useCallback wrap em load com [] deps (parametro q dinamico via arg, sem state captured)
+     - useAdminAction recebe stable callback -> action.run estavel
+     - useEffect deps [load] em primeiro (mount load)
+     - useEffect deps [searchQuery, load] em segundo (debounced)
+     Pattern V8 React stability cadeia 8 sites cross-dashboard. */
+  const load = useCallback(async (q?: string) => {
     try {
       const qs = q !== undefined ? `?q=${encodeURIComponent(q)}` : '';
       const r = await adminFetch<{ sellers: any[] }>(`/sellers/admin/pending-kyc${qs}`);
@@ -27,14 +39,14 @@ export default function SellersPage() {
       setLoadError('');
     }
     catch (e: any) { setLoadError(e.message); }
-  }
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   // Debounced search trigger
   useEffect(() => {
     const t = setTimeout(() => { load(searchQuery.trim()); }, 300);
     return () => clearTimeout(t);
-  }, [searchQuery]);
+  }, [searchQuery, load]);
 
   // FIX-WORKER-4 pass 2: useAdminAction hook
   const action = useAdminAction(load);
