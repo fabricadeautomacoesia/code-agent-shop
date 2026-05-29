@@ -882,9 +882,17 @@ router.post('/:id/dispute',
 //   POST-FIX: normalize cache key SAME way handler normalizes.
 //   Pattern V8 cache hygiene invariante (passes 520/530/533/551/558/566/572).
 const VALID_DISPUTE_STATUSES = ['opened', 'under_review', 'resolved_buyer', 'resolved_seller', 'cancelled'];
+/* FIX-WORKER-4 pass 715 (case-insensitive status normalize - paridade pass 710 cadeia 32 sites):
+   PRE-FIX: status raw + .trim() apenas (case-sensitive whitelist check)
+   - ?status=Opened (mixed case) -> includes() false -> '' (no filter)
+   - ?status=OPENED (caps) -> idem
+   - Admin dashboard URL bar drift -> case variance UX confusion
+   - Cache key + handler ambos case-sensitive MAS UX broken
+   POST-FIX: + .toLowerCase() ANTES whitelist check (cache key + handler consistent)
+   Pattern V8 cache hygiene case-insensitive UX paridade 32 sites cross-svc. */
 const disputesCacheKey = (req) => {
   const q = req.query;
-  const statusRaw = (q.status || '').toString().trim();
+  const statusRaw = (q.status || '').toString().trim().toLowerCase();
   const statusNorm = VALID_DISPUTE_STATUSES.includes(statusRaw) ? statusRaw : '';
   const lim = Math.max(1, Math.min(200, parseInt(q.limit, 10) || 50));
   const off = Math.max(0, parseInt(q.offset, 10) || 0);
@@ -896,7 +904,8 @@ router.get('/admin/disputes',
   cache.cacheMiddleware(disputesCacheKey, 30),
   asyncHandler(async (req, res) => {
     // Status enum mig 007: opened|under_review|resolved_buyer|resolved_seller|cancelled
-    const status = (req.query.status || '').toString();
+    // FIX pass 715: + .trim().toLowerCase() paridade cacheKey case-insensitive UX
+    const status = (req.query.status || '').toString().trim().toLowerCase();
     const VALID_STATUSES = ['opened', 'under_review', 'resolved_buyer', 'resolved_seller', 'cancelled'];
     const statusFilter = VALID_STATUSES.includes(status) ? status : null;
     const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
