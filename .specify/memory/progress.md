@@ -39515,3 +39515,33 @@ CADEIA cross-svc admin endpoints DLP mask reason + ua_prefix:
 - Cadeia 8+ sites cross-svc consolidacao W7 ops admin DLP/forensic
 
 382 passes acumulados (268->652) sem deploy VPS
+
+============================================================================
+SESSAO 653 (W1 NotificationBell decorative icons aria-hidden)
+============================================================================
+
+Pass 653 (W1 NotificationBell Check/CheckCheck icons aria-hidden):
+- DESCOBERTA: CheckCheck (read) + Check (unread) icons SEM aria-hidden=true
+- NVDA/JAWS lia "CheckCheck Notification title... lida" (icon name expandido
+  pelo accessible-name parser sem hidden flag) - redundancia SR
+- aria-label externo (linha 296) ja descreve "lida"/"nao lida" semantico
+- POST-FIX: + aria-hidden=true (icons decorativos - estado ja em aria-label)
+- Paridade cadeia 8+ icons aria-hidden cross-components:
+  - QnaForm MessageCircle/Send (pass 159)
+  - WishlistButton Heart/Loader2 (pass 186)
+  - PDP 7 icons (pass 541)
+  - WishlistButton 2 variants (pass 575)
+  - FlashPromoTimer Zap/Clock (pass 645)
+  - NotificationBell Check/CheckCheck (este pass 653)
+
+CADEIA W1 NotificationBell consolidacao a11y:
+- aria-label dinamico bell count (pass 200)
+- aria-expanded/aria-haspopup (pass 201-202)
+- aria-hidden Bell icon (pass 204)
+- optimistic update + rollback (pass 7)
+- UUID validate markRead (pass 267)
+- defensive date guard (pass 306)
+- decorative icons aria-hidden (pass 653 ESTE)
+= 7 fixes a11y/UX cumulative NotificationBell consolidacao
+
+383 passes acumulados (268->653) sem deploy VPS
