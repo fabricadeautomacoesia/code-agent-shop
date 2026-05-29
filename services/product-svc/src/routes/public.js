@@ -250,6 +250,24 @@ router.get('/:slug/also-bought',
      PRE-FIX: req.params.slug raw - case-variants criam cache entries duplicados.
      Slugs DB sao lowercase canonical mas Express path nao normaliza.
      POST-FIX: trim().toLowerCase() + clamp limit defensive. */
+  /* FIX-WORKER-18 pass 513 (cache key/query case-mismatch consistency):
+     PRE-FIX BUG: cache key lowercase (pass 298) MAS query usa req.params.slug RAW
+     - PG slug='PRODUCT-A' = case-sensitive vs slug='product-a' (DB lowercase)
+     - Cenario: GET /PRODUCT-A/also-bought
+       1. Cache MISS (chave normalizada products:also-bought:product-a:lim=6)
+       2. Handler: SELECT WHERE slug='PRODUCT-A' -> 0 rows -> 404 (sem cache)
+       3. Outro user: GET /product-a/also-bought
+          - Cache MISS mesma chave -> Handler -> SELECT slug='product-a' -> OK
+          - Response cacheada na chave normalizada
+       4. Volta primeiro user: GET /PRODUCT-A/also-bought
+          - Cache HIT (chave normalizada) -> retorna data do 'product-a'
+          - User esperava 404 (PRODUCT-A nao existe case-sensitive) - confusao
+     - Pode parecer minor mas viola Pattern V8: cache key e query devem usar
+       MESMA strategy de normalization (full case-insensitive end-to-end)
+     POST-FIX: normalize slug early no handler antes da query
+     - LOWER(slug) na query? Quebra idx_products_slug (mig 003 case-sensitive)
+     - Melhor: aplicar .toLowerCase() ao input do handler -> match DB canonical
+     - Trade-off ZERO: slugs DB ja sao lowercase, usuario nao perde nada */
   cache.cacheMiddleware((req) => {
     const slug = (req.params.slug || '').toString().trim().toLowerCase();
     const lim = Math.min(parseInt(req.query.limit, 10) || 6, 12);
@@ -257,14 +275,17 @@ router.get('/:slug/also-bought',
   }, 600),
   asyncHandler(async (req, res, next) => {
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 6, 12));
+  // FIX pass 513: normalize slug = cache key normalize (case-insensitive end-to-end)
+  const normalizedSlug = (req.params.slug || '').toString().trim().toLowerCase();
 
   // FIX bug 3: parent check (diferencia 404 de empty)
   // FIX bug 1,2: deleted_at IS NULL + status valido (approved OR platform_owned)
+  // FIX pass 513: usar normalizedSlug (match cache key + DB canonical lowercase)
   const parent = await query(
     `SELECT id FROM products
       WHERE slug = $1 AND deleted_at IS NULL
         AND status IN ('approved','platform_owned')
-      LIMIT 1`, [req.params.slug]
+      LIMIT 1`, [normalizedSlug]
   );
   if (!parent.rows.length) {
     return next(errorHandler.notFound('product_not_found'));
@@ -337,7 +358,9 @@ router.get('/:slug/also-bought',
 // 5. Subqueries (SELECT ... FROM sellers WHERE id=p2.seller_id) 2x redundantes -> JOIN unico
 // 6. Cache populado em 404 (gastava memoria Redis com slug ruim em loop bot)
 router.get('/:slug/related',
-  /* FIX-WORKER-7 pass 298: cache key normalization paridade also-bought */
+  /* FIX-WORKER-7 pass 298: cache key normalization paridade also-bought
+     FIX-WORKER-18 pass 513: normalize slug query side (case-mismatch consistency).
+     Mesmo bug do also-bought pass 513 - ver comment expansivo la. */
   cache.cacheMiddleware((req) => {
     const slug = (req.params.slug || '').toString().trim().toLowerCase();
     const lim = Math.min(parseInt(req.query.limit, 10) || 6, 24);
@@ -346,13 +369,16 @@ router.get('/:slug/related',
   asyncHandler(async (req, res, next) => {
   // FIX bug 1: validar e clampear limit (default 6, max 24 - evita scrape massivo)
   const limit = Math.min(Math.max(parseInt(req.query.limit) || 6, 1), 24);
+  // FIX pass 513: normalize slug = cache key normalize (case-insensitive end-to-end)
+  const normalizedSlug = (req.params.slug || '').toString().trim().toLowerCase();
 
   // FIX bug 4: verificar produto pai existe + status valido ANTES de buscar relacionados
   // Diferencia 404 (slug inexistente / deletado / pending) de 200 [] (sem relacionados na categoria)
+  // FIX pass 513: usar normalizedSlug (match cache key + DB canonical lowercase)
   const parent = await query(
     `SELECT id, category_id, status FROM products
       WHERE slug = $1 AND deleted_at IS NULL AND status IN ('approved','platform_owned')
-      LIMIT 1`, [req.params.slug]
+      LIMIT 1`, [normalizedSlug]
   );
   if (!parent.rows.length) {
     // FIX bug 6: nao cachear 404 (errorHandler nao popula cache, cacheMiddleware so cacheia 2xx)

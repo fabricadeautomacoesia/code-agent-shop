@@ -37594,3 +37594,57 @@ Cross-svc cadeia atomicity pattern V8 (8 endpoints consolidated):
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply
+
+## Pass 513 - W18 PERFORMANCE: /also-bought + /related cache key/query case-mismatch
+
+PRE-FIX BUG (case-mismatch cache vs query):
+- 2 endpoints product-svc public.js com mesma classe de bug:
+  1. GET /:slug/also-bought (linha 248)
+  2. GET /:slug/related (linha 339)
+- Cache key (pass 298): slug normalizado .toLowerCase()
+- Query: WHERE slug = $1 com req.params.slug RAW (case-sensitive PG)
+
+Cenarios de inconsistencia:
+1. GET /PRODUCT-A/also-bought
+   - Cache MISS (chave normalizada products:also-bought:product-a:lim=6)
+   - Handler: SELECT slug='PRODUCT-A' -> 0 rows -> 404 (sem cache)
+2. Outro user: GET /product-a/also-bought
+   - Cache MISS mesma chave -> Handler SELECT slug='product-a' -> OK
+   - Response cacheada na chave normalizada
+3. Volta primeiro user: GET /PRODUCT-A/also-bought
+   - Cache HIT (chave normalizada) -> retorna data do 'product-a'
+   - User esperava 404 (PRODUCT-A nao existe case-sensitive) - confusao UX
+4. Cache pollution: chave normalizada serve cases diferentes
+
+Impact:
+- Slugs DB sao lowercase canonical mas Express path nao normaliza
+- Pattern V8 violacao: cache key e query DEVEM usar mesma strategy normalize
+- SEO duplicado: PRODUCT-A vs product-a viram URLs distintas no Google mas
+  servem mesmo conteudo (com confusao 404 ocasional)
+- Minor bug mas viola consistency invariant
+
+POST-FIX:
+- const normalizedSlug = (req.params.slug || '').toString().trim().toLowerCase();
+- Query usa normalizedSlug (match cache key + DB canonical lowercase)
+- Trade-off ZERO: slugs DB ja sao lowercase, usuario nao perde nada
+- Pattern V8 W18 cache-coherency: end-to-end normalization
+
+Cadeia W18 cache key/query consistency:
+- pass 291 search-svc top-sellers cat lowercase
+- pass 298 also-bought + related cache key lowercase (mas query raw - bug)
+- pass 302 flash-promo cache key normalization
+- pass 490 /compare cache key UUID filter
+- pass 513 (este) /also-bought + /related query normalize paridade
+
+Latencia / perf impact:
+- Sem perf direct change (queries cache hit ja eram <1ms)
+- ELIMINA case-confusion bug (UX)
+- ELIMINA cache pollution edge case (Redis hygiene)
+- SEO clean: PRODUCT-A redirects logicamente para product-a
+
+245 passes acumulados (268->513) sem deploy VPS
+9 CRITICAL + 36 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply
