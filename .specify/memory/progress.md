@@ -34586,3 +34586,63 @@ Pattern V8 W4: enum whitelists em backend precisam aligned com actual data value
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 456 W3 PDP: WishlistButton error message contextual + a11y announcement
+commit pendente
+BUG silent error feedback em wishlist toggle
+PRE-FIX (pass 6):
+- errorFlash apenas visual (red ring 2s pulsing)
+- User nao via MOTIVO do erro:
+  - 401 sessao expirou
+  - 429 rate-limit
+  - 404 produto nao existe
+  - 500 servico down
+- Screen reader NAO anunciava falha (sem aria-live)
+- Tooltip title estatico ("Adicionar/Remover dos favoritos") em both states
+- Distincao silent fail vs erro real impossivel para user
+
+CENARIO:
+- User clica favorite com sessao expirada (V8 token 15min)
+- Backend retorna 401 invalid_token
+- WishlistButton catch: rollback state + red flash 2s
+- User: "favoritei mas nao salvou - bug?"
+- Tem que abrir DevTools console p/ ver erro
+- ~30% engagement loss em sessions expiradas (estimativa industria)
+
+POST-FIX:
+- errorMsg state contextual cross-status:
+  - 401: "Sessao expirou - faca login"
+  - 429: "Muitas tentativas, aguarde"
+  - 404+product_not_found: "Produto indisponivel"
+  - 5xx: "Servico temporariamente indisponivel"
+  - default: "Erro ao atualizar favorito"
+- title attr + aria-label DINAMICOS (mostram errorMsg quando ativo)
+- SR-only span role=alert aria-live=assertive (announce SR)
+- PDP variant: + visual text-xs red below button (visivel sighted users)
+- Card variant: SR-only only (sem espaco visual no overlay)
+- Auto-clear apos 4s (extendido de 2s p/ usuario ler)
+
+Paridade add-to-cart pass 67 friendlyCartError.
+
+W3 wishlist UX series:
+  pass 4 optimistic update
+  pass 6 errorFlash visual + console.error
+  pass 159 a11y aria-pressed
+  pass 231 hover visual consistency
+  pass 291 already_exists backend consume
+  pass 456 errorMsg contextual + a11y announcement <- ESTE
+
+Pattern V8 W3: TODO interactive button com fetch deve ter:
+- Loading state (existe)
+- Optimistic update (existe)
+- Rollback on error (existe)
+- Contextual error message (NOVO pass 456)
+- A11y announcement aria-live (NOVO pass 456)
+- Visual feedback distinguish silent vs real fail (NOVO pass 456)
+
+189 passes acumulados (268->456) sem deploy VPS
+8 CRITICAL + 29 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 ALTA PRIORIDADE

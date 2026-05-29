@@ -50,6 +50,18 @@ export function WishlistButton({
   // Network down / backend 500 antes nao retornava feedback visual.
   // User clicava, nada acontecia, e nao sabia se favoritou ou nao.
   const [errorFlash, setErrorFlash] = useState(false);
+  // FIX-WORKER-3 pass 456 (error message contextual + a11y announcement):
+  //   PRE-FIX (pass 6): errorFlash apenas visual (red ring 2s)
+  //   - User nao via MOTIVO do erro (network, rate-limit, 401 etc)
+  //   - SR (screen reader) nao anunciava falha (sem aria-live)
+  //   - Tooltip title nao muda em error - sempre "Adicionar/Remover dos favoritos"
+  //   - Distincao silent fail vs erro real impossivel
+  //   POST-FIX: errorMsg state + aria-live span + title contextual.
+  //   - 401: "Sessao expirou - fazendo login novamente..."
+  //   - 429: "Muitas tentativas, aguarde"
+  //   - default: "Erro ao atualizar favorito"
+  //   Paridade add-to-cart pass 67 friendlyCartError.
+  const [errorMsg, setErrorMsg] = useState('');
 
   async function toggle(e?: React.MouseEvent) {
     // Card overlay esta DENTRO de um <Link> wrapper - evita navegar para PDP
@@ -72,6 +84,7 @@ export function WishlistButton({
     const wasInWishlist = favorited;
     setLoading(true);
     setErrorFlash(false);
+    setErrorMsg(''); // FIX pass 456: clear msg em retry
     // optimistic flip
     setFavorited(!wasInWishlist);
     if (variant === 'card') {
@@ -109,9 +122,18 @@ export function WishlistButton({
       if (variant === 'card') {
         wasInWishlist ? add(productId) : remove(productId);
       }
+      // FIX-WORKER-3 pass 456: errorMsg contextual cross-status
+      const status = err?.status;
+      const code = err?.data?.error || '';
+      let msg = 'Erro ao atualizar favorito';
+      if (status === 401) msg = 'Sessao expirou - faca login';
+      else if (status === 429) msg = 'Muitas tentativas, aguarde';
+      else if (status === 404 && code === 'product_not_found') msg = 'Produto indisponivel';
+      else if (status >= 500) msg = 'Servico temporariamente indisponivel';
+      setErrorMsg(msg);
       // Flash visual vermelho por 2s para indicar erro
       setErrorFlash(true);
-      setTimeout(() => setErrorFlash(false), 2000);
+      setTimeout(() => { setErrorFlash(false); setErrorMsg(''); }, 4000);
     } finally { setLoading(false); }
   }
 
@@ -119,46 +141,65 @@ export function WishlistButton({
   // (red shake-like ring por 2s quando request falha).
   const errorClasses = errorFlash ? 'ring-2 ring-red-500 animate-pulse' : '';
 
+  // FIX pass 456: dynamic title + aria-label exposes errorMsg
+  const buttonTitle = errorMsg || (favorited ? 'Remover dos favoritos' : 'Adicionar aos favoritos');
+  const buttonAriaLabel = errorMsg
+    ? `Erro: ${errorMsg}`
+    : (favorited ? 'Remover dos favoritos' : 'Adicionar aos favoritos');
+
   if (variant === 'card') {
     return (
-      /* FIX-WORKER-3 pass 159 (a11y): type='button' defensive + focus-visible */
-      <button type="button" onClick={toggle} disabled={loading}
-        aria-label={favorited ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-        aria-pressed={favorited}
-        title={favorited ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-        className={`absolute top-3 right-3 z-10 p-2 rounded-full backdrop-blur transition-all focus-visible:outline-2 focus-visible:outline-magenta ${
-          favorited
-            ? 'bg-magenta/90 text-white shadow-lg shadow-magenta/40'
-            : 'bg-black/40 text-white/80 hover:bg-magenta/80 hover:text-white'
-        } disabled:opacity-50 ${errorClasses}`}>
-        {loading
-          ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
-          : <Heart className={`w-3.5 h-3.5 ${favorited ? 'fill-white' : ''}`} aria-hidden="true" />}
-      </button>
+      <>
+        {/* FIX-WORKER-3 pass 159 (a11y): type='button' defensive + focus-visible
+            FIX pass 456: + aria-live span p/ SR announce error contextual */}
+        <button type="button" onClick={toggle} disabled={loading}
+          aria-label={buttonAriaLabel}
+          aria-pressed={favorited}
+          title={buttonTitle}
+          className={`absolute top-3 right-3 z-10 p-2 rounded-full backdrop-blur transition-all focus-visible:outline-2 focus-visible:outline-magenta ${
+            favorited
+              ? 'bg-magenta/90 text-white shadow-lg shadow-magenta/40'
+              : 'bg-black/40 text-white/80 hover:bg-magenta/80 hover:text-white'
+          } disabled:opacity-50 ${errorClasses}`}>
+          {loading
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+            : <Heart className={`w-3.5 h-3.5 ${favorited ? 'fill-white' : ''}`} aria-hidden="true" />}
+        </button>
+        {/* SR-only live region p/ anunciar error */}
+        {errorMsg && (
+          <span role="alert" aria-live="assertive" className="sr-only">{errorMsg}</span>
+        )}
+      </>
     );
   }
 
   return (
-    /* FIX-WORKER-3 pass 6: PDP variant agora com aria-label + aria-pressed (era apenas title).
-       title nao e anunciado por screen readers consistentemente.
-       FIX-WORKER-3 pass 159: type='button' defensive (V8 Regra 23) */
-    <button type="button" onClick={toggle} disabled={loading}
-      aria-label={favorited ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-      aria-pressed={favorited}
-      className={`p-2 rounded-lg border transition-all focus-visible:outline-2 focus-visible:outline-magenta ${
-        favorited
-          /* FIX-WORKER-8 pass 231 (visual hover consistency): PDP variant favorited
-             nao tinha hover state -> parecia estatico/desabilitado. Adiciona
-             hover:bg-magenta/30 sutil (mesmo pattern card variant linha 118-119
-             mas com /30 em vez de /80 pq border ja indica state). UX: feedback
-             tactile que botao continua clicavel mesmo apos favoritar. */
-          ? 'bg-magenta/20 hover:bg-magenta/30 border-magenta text-magenta-glow'
-          : 'border-white/10 hover:border-white/30 hover:bg-white/5 text-white/60'
-      } disabled:opacity-50 ${errorClasses}`}
-      title={favorited ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>
-      {loading
-        ? <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
-        : <Heart className={`w-5 h-5 ${favorited ? 'fill-magenta' : ''}`} aria-hidden="true" />}
-    </button>
+    <>
+      {/* FIX-WORKER-3 pass 6: PDP variant agora com aria-label + aria-pressed (era apenas title).
+         title nao e anunciado por screen readers consistentemente.
+         FIX-WORKER-3 pass 159: type='button' defensive (V8 Regra 23)
+         FIX pass 456: + dynamic aria-label/title com errorMsg + SR live region */}
+      <button type="button" onClick={toggle} disabled={loading}
+        aria-label={buttonAriaLabel}
+        aria-pressed={favorited}
+        className={`p-2 rounded-lg border transition-all focus-visible:outline-2 focus-visible:outline-magenta ${
+          favorited
+            /* FIX-WORKER-8 pass 231 (visual hover consistency) */
+            ? 'bg-magenta/20 hover:bg-magenta/30 border-magenta text-magenta-glow'
+            : 'border-white/10 hover:border-white/30 hover:bg-white/5 text-white/60'
+        } disabled:opacity-50 ${errorClasses}`}
+        title={buttonTitle}>
+        {loading
+          ? <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
+          : <Heart className={`w-5 h-5 ${favorited ? 'fill-magenta' : ''}`} aria-hidden="true" />}
+      </button>
+      {/* SR-only live region + visual error toast */}
+      {errorMsg && (
+        <>
+          <span role="alert" aria-live="assertive" className="sr-only">{errorMsg}</span>
+          <div className="text-xs text-red-400 mt-1" aria-hidden="true">{errorMsg}</div>
+        </>
+      )}
+    </>
   );
 }
