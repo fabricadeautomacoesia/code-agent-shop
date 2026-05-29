@@ -34246,3 +34246,53 @@ W15 mobile responsive series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 ALTA PRIORIDADE
+
+## PASS 450 W5 SELLER DASH: reviews "Ver no site" preview link (paridade pass 425+426+434)
+commit pendente
+GAP /seller/reviews mesmo bug pass 425 (QNA) - sem preview PDP publico
+PRE-FIX:
+- Title link interno /products/{r.product_id} (edit-page seller)
+- Backend (review-svc /seller/received linha 1210) ja envia product_slug
+- Frontend NAO usava product_slug
+- Seller queria ver review publicado p/ responder com contexto:
+  - "Como aparece na PDP?"
+  - "Outras reviews relacionadas?"
+- Sem link "Ver no site" -> manual navegacao por slug
+
+CONSUME cadeia 425+426+434:
+- Pass 425 dashboard-seller QNA "Ver no site"
+- Pass 426 product-tabs hash anchor handler #qna-* + #review-*
+- Pass 434 review-svc qna_id em notification payload
+- Pass 450 fecha gap: reviews dashboard tambem precisa preview
+
+POST-FIX:
+- + STOREFRONT_URL const env-driven (paridade pass 425)
+- + link "Ver no site" -> {STOREFRONT_URL}/product/{slug}#review-{id}
+- target=_blank + rel=noopener (security)
+- Hash anchor consome product-tabs.tsx pass 426 useEffect
+- PDP abre tab Reviews + smooth scroll para review especifico
+- Link interno preservado (title -> edit-page)
+
+UX flow end-to-end agora:
+- Buyer escreve review em /product/X
+- Seller dashboard /reviews ve review nova
+- Click "Ver no site" -> {STOREFRONT_URL}/product/X#review-{uuid}
+- product-tabs detecta hash -> setActive('reviews') + scrollIntoView
+- Seller ve review destacada no contexto PDP publico
+- Responde com contexto completo (vs cego)
+
+W5+W3 deep-link series fechado:
+  pass 425 dashboard-seller QNA "Ver no site"
+  pass 426 product-tabs hash handler + ids
+  pass 434 review-svc qna_id notif + inferCtaUrl
+  pass 450 dashboard-seller REVIEWS "Ver no site" <- ESTE
+
+Pattern V8: TODA listing dashboard-seller/admin com refer publico deve ter
+"Ver no site" link com hash anchor para deep-link especifico
+
+183 passes acumulados (268->450) sem deploy VPS
+7 CRITICAL + 28 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE

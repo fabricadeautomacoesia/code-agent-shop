@@ -7,6 +7,13 @@ import { Star, MessageSquare, Send, ExternalLink } from 'lucide-react';
 import { sellerFetch, fmtDate } from '@/lib/seller-api';
 import { useSellerAction } from '@/lib/use-seller-action';
 
+// FIX-WORKER-5 pass 450 (storefront URL env-driven paridade pass 425 QNA):
+//   Reviews page tinha mesmo bug que QNA pass 425: title link interno
+//   /products/{id} (edit-page) sem opcao preview PDP publico.
+//   Seller queria ver review publicado para responder com contexto.
+const STOREFRONT_URL = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_STOREFRONT_URL)
+  || 'https://cas.inovareinteligenciaartificial.com';
+
 export default function SellerReviewsPage() {
   const [reviews, setReviews] = useState<any[]>([]);
   const [replies, setReplies] = useState<Record<string, string>>({});
@@ -129,10 +136,29 @@ export default function SellerReviewsPage() {
                       fill sizes="48px" className="object-cover" />
                   </div>
                 )}
+                {/* FIX-WORKER-5 pass 450 (storefront preview link - paridade pass 425 QNA):
+                    PRE-FIX: title link interno /products/{id} so abria edit-page seller
+                    - Seller queria ver review publicado para responder contexto
+                    - r.product_slug ja disponivel backend (review-svc linha 1210)
+                      mas NAO usado
+                    POST-FIX 2 links separados:
+                    - Title -> /products/{id} (edit-page interno)
+                    - "Ver no site" -> {STOREFRONT_URL}/product/{slug}#review-{id}
+                      (hash anchor consume product-tabs pass 426 deep-link handler) */}
                 <div className="flex-1">
                   <Link href={`/products/${r.product_id}`} className="text-sm font-display font-semibold hover:text-magenta">
                     {r.product_title} <ExternalLink className="w-3 h-3 inline ml-1" aria-hidden="true" />
                   </Link>
+                  {r.product_slug && (
+                    <div className="mt-0.5">
+                      <a href={`${STOREFRONT_URL}/product/${r.product_slug}#review-${r.id}`}
+                         target="_blank" rel="noopener noreferrer"
+                         aria-label={`Ver review publicado em ${r.product_title}`}
+                         className="text-[11px] text-magenta hover:underline inline-flex items-center gap-1">
+                        Ver no site <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                      </a>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 mt-1">
                     {/* FIX-WORKER-5 pass 7: role=img + aria-label no container, aria-hidden nas estrelas */}
                     <div className="flex" role="img" aria-label={`${r.rating} de 5 estrelas`}>
