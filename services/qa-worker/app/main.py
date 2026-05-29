@@ -449,9 +449,27 @@ async def call_llm_fallback(prompt: str) -> tuple[str, str, str, dict]:
     - Per-provider timeout LLM_PROVIDER_TIMEOUT (default 20s)
     - Permanent errors (400/401/403) NAO disparam fallback (fail fast)
     - Sanitized error messages (DLP - secrets em upstream body)
+
+    FIX-WORKER-12 pass 547 (configured vs failed disambiguation +
+    Groq permanent error handling):
+    - PRE-FIX BUG 1: erro 'Nenhum provider LLM disponivel' era ambiguo
+      - 'No keys configured' (deploy gap) E
+      - 'All configured providers failed' (transient outage)
+      eram indistinguiveis em logs. Ops investigation lost time.
+    - PRE-FIX BUG 2: Groq (ultimo provider) sem _is_transient_error check.
+      - Groq 401 invalid key = permanent, mas loop nao distinguia.
+      - Erro final 'Nenhum provider' generico, sem fail-fast signal
+        para alertar admin de key invalida (vs random outage).
+    POST-FIX:
+    - configured_providers counter (which keys env set)
+    - Distinguished error messages: 'no_providers_configured' vs
+      'all_providers_failed' (semantica clara)
+    - Groq permanent error tambem raise explicit (paridade OpenAI/Gemini)
     """
     errors = []
+    configured_providers = []
     if OPENAI_KEY:
+        configured_providers.append("openai")
         try:
             return await _call_openai(prompt)
         except Exception as e:
@@ -459,6 +477,7 @@ async def call_llm_fallback(prompt: str) -> tuple[str, str, str, dict]:
             if not _is_transient_error(e):
                 raise RuntimeError(f"OpenAI permanent error - fallback skipped. {errors[-1]}")
     if GEMINI_KEY:
+        configured_providers.append("gemini")
         try:
             return await _call_gemini(prompt)
         except Exception as e:
@@ -466,11 +485,18 @@ async def call_llm_fallback(prompt: str) -> tuple[str, str, str, dict]:
             if not _is_transient_error(e):
                 raise RuntimeError(f"Gemini permanent error - fallback skipped. {'; '.join(errors)}")
     if GROQ_KEY:
+        configured_providers.append("groq")
         try:
             return await _call_groq(prompt)
         except Exception as e:
             errors.append(f"groq: {_sanitize_llm_error(e)}")
-    raise RuntimeError("Nenhum provider LLM disponivel. " + "; ".join(errors))
+            # FIX pass 547: Groq tambem permanent error fail-fast (paridade)
+            if not _is_transient_error(e):
+                raise RuntimeError(f"Groq permanent error - last provider. {'; '.join(errors)}")
+    # FIX pass 547: disambiguate 'no keys' vs 'all failed'
+    if not configured_providers:
+        raise RuntimeError("no_providers_configured (env keys missing: OPENAI_KEY, GEMINI_KEY, GROQ_KEY)")
+    raise RuntimeError(f"all_providers_failed (configured={configured_providers}). " + "; ".join(errors))
 
 
 async def _call_openai(prompt: str) -> tuple[str, str, str, dict]:
