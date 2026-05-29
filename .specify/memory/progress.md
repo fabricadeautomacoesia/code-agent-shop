@@ -38304,3 +38304,52 @@ Cadeia W14 PARTIAL com literal predicates (9 indexes consolidated):
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
+
+## Pass 525 - W3 PDP: ProductTabs PT-BR pluralization minuto/minutos
+
+PRE-FIX BUG (PT-BR grammatical error):
+- ProductTabs.tsx linha 167-171 (Pre-requisitos tab):
+    <strong>{product.estimated_install_min} minutos</strong>
+- Hardcoded plural 'minutos' para qualquer N (incluindo 1)
+- 1 minutos = grammatical error PT-BR
+- SR anuncia "um minutos" (incorreto) vs "um minuto" (correto)
+- Pattern V8 W3 pass 232 ja tinha plural correto em badges (avaliacao/avaliacoes)
+- estimated_install_min ficou lagged paridade
+
+Impact UX:
+- SR users (NVDA/JAWS) PT-BR linguistic awareness
+- Visual: 'Tempo estimado de instalacao: 1 minutos' looks low-quality
+- Inconsistency cross-component (pass 232 review/qna badges OK, install min not)
+
+Comparacao Pattern V8 W3 pluralization correto:
+- pass 232 ProductTabs badge: 1 -> 'avaliacao' / N -> 'avaliacoes' ✓
+- pass 152 QnaUpvote ariaLabel: 1 -> 'voto' / N -> 'votos' ✓
+- linha 234 totalAgg: 1 -> 'avaliacao' / N -> 'avaliacoes' ✓
+- linha 167 estimated_install_min (este): plural hardcoded ✗
+
+POST-FIX:
+- Number(product.estimated_install_min) === 1 ? 'minuto' : 'minutos'
+- Defensive Number() cast (PG INT may return string in some drivers)
+- Paridade pass 232 pluralization pattern
+- Comment expansivo lista paridade cross-component
+
+Cadeia W3 PDP UX/i18n:
+- pass 3 AddToCart double-click guard
+- pass 4 WishlistButton guard + soft-nav
+- pass 137 a11y htmlFor + aria-describedby
+- pass 152 QnaUpvote aria-label + plural
+- pass 232 ProductTabs badge plural avaliacao
+- pass 254 defensive date guard reviews
+- pass 264 router.push soft-nav
+- pass 278 defensive sort versions
+- pass 365 Q&A datas display
+- pass 426 hash anchor deep-link qna/review
+- pass 489 QnaForm i18n native validation
+- pass 525 (este) estimated_install_min plural
+
+257 passes acumulados (268->525) sem deploy VPS
+9 CRITICAL + 38 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)

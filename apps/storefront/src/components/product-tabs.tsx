@@ -164,9 +164,18 @@ export function ProductTabs({ product, reviews, qna, starsBreakdown, avgRatingAg
               </ul>
             </>
           )}
+          {/* FIX-WORKER-3 pass 525 (PT-BR singular/plural correctness):
+              PRE-FIX: '{N} minutos' hardcoded plural - "1 minutos" = grammatical error
+              - PT-BR pluralization rule: 1 -> singular, 0/>1 -> plural
+              - SR anuncia "um minutos" (incorreto) vs "um minuto" (correto)
+              - Pattern V8 W3 pass 232 ja estabeleceu plural correto em reviews/qna badges
+              - estimated_install_min ficou lagged (mesma issue grammar)
+              POST-FIX: conditional singular/plural paridade pass 232
+              - 1 -> 'minuto'
+              - 0/N -> 'minutos' */}
           {product.estimated_install_min && (
             <p className="text-white/60 text-sm mt-4">
-              Tempo estimado de instalacao: <strong className="text-white">{product.estimated_install_min} minutos</strong>
+              Tempo estimado de instalacao: <strong className="text-white">{product.estimated_install_min} {Number(product.estimated_install_min) === 1 ? 'minuto' : 'minutos'}</strong>
             </p>
           )}
         </div>
