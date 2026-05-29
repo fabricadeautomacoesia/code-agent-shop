@@ -39416,3 +39416,26 @@ CADEIA W2 cart/checkout anti-race consolidacao:
 - 5 sites anti-double-click race consolidacao
 
 377 passes acumulados (268->647) sem deploy VPS
+
+============================================================================
+SESSAO 648 (W10+W14 /search SORT_OPTIONS direction parity 6 sites HOT path)
+============================================================================
+
+Pass 648 (W10+W14 /search SORT_OPTIONS direction parity DESC+DESC):
+- DESCOBERTA: 7 SORT_OPTIONS terminavam em `p.id` (PG default ASC) com chains DESC
+  - relevance, newest, price_desc, rating, sales, recent_sales: DESC chain + id ASC = MIXED
+  - price_asc: ASC + ASC tiebreaker OK
+- HOT PATH /search homepage facets/filters cada navigation
+- Mixed direction tiebreaker forca External Sort (idx composite nao bate)
+- Inconsistencia vs cadeia Regra D V8 cross-svc (30+ sites DESC+DESC consolidados)
+- POST-FIX: 6 SORT_OPTIONS com `p.id DESC` explicit (paridade direction parity)
+  - relevance (com/sem q), newest, price_desc, rating, sales, recent_sales -> DESC tiebreaker
+  - price_asc preserva ASC tiebreaker (consistency com ASC chain)
+- Elimina External Sort hot path /search principal
+
+CADEIA Regra D direction parity status:
+- DESC+DESC variant: 30+ sites admin listings + search hot path (pass 648 este)
+- ASC+ASC variant: cron FIFO operacional (qa stuck, vault rotation)
+- Mixed direction OK quando intencional (outbox priority DESC + created_at ASC FIFO)
+
+378 passes acumulados (268->648) sem deploy VPS
