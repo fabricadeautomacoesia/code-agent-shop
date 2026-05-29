@@ -691,9 +691,48 @@ const auditLogHandler = asyncHandler(async (req, res) => {
 // 30s freshness adequada: audit_log eh forensic (nao realtime critical).
 // FIX-WORKER-14 pass 430: cache key inclui target_id + target_type (vary filter).
 // target_id e UUID-safe inline (regex matched antes) - cache key sem hash necessario.
+/* FIX-WORKER-10 pass 530 (cache key normalization + validation - paridade handler):
+   PRE-FIX BUGS (3 issues cache pollution + inconsistency):
+   1. Raw req.query.action sem trim - 'foo' vs 'foo ' vs ' foo' = 3 entries
+   2. Raw req.query.target_type sem .toLowerCase() (handler usa lower linha 593)
+      - User /aiops/audit-log?target_type=Seller vs ?target_type=seller
+      - Cache: 2 entries com mesma resposta (handler normalize)
+   3. Cache key inclui ATTACKER-CONTROLLED filter values pre-validate:
+      - ?action=<arbitrary unicode 200 chars> -> cache key unbounded
+      - ?target_type=INVALID_VALUE -> cache key inclui INVALID mas handler
+        normalizes to null -> cached under junk key
+      - DoS amplification: varied invalid filters create infinite cache keys
+   POST-FIX (paridade handler validation):
+   - days clamp Math.min/max paridade handler linha 574
+   - action trim() (handler linha 577)
+   - severity validate enum (handler linha 581) - null if invalid
+   - target_id UUID regex validate (handler linha 619) - null if invalid
+   - target_type lower + enum validate (handler linha 620) - null if invalid
+   - Cache key so reflete VALID inputs - junk inputs cached under bounded keys
+   Trade-off ZERO: handler ja faz validate, cache key agora paridade.
+   Paridade pass 291 (search top-sellers normalize) + pass 490 (compare UUID filter). */
+const AUDIT_VALID_SEV = new Set(['info','warn','error','critical']);
+const AUDIT_VALID_TT = new Set([
+  'user','seller','product','order','order_item',
+  'seller_payout','pending_wallet_payout','payouts_pending_wallet',
+  'vault_api_key','vault_key','vault_internal','user_session','qa_callback','asaas_webhook',
+  'alert','report',
+  'category','review','qna','dispute',
+]);
+const AUDIT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const auditLogCacheKey = (req) => {
   const q = req.query;
-  return `aiops:audit-log:d=${q.days||7}:a=${q.action||''}:s=${q.severity||''}:tid=${q.target_id||''}:tt=${q.target_type||''}:lim=${q.limit||50}:off=${q.offset||0}`;
+  const days = Math.min(Math.max(1, parseInt(q.days || '7', 10)), 90);
+  const lim = Math.min(Math.max(1, parseInt(q.limit || '50', 10)), 200);
+  const off = Math.max(0, parseInt(q.offset || '0', 10));
+  const action = String(q.action || '').trim().slice(0, 80); // bounded slice anti-DoS
+  const sevRaw = String(q.severity || '').trim();
+  const sev = AUDIT_VALID_SEV.has(sevRaw) ? sevRaw : '';
+  const tidRaw = String(q.target_id || '').trim();
+  const tid = AUDIT_UUID_RE.test(tidRaw) ? tidRaw.toLowerCase() : '';
+  const ttRaw = String(q.target_type || '').trim().toLowerCase();
+  const tt = AUDIT_VALID_TT.has(ttRaw) ? ttRaw : '';
+  return `aiops:audit-log:d=${days}:a=${action}:s=${sev}:tid=${tid}:tt=${tt}:lim=${lim}:off=${off}`;
 };
 app.get('/audit-log',
   jwt.requireAuth({ roles: ['admin','staff'] }),

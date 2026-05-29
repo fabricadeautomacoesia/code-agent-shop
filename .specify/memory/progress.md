@@ -38566,3 +38566,63 @@ Total endpoints case-insensitive end-to-end agora: 7
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
+
+## Pass 530 - W10 SEARCH/AIOPS: /audit-log cache key normalization + validation
+
+PRE-FIX BUGS (3 issues cache pollution + DoS amplification):
+- aiops-svc /audit-log cache key (linha 694-697):
+    return `aiops:audit-log:d=${q.days||7}:a=${q.action||''}:s=${q.severity||''}:tid=${q.target_id||''}:tt=${q.target_type||''}:lim=${q.limit||50}:off=${q.offset||0}`;
+
+1. Raw req.query.action sem trim:
+   - 'foo' vs 'foo ' vs ' foo' = 3 Redis entries para MESMA query logica
+   - Cache hit rate degradado + memory waste
+2. Raw req.query.target_type sem .toLowerCase():
+   - Handler usa toLowerCase() linha 593 -> validates 'seller'
+   - Cache key usa raw 'Seller' (caso variation)
+   - Mesma resposta cached em 2 keys = miss rate alto
+3. ATTACKER-CONTROLLED filter values pre-validate:
+   - ?action=<arbitrary unicode 200 chars> -> cache key unbounded
+   - ?target_type=INVALID_ENUM_VALUE -> handler null + cached junk key
+   - ?severity=INVALID -> idem
+   - ?target_id=NOT_UUID -> idem
+   - DoS amplification: varied invalid filters create infinite Redis entries
+   - Redis memory waste + SCAN slowdown em invalidate
+
+Impact admin queries:
+- Cache hit rate degradado em queries normais
+- Memory waste Redis (junk keys ate TTL 30s)
+- Attacker pode hammer endpoint com varied invalid filters -> Redis fill
+
+Comparacao handler validation linha 574-620:
+- days: Math.min/max clamp [1,90] ✓
+- action: .trim() ✓
+- severity: VALID_SEV enum filter ✓
+- target_id: UUID_RE regex validate ✓
+- target_type: VALID_TT enum + .toLowerCase() ✓
+
+POST-FIX (cache key paridade handler validation):
+- days clamp same Math.min/max
+- action .trim().slice(0, 80) bounded anti-DoS
+- severity VALID_SEV filter (null se invalid)
+- target_id UUID_RE validate + .toLowerCase() (PG case-insensitive)
+- target_type lower + VALID_TT enum (null se invalid)
+- Lim + off clamp paridade
+
+Trade-off ZERO: handler ja faz validate, cache key agora paridade end-to-end.
+
+Pattern V8 cache key/validation consistency cross-svc:
+- pass 291 search top-sellers cat lowercase
+- pass 302 flash-promo cache key normalization
+- pass 490 /compare cache key UUID filter (paridade)
+- pass 513 /also-bought + /related slug normalize
+- pass 520 aiops cache bypass silent
+- pass 521 sellers stats slug normalize
+- pass 529 /reviews + /qna 6 sites slug normalize
+- pass 530 (este) aiops /audit-log cache key validate paridade
+
+262 passes acumulados (268->530) sem deploy VPS
+9 CRITICAL + 38 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
