@@ -36,8 +36,30 @@ async function api(method, path, body) {
   });
 }
 
+/* FIX-WORKER-11 pass 517 (omit null/undefined fields - Asaas rejects null):
+   PRE-FIX BUG: payload { phone: null } sent to Asaas /customers
+   - Asaas API behavior: phone OMITTED = OK (optional field)
+   - phone NULL ou EMPTY string -> 400 invalid_phone
+   - Cenario REAL: user sem phone em profile -> order.phone_e164 = NULL
+     -> server.js linha 270 passa phone: null -> createCustomer({...phone:null})
+     -> Asaas 400 -> errorHandler 500 generico -> UX user confuso
+     ("Erro interno" mas verdadeiro motivo eh phone obrigatorio se enviado)
+   - Pass 4 fixou cpfCnpj com 400 explicit (linha 253) MAS phone ficou lagged
+   POST-FIX: omit nullish/empty fields antes enviar a Asaas
+   - Pattern V8 W11: NUNCA enviar null/undefined em campos opcionais Asaas
+   - Trade-off ZERO: omit eh semantica correta para optional fields
+   - Paridade pass 221 (defensive createCustomer return check) + pass 4 cpf */
 async function createCustomer({ name, cpfCnpj, email, phone, externalReference }) {
-  return api('POST', '/customers', { name, cpfCnpj, email, phone, externalReference });
+  const payload = { name, cpfCnpj, email };
+  // Only include phone if present + non-empty (Asaas rejects null/'' but accepts missing)
+  if (phone && typeof phone === 'string' && phone.trim().length > 0) {
+    payload.phone = phone.trim();
+  }
+  // externalReference optional - defensive omit if null/empty (Asaas same behavior)
+  if (externalReference && String(externalReference).trim().length > 0) {
+    payload.externalReference = String(externalReference);
+  }
+  return api('POST', '/customers', payload);
 }
 
 async function getCustomer(id) { return api('GET', `/customers/${id}`); }

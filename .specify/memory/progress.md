@@ -37823,3 +37823,64 @@ Cadeia W13 NOTIFICATION DLP defense-in-depth:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)
+
+## Pass 517 - W11 PAYMENT/ASAAS: createCustomer omit null fields (Asaas 400)
+
+PRE-FIX BUG (Asaas 400 generico em scenarios reais):
+- asaas.js linha 39-41 createCustomer:
+    return api('POST', '/customers', { name, cpfCnpj, email, phone, externalReference });
+- Asaas API behavior:
+  * phone OMITTED = OK (optional field)
+  * phone NULL ou EMPTY string -> 400 invalid_phone
+
+Cenarios reais que disparavam o bug:
+1. User sem phone em profile (campo opcional registro):
+   - server.js linha 270 passa phone: order.phone_e164
+   - phone_e164 e NULL no DB
+   - createCustomer({...phone: null})
+   - Asaas 400 'invalid_phone'
+   - errorHandler retorna 500 generico
+   - UX user ve "Erro interno do servidor" sem context real
+
+2. externalReference null (defensive - edge case):
+   - order.buyer_user_id sempre UUID NOT NULL no DB
+   - Mas defensive coding p/ futuras refatoracoes
+
+3. Pass 4 fixou cpfCnpj com 400 explicit MAS phone ficou lagged:
+   - cpf_cnpj check no server.js linha 253 retorna 400 amigavel
+   - phone null -> reach Asaas API -> 400 atribuido a Asaas error generico
+
+POST-FIX:
+- Build payload starting with required fields {name, cpfCnpj, email}
+- phone: include APENAS se non-empty string
+- externalReference: include APENAS se non-empty (defensive)
+- Pattern V8 W11: NUNCA enviar null/undefined em campos opcionais Asaas
+- Trade-off ZERO: omit eh semantica correta para optional fields
+
+Impact:
+- Users sem phone agora completam checkout normalmente (sem 500)
+- Backend logs poluido com 'asaas.err' reduzido
+- UX melhora (sem mensagem generica em scenario comum)
+- Paridade com pass 221 (defensive createCustomer return check) + pass 4 cpf
+
+Cadeia W11 PAYMENT defensive Asaas integration:
+- pass 4 missing_cpf_cnpj explicit 400 (server.js)
+- pass 221 createCustomer return defensive check (asaas_response.id valid)
+- pass 230 installment Math.round vs Math.floor (centavos)
+- pass 235 createTransfer Number() + Math.round
+- pass 249 split fixedValue Number() defensive
+- pass 269 atomic provision audit_log
+- pass 289 cancelPayment implementation (DELETE Asaas v3)
+- pass 306 mask.obj data error logs DLP
+- pass 362 billingType validate upfront
+- pass 439 refundPayment value=0 trap (Number.isFinite)
+- pass 488 interest_pct BACEN conformidade
+- pass 503 notifCache pos-tx deferral
+- pass 517 (este) createCustomer omit null phone/externalReference
+
+249 passes acumulados (268->517) sem deploy VPS
+9 CRITICAL + 37 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)
