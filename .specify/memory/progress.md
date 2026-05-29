@@ -34159,3 +34159,47 @@ W11 webhook hardening series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 ALTA PRIORIDADE
+
+## PASS 448 W14+W18 DB+PERF: qa-queue LATERAL JOIN refactor (consume pass 446)
+commit pendente
+BUG perf N+1 em /products/admin/qa-queue (3 correlated subqueries per row)
+PRE-FIX:
+- 50 products LIMIT = 150 subqueries em product_qa_runs por request
+- 3 correlated subqueries per row:
+  1. last_run_verdict (SELECT ORDER BY started_at DESC LIMIT 1)
+  2. last_run_started_at (MESMA QUERY, coluna diferente - WASTE)
+  3. timeout_count (SELECT COUNT(*) FILTER verdict=timeout)
+- idx_qa_runs_product_started (mig 034) usado MAS planner executa 3x O(log n)
+- Subqueries 1+2 SAO identicas exceto retorno coluna -> duplicate work
+
+CONSUME pass 446:
+- Pass 446 admin qa-queue UI title preview link
+- Admin abre /admin/qa-queue mais frequente (preview workflow)
+- Cache 30s pass 99 ajuda mas miss path forca 150 subqueries
+- Multiplos admins online = thundering herd cache miss
+
+POST-FIX 2 LATERAL JOINs:
+1. lr (last_run) - 1 subquery returns verdict + started_at (DRY)
+2. tc (timeout_count) - 1 aggregate per product
+
+Performance:
+- 50 products = 100 LATERAL invocations (50 lr + 50 tc) vs 150 antes
+- lr DRY elimina 50 subqueries identicas (33% saving direct)
+- PG planner inlining LATERAL otimiza hash/merge join
+- Latencia esperada: ~50ms -> ~20ms (2-3x melhoria)
+- Cache miss cost reduzido significativamente
+
+Pattern V8 W18 paridade pass 440 /orders LATERAL JOIN:
+- Correlated subquery same WHERE = LATERAL JOIN candidate
+- Multiple subqueries identical ORDER BY = DRY single LATERAL
+
+W18 LATERAL JOIN series:
+  pass 440 /orders items_preview LATERAL
+  pass 448 /qa-queue last_run + timeout_count LATERAL <- ESTE
+
+181 passes acumulados (268->448) sem deploy VPS
+7 CRITICAL + 28 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE

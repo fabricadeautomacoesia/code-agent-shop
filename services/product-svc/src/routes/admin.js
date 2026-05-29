@@ -111,26 +111,45 @@ router.get('/qa-queue',
     params.push(limit, offset);
 
     /* FIX-WORKER-7 pass 301: COUNT(*) OVER() window consolidation.
-       PRE-FIX: 2 queries (rows + COUNT) com WHERE identico em products JOIN.
-       Pattern V8 cross-svc consolidado em 13+ endpoints (passes 178-300).
-       POST-FIX: 1 query window aggregate + strip _total. Latencia ~30ms ->
-       ~17ms (1 scan vs 2). */
+       FIX-WORKER-18 pass 448 (N+1 subqueries product_qa_runs consolidation):
+         PRE-FIX (pass 301 + pass 14): 3 correlated subqueries per product row:
+         1. last_run_verdict (SELECT ... ORDER BY started_at DESC LIMIT 1)
+         2. last_run_started_at (mesma query, coluna diferente - WASTE)
+         3. timeout_count (SELECT COUNT(*) FILTER verdict=timeout)
+         50 products LIMIT = 150 subqueries em product_qa_runs por request.
+         idx_qa_runs_product_started (mig 034) ajuda PER subquery mas planner
+         executa 3x O(log n) lookups duplicates. Pattern V8 W18 N+1 refactor.
+         POST-FIX 2 LATERAL JOINs:
+         1. lr (last_run) - 1 subquery returns verdict + started_at (DRY)
+         2. tc (timeout_count) - 1 aggregate per product
+         50 products = 100 LATERAL invocations (50 lr + 50 tc) vs 150 antes.
+         Mais importante: lr DRY elimina 50 subqueries identicas (33% saving).
+         PG planner inlining LATERAL otimiza hash/merge join.
+         Latencia esperada: ~50ms -> ~20ms (2-3x melhoria).
+         Paridade pass 440 /orders LATERAL JOIN pattern.
+       PRE-FIX pass 301: 2 queries (rows + COUNT) -> 1 query window aggregate. */
     const r = await query(
       `SELECT p.id, p.title, p.slug, p.status, p.qa_verdict, p.qa_confidence_score,
               p.submitted_at, s.store_name, u.email,
-              (SELECT verdict FROM product_qa_runs r
-                 WHERE r.product_id = p.id
-                 ORDER BY r.started_at DESC LIMIT 1) AS last_run_verdict,
-              (SELECT started_at FROM product_qa_runs r
-                 WHERE r.product_id = p.id
-                 ORDER BY r.started_at DESC LIMIT 1) AS last_run_started_at,
-              (SELECT COUNT(*)::INT FROM product_qa_runs r
-                 WHERE r.product_id = p.id
-                   AND r.verdict = 'timeout') AS timeout_count,
+              lr.verdict AS last_run_verdict,
+              lr.started_at AS last_run_started_at,
+              COALESCE(tc.timeout_count, 0) AS timeout_count,
               COUNT(*) OVER()::INT AS _total
          FROM products p
          LEFT JOIN sellers s ON s.id = p.seller_id
          LEFT JOIN users u ON u.id = s.user_id
+         LEFT JOIN LATERAL (
+           SELECT verdict, started_at
+             FROM product_qa_runs
+            WHERE product_id = p.id
+            ORDER BY started_at DESC
+            LIMIT 1
+         ) lr ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT COUNT(*)::INT AS timeout_count
+             FROM product_qa_runs
+            WHERE product_id = p.id AND verdict = 'timeout'
+         ) tc ON TRUE
         WHERE ${whereParts.join(' AND ')}
         ORDER BY p.submitted_at ASC NULLS LAST, p.id ASC
         LIMIT $${i++} OFFSET $${i++}`,
