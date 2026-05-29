@@ -36261,3 +36261,45 @@ W14 idx composite cadeia consume admin investigation:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 096+097+098+099+100+101 ALTA PRIORIDADE
+
+## Pass 485 - W4 ADMIN: audit forensic link per-row em /admin/reports
+
+PRE-FIX (cadeia investigation cross-admin):
+- /admin/reports lista denuncias mas SEM audit link per-row
+- Admin resolvia/descartava report mas NAO conseguia ver QUEM/QUANDO/PAYLOAD
+- review-svc audit `report.resolve` target_type='report' EXISTE (linha 1508)
+- MAS aiops-svc VALID_TT NAO incluia 'report' -> filter ?target_type=report rejeitado silente
+- Workflow investigation quebrado: list -> audit trail (FAIL)
+
+POST-FIX:
+1. aiops-svc VALID_TT + 'report' (18 values total)
+2. /admin/reports page: per-row link audit -> /admin/audit-log?target_type=report&target_id=$id
+3. Search icon import (lucide) consistente cross-admin
+4. role=alert ja existia (pass 7) - preservado
+5. aria-label "Ver audit trail da denuncia X" a11y
+
+Paridade cross-admin investigation workflow:
+- pass 451: /admin/sellers audit link
+- pass 452: /admin/orders audit link
+- pass 455: /admin/payouts audit link
+- pass 485 (este): /admin/reports audit link
+
+Loop investigation completo:
+list report -> click audit -> audit_log filtered ?target_type=report&target_id=X
+-> ve actor_user_id/severity/payload_after (new_status/previous/notes_length/ip)
+
+VALID_TT cadeia evolution:
+  pass 430: 13 values base
+  pass 455: + 5 (seller_payout/pending_wallet_payout/payouts_pending_wallet/vault_api_key/user_session)
+  pass 458: + vault_internal
+  pass 462: + qa_callback
+  pass 463: + asaas_webhook
+  pass 482: + alert
+  pass 485: + report (este) <- 18 total
+
+218 passes acumulados (268->485) sem deploy VPS
+8 CRITICAL + 33 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-101 ALTA PRIORIDADE apply

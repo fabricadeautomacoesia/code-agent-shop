@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
-import { AlertOctagon, Check, X } from 'lucide-react';
+import { AlertOctagon, Check, X, Search } from 'lucide-react';
 
 const REASON_LABEL: Record<string, string> = {
   plagiarism: 'Plagio',
@@ -150,6 +150,20 @@ export default function AdminReportsPage() {
                                                      'bg-blue-500/20 text-blue-400'
                         }`}>{r.status}</span>
                       )}
+                      {/* FIX-WORKER-4 pass 485 (consume audit forensic cadeia pass 451/452/455):
+                          PRE-FIX: admin via report resolvido sem link p/ ver QUEM resolveu/quando audit trail.
+                            target_type='report' rejeitado silente em /admin/audit-log (nao em VALID_TT).
+                          POST-FIX:
+                            - aiops-svc pass 485 + 'report' em VALID_TT
+                            - per-row "audit" link -> ?target_type=report&target_id=$id (paridade
+                              sellers/orders/payouts/qa-queue cross-admin investigation workflow).
+                          Loop investigacao fechado: lista report -> audit trail -> actor/severity/payload. */}
+                      <a href={`/admin/audit-log?target_type=report&target_id=${r.id}`}
+                        className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 bg-magenta/10 text-magenta hover:bg-magenta/20 hover:underline border border-magenta/20"
+                        aria-label={`Ver audit trail da denuncia ${r.id?.slice?.(0, 8) || ''}`}
+                        title="Ver audit log (quem/quando/payload)">
+                        <Search className="w-2.5 h-2.5" aria-hidden="true" /> audit
+                      </a>
                     </div>
                     {r.description && <p className="text-sm text-white/80 mb-2 break-words">{r.description}</p>}
                     {/* FIX-WORKER-4 pass 7: evidencias numeradas + rel security */}

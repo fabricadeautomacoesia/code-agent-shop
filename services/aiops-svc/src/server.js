@@ -605,12 +605,15 @@ const auditLogHandler = asyncHandler(async (req, res) => {
   /* FIX-WORKER-17 pass 458: + 'vault_internal' (vault-svc audit critical)
      FIX-WORKER-12 pass 462: + 'qa_callback' (qa-svc invalid_signature audit critical)
      FIX-WORKER-11 pass 463: + 'asaas_webhook' (payment-svc invalid_signature audit critical)
-     FIX-WORKER-10 pass 482: + 'alert' (aiops-svc alert acknowledge audit) */
+     FIX-WORKER-10 pass 482: + 'alert' (aiops-svc alert acknowledge audit)
+     FIX-WORKER-4  pass 485: + 'report' (review-svc report.resolve audit pass 23
+       - admin filter ?target_type=report era rejected silent; necessario p/
+       audit forensic link per-row em /admin/reports page) */
   const VALID_TT = new Set([
     'user','seller','product','order','order_item',
     'seller_payout','pending_wallet_payout','payouts_pending_wallet',
     'vault_api_key','vault_key','vault_internal','user_session','qa_callback','asaas_webhook',
-    'alert',
+    'alert','report',
     'category','review','qna','dispute',
   ]);
   const targetIdFilter = (targetId && UUID_RE.test(targetId)) ? targetId : null;
