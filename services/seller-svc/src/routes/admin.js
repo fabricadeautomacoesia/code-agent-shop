@@ -822,7 +822,17 @@ router.get('/payouts/pending',
     //   pending/approved (ativos) = ASC (FIFO queue, oldest first p/ SLA)
     //   paid/rejected (final) = DESC (recentes p/ auditoria)
     //   all/all_states = DESC (mistura - prioriza visualizacao recente)
-    const orderDirection = (status === 'pending' || status === 'approved' || status === 'all')
+    /* FIX-WORKER-4 pass 634 (BUG inconsistencia comentario vs codigo - admin UX):
+       PRE-FIX: condition `status === 'all'` retornava ASC (oldest first MIXED)
+       MAS comentario linha 824 declara 'all/all_states = DESC' (recentes primeiro)
+       - Admin /admin/payouts default 'all' view -> mostra payouts ANTIGOS primeiro
+       - Inconsistente vs /admin/orders, /admin/sellers, /admin/reports (DESC default)
+       - Pattern V8: terminal states DESC, active states ASC (FIFO triage)
+       - 'all' MIXES estados -> recentes mais relevantes (idem UX dashboards admin)
+       POST-FIX: 'all' removido da condicao ASC -> retorna DESC (alinha comentario)
+       - active filter explicit (pending/approved) preserva ASC FIFO behavior
+       - all + paid + rejected -> DESC default UX consistente cross-admin */
+    const orderDirection = (status === 'pending' || status === 'approved')
       ? 'ASC' : 'DESC';
 
     const r = await query(
