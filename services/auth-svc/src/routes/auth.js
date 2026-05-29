@@ -84,6 +84,27 @@ const emptyToUndef = (v) => (v === '' || v === null ? undefined : v);
 // na app é defesa em profundidade comum (pattern Stripe, Auth0, Supabase).
 const normalizedEmail = z.string().email().max(180).transform((s) => s.trim().toLowerCase());
 
+// FIX-WORKER-6 pass 607 (cpf_cnpj regex hardening - paridade pass 385 patchMeSchema):
+//   PRE-FIX (register): cpf_cnpj z.string().min(11).max(20).optional() SEM regex.
+//   Inconsistencia auth-svc:
+//   - /me PATCH (pass 385): regex /^[0-9./\-]+$/ aplicado (digits + . - / only)
+//   - /register (este): SEM regex - aceita 'abc12345678' (Zod passa, handler
+//     algoritmo isValidCpf catch DV mismatch MAS audit_log + DB store raw)
+//   Vetores aceitos /register pre-fix:
+//   - 'abc12345678' (11 chars) - Zod ok, isValidCpf algoritmo catch
+//   - '<svg>11.222' - Zod ok ate 20 chars - audit_log payload XSS risk
+//   - '\\r\\n11.222.333-44' - control char injection em logs
+//   Risco: cpf_cnpj raw em audit_log.payload_after antes do algoritmo validar
+//     -> XSS/log injection cross-svc se admin dashboard renderiza payload raw
+//   POST-FIX: + regex paridade /me PATCH pass 385:
+//   - /^[0-9./\-]+$/ - apenas digits + . - / aceitos (chars validos formato BR)
+//   - CPF format: 111.222.333-44 (14 chars com mask) ou 11122233344 (11 raw)
+//   - CNPJ format: 11.222.333/0001-44 (18 chars com mask) ou 14 raw
+//   - Algoritmo isValidCpf/Cnpj (auth.js linha 84+) valida DV apos normalizacao
+//   Pattern V8 W6 consolidacao auth-svc cpf_cnpj validation paridade:
+//     pass 385 PATCH /me regex applied
+//     pass 607 (este) POST /register regex applied
+//   100% endpoints auth-svc com cpf_cnpj regex consolidados.
 const registerSchema = z.object({
   email: normalizedEmail,
   password: z.string().min(8).max(128)
@@ -91,7 +112,11 @@ const registerSchema = z.object({
       'Senha precisa de maiuscula, numero e caractere especial (!@#$%^&* etc)'),
   full_name: z.string().min(2).max(200),
   role: z.enum(['buyer','seller']).default('buyer'),
-  cpf_cnpj: z.preprocess(emptyToUndef, z.string().min(11).max(20).optional()),
+  cpf_cnpj: z.preprocess(emptyToUndef,
+    z.string().min(11).max(20)
+      .regex(/^[0-9./\-]+$/, 'cpf_cnpj deve conter apenas digitos e . - /')
+      .optional()
+  ),
   phone_e164: z.preprocess(emptyToUndef, z.string().regex(/^\+[1-9]\d{6,14}$/).optional()),
 });
 
