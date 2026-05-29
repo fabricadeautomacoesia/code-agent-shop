@@ -67,9 +67,13 @@ export function ProgressiveCouponTeaser({
 
   return (
     <div className="rounded-lg border border-magenta/40 bg-gradient-to-br from-magenta/10 to-purple-500/5 p-3 mb-4">
-      <div className="flex items-center justify-between mb-2">
+      {/* FIX-WORKER-15 pass 539 (mobile 375px overflow): flex-wrap + gap p/
+          quando codigo cupom + label longa nao caberem em 1 linha. Antes:
+          em 375px o codigo PROGRESSIVO15 grudava na borda direita e label
+          "GANHE DESCONTO PROGRESSIVO" wrapava awkward sem gap. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 text-xs font-bold text-magenta-glow">
-          <TrendingUp className="w-3.5 h-3.5" />
+          <TrendingUp className="w-3.5 h-3.5" aria-hidden="true" />
           GANHE DESCONTO PROGRESSIVO
         </div>
         <span className="text-[10px] font-mono bg-magenta/20 text-magenta-glow px-2 py-0.5 rounded">
@@ -82,13 +86,17 @@ export function ProgressiveCouponTeaser({
           const reached = subtotalCents >= Number(t.min_cents);
           const isActive = idx === active;
           return (
-            <div key={idx} className={`flex justify-between items-center text-xs ${
+            <div key={idx}
+              /* FIX-WORKER-15 pass 539: flex-wrap + gap p/ tier rows.
+                 Em 375px, "A partir de R$ 1.999,00" + "-15% R$" pode wrappar
+                 awkward sem espaco. flex-wrap + gap-x preserva alinhamento. */
+              className={`flex flex-wrap items-center justify-between gap-x-2 text-xs ${
               isActive ? 'text-white font-bold' : reached ? 'text-white/70' : 'text-white/40'
             }`}>
               <span className="flex items-center gap-1.5">
                 {reached
-                  ? <Check className="w-3 h-3 text-green-400" />
-                  : <span className="w-3 h-3 rounded-full border border-white/30 inline-block" />}
+                  ? <Check className="w-3 h-3 text-green-400" aria-hidden="true" />
+                  : <span className="w-3 h-3 rounded-full border border-white/30 inline-block" aria-hidden="true" />}
                 A partir de {Api.formatBRL(Number(t.min_cents))}
               </span>
               <span className={isActive ? 'text-magenta-glow font-mono' : 'font-mono'}>
@@ -107,14 +115,23 @@ export function ProgressiveCouponTeaser({
       )}
 
       {active >= 0 ? (
+        /* FIX-WORKER-15 pass 539 (mobile + a11y):
+           - type='button' explicit (componente pode ser renderizado dentro de
+             <form> futuramente, sem type defaultaria submit = form unexpected)
+           - focus-visible outline magenta paridade pass 537 (gradient CTA)
+           - aria-busy enquanto applying (assistive tech context)
+           - Tag/ArrowRight icons aria-hidden (decorativos) */
         <button
+          type="button"
           onClick={applyNow}
           disabled={applying}
-          className="w-full px-3 py-2 rounded-lg bg-gradient-vibe text-white text-xs font-semibold hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5 disabled:opacity-50"
+          aria-busy={applying}
+          aria-label={applying ? 'Aplicando cupom progressivo' : `Aplicar cupom progressivo, desconto de ${Api.formatBRL(preview.discount_cents || 0)}`}
+          className="w-full px-3 py-2 rounded-lg bg-gradient-vibe text-white text-xs font-semibold hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta"
         >
-          <Tag className="w-3.5 h-3.5" />
+          <Tag className="w-3.5 h-3.5" aria-hidden="true" />
           {applying ? 'Aplicando...' : `Aplicar -${Api.formatBRL(preview.discount_cents || 0)} agora`}
-          {!applying && <ArrowRight className="w-3.5 h-3.5" />}
+          {!applying && <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />}
         </button>
       ) : (
         <div className="text-center text-[11px] text-white/40 py-1">
@@ -122,7 +139,14 @@ export function ProgressiveCouponTeaser({
         </div>
       )}
 
-      {err && <div className="text-[11px] text-red-400 mt-2">{err}</div>}
+      {/* FIX-WORKER-15 pass 539 (a11y): role=alert + aria-live polite para
+          screen readers anunciarem erro de apply cupom (era texto silent).
+          Paridade pattern login/cart-drawer (pass 492/501). */}
+      {err && (
+        <div role="alert" aria-live="polite" className="text-[11px] text-red-400 mt-2">
+          {err}
+        </div>
+      )}
     </div>
   );
 }
