@@ -715,9 +715,26 @@ router.post('/:id/kyc/reject',
 // + DLP mask.text rejected_reason (admin pode escrever CPF/Bearer no motivo)
 // + ?limit + ?offset (pattern V8 W7 pass E)
 // + Parameterized $1 em vez de string interpolation status
+// FIX-WORKER-18 pass 611 (cache key normalization paridade cadeia 24 sites
+// W7+W10+W12+W13+W17+W18 cache hygiene cross-svc consolidacao - 25 sites total):
+//   PRE-FIX BUGS (3 issues cache pollution vs handler):
+//   1. Raw q.status sem VALID whitelist check (handler linha 735-736).
+//      Cenarios:
+//      - ?status=INVALID -> cache key 's=INVALID', handler default 'pending'
+//      - Pollution + cache key sprawl com mesma response
+//   2. Raw q.limit. Handler clamps Math.max/Math.min [1, 200] (linha 737).
+//      ?limit=99999 -> cache key 'lim=99999', handler clamp 200 SAME response.
+//   3. Raw q.offset. Handler Math.max(0, ...) (linha 738).
+//      ?offset=-5 -> cache key 'off=-5', handler -> 0.
+//   POST-FIX: normalize cache key SAME way handler normalizes.
+//   Paridade cadeia 24 sites cache hygiene cross-svc (passes 520-610).
+const VALID_PAYOUT_PENDING_STATUS = new Set(['pending','approved','paid','rejected','all','all_states']);
 const payoutsPendingCacheKey = (req) => {
-  const q = req.query;
-  return `seller:admin:payouts-pending:s=${q.status||'pending'}:lim=${q.limit||50}:off=${q.offset||0}`;
+  const statusRaw = (req.query.status || '').toString().trim().toLowerCase();
+  const status = VALID_PAYOUT_PENDING_STATUS.has(statusRaw) ? statusRaw : 'pending';
+  const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  return `seller:admin:payouts-pending:s=${status}:lim=${lim}:off=${off}`;
 };
 
 router.get('/payouts/pending',
