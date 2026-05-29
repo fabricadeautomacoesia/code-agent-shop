@@ -709,10 +709,15 @@ const PAYOUT_STATUS_ENUM = new Set([
 //      ?offset=-5 -> cache key 'o-5', handler -> 0.
 //   POST-FIX: normalize cache key SAME way handler normalizes (paridade
 //   cadeia 23 sites pre-cache: 520-609 consolidacao).
+/* FIX-WORKER-5 pass 720 (case-insensitive payouts status paridade cadeia 34+ sites):
+   PRE-FIX: status raw .trim() apenas (case-sensitive whitelist)
+   - Seller /financeiro URL drift -> case variance UX
+   - ?status=Pending vs pending = 400 handler invalid_status
+   POST-FIX: + .toLowerCase() ANTES whitelist check (cacheKey + handler) */
 const payoutsCacheKey = (req) => {
   const userId = req.user?.sub || 'anon';
   // Normalize status: PAYOUT_STATUS_ENUM whitelist check or 'all'
-  const statusRaw = (req.query.status || '').toString().trim();
+  const statusRaw = (req.query.status || '').toString().trim().toLowerCase();
   const status = PAYOUT_STATUS_ENUM.has(statusRaw) ? statusRaw : 'all';
   const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
   const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
@@ -725,7 +730,10 @@ router.get('/payouts',
     // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
     const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-    const statusFilter = req.query.status ? String(req.query.status) : null;
+    // FIX pass 720: + .trim().toLowerCase() paridade cacheKey case-insensitive
+    const statusFilter = req.query.status
+      ? String(req.query.status).trim().toLowerCase()
+      : null;
     if (statusFilter && !PAYOUT_STATUS_ENUM.has(statusFilter)) {
       return res.status(400).json({ error: 'invalid_status', allowed: Array.from(PAYOUT_STATUS_ENUM) });
     }
