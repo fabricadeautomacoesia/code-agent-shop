@@ -39587,3 +39587,45 @@ CADEIA cross-svc withRetry atomicity status:
 - seller-svc admin: 5 tx LAGGED (proxima micro-tarefa)
 
 385 passes acumulados (268->655) sem deploy VPS
+
+============================================================================
+SESSAO 656-660 (W4 seller-svc admin 5/5 withRetry COMPLETA atomicity defense)
+============================================================================
+
+Pass 656 (W4 seller admin /:id/suspend withRetry):
+- tx() lock contention: UPDATE sellers + UPDATE user_sessions + audit_log + notification
+- Cenarios: admin mass-suspend batch, race login attempt seller, race reactivate concorrente
+
+Pass 657 (W4 seller admin /:id/reactivate withRetry):
+- tx() paridade pass 656 - cash flow unblock + UX engagement
+
+Pass 658 (W4 seller admin /:id/kyc/approve withRetry):
+- tx() UPDATE sellers status + audit_log + notification email
+- Race com kyc/reject concorrente (admin dupla decisao)
+
+Pass 659 (W4 seller admin /:id/kyc/reject withRetry):
+- tx() UPDATE sellers status + audit_log + notification (priority 3)
+- Race com kyc/approve concorrente
+
+Pass 660 (W4 seller admin payouts-pending-wallet/:id/force-liquidate withRetry):
+- tx() UPDATE seller_payouts status + audit_log critical financeiro
+- ULTIMO seller-svc admin tx lagged - COMPLETA 5/5
+
+CADEIA seller-svc admin atomicity COMPLETA 5/5 endpoints:
+- suspend (pass 656)
+- reactivate (pass 657)
+- kyc/approve (pass 658)
+- kyc/reject (pass 659)
+- force-liquidate (pass 660)
++ withRetry import @cas/shared (era ausente) + mask destructure DRY
+
+CADEIA cross-svc withRetry atomicity STATUS:
+- auth-svc: 6/6 tx COMPLETA (pass 654-655)
+- vault-svc: 8/8 endpoints write COMPLETA (pass 643)
+- product-svc admin: 3/3 COMPLETA (pass 650-652)
+- seller-svc admin: 5/5 COMPLETA (passes 656-660 ESTA SESSAO)
+- payment-svc: refund + create COMPLETA (pass 644)
+- order-svc: dispute resolve + checkout COMPLETA (historico)
+- TOTAL: ~30 endpoints/tx cross-svc consolidacao 100%
+
+390 passes acumulados (268->660) sem deploy VPS
