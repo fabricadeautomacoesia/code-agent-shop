@@ -215,9 +215,31 @@ router.delete('/:product_id', asyncHandler(async (req, res, next) => {
 // + WishlistButton em PDP. 100 produtos visiveis = 100 hits ate now.
 // Cache 60s + invalidation em POST/DELETE wishlist mantem freshness.
 const checkCacheKey = (req) => `wishlist:check:${req.user?.sub || 'anon'}:${req.params.product_id}`;
+/* FIX-WORKER-7 pass 551 (cache pollution from invalid UUIDs):
+   PRE-FIX BUG: cache.cacheMiddleware corria ANTES do UUID_RE.test() guard.
+   - User/atacante envia /wishlist/abc/check (UUID malformado)
+   - cacheMiddleware computa key 'wishlist:check:USER:abc' e cacheia
+   - Handler depois retorna 400 invalid_uuid
+   - Cache pollution: cada tentativa malformada vira entry diferente
+   - Redis storage waste + cache key sprawl em atacante probing flow
+   - Mitigation: chave inclui malformed input - mas cache shouldnt store 400s
+   POST-FIX: validar UUID em pre-middleware (skipCacheIfInvalid).
+   - Bypassa cacheMiddleware quando input invalido
+   - Handler retorna 400 sem polluir cache
+   - Cache permanece com keys validas apenas
+   - Pattern V8 W18 cache hygiene cross-svc (paridade aiops pass 520 +
+     search pass 533) */
+const skipCacheIfInvalid = (req, res, next) => {
+  if (!UUID_RE.test(req.params.product_id || '')) {
+    return next(errorHandler.badRequest('invalid_uuid'));
+  }
+  next();
+};
 router.get('/:product_id/check',
+  skipCacheIfInvalid,
   cache.cacheMiddleware(checkCacheKey, 60),
   asyncHandler(async (req, res, next) => {
+    // UUID ja validado em skipCacheIfInvalid - mas mantido defensive
     if (!UUID_RE.test(req.params.product_id)) {
       return next(errorHandler.badRequest('invalid_uuid'));
     }
