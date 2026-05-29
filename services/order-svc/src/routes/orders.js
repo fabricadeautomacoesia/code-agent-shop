@@ -904,6 +904,16 @@ router.get('/admin/disputes',
          LEFT JOIN sellers s ON s.id = d.against_seller_id
          LEFT JOIN orders o ON o.id = d.order_id
         WHERE ($1::TEXT IS NULL OR d.status::TEXT = $1)
+        /* FIX-WORKER-2 pass 636 (Regra D direction parity tiebreaker - mixed direction fix):
+           PRE-FIX: ORDER BY ... d.created_at DESC, d.id (sem direction explicit)
+           - PG default ASC para tiebreaker quando omitted -> MIXED direction
+             DESC + ASC = External Sort obrigatorio (idx composite nao bate)
+           - Inconsistencia vs cadeia Regra D V8 cross-svc (30+ sites DESC+DESC)
+           - Admin /admin/disputes page polling default ordem mixed:
+             prioridade ASC (case enum) -> recentes DESC -> mas tiebreaker ASC
+           - mig 109 idx_disputes_created (created_at DESC) nao cobre id direction
+           POST-FIX: d.id DESC explicit (paridade cadeia 30+ sites cross-svc)
+           - Direction parity Regra D V8 dentro mesmo created_at: id DESC ties */
         ORDER BY
           CASE d.status::TEXT
             WHEN 'opened' THEN 1
@@ -913,7 +923,7 @@ router.get('/admin/disputes',
             ELSE 5
           END,
           d.created_at DESC,
-          d.id
+          d.id DESC
         LIMIT $2 OFFSET $3`,
       [statusFilter, limit, offset]
     );
