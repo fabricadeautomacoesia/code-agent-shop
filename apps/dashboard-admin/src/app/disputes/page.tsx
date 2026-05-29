@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { adminFetch, fmtDate, fmtBRL } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
 import { AlertTriangle, CheckCircle, XCircle, Clock } from 'lucide-react';
@@ -135,8 +136,10 @@ export default function DisputesPage() {
 
   return (
     <div>
+      {/* FIX-WORKER-4 pass 565 (a11y - paridade pass 541/561 icons consolidacao):
+          AlertTriangle heading icon decorativo + texto 'Disputas' descritivo. */}
       <h1 className="font-display font-bold text-4xl mb-2 flex items-center gap-3">
-        <AlertTriangle className="w-8 h-8 text-yellow-400" /> Disputas
+        <AlertTriangle className="w-8 h-8 text-yellow-400" aria-hidden="true" /> Disputas
       </h1>
       <p className="text-white/60 mb-6">Triagem e resolucao de disputas abertas por compradores.</p>
 
@@ -184,8 +187,10 @@ export default function DisputesPage() {
       )}
 
       {data.disputes.length === 0 ? (
-        <div className="glass p-12 text-center text-white/50">
-          <Clock className="w-12 h-12 mx-auto mb-3 opacity-30" />
+        /* FIX-WORKER-4 pass 565 (a11y empty state - paridade pass 544/556):
+            role=status SR announce + Clock icon aria-hidden. */
+        <div role="status" className="glass p-12 text-center text-white/50">
+          <Clock className="w-12 h-12 mx-auto mb-3 opacity-30" aria-hidden="true" />
           Nenhuma disputa {filter ? STATUS_LABELS[filter].toLowerCase() : ''} no momento.
         </div>
       ) : (
@@ -196,12 +201,31 @@ export default function DisputesPage() {
               <div key={d.id} className="glass p-4 hover:bg-white/5 transition-colors">
                 <div className="flex items-start justify-between gap-4 mb-3">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
+                    {/* FIX-WORKER-4 pass 565 (dispute forensic audit link - completa
+                        cadeia admin CRITICAL pages 451/452/455/543):
+                        PRE-FIX: dispute row sem investigation flow.
+                        - Disputes = REAL MONEY arbitration (refund/replacement decisions)
+                        - Admin via status/reason mas SEM:
+                          a. Trail forense de transitions opened->under_review->resolved
+                          b. One-click drill-down ao audit_log
+                          c. Cross-svc cross-reference (dispute.* + order.* actions)
+                        POST-FIX: + Link 'audit' target_type=dispute
+                        Pattern V8 W4 admin CRITICAL forensic flow COMPLETO 5/5 pages:
+                        pass 451 orders + 452 sellers + 455 payouts + 543 vault +
+                        565 (este) disputes. */}
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold border ${STATUS_COLORS[d.status]}`}>
                         {STATUS_LABELS[d.status]}
                       </span>
                       <span className="text-xs text-white/40">#{d.order_number}</span>
                       <span className="text-xs text-magenta-glow font-mono">{fmtBRL(d.total_cents)}</span>
+                      <Link
+                        href={`/audit-log?target_id=${d.id}&target_type=dispute`}
+                        aria-label={`Ver audit log da disputa #${d.order_number}`}
+                        title="Ver audit log da disputa (forensic)"
+                        className="text-[10px] text-white/30 hover:text-magenta-glow underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                        audit
+                      </Link>
                     </div>
                     <div className="text-sm font-semibold mb-1">
                       {REASON_LABELS[d.reason_code] || d.reason_code} - solicita: {d.requested_resolution}
