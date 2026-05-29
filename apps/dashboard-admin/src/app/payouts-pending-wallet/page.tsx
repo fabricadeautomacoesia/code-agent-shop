@@ -114,9 +114,16 @@ export default function PayoutsPendingWalletPage() {
         )}
       </div>
 
+      {/* FIX-WORKER-4 pass 586 (a11y dismiss button paridade pass 492/552 admin error banners):
+          PRE-FIX: error banner sem dismiss action - user precisava recarregar
+          page p/ limpar erro persistente. Inconsistente com outros admin pages
+          (orders pass 6, sellers pass 427, payouts pass 427) que tem retry. */}
       {error && (
-        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4">
-          Erro: {error}
+        <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+          <span>Erro: {error}</span>
+          <button type="button" onClick={() => { setError(''); load(); }}
+            aria-label="Tentar carregar lista novamente"
+            className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">retry</button>
         </div>
       )}
 
@@ -166,7 +173,8 @@ export default function PayoutsPendingWalletPage() {
 
       <div className="glass p-6 overflow-x-auto">
         {payouts.length === 0 ? (
-          <p className="text-white/60 text-center py-12">
+          /* FIX-WORKER-4 pass 586 (a11y empty state - paridade pass 544/556/565/580) */
+          <p role="status" className="text-white/60 text-center py-12">
             {status === 'pending' ? 'Nenhum payout pendente. Bom sinal - sellers tem wallets configuradas.' : `Nenhum payout em ${status}.`}
           </p>
         ) : (
@@ -182,8 +190,34 @@ export default function PayoutsPendingWalletPage() {
                 const badge = STATUS_BADGE[p.status] || STATUS_BADGE.pending;
                 return (
                   <tr key={p.id} className="border-b border-white/5 hover:bg-white/5">
+                    {/* FIX-WORKER-4 pass 586 (forensic audit link - paridade cadeia 6/6 admin pages):
+                        PRE-FIX: pending_wallet_payout row sem investigation flow.
+                        - DEBT QUEUE = sellers sem wallet em vendas pagas
+                        - Status transitions pending->liquidated/forfeited critical
+                        - Admin via store_name + amount mas SEM:
+                          a. Trail forense de transitions (create/liquidate/forfeit)
+                          b. Force-liquidate audit cross-reference (pass 277 endpoint)
+                          c. Cron daily liquidacao process tracking
+                        POST-FIX: + Link 'audit' target_type=pending_wallet_payout
+                        - Consume pass 430 backend audit_log filter
+                        - VALID_TT enum aiops-svc ja inclui (linha 643 + 644)
+                        Pattern V8 W4 admin forensic flow extensao alem 6 CRITICAL pages:
+                          451 orders + 452 sellers + 455 payouts + 543 vault +
+                          565 disputes + 580 products + 586 (este) pending_wallet */}
                     <td className="py-3">
-                      <Link href={`/sellers?slug=${p.store_slug}`} className="hover:text-magenta">{p.store_name}</Link>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Link href={`/sellers?slug=${p.store_slug}`}
+                          className="hover:text-magenta focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                          {p.store_name}
+                        </Link>
+                        <Link
+                          href={`/audit-log?target_id=${p.id}&target_type=pending_wallet_payout`}
+                          aria-label={`Audit log do payout pendente de ${p.store_name}`}
+                          title="Ver audit log (forensic)"
+                          className="text-[10px] text-white/30 hover:text-magenta-glow underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                          audit
+                        </Link>
+                      </div>
                     </td>
                     <td className="font-display font-bold text-magenta-glow">{fmtBRL(p.amount_cents)}</td>
                     <td>
