@@ -40566,3 +40566,37 @@ CADEIA cache hygiene cross-svc invariante:
 = 2 lessons learned cache hygiene observability cumulative
 
 452 passes acumulados (268->722) sem deploy VPS
+
+============================================================================
+SESSAO 723-724 (W4 cache hygiene mismatch handler .trim() paridade cacheKey)
+============================================================================
+
+Pass 723 (W4 /payouts/pending handler .trim() paridade):
+- DESCOBERTA: cacheKey ja aplica .trim().toLowerCase() linha 793
+  MAS handler linha 803 .toLowerCase() apenas (no .trim())
+- Trailing whitespace ?status=pending%20 (URL encoded space):
+  cacheKey 'pending' (trimmed) MAS handler 'pending ' (with space)
+  -> handler match falha if VALID_PAYOUT_PENDING_STATUS check exact
+  -> default 'pending' MAS cache stored under 'pending' (trimmed key)
+- Cache hit retorna response WITHOUT filter applied
+- POST-FIX: + .trim() handler paridade cacheKey
+
+Pass 724 (W4 /sellers/all handler .trim() paridade - 2 fields):
+- DESCOBERTA: cacheKey aplica .trim().toLowerCase() linha 366/368
+  MAS handler linha 400/407 .toLowerCase() apenas (no .trim())
+- Same root cause pass 723 - 2 fields affected (status + seller_class)
+- POST-FIX: + .trim() handler ambos campos paridade cacheKey
+
+CADEIA cache hygiene MISMATCH bugs detected + fixed (lessons learned):
+- pass 618: admin/reports cache shape errado (silent disabled)
+- pass 722: aiops /alerts severity case mismatch (silent UX broken)
+- pass 723: /payouts/pending handler .trim() gap (cache stale filter)
+- pass 724: /sellers/all handler .trim() gap (2 fields)
+= 4 cache hygiene MISMATCH bugs detected cumulative
+
+Pattern V8 cache hygiene invariante REFORCADO:
+- cache key MUST mirror handler normalization EXATA
+- helper @cas/shared/cache.js pass 709 log.warn detection
+- audits semestrais cacheKey vs handler drift
+
+454 passes acumulados (268->724) sem deploy VPS
