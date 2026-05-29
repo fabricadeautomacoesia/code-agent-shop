@@ -423,7 +423,29 @@ router.get('/sla-status',
 // BUG 3 *** Regra E PAGINATION MISSING *** hardcoded LIMIT 50
 //   Seller veterano (12+ meses) tem 100+ SLA events. Só vê 50 primeiras.
 //   FIX: ?limit (1-200, default 50) + ?offset + total + has_more.
-router.get('/sla-history', asyncHandler(async (req, res) => {
+// FIX-WORKER-18 pass 554 (cache gap - paridade /sla-status pass 397 + /payouts pass 676):
+//   PRE-FIX: GET /sellers/me/sla-history sem cache.cacheMiddleware.
+//   Dashboard-seller /financeiro SLA tab polling 30s = cada hit:
+//   - JOIN sellers s + seller_sla_history h
+//   - COUNT(*) OVER() window aggregate
+//   - Em sellers veteranos (12+m): ~50-100ms PG
+//   Paridade endpoints irmaos em me.js todos cached:
+//   - /sellers/me (sellerMeCacheKey, 30s)
+//   - /sla-status (slaStatusCacheKey, 60s)
+//   - /payouts (payoutsCacheKey, 30s)
+//   - /kpi (kpiCacheKey, 300s)
+//   - /sla-history (este) - era ausente
+//   POST-FIX: cache.cacheMiddleware 60s vary by user+pagination.
+//   Latency ~50-100ms -> ~1-2ms (Redis hit). SLA history e append-only
+//   (cron escreve novas entries) - 60s freshness adequada (vs realtime).
+const slaHistoryCacheKey = (req) => {
+  const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  return `seller:sla_history:u=${req.user?.sub || 'anon'}:lim=${lim}:off=${off}`;
+};
+router.get('/sla-history',
+  cache.cacheMiddleware(slaHistoryCacheKey, 60),
+  asyncHandler(async (req, res) => {
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   // FIX-WORKER-7 pass 109 deploy: schema real seller_sla_history tem
