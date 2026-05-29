@@ -642,7 +642,14 @@ const auditLogHandler = asyncHandler(async (req, res) => {
      Index mig 094 (target_id + created_at DESC PARTIAL) provides 10-30x speedup.
      Pattern V8 W14: filtros DB-side > client-side, exact match indexable. */
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const targetId = (req.query.target_id || '').toString().trim();
+  /* FIX-WORKER-10 pass 732 (cache hygiene MISMATCH target_id paridade cacheKey linha 792):
+     PRE-FIX: handler .trim() apenas (no .toLowerCase())
+     - cacheKey valida UUID_RE (case-insensitive) MAS depois tidRaw.toLowerCase()
+     - handler aceita UPPERCASE UUID raw -> PG WHERE comparison case-sensitive contra
+       canonical lowercase -> 0 rows (UUID storage lowercase canonical PG)
+     - cacheKey 'tid=abc-123' (lowercase) MAS handler queries 'ABC-123' -> miss
+     POST-FIX: + .toLowerCase() handler paridade cacheKey (canonical storage) */
+  const targetId = (req.query.target_id || '').toString().trim().toLowerCase();
   const targetType = (req.query.target_type || '').toString().trim().toLowerCase();
   /* FIX-WORKER-4 pass 455 (VALID_TT alinhar com actual target_types cross-svc):
      PRE-FIX (pass 430): 'payout' generic - mas svcs usam 'seller_payout' e
