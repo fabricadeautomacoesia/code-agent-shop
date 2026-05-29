@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, errorHandler, validate, rateLimiter, mask, maskPII, cache } = require('@cas/shared');
+const { jwt, asyncHandler, errorHandler, validate, rateLimiter, mask, maskPII, cache, withRetry } = require('@cas/shared');
 
 const router = express.Router();
 router.use(jwt.requireAuth());
@@ -174,9 +174,18 @@ router.patch('/',
     vals.push(req.user.sub);
     const limIdx = i;
 
+    /* FIX-WORKER-6 pass 718 (withRetry PATCH /me deadlock defense - cadeia auth-svc cumulative):
+       PRE-FIX: tx() sem withRetry wrap.
+       - Cenarios deadlock 40P01:
+         1. User double-click "Salvar perfil" -> 2 concurrent UPDATE lock contention
+         2. Race com /auth/2fa/enable mesma row users (UPDATE concurrent)
+         3. Race com cron user_activity update (timezone touch on login)
+       - Pass 654/655 ja consolidou forgot_password + reset_password tx atomicity
+         /me PATCH ficou lagged (descobertura tardia)
+       POST-FIX: withRetry('auth.patch_me.tx') wrap 3 attempts backoff. */
     let outcome;
     try {
-      await tx(async (c) => {
+      await withRetry('auth.patch_me.tx', async () => await tx(async (c) => {
         // BUG 1 Regra K: SELECT FOR UPDATE em users (anti-race)
         const cur = await c.query(
           `SELECT id, cpf_cnpj AS old_cpf FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
@@ -237,7 +246,7 @@ router.patch('/',
              ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
            })]
         );
-      });
+      }));
     } catch (e) {
       // BUG 6: CPF unique violation -> 409 (era 500 leak)
       if (e.code === '23505') {
