@@ -836,12 +836,19 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
                  'alt_text', pm.caption, 'sort_order', pm.sort_order
                ) ORDER BY pm.sort_order)
                  FROM product_media pm WHERE pm.product_id = p.id) AS media,
-              (p.sales_count >= 5 AND p.sales_count = (
-                 SELECT MAX(p2.sales_count) FROM products p2
-                  WHERE p2.category_id = p.category_id
-                    AND p2.status IN ('approved','platform_owned')
-                    AND p2.deleted_at IS NULL
-              )) AS is_top_seller
+              /* FIX-WORKER-10 pass 487 (is_top_seller boolean + NULL category guard):
+                 Paridade search-svc fix mesma pass. category_id e NULLABLE -
+                 quando NULL: MAX retorna NULL -> p.sales_count=NULL e NULL -
+                 is_top_seller NULL (nao FALSE) - frontend OfficialBadge prop NULL.
+                 Fix: AND p.category_id IS NOT NULL pre-guard + COALESCE FALSE wrap. */
+              COALESCE(
+                p.sales_count >= 5 AND p.category_id IS NOT NULL AND p.sales_count = (
+                  SELECT MAX(p2.sales_count) FROM products p2
+                   WHERE p2.category_id = p.category_id
+                     AND p2.status IN ('approved','platform_owned')
+                     AND p2.deleted_at IS NULL
+                ), FALSE
+              ) AS is_top_seller
          FROM products p
          LEFT JOIN sellers s ON s.id = p.seller_id
          LEFT JOIN categories c ON c.id = p.category_id AND c.is_active = TRUE

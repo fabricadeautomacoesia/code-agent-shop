@@ -36358,3 +36358,51 @@ W14 idx PARTIAL cadeia consume hot paths:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply (9 idx PARTIAL/composite)
+
+## Pass 487 - W10 SEARCH/AIOPS: is_top_seller boolean + NULL category guard
+
+PRE-FIX (2 svcs, mesma classe de bug):
+- search-svc /search linha 188 e product-svc /products/:slug linha 839
+- products.category_id e NULLABLE (mig 005 sem NOT NULL constraint)
+- Subquery is_top_seller:
+  (p.sales_count >= 5 AND p.sales_count = (
+    SELECT MAX(p2.sales_count) FROM products p2
+     WHERE p2.category_id = p.category_id ...
+  )) AS is_top_seller
+
+BUG 1 (boolean correctness):
+  category_id IS NULL -> subquery WHERE p2.category_id = NULL -> NULL=NULL e NULL
+  -> 0 rows match -> MAX() retorna NULL
+  -> p.sales_count = NULL e NULL (nao FALSE)
+  -> is_top_seller retornado como NULL ao inves de FALSE
+  -> Frontend OfficialBadge isTopSeller={null} - prop boolean recebe NULL
+  -> React warning + render imprevisivel se logic checa === true
+
+BUG 2 (perf desperdicio):
+  Subquery correlated executa por cada row LIMIT 24 default.
+  Mesmo p.category_id IS NULL ou p.sales_count<5 a subquery roda.
+  Pattern V8 W14: short-circuit AND para evitar subquery quando
+  pre-condition falha.
+
+POST-FIX:
+- AND p.category_id IS NOT NULL como pre-guard (short-circuit
+  PG planner skip subquery se NULL)
+- COALESCE(..., FALSE) garante boolean nunca NULL
+- Aplicado em search-svc/server.js + product-svc/routes/public.js
+- Trade-off NENHUM: queries com category_id NOT NULL identicas
+  (PG ja avalia AND left-to-right). Apenas elimina edge case NULL.
+
+Coverage queries:
+- /search homepage hot-path 24 rows default
+- /products/:slug PDP single row (1x query mas widely chamada)
+
+Paridade cross-svc consistency:
+- search-svc + product-svc agora retornam is_top_seller boolean canonico
+- Frontend OfficialBadge isTopSeller prop sempre boolean
+
+220 passes acumulados (268->487) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply

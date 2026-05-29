@@ -185,12 +185,35 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
            p.last_sale_at,
            s.store_slug, s.store_name, s.reputation_tier,
            c.slug AS category_slug, c.name AS category_name,
-           (p.sales_count >= 5 AND p.sales_count = (
-              SELECT MAX(p2.sales_count) FROM products p2
-               WHERE p2.category_id = p.category_id
-                 AND p2.status IN ('approved','platform_owned')
-                 AND p2.deleted_at IS NULL
-           )) AS is_top_seller,
+           /* FIX-WORKER-10 pass 487 (is_top_seller boolean + perf NULL category guard):
+              PRE-FIX BUG 1 (boolean correctness):
+                category_id e NULLABLE (mig 005 sem NOT NULL).
+                Quando p.category_id IS NULL:
+                - Subquery: WHERE p2.category_id = NULL -> NULL=NULL e NULL (nao TRUE)
+                - 0 rows match -> MAX() retorna NULL
+                - p.sales_count = NULL e NULL (nao FALSE)
+                - is_top_seller retornado como NULL ao inves de FALSE
+                - Frontend OfficialBadge isTopSeller={null} - prop boolean recebe NULL
+                  (warning React + render imprevisivel se logic checa === true)
+              PRE-FIX BUG 2 (perf desperdicio):
+                Subquery correlated executa por cada row LIMIT 24 default.
+                Mesmo p.category_id IS NULL ou p.sales_count<5 a subquery roda.
+                Pattern V8 W14: short-circuit AND para evitar subquery quando
+                pre-condition falha.
+              POST-FIX:
+                - AND p.category_id IS NOT NULL como pre-guard (short-circuit
+                  PG planner skip subquery se NULL)
+                - COALESCE(..., FALSE) garante boolean nunca NULL
+              Trade-off NENHUM: queries com category_id NOT NULL identicas (PG
+              ja avalia AND left-to-right). Apenas elimina edge case NULL. */
+           COALESCE(
+             p.sales_count >= 5 AND p.category_id IS NOT NULL AND p.sales_count = (
+               SELECT MAX(p2.sales_count) FROM products p2
+                WHERE p2.category_id = p.category_id
+                  AND p2.status IN ('approved','platform_owned')
+                  AND p2.deleted_at IS NULL
+             ), FALSE
+           ) AS is_top_seller,
            ${rank_expr} AS rank,
            fn_product_search_rank(
              ${rank_expr},
