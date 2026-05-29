@@ -93,13 +93,22 @@ router.get('/',
     params.push(`%${sEscaped}%`);
   }
 
-  // FIX-WORKER-7 pass 72 BUG 1: + s.id ASC tiebreaker
+  /* FIX-WORKER-7 pass 691 (Regra D direction parity - paridade cadeia 30+ sites cross-svc):
+     PRE-FIX (pass 72): + s.id ASC tiebreaker mas MIXED direction com chains DESC
+     - rep_desc + s.id ASC = MIXED -> External Sort obligatorio (idx composite nao bate)
+     - sales_desc + s.id ASC = MIXED
+     - newest (created_at DESC) + s.id ASC = MIXED
+     - rep_asc + s.id ASC = paridade OK (ASC+ASC)
+     Cadeia Regra D V8 cross-svc (30+ sites): DESC chain -> id DESC tiebreaker
+     POST-FIX: id DESC para chains DESC, id ASC apenas para rep_asc
+     Elimina External Sort hot path /sellers public listing
+     Pattern V8 consolidacao paridade pass 624 admin/sellers + pass 648 /search SORT_OPTIONS. */
   const order = ({
-    rep_desc:   's.reputation_score DESC, s.id ASC',
+    rep_desc:   's.reputation_score DESC, s.id DESC',
     rep_asc:    's.reputation_score ASC, s.id ASC',
-    sales_desc: 's.total_sales DESC, s.id ASC',
-    newest:     's.created_at DESC, s.id ASC',
-  })[sort] || 's.reputation_score DESC, s.id ASC';
+    sales_desc: 's.total_sales DESC, s.id DESC',
+    newest:     's.created_at DESC, s.id DESC',
+  })[sort] || 's.reputation_score DESC, s.id DESC';
 
   /* FIX-WORKER-2 pass 325: COUNT(*) OVER() window consolidation.
      Pattern V8 20+ endpoints (passes 178-321). */
