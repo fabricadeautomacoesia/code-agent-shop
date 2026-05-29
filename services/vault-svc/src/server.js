@@ -260,6 +260,20 @@ app.post('/keys', provisionRateLimit, adminOnly, validate({ body: provisionSchem
 // admins. Usa idx_vault_rotation partial (WHERE is_active = TRUE) - barato.
 async function rotationAlertCron() {
   try {
+    /* FIX-WORKER-17 pass 632 (Regra D direction parity tiebreaker - paridade cadeia 30+ sites):
+       PRE-FIX: ORDER BY rotation_due_at ASC sem id ASC tiebreaker.
+       - Cron diario rotationAlertCron - LIMIT 50 (rotation window 7d normalmente <50)
+       - Edge case: mass-provision keys mesmo rotation_days (90d default seller signup)
+         5+ keys CHEGAM mesma rotation_due_at second-precision em batch import
+       - Sem id ASC tiebreaker: PG default heap order arbitrario
+       - Cron run-1: detecta key A,B,C primeiro -> notification cobre A,B,C
+       - Cron run-2 (24h depois): detecta key C,A,B (heap reorder via VACUUM) ->
+         notification re-cobre mesmas 3 keys (idempotente OK) MAS ordem audit_log
+         payload_after.keys[] inverte -> forensic non-deterministic
+       - LIMIT 50 + 51+ keys due same instant -> drift mensal
+       POST-FIX: + id ASC tiebreaker (paridade Regra D V8 cross-svc).
+       - Cron output deterministic (audit trail forense estavel)
+       - LIMIT 50 picks always same N keys when ties (vs random rotation) */
     // Keys com rotation_due_at em < 7 dias (warning) e <= NOW() (overdue)
     const r = await query(
       `SELECT id, key_alias, provider, rotation_due_at,
@@ -268,7 +282,7 @@ async function rotationAlertCron() {
         WHERE is_active = TRUE
           AND rotation_due_at IS NOT NULL
           AND rotation_due_at < NOW() + INTERVAL '7 days'
-        ORDER BY rotation_due_at ASC
+        ORDER BY rotation_due_at ASC, id ASC
         LIMIT 50`
     );
     if (!r.rows.length) return;
