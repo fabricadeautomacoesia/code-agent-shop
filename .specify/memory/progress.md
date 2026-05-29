@@ -39375,3 +39375,44 @@ CADEIA W8 a11y cumulative storefront components:
 - 8 components a11y consolidacao cumulative
 
 375 passes acumulados (268->645) sem deploy VPS
+
+============================================================================
+SESSAO 646-647 (W13 LGPD prefs JOIN case-fold + W2 CartDrawer qty race)
+============================================================================
+
+Pass 646 (W13 LGPD prefs JOIN case-mismatch BUG - completa pass 238):
+- DESCOBERTA: LEFT JOIN user_notification_prefs unp case-sensitive
+- Pass 238 corrigiu CRITICAL_TEMPLATES bypass CASE WHEN com LOWER()
+- MAS deixou JOIN ON template_code case-sensitive lagged
+- CENARIO REAL LGPD violation:
+  - PATCH /prefs gravou row {template_code: 'Product_Qna_New', is_enabled: FALSE}
+    (typo cliente OU migration legacy mixed case)
+  - notif INSERT com template_code='product_qna_new' (lowercase canonical)
+  - JOIN case-sensitive -> unp.is_enabled=NULL -> default TRUE -> notif ENVIADA
+  - User opted-out via UI MAS recebe email - LGPD opt-out violation
+  - GET / pass 436 ja aplicou LOWER() em ambos lados desta JOIN (paridade gap)
+- POST-FIX: + LOWER(unp.template_code) = LOWER(n.template_code) defensive case-fold
+
+Pass 647 (W2 CartDrawer qty +/- buttons busy guard - anti-race):
+- DESCOBERTA: +/- buttons sem busy guard durante Api.cartSetQty fetch (~200-500ms)
+- CENARIO REAL CRITICAL race:
+  - User clica + rapido 3x em row prod -> 3 requests paralelas
+  - optimistic state aplica IMEDIATAMENTE qty+1 cada click
+  - 3 requests chegam backend em ordem arbitraria, ultimo wins
+  - Visual mostra qty=4 mas backend pode commit qty=2 (race winner)
+  - Pattern industry: optimistic UI exige lock single-flight per item id
+- POST-FIX: settingQtyId state guard analogo a removingId
+  - Bloqueia cliques + e - durante in-flight (anti-race)
+  - aria-busy true durante in-flight (SR feedback)
+  - cursor-wait visual + opacity disabled
+  - load() finaliza guard via finally clear
+
+CADEIA W2 cart/checkout anti-race consolidacao:
+- /cart redeem busy guard (pass 249)
+- /cart coupon busy guard (pass 255)
+- /cart remove busy guard (pass 494)
+- CartDrawer remove busy guard (pass 501)
+- CartDrawer qty setQty busy guard (pass 647 este)
+- 5 sites anti-double-click race consolidacao
+
+377 passes acumulados (268->647) sem deploy VPS
