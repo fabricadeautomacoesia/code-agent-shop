@@ -711,6 +711,23 @@ app.patch('/prefs', jwt.requireAuth(), asyncHandler(async (req, res) => {
      POST-FIX: regex whitelist alfanumerico + _ (templates patterns reais:
      'security_refresh_reuse', 'password_reset', '2fa_disabled', etc).
      Paridade KEY_ALIAS_REGEX vault pass 276. */
+  /* FIX-WORKER-13 pass 737 (CRITICAL template_code case mismatch silent skip - LGPD violation):
+     PRE-FIX BUG: TEMPLATE_CODE_REGEX = /^[a-z0-9_]{3,60}$/ case-sensitive lowercase apenas.
+     Handler valida pref.template_code RAW sem .toLowerCase() pre-regex.
+     CENARIO REAL LGPD breach (paridade pass 646 outbox JOIN case mismatch):
+     - Cliente UI bug OU storefront prefs page envia 'Product_Qna_New' (mixed case)
+     - Regex rejeita -> skipped++ silenciosamente (sem error response field por pref)
+     - User opt-out NUNCA aplicado em DB
+     - Notif continua enviando email -> LGPD opt-out violation silenciosa
+     - Pass 646 ja corrigiu outbox JOIN com LOWER() defensive mas PATCH /prefs lagged
+     - Sem trail forensic: skipped count agregado nao identifica WHICH templates skipped
+     POST-FIX:
+     - Normalize template_code .trim().toLowerCase() ANTES regex check
+     - Mensagem skip permanece (silent skip aceito para junk)
+     - LGPD opt-out cliente preservado mesmo com case-drift accidental
+     - Paridade outbox pass 646 LOWER() consistencia cross-paths
+     Pattern V8 W13 LGPD storage hygiene: dados normalizados = canonical form
+     CADEIA cache hygiene + storage normalize cross-svc cumulative (15 sites). */
   const TEMPLATE_CODE_REGEX = /^[a-z0-9_]{3,60}$/;
   // FIX-WORKER-13 pass 408 (bulk UPSERT via UNNEST - paridade pass 363):
   //   PRE-FIX: for loop sequencial - 100 queries DB roundtrip por request
@@ -727,10 +744,14 @@ app.patch('/prefs', jwt.requireAuth(), asyncHandler(async (req, res) => {
   const validPrefs = [];
   for (const pref of body.prefs) {
     if (!pref.template_code || typeof pref.template_code !== 'string') { skipped++; continue; }
-    if (!TEMPLATE_CODE_REGEX.test(pref.template_code)) { skipped++; continue; }
-    if (!PREFS_CHANNEL_ENUM.has(pref.channel)) { skipped++; continue; }
+    // FIX pass 737: normalize template_code antes regex check (LGPD case-drift defense)
+    const tcNorm = String(pref.template_code).trim().toLowerCase();
+    if (!TEMPLATE_CODE_REGEX.test(tcNorm)) { skipped++; continue; }
+    // FIX pass 737: channel tambem normalize (paridade defensive - PREFS_CHANNEL_ENUM ja lowercase)
+    const chNorm = String(pref.channel || '').trim().toLowerCase();
+    if (!PREFS_CHANNEL_ENUM.has(chNorm)) { skipped++; continue; }
     if (typeof pref.is_enabled !== 'boolean') { skipped++; continue; }
-    validPrefs.push(pref);
+    validPrefs.push({ template_code: tcNorm, channel: chNorm, is_enabled: pref.is_enabled });
   }
 
   if (validPrefs.length > 0) {

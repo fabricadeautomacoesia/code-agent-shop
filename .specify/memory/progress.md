@@ -40842,3 +40842,46 @@ product-svc public.js endpoints:
 - /:slug/reviews: cache 60s + pass 733 sort normalize
 - /compare: cache + ids normalize
 Status: public.js endpoints sem cache gap detectavel.
+
+## PASS 737 (W13 NOTIFICATION PATCH /prefs template_code case-drift silent skip - LGPD)
+
+services/notification-svc/src/server.js linhas 714-734
+
+PRE-FIX BUG (LGPD opt-out violation silenciosa):
+- TEMPLATE_CODE_REGEX = /^[a-z0-9_]{3,60}$/ case-sensitive lowercase apenas
+- Handler validava pref.template_code RAW sem .toLowerCase() pre-regex
+- Cliente UI bug OU storefront envia 'Product_Qna_New' (mixed case)
+- Regex rejeita -> skipped++ silenciosamente (sem error response por pref)
+- User opt-out NUNCA aplicado em DB
+- Notif continua enviando email -> LGPD opt-out VIOLATION SILENCIOSA
+- Pass 646 ja corrigiu outbox JOIN com LOWER() mas PATCH /prefs lagged
+- Sem trail forensic (skipped count agregado nao revela WHICH templates)
+
+POST-FIX:
+- tcNorm = String(pref.template_code).trim().toLowerCase() ANTES regex check
+- chNorm tambem normalize defensive (PREFS_CHANNEL_ENUM ja lowercase)
+- validPrefs.push usa tcNorm + chNorm (DB armazena canonical lowercase)
+- LGPD opt-out preservado mesmo com case-drift accidental cliente
+- Paridade outbox pass 646 LOWER() consistencia cross-paths
+
+W1 AUDIT (sem fix - NotificationBell + login solidissimos):
+- login/page.tsx: ?next deep-link redirect (pass 375), client email normalize (pass 183),
+  banners persistencia gates (pass 245), a11y aria-* completo (passes 5/160/492)
+- notification-bell.tsx: optimistic + rollback (pass 7), UUID guard (pass 267),
+  date defensive (pass 306), env-driven seller URL (pass 355), footer honesty (pass 510),
+  tabnabbing rel noreferrer (pass 230), a11y icons hidden (pass 653)
+Status: W1 auth flow 100% Blueprint V8 compliant.
+
+W2 AUDIT (sem fix - cart.js consolidado pass 734 + ja consolidado anteriormente):
+- /coupon storage canonical UPPERCASE (pass 734)
+- max_uses_per_user (pass 352), tier check (MLB++), withRetry tx (pass 681)
+Status: cart endpoints consolidados, sem bug detectavel.
+
+CADEIA cache hygiene + storage normalize cross-svc cumulative 16 sites:
+- pass 618 (cache shape errado)
+- pass 719-731 (10 sites case + trim mismatches)
+- pass 732-733 (target_id UUID + reviews sort)
+- pass 734 (coupon storage normalize)
+- pass 735 (sellers tier double-check)
+- pass 736 (qa/runs UUID case mismatch)
+- pass 737 (este - notif prefs template_code case-drift LGPD)
