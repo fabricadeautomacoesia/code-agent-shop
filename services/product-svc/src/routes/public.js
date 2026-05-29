@@ -697,9 +697,45 @@ const SORT_ENUM = new Set(['relevance','newest','price_asc','price_desc','rating
 
 router.get('/',
   listLimiter,
+  /* FIX-WORKER-7 pass 612 (cache key normalization 11 params - MASSIVE pollution gap):
+     PRE-FIX BUG: cache key usava 11 raw query params SEM normalize:
+     - q.category (raw, sem .trim().toLowerCase() - paridade pass 535 query)
+     - q.kind (raw, sem KIND_ENUM whitelist check)
+     - q.min_price/max_price (raw, sem Number.isFinite check)
+     - q.free/platform_owned (raw, sem 'true'/'false' normalize)
+     - q.seller (raw, sem .trim().toLowerCase())
+     - q.sort (raw, sem SORT_ENUM whitelist check)
+     - q.limit (raw, sem Math.max/Math.min clamp)
+     - q.page (raw, sem Math.max(1, ...) clamp)
+     - q.include_total (raw boolean)
+     Cenarios pollution amplificados em /products listing hot path:
+     - ?category=AI-Agents -> cache key 'cat=AI-Agents', handler lowercase 'ai-agents'
+     - ?kind=INVALID -> cache key 'kind=INVALID', handler 400
+     - ?limit=99999 -> cache key 'lim=99999', handler clamp 60
+     - ?page=-5 -> cache key 'page=-5', handler -> 1 page
+     - ?free=TRUE vs ?free=true = 2 entries pollution
+     - ?platform_owned=TRUE vs true = 2 entries
+     - Combinatorial explosion: 11 params x case variations = milhares pollution
+     POST-FIX: normalize CADA param SAME way handler normalizes.
+     Paridade cadeia 25 sites cache hygiene cross-svc (passes 520-611). */
   cache.cacheMiddleware((req) => {
     const q = req.query;
-    return `products:list:cat=${q.category||''}:kind=${q.kind||''}:min=${q.min_price||''}:max=${q.max_price||''}:free=${q.free||''}:platform=${q.platform_owned||''}:seller=${q.seller||''}:sort=${q.sort||''}:lim=${q.limit||24}:page=${q.page||1}:tot=${q.include_total||''}`;
+    const cat = (q.category || '').toString().trim().toLowerCase();
+    const kindRaw = String(q.kind || '').trim();
+    const kind = KIND_ENUM.has(kindRaw) ? kindRaw : '';
+    const minP = (q.min_price !== undefined && Number.isFinite(parseInt(q.min_price, 10)))
+      ? parseInt(q.min_price, 10) : '';
+    const maxP = (q.max_price !== undefined && Number.isFinite(parseInt(q.max_price, 10)))
+      ? parseInt(q.max_price, 10) : '';
+    const free = String(q.free || '').toLowerCase() === 'true' ? 'true' : '';
+    const plat = String(q.platform_owned || '').toLowerCase() === 'true' ? 'true' : '';
+    const seller = (q.seller || '').toString().trim().toLowerCase();
+    const sortRaw = String(q.sort || '').trim();
+    const sort = SORT_ENUM.has(sortRaw) ? sortRaw : '';
+    const lim = Math.max(1, Math.min(60, parseInt(q.limit, 10) || 24));
+    const page = Math.max(1, parseInt(q.page, 10) || 1);
+    const tot = String(q.include_total || '').toLowerCase() === 'true' ? 'true' : '';
+    return `products:list:cat=${cat}:kind=${kind}:min=${minP}:max=${maxP}:free=${free}:platform=${plat}:seller=${seller}:sort=${sort}:lim=${lim}:page=${page}:tot=${tot}`;
   }, 60),
   asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 3: clamp 1..60 (era Math.min apenas, deixava lim=-5 passar).
