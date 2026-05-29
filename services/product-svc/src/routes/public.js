@@ -60,9 +60,18 @@ const router = express.Router();
 //   top-rated products globais (sales_count >= 1 OR is_platform_owned).
 router.get('/recommendations/for-me',
   require('@cas/shared').jwt.requireAuth(),
-  /* FIX-WORKER-18 pass 302: cache key normalization paridade */
+  /* FIX-WORKER-18 pass 302: cache key normalization paridade
+     FIX-WORKER-18 pass 594 (Math.max(1, ...) clamp gap paridade cadeia 15 sites):
+     PRE-FIX BUG: cache key Math.min(parseInt(...) || 12, 50) MAS handler
+     usa Math.max(1, Math.min(50, ...)) (linha 69). Cenarios:
+     - ?limit=-5 -> parseInt=-5, -5||12=-5, Math.min(-5,50)=-5
+       cache key 'lim=-5', handler Math.max(1, ...)=1 -> SAME response 2 entries
+     - ?limit=0 -> 0||12=12, Math.min(12,50)=12 cache key 'lim=12', handler 12 OK
+     - ?limit=99999 -> Math.min(99999,50)=50 cache key 'lim=50' OK
+     POST-FIX: Math.max(1, ...) clamp pre-cache paridade cadeia 15 sites
+     consolidacao (520/530/533/551/558/566/572/576/577/579/582/583/588/589/590). */
   cache.cacheMiddleware((req) => {
-    const lim = Math.min(parseInt(req.query.limit, 10) || 12, 50);
+    const lim = Math.max(1, Math.min(50, parseInt(req.query.limit, 10) || 12));
     return `products:reco:for-me:${req.user.sub}:lim=${lim}`;
   }, 60),
   asyncHandler(async (req, res) => {
@@ -189,9 +198,10 @@ router.get('/recommendations/for-me',
 //   FIX: + limit echo (frontend pode confirmar param aplicado).
 router.get('/recently-viewed',
   require('@cas/shared').jwt.requireAuth(),
-  /* FIX-WORKER-18 pass 302: cache key normalization paridade pass 298 */
+  /* FIX-WORKER-18 pass 302: cache key normalization paridade pass 298
+     FIX-WORKER-18 pass 594 (Math.max(1, ...) clamp gap paridade pass 594 for-me) */
   cache.cacheMiddleware((req) => {
-    const lim = Math.min(parseInt(req.query.limit, 10) || 12, 30);
+    const lim = Math.max(1, Math.min(30, parseInt(req.query.limit, 10) || 12));
     return `products:recently-viewed:${req.user.sub}:lim=${lim}`;
   }, 30),
   asyncHandler(async (req, res) => {
