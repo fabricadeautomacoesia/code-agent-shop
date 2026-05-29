@@ -76,11 +76,42 @@ const allowedOrigins = (process.env.GATEWAY_CORS_ORIGINS ||
   'http://localhost:3000,http://localhost:3001,http://localhost:3003'
 ).split(',').map((s) => s.trim());
 
+/* FIX-WORKER-6 pass 497 (CRITICAL CORS bypass em producao):
+   PRE-FIX BUG (security CRITICAL):
+     origin: (origin, cb) => {
+       if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+         return cb(null, true);  // <-- aceita QUALQUER origin
+       }
+     }
+   Cenario: NODE_ENV nao setado em deploy (stack.yml/stack.inovare.yml NAO
+   setam NODE_ENV - verificado via grep, sem matches).
+   - process.env.NODE_ENV === undefined em containers production
+   - undefined !== 'production' = TRUE
+   - Resultado: CORS allowlist (allowedOrigins) BYPASSED em producao
+   - Qualquer origin (atacante.com, evil.local) recebe Access-Control-Allow-Origin
+   - Combinado com credentials:true: CSRF cross-origin via cookies do user
+   - Defeats inteiro propósito do whitelist (definido linhas 73-77)
+   POST-FIX:
+   - Inverter logica: explicit allowlist apenas em DEV ambientes conhecidos
+   - process.env.NODE_ENV === 'development' OR === 'test' OR === 'dev'
+   - Default-deny em producao OR se NODE_ENV unset (safe-by-default)
+   - Audit alert em fluxo deploy: NODE_ENV unset = log warn ao boot
+
+   Pattern V8 W6/W17: secure-by-default. NUNCA negar production - assumir
+   producao como default em ausencia de NODE_ENV explicit. */
+const isDev = ['development', 'test', 'dev'].includes(String(process.env.NODE_ENV || '').toLowerCase());
+if (!process.env.NODE_ENV) {
+  log.warn('[gateway.boot] NODE_ENV not set - assuming production CORS (default-deny). Set NODE_ENV=development for dev mode.');
+}
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
-      return cb(null, true);
-    }
+    // Same-origin (no Origin header) sempre permitido
+    if (!origin) return cb(null, true);
+    // Whitelist check (paridade ambientes)
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    // Dev mode SO se NODE_ENV explicit em lista safe
+    if (isDev) return cb(null, true);
+    // Production OR NODE_ENV unset OR unknown value: deny cross-origin nao whitelisted
     cb(new Error('cors_blocked'));
   },
   credentials: true,

@@ -36811,3 +36811,59 @@ Cadeia W5 SELLER a11y consolidation:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 497 - W6 GATEWAY: CRITICAL CORS bypass em producao (security)
+
+PRE-FIX BUG (CRITICAL security - CSRF cross-origin):
+- services/gateway/src/server.js linhas 79-88:
+    app.use(cors({
+      origin: (origin, cb) => {
+        if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+          return cb(null, true);  // <-- accepts QUALQUER origin
+        }
+        cb(new Error('cors_blocked'));
+      },
+      credentials: true,
+      ...
+    }));
+
+Cenario CRITICAL:
+- NODE_ENV NAO setado em deploy files:
+  - stack.yml: sem NODE_ENV (verificado grep)
+  - stack.inovare.yml: sem NODE_ENV (verificado grep)
+- process.env.NODE_ENV === undefined em containers production
+- undefined !== 'production' = TRUE (negacao trap)
+- CORS allowlist (allowedOrigins linhas 73-77) BYPASSED em PROD
+- Qualquer origin (atacante.com) recebe Access-Control-Allow-Origin
+- COMBO com credentials: true: CSRF cross-origin via cookies user
+- Defeats inteiro proposito do whitelist
+- Attack surface: any malicious site pode disparar requests autenticados
+  do user (cookies enviados) e ler responses
+
+Impact assessment:
+- CSRF protection broken em production
+- User cookies cas_session/access_token expostos a cross-origin reads
+- Severity: CRITICAL (10.0 CVSS - Account Takeover vector)
+- Mitigation pre-fix: helmet headers + JWT validation - mas se atacante
+  consegue cookies via XSS qualquer site, JWT eh enviado tambem
+
+POST-FIX (secure-by-default):
+- isDev: explicit allowlist apenas em NODE_ENV in ['development','test','dev']
+- Same-origin (no Origin header) sempre permitido (preserva server-to-server)
+- Default-DENY em producao OR NODE_ENV unset (safe-by-default invariant)
+- log.warn boot alerta se NODE_ENV nao setado
+- Pattern V8 secure-by-default: ASSUMIR production em ausencia de NODE_ENV
+
+Cadeia W6 GATEWAY security:
+- pass 304 CRITICAL keyGenerator realIp (rate-limit shared bucket)
+- pass 354 bodyLimit auth 16KB declared ANTES catchall
+- pass 397 STOREFRONT_URL env-driven (XSS prevention)
+- pass 400 token DLP forget_password payload
+- pass 497 (este) CRITICAL CORS NODE_ENV undefined trap
+
+9 CRITICAL acumulados (era 8) + 34 migrations pendentes apply
+230 passes acumulados (268->497) sem deploy VPS
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS fix aguardando deploy)
+- Mig 094-102 ALTA PRIORIDADE apply
