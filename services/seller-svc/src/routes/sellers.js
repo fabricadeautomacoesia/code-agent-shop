@@ -305,14 +305,28 @@ const SELLER_PRODUCTS_KIND = new Set([
 const SELLER_PRODUCTS_SORT = new Set(['relevance','newest','price_asc','price_desc','rating','sales']);
 
 router.get('/:slug/products',
+  /* FIX-WORKER-18 pass 531 (cache key/query case-mismatch paridade pass 513/521/529):
+     PRE-FIX BUG (same class):
+     - Cache key line 311: req.params.slug RAW
+     - Pre-check query line 330: WHERE store_slug = req.params.slug RAW
+     - Main query params line 346: [req.params.slug] RAW
+     - 3 sites usando RAW = inconsistencia tripla
+     Slugs DB lowercase canonical mas Express path nao normaliza:
+     - /sellers/Loja-Tech/products vs /sellers/loja-tech/products = 2 cache keys
+     - Query case-sensitive PG -> 'LOJA-TECH' nao matches DB 'loja-tech' -> 404
+     POST-FIX: normalize early, use in cache key + ALL 3 query sites.
+     Paridade pass 380 /sellers/:slug detail + pass 521 /:slug/stats + 529 reviews/qna */
   cache.cacheMiddleware((req) => {
+    const slugNorm = String(req.params.slug || '').trim().toLowerCase();
     const k = req.query.kind || '';
     const s = req.query.sort || 'relevance';
-    return `sellers:products:${req.params.slug}:p=${req.query.page||1}:lim=${req.query.limit||24}:k=${k}:s=${s}`;
+    return `sellers:products:${slugNorm}:p=${req.query.page||1}:lim=${req.query.limit||24}:k=${k}:s=${s}`;
   }, 60),
   asyncHandler(async (req, res, next) => {
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 24, 100));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
+  // FIX pass 531: normalize slug end-to-end (match cache key + DB canonical lowercase)
+  const slugNorm = String(req.params.slug || '').trim().toLowerCase();
 
   // BUG 4: kind enum
   if (req.query.kind && !SELLER_PRODUCTS_KIND.has(req.query.kind)) {
@@ -325,9 +339,10 @@ router.get('/:slug/products',
   }
 
   // BUG 6: pre-check seller exists (consistencia com /:slug 404)
+  // FIX pass 531: slugNorm (case-insensitive end-to-end)
   const sellerCheck = await query(
     `SELECT id FROM sellers WHERE store_slug = $1 AND status = 'active' AND deleted_at IS NULL LIMIT 1`,
-    [req.params.slug]
+    [slugNorm]
   );
   if (!sellerCheck.rows.length) return next(errorHandler.notFound('seller_not_found'));
 
@@ -342,8 +357,9 @@ router.get('/:slug/products',
   })[sort] || 'vp.sales_count DESC, vp.id ASC';
 
   // Build WHERE
+  // FIX pass 531: slugNorm (paridade pre-check + cache key)
   const whereParts = ['s.store_slug = $1'];
-  const params = [req.params.slug];
+  const params = [slugNorm];
   let i = 2;
   if (req.query.kind) {
     whereParts.push(`vp.kind = $${i++}`);

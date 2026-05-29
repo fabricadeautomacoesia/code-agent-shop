@@ -38626,3 +38626,57 @@ Pattern V8 cache key/validation consistency cross-svc:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
+
+## Pass 531 - W18 PERFORMANCE: 2 CRITICAL endpoints slug case-mismatch (PDP + /sellers/:slug/products)
+
+PRE-FIX BUGS (2 endpoints HOT paths paridade lagged):
+
+1. /products/:slug detail (HOTTEST endpoint - TODA PDP view):
+   - Pass 350 declarou slugNorm.toLowerCase() para cache key (linha 855)
+   - MAS query params line 906 usa req.params.slug RAW
+   - Cenario:
+     a. /products/FOO -> cache MISS chave 'foo' normalized
+        -> SELECT slug='FOO' -> 0 rows -> cached null sentinel 10s (pass 350 DoS reduce)
+     b. /products/foo -> cache MISS chave 'foo' -> SELECT 'foo' OK -> cache set
+     c. /products/FOO again -> cache HIT 'foo' data (mas null sentinel ainda pode estar ativo)
+   - Pass 350 added 10s null TTL p/ "DoS amplification reduce" - mas BUG na query
+     ENABLES o DoS first place!
+   - Paridade pass 513 (also-bought/related) + 529 (reviews/qna) - DETAIL lagged
+
+2. /sellers/:slug/products (3 sites RAW):
+   - Cache key linha 311: req.params.slug RAW
+   - Pre-check query linha 330: WHERE store_slug = req.params.slug RAW
+   - Main query params linha 346: [req.params.slug] RAW
+   - 3 sites inconsistencia tripla
+   - Paridade pass 380 /sellers/:slug detail + 521 /:slug/stats - products lagged
+
+POST-FIX (paridade pass 350/380/513/521/529):
+1. /products/:slug detail line 906: [req.params.slug] -> [slugNorm] (reusing pass 350 slugNorm)
+2. /sellers/:slug/products:
+   - const slugNorm declarado early
+   - Cache key usa slugNorm
+   - Pre-check usa slugNorm
+   - Main query params usa slugNorm
+   - 3 sites paridade end-to-end
+
+Trade-off ZERO: slugs DB lowercase canonical, normalize seamless.
+
+Pattern V8 W7 W18 cache key/query consistency FINAL (9 endpoints case-insensitive):
+- products /:slug detail (pass 350 + 531 query fix) ✓
+- products /:slug/also-bought (pass 513) ✓
+- products /:slug/related (pass 513) ✓
+- products /:slug/reviews (pass 529 - 3 sites) ✓
+- products /:slug/qna (pass 529 - 3 sites) ✓
+- sellers /:slug detail (pass 380) ✓
+- sellers /:slug/stats (pass 521) ✓
+- sellers /:slug/products (pass 531 - 3 sites) ✓ NEW
+- search top-sellers cat lowercase (pass 291) ✓
+
+W7 W18 cache key/query consistency = 100% paridade end-to-end achieved.
+
+263 passes acumulados (268->531) sem deploy VPS
+9 CRITICAL + 38 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)

@@ -903,7 +903,22 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
         WHERE p.slug = $1
           AND p.status IN ('approved','platform_owned')
           AND p.deleted_at IS NULL`,
-      [req.params.slug]
+      /* FIX-WORKER-18 pass 531 (CRITICAL cache key/query case-mismatch - HOTTEST endpoint):
+         PRE-FIX BUG: line 855 declared slugNorm.toLowerCase() para cache key
+         (pass 350) MAS query usa req.params.slug RAW (case-sensitive PG).
+         - Cenario: /products/FOO -> cache MISS (chave 'foo' normalized) ->
+           SELECT slug='FOO' -> 0 rows -> cached null sentinel 10s
+         - Cenario: /products/foo -> cache MISS chave 'foo' -> SELECT 'foo' OK -> cache
+         - Cenario: /products/FOO again -> cache HIT 'foo' data (mas pass 350 cached
+           null primeiro - 10s tomei pra superseder) -> incorret 404 OR 200 conforme timing
+         - HOTTEST endpoint: TODA PDP view ataca este path
+         - Pass 350 adicionou 10s null TTL p/ "reducer DoS amplification" - mas
+           BUG na query lado ENABLES o DoS first place
+         - Paridade pass 513 (also-bought/related) + 521 (sellers stats) +
+           529 (reviews/qna) - este endpoint principal estava LAGGED
+         POST-FIX: slugNorm reuse (declared line 855) - case-insensitive end-to-end
+         Trade-off ZERO: slugs DB lowercase canonical */
+      [slugNorm]
     );
     if (!r.rows.length) return null;
     return r.rows[0];
