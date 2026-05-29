@@ -6,7 +6,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, startup, mask, cache, withRetry } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, validate, jwt, startup, mask, cache, withRetry, notifCache } = require('@cas/shared');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
 // QA_CALLBACK_SECRET obrigatorio (HMAC do worker -> autenticidade de scores).
@@ -720,12 +720,24 @@ app.post('/qa/callback',
     // FIX-WORKER-12 pass 174: cache invalidation pos-tx commit (best-effort).
     // Evita: seller submete produto -> QA approve -> dashboard mostra SLA timer
     // antigo por ate 60s (TTL cache /sla-status W18-174).
-    if (approved && sellerUserIdToInvalidate) {
+    /* FIX-WORKER-12 pass 470 (notifCache cross-svc cadeia consume pass 467+468+469):
+       PRE-FIX (pass 174): cache invalidation SO se approved
+       - SLA + KPI caches sao gated por approved (so mudam em approve)
+       - MAS notifCache (notifs:list + unread-count) DEVE invalidar AMBOS paths:
+         * approved: notif product_approved (priority 0) - seller v vitrine
+         * rejected: notif product_rejected (priority 1) - seller precisa AGIR
+       - PRE-FIX: rejected seller aguarda 20s ate ver "necessario ajustar"
+       - Seller fica esperando QA decision -> bell 20s delay = ansiedade
+       POST-FIX: notifCache.invalidate(sellerUserIdToInvalidate) em AMBOS cases.
+       SLA+KPI cache invalidation preserved gated by approved (correct logic). */
+    if (sellerUserIdToInvalidate) {
       try {
-        await Promise.all([
-          cache.del(`seller:sla-status:${sellerUserIdToInvalidate}`),
-          cache.del(`seller:kpi:${sellerUserIdToInvalidate}`),
-        ]);
+        const invalidations = [notifCache.invalidate(sellerUserIdToInvalidate)];
+        if (approved) {
+          invalidations.push(cache.del(`seller:sla-status:${sellerUserIdToInvalidate}`));
+          invalidations.push(cache.del(`seller:kpi:${sellerUserIdToInvalidate}`));
+        }
+        await Promise.all(invalidations);
       } catch (e) {
         log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), user: sellerUserIdToInvalidate }, '[cache.invalidate_fail]');
       }

@@ -35414,3 +35414,64 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096+097+098 ALTA PRIORIDADE
 - Continuar consume notifCache 24+ sites pendentes
+
+## PASS 470 W12 QA PIPELINE: notifCache consume qa.callback (paridade pass 467+468+469)
+commit pendente
+GAP qa-svc callback INSERT notification SEM cache invalidate
+PRE-FIX:
+- Pass 174 ja invalidava seller:sla-status + seller:kpi APENAS se approved
+- Razao: SLA/KPI mudam so com approve (logic correct)
+- MAS notifCache (notifs:list + unread-count) NAO existia em pass 174
+- Pass 467 helper criado mas qa-svc lagged
+- AMBOS approved e rejected path INSERT notification seller (linha 685)
+- Sem notifCache.invalidate:
+  - approved: seller aguarda 20s ver "produto aprovado" - cash flow timing
+  - rejected: seller aguarda 20s ver "necessario ajustar" - bloqueio ativacao
+- Rejected path PIOR UX: seller espera decision, atrasou rejeicao = ansiedade
+
+SCOPE WHY:
+- QA pipeline = core trust signal seller (resposta a submit)
+- 20s delay em rejected = blocking workflow (seller nao pode resubmit ate ver)
+- Priority 1 rejected requires immediate action -> bell delay = UX failure
+
+POST-FIX:
+- Import notifCache em require @cas/shared
+- Refactor invalidation: ambos paths invalidate notifCache, SLA+KPI so approved
+- Promise.all unified [notifCache.invalidate, (if approved) seller:sla-status + seller:kpi]
+- Pattern V8 W12: notification side-effects sempre = cache invalidate (independente status)
+- SLA+KPI cache gating preserved (correct logic - so muda em approve)
+
+Cadeia consume pass 467 cross-svc consolidada (passes 467->470):
+  pass 467 helper module + auth-svc 2fa.activate (1 site)
+  pass 468 payment-svc PAYMENT_RECEIVED + refund_failed (2 main sites)
+  pass 469 order-svc dispute resolve + free_order gap (2 sites)
+  pass 470 qa-svc qa.callback approved+rejected (1 site - dual path) <- ESTE
+
+W12 QA pipeline series:
+  pass 174 SLA+KPI cache invalidation approved-only
+  pass 387 parse_score defensive
+  pass 407 download streaming + size cap
+  pass 421 static_analysis n8n defensive
+  pass 435 slug em notification payload (deep-link)
+  pass 462 qa.callback.invalid_signature audit critical
+  pass 470 notifCache consume (approved+rejected paths) <- ESTE
+
+PROXIMOS PASSES (~22 sites pendentes consume notifCache):
+  - payment-svc: PAYMENT_OVERDUE, payouts (5 sites)
+  - review-svc: qna_new + answered (1+ sites)
+  - product-svc: version_publish (1 site)
+  - seller-svc loyalty: tier_up bonus (1 site)
+  - auth-svc: refresh_reuse_breach, /recovery, /disable, /reset (5 sites)
+  - notification-svc: outras INSERTs admin /test (1 site)
+  - product-svc admin force-approve (1 site)
+
+Pattern V8 W12: TODO callback path com notification side-effect (independente verdict)
+deve invalidate notifCache + manter logic-specific cache gating.
+
+203 passes acumulados (268->470) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096+097+098 ALTA PRIORIDADE
+- Continuar consume notifCache 22+ sites pendentes
