@@ -66,27 +66,30 @@ router.get('/',
   const lim = Math.max(1, Math.min(parseInt(limit, 10) || 24, 100));
   const off = (Math.max(parseInt(page, 10) || 1, 1) - 1) * lim;
 
-  // FIX-WORKER-7 pass 72 BUG 2: tier enum whitelist
-  if (tier && !SELLER_TIER_ENUM.has(tier)) {
-    return res.status(400).json({ error: 'invalid_tier', allowed: Array.from(SELLER_TIER_ENUM) });
-  }
-
-  /* FIX-WORKER-2 pass 325 hardening:
-     PRE-FIX bugs:
-     1. tier sem ENUM whitelist - PG cast erro 22P02 -> 500 leak
-     2. search ILIKE %${search}% sem escape - wildcards % e _ aceitos
-        ?search=%% -> match TODOS sellers (mass exfil)
-     POST-FIX paridade pass 299 admin/all:
-     - VALID_TIER whitelist + 400 invalid
-     - search escape regex /[%_\\]/g + ESCAPE '\\' + slice(0,100) */
+  /* FIX-WORKER-5 pass 735 (CRITICAL tier double-check raw vs cacheKey normalized):
+     PRE-FIX BUG (regression latent): handler tinha DOIS checks de tier:
+     1. Linha 70 (antigo): SELLER_TIER_ENUM.has(tier) RAW - case-sensitive
+     2. Linha 83 (antigo): VALID_TIER.has(String(tier).toLowerCase())
+     - ?tier=BRONZE -> check 1 (RAW BRONZE not in set) -> 400 invalid_tier SPURIOUS
+     - check 2 nunca alcancado (early return em check 1)
+     - MAS cacheKey (linha 56-57) normaliza .toLowerCase() -> 'bronze'
+     - Cache pode armazenar 400 invalid p/ 'bronze' key se atacante probe BRONZE
+       primeiro (cache.js so cache 2xx, mas key sprawl ainda ocorre antes do match)
+     - UX broken: storefront filtro "Bronze" -> ?tier=Bronze -> 400 spurious
+       (frontend bypass via toLowerCase ja faz mas defensive)
+     POST-FIX: normalize tier UMA vez antes ambos checks + queries usam tier normalizado.
+     Cadeia 14 cache hygiene MISMATCH bugs cumulative cross-svc (pass 618, 719-734).
+     Pattern V8 invariante: cacheKey = handler normalize EXATAMENTE. */
+  const tierNorm = tier ? String(tier).trim().toLowerCase() : null;
   const VALID_TIER = new Set(['iniciante','bronze','prata','ouro','platinum']);
-  if (tier && !VALID_TIER.has(String(tier).toLowerCase())) {
+  if (tierNorm && !VALID_TIER.has(tierNorm)) {
     return res.status(400).json({ error: 'invalid_tier', allowed: Array.from(VALID_TIER) });
   }
   const where = [`s.status = 'active'`, `s.deleted_at IS NULL`];
   const params = [];
   let i = 1;
-  if (tier)   { where.push(`s.reputation_tier = $${i++}`); params.push(String(tier).toLowerCase()); }
+  // FIX pass 735: usar tierNorm consolidado (sem re-call toLowerCase per param)
+  if (tierNorm)   { where.push(`s.reputation_tier = $${i++}`); params.push(tierNorm); }
   if (search) {
     const sEscaped = String(search).replace(/[%_\\]/g, '\\$&').slice(0, 100);
     where.push(`s.store_name ILIKE $${i++} ESCAPE '\\'`);

@@ -40759,3 +40759,32 @@ Pattern V8 W2 storage hygiene: dados persistidos = canonical form
    - 527M livre remaining - apertado mas funcional
    - Necessario: cleanup adicional ou disk expansion na proxima sessao
 
+
+## PASS 735 (W5 SELLER-SVC sellers.js GET / tier double-check raw vs cacheKey)
+
+services/seller-svc/src/routes/sellers.js linhas 64-94
+
+PRE-FIX BUG (regression latent):
+- Handler tinha DOIS checks de tier (linhas 70 + 83)
+  1. Check 1 RAW: SELLER_TIER_ENUM.has(tier) case-sensitive
+  2. Check 2 normalize: VALID_TIER.has(String(tier).toLowerCase())
+- ?tier=BRONZE -> check 1 RAW BRONZE not in set -> 400 invalid_tier SPURIOUS
+- check 2 nunca alcancado (early return em check 1)
+- cacheKey (linha 56-57) normaliza .toLowerCase() = 'bronze'
+- Mismatch: cacheKey assume 'bronze', handler rejeita 'BRONZE' antes
+- UX broken: filtro storefront query string case-variant -> 400 spurious
+
+POST-FIX:
+- tierNorm = tier ? String(tier).trim().toLowerCase() : null (UMA vez)
+- Removido check 1 duplicado RAW
+- WHERE clause usa tierNorm consolidado (sem re-call toLowerCase per param)
+
+CADEIA 14 cache hygiene MISMATCH bugs cumulative cross-svc:
+- pass 618 (cache shape errado)
+- pass 719-731 (10 sites case + trim mismatches)
+- pass 732-733 (target_id UUID + reviews sort)
+- pass 734 (coupon storage normalize)
+- pass 735 (este - sellers tier double-check elimination)
+
+Pattern V8 invariante: cacheKey MUST mirror handler normalization EXACTLY
++ corollary: handler valida UMA vez (sem checks duplicados raw+normalized).
