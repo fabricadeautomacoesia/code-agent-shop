@@ -410,11 +410,16 @@ export default function CartPage() {
               </div>
             )}
 
-            {/* MLB-11: Cupom progressivo - tiers visuais */}
+            {/* MLB-11: Cupom progressivo - tiers visuais
+                FIX-WORKER-2 pass 601 (a11y - TrendingUp icon aria-hidden):
+                PRE: <TrendingUp className='w-3.5 h-3.5' /> + 'CUPOM PROGRESSIVO'
+                SR (NVDA/JAWS) anunciava 'imagem TrendingUp' antes do header.
+                Paridade pass 539 (progressive-coupon-teaser) + pass 568 financeiro
+                + cadeia W3/W4/W5/W8 a11y icons aria-hidden consolidacao. */}
             {couponPreview?.tiers?.length > 0 && (
               <div className="rounded-lg border border-magenta/30 bg-magenta/5 p-3 mb-4">
                 <div className="flex items-center gap-2 text-xs font-bold text-magenta mb-2">
-                  <TrendingUp className="w-3.5 h-3.5" />
+                  <TrendingUp className="w-3.5 h-3.5" aria-hidden="true" />
                   CUPOM PROGRESSIVO {cart.coupon_code}
                 </div>
                 <div className="space-y-1.5">
