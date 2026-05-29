@@ -41015,3 +41015,46 @@ Pattern V8 React stability cadeia 5 sites cross-dashboard:
 CADEIA cumulative cross-svc:
 - 16 cache hygiene + storage normalize bugs (618, 719-737)
 - 5 React stability fixes cross-dashboard (738-742)
+
+## PASS 743 (W4 ADMIN /orders useCallback + STATS state-stale closure FIX)
+
+apps/dashboard-admin/src/app/orders/page.tsx linhas 25-57
+
+PRE-FIX BUGS (cadeia React stability 6 sites + new state-stale class):
+1. async function load() recriada cada render (paridade pass 738-742)
+2. NEW BUG CLASS: setStats(r.stats || stats) - state-stale closure:
+   - setInterval(load, 30000) com useEffect deps [] = interval criado UMA vez
+   - load capturada = primeira render com stats={count_paid:0, count_pending:0}
+   - Toda chamada interval usa stats inicial via fallback || stats
+   - Backend retorna stats:null -> state corrompe pro inicial
+   - Backend retorna stats={count_paid: 5}, fallback fica stats inicial = bug
+3. onVisChange handler captura `i` mutavel + closure scope (safe pero pattern)
+
+POST-FIX:
+- useCallback wrap em load com [] deps -> stable reference
+- setStats((prev) => r.stats || prev) - setState functional form
+- useEffect deps [load] - paridade ESLint exhaustive-deps
+
+## PASS 744 (W4 ADMIN /vault useCallback stable closure - SECURITY CRITICAL)
+
+apps/dashboard-admin/src/app/vault/page.tsx linhas 28-43
+
+PRE-FIX BUG (paridade cadeia 738-743):
+- async function load() recriada cada render
+- useAdminAction(load) recebe nova ref cada render -> action.run re-criada
+- Vault page SECURITY-CRITICAL: keys list + create/revoke/rotate mutations
+- Cascading re-renders + stale callbacks em endpoint critical
+
+POST-FIX:
+- useCallback wrap em load com [] deps -> stable reference
+- useAdminAction recebe stable callback -> action.run estavel
+- useEffect deps [load] - paridade ESLint exhaustive-deps
+
+Pattern V8 React stability cadeia 7 sites cross-dashboard:
+- 738 disputes, 739 payouts-pending, 740 financeiro, 741 loja,
+- 742 alerts (15s poll), 743 orders (30s poll + state-stale fix),
+- 744 vault (security critical)
+
+CADEIA cumulative cross-svc:
+- 16 cache hygiene + storage normalize bugs (618, 719-737)
+- 7 React stability fixes cross-dashboard (738-744)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { adminFetch, fmtBRL, fmtDate } from '@/lib/admin-api';
 import { TrendingUp, ShoppingBag, Clock } from 'lucide-react';
@@ -22,16 +22,38 @@ export default function AdminOrdersPage() {
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
-  async function load() {
+  /* FIX-WORKER-4 pass 743 (useCallback stable + STATS state-stale closure FIX):
+     PRE-FIX BUGS (cadeia React stability 6 sites + new state-stale class):
+     1. async function load() recriada cada render (paridade pass 738-742)
+     2. setStats(r.stats || stats) - `stats` closure capturada da render
+        atual MAS:
+        - setInterval(load, 30000) com useEffect deps [] = interval criado UMA vez
+        - load capturada = primeira render com stats={count_paid:0, count_pending:0}
+        - Toda chamada interval usa stats inicial via fallback || stats
+        - Backend retorna stats:null -> state corrompe pro inicial
+        - Backend retorna stats={count_paid: 5}, fallback fica stats inicial = bug
+     3. onVisChange handler captura `i` mutavel + closure scope - safe pois
+        useEffect [] e mount-only MAS ainda paridade pattern consolidacao
+     POST-FIX:
+     - useCallback wrap em load com [] deps -> stable reference (sem state ext)
+     - Fix fallback: setStats((prev) => r.stats || prev) - usa setState functional
+       form que sempre tem prev state real (sem stale closure)
+     - useEffect deps [load] - paridade ESLint exhaustive-deps
+     Pattern V8 React stability cadeia 6 sites + state-stale class fix:
+     - 738 disputes, 739 payouts-pending, 740 financeiro, 741 loja, 742 alerts,
+     - 743 orders (este) - hot path 30s poll + state-stale closure fix. */
+  const load = useCallback(async () => {
     try {
       const r = await adminFetch<{ orders: any[]; stats: any }>('/orders/admin/recent');
       setOrders(r.orders || []);
-      setStats(r.stats || stats);
+      // FIX pass 743: setState functional form previne stale closure
+      // Backend stats:null -> mantém prev state em vez de corromper p/ inicial
+      setStats((prev: any) => r.stats || prev);
       // FIX-WORKER-4 pass 6: limpa erro em sucesso (era persistente)
       setError('');
       setLastUpdate(new Date());
     } catch (e: any) { setError(e.message); }
-  }
+  }, []);
   // FIX-WORKER-4 pass 6: poll inteligente - pausa quando tab background.
   // Antes: setInterval(30s) rodava sempre, mesmo com tab offscreen.
   // 5 tabs admin abertos = 10 calls/min mesmo invisivel ao admin.
@@ -54,7 +76,7 @@ export default function AdminOrdersPage() {
       if (i) clearInterval(i);
       document.removeEventListener('visibilitychange', onVisChange);
     };
-  }, []);
+  }, [load]);
 
   return (
     <div>

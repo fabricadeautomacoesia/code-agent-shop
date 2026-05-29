@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
@@ -25,7 +25,18 @@ export default function VaultPage() {
   // FIX-WORKER-4 pass 11: rotacao counters (W17 pass 12 endpoint)
   const [rotationDue, setRotationDue] = useState<{ overdue: number; soon: number }>({ overdue: 0, soon: 0 });
 
-  async function load() {
+  /* FIX-WORKER-4 pass 744 (useCallback stable closure - cadeia 7 sites):
+     PRE-FIX BUG (paridade pass 738-743):
+     - async function load() recriada cada render
+     - useAdminAction(load) recebe nova ref cada render -> action.run re-criada
+     - Vault page SECURITY-CRITICAL: keys list mutations (create/revoke/rotate)
+     - Cascading re-renders + stale callbacks em endpoint critical
+     POST-FIX:
+     - useCallback wrap em load com [] deps -> stable reference
+     - useAdminAction recebe stable callback -> action.run estavel
+     - useEffect deps [load] - paridade ESLint exhaustive-deps
+     Pattern V8 React stability cadeia 7 sites cross-dashboard. */
+  const load = useCallback(async () => {
     try { const r = await adminFetch<{ keys: any[] }>('/vault/keys'); setKeys(r.keys); setLoadError(''); }
     catch (e: any) { setLoadError(e.message); }
     // Fetch paralelo: rotation-due counters (W17 pass 12)
@@ -39,8 +50,8 @@ export default function VaultPage() {
       }
       setRotationDue({ overdue, soon });
     } catch { /* silent - endpoint pode nao existir em deploy antigo */ }
-  }
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   // FIX-WORKER-4 pass 4: useAdminAction hook substitui try/catch ad-hoc
   const action = useAdminAction(load);
