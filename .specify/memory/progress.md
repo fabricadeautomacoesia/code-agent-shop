@@ -38746,3 +38746,57 @@ Cadeia W14 PARTIAL com literal predicates (10 indexes consolidated):
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-107 ALTA PRIORIDADE apply (14 PARTIAL/composite indexes)
+
+## Pass 533 - W10 SEARCH/AIOPS: category param case-mismatch 2 endpoints
+
+PRE-FIX BUGS (2 endpoints - paridade lagged):
+
+1. /top-sellers/:category (linha 494-518):
+   - Cache key (pass 291) usa category.toLowerCase()
+   - Query linha 514 usa req.params.category RAW
+   - 404 response (linha 517) retorna req.params.category RAW
+   - Cenario:
+     a. /top-sellers/AI-Agents -> cache MISS 'ai-agents' normalized ->
+        SELECT slug='AI-Agents' -> 0 rows (DB lowercase) -> 404
+     b. /top-sellers/ai-agents -> cache MISS 'ai-agents' -> SELECT OK -> cache
+     c. /top-sellers/AI-Agents again -> cache HIT 'ai-agents' data -> 200
+   - Cache pollution + case-confusion 404
+
+2. GET / (search principal) linha 128-132:
+   - User search ?category=AI-Agents
+   - params.push(category) RAW
+   - WHERE slug='AI-Agents' -> 0 rows (case-sensitive PG)
+   - Search retorna 0 results em vez de matchar
+   - UX broken: user filtra por categoria visivel no UI mas zero matches
+
+POST-FIX (paridade pass 380/513/521/529/531):
+
+1. /top-sellers/:category:
+   - const categoryNorm = .trim().toLowerCase() early
+   - Cache key + query + 404 response usam categoryNorm
+   - 3 sites paridade end-to-end
+
+2. /search GET /:
+   - params.push(String(category).trim().toLowerCase())
+   - 1 site corrigido
+
+Pattern V8 W10 cache key/query consistency (10 endpoints case-insensitive end-to-end):
+- products /:slug detail (350+531) ✓
+- products /:slug/also-bought (513) ✓
+- products /:slug/related (513) ✓
+- products /:slug/reviews 3 sites (529) ✓
+- products /:slug/qna 3 sites (529) ✓
+- sellers /:slug detail (380) ✓
+- sellers /:slug/stats (521) ✓
+- sellers /:slug/products 3 sites (531) ✓
+- search-svc /top-sellers/:category 3 sites (533 este) ✓ NEW
+- search-svc /search ?category (533 este) ✓ NEW
+
+W7 W10 W18 cache key/query consistency = 100% paridade COMPLETE.
+
+265 passes acumulados (268->533) sem deploy VPS
+9 CRITICAL + 39 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-107 ALTA PRIORIDADE apply (14 PARTIAL/composite indexes)

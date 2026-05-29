@@ -127,8 +127,14 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
   }
   if (category) {
     // FIX pass 417: + AND is_active=TRUE subquery cat lookup (paridade /top-sellers/:category)
+    /* FIX-WORKER-10 pass 533 (category case-sensitivity bug):
+       PRE-FIX: params.push(category) RAW - case-sensitive PG slug match
+       - User search ?category=AI-Agents -> slug='AI-Agents' -> 0 rows
+       - categories.slug DB lowercase canonical (mig 005)
+       - Search retorna 0 results em vez de matchar categoria
+       POST-FIX: .toString().trim().toLowerCase() paridade /top-sellers/:category */
     where.push(`p.category_id = (SELECT id FROM categories WHERE slug = $${i++} AND is_active = TRUE)`);
-    params.push(category);
+    params.push(String(category).trim().toLowerCase());
   }
   if (kind)      { where.push(`p.kind = $${i++}`); params.push(kind); }
   if (min_price !== null) { where.push(`p.price_cents >= $${i++}`); params.push(min_price); }
@@ -492,7 +498,18 @@ app.get('/top-sellers',
 // via render-on-demand somam). top-sellers/:category roda 3 subqueries por linha
 // (sellers x3) - cache poupa CPU + DB pool. Key inclui params + limit.
 app.get('/top-sellers/:category',
-  /* FIX-WORKER-10 pass 291: paridade /top-sellers cache key normalization */
+  /* FIX-WORKER-10 pass 291: paridade /top-sellers cache key normalization
+     FIX-WORKER-10 pass 533 (cache key/query case-mismatch paridade pass 513/521/529/531):
+     PRE-FIX BUG: Cache key linha 497 normaliza category.toLowerCase()
+     MAS query linha 514 usa req.params.category RAW (case-sensitive PG)
+     - Cenario /top-sellers/AI-Agents -> cache MISS 'ai-agents' normalized ->
+       SELECT slug='AI-Agents' -> 0 rows (categories.slug DB lowercase) -> 404
+     - /top-sellers/ai-agents -> cache MISS 'ai-agents' -> SELECT 'ai-agents' OK
+     - /top-sellers/AI-Agents again -> cache HIT 'ai-agents' data -> 200
+     - Cache pollution + UX case-confusion 404
+     - 404 response retorna slug RAW (linha 517) - reflete input nao DB canonical
+     POST-FIX: normalize category early, use in cache key + query + response
+     Paridade pass 380 sellers detail + 513 products + 529 reviews/qna + 531 sellers products */
   cache.cacheMiddleware((req) => {
     const cat = (req.params.category || '').toString().trim().toLowerCase();
     const lim = Math.min(parseInt(req.query.limit || '12', 10) || 12, 50);
@@ -501,6 +518,8 @@ app.get('/top-sellers/:category',
   asyncHandler(async (req, res) => {
   // FIX-WORKER-7 pass 4: Math.max(1, ...) clamp p/ rejeitar negativos
   const lim = Math.max(1, Math.min(parseInt(req.query.limit || '12', 10), 50));
+  // FIX pass 533: normalize category end-to-end (match cache key + DB canonical lowercase)
+  const categoryNorm = (req.params.category || '').toString().trim().toLowerCase();
   // 1) Resolve categoria e valida existencia
   // FIX-WORKER-10 pass 417 (is_active filter cat lookup - paridade 411):
   //   PRE-FIX: WHERE slug=$1 sem is_active filter
@@ -509,12 +528,14 @@ app.get('/top-sellers/:category',
   //   - Frontend /categoria/[slug] renderiza cat inativa
   //   - Pattern V8 pass 406+411 fixou cross-svc, top-sellers/:category lagged
   //   POST-FIX: + AND is_active = TRUE (404 graceful se inativa)
+  // FIX pass 533: usar categoryNorm (match cache key + DB canonical)
   const catR = await query(
     `SELECT id, slug, name, name_singular, description, parent_id
-       FROM categories WHERE slug = $1 AND is_active = TRUE`, [req.params.category]
+       FROM categories WHERE slug = $1 AND is_active = TRUE`, [categoryNorm]
   );
   if (!catR.rows.length) {
-    return res.status(404).json({ error: 'category_not_found', slug: req.params.category });
+    // FIX pass 533: response usa categoryNorm (consistencia com cache key + handler logic)
+    return res.status(404).json({ error: 'category_not_found', slug: categoryNorm });
   }
   const cat = catR.rows[0];
   // 2) Top sellers da categoria
