@@ -40116,3 +40116,27 @@ CADEIA W13 Telegram consolidacao:
 - pass 701 (este): visual bug literal asterisks - consume pass 219
 
 431 passes acumulados (268->701) sem deploy VPS
+
+============================================================================
+SESSAO 702 (W1 redefinir-senha a11y - aria-live hint + submit btn aria-busy)
+============================================================================
+
+Pass 702 (W1 redefinir-senha a11y a11y - 2 bugs):
+- DESCOBERTA 1: pw-confirm-hint shown dinamically MAS sem aria-live
+  - SR (NVDA/JAWS) nao anuncia "Senhas ainda nao coincidem" quando aparece
+  - User com deficiencia visual digita confirm, ouve nada, submete -> erro
+  - aria-describedby ja preserva semantica MAS dynamic content sem aria-live
+  - POST-FIX: + role=status aria-live=polite no hint
+- DESCOBERTA 2: submit btn sem aria-busy/aria-label dinamico/focus-visible
+  - Sem aria-busy: SR nao anuncia 'busy' durante save
+  - Sem focus-visible: keyboard users sem affordance
+  - POST-FIX: aria-busy + aria-label dinamico + focus-visible outline magenta
+
+CADEIA W1 AUTH a11y submit btn consolidacao authflows cumulative:
+- /login (pass historico)
+- /register (pass 183)
+- /esqueci-senha (pass 549)
+- /redefinir-senha (pass 702 este)
+= 4 authflow forms a11y submit CTAs consolidacao
+
+432 passes acumulados (268->702) sem deploy VPS
