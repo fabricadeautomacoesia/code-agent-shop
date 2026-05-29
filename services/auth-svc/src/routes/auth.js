@@ -279,6 +279,36 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
   );
   if (!r.rows.length) {
     req.fail2ban?.reportFailure();
+    /* FIX-WORKER-6 pass 587 (audit_log login.user_not_found - paridade pass 480 + forgot_password):
+       PRE-FIX BUG: email nao cadastrado path -> 401 + fail2ban report mas SEM audit_log.
+       - Pass 480 estabeleceu audit_log para invalid_password + account_locked
+       - Linha 941 ja tinha audit_log p/ forgot_password.user_not_found (consistencia esperada)
+       - login.user_not_found era unico path lagged sem trail forense
+       Forensic incident response: 'qual email foi probado X vezes ip Y?' sem query.
+       Bruteforce vector amplificado: atacante enumera emails ('admin@cas.io',
+       'staff@cas.io', etc) sem trail queryable. fail2ban bana IP mas pos-incident
+       analysis precisa queryable hash trail.
+       SCOPE:
+       - SOC2 CC7.3: failed authentication attempts audit
+       - LGPD Art 37: security incidents requerem trail
+       - Anti-enumeration: email_hash queryable cross-attempts forensic
+       POST-FIX: + audit_log severity='warn' (vs 'critical' do account_locked):
+       - actor NULL (user nao existe - nao podemos linkar)
+       - actor_role 'system'
+       - target_type 'email' (mesma semantica forgot_password pass 941)
+       - target_id NULL
+       - payload: ip + ua_prefix + email_hash (queryable enumeration detection)
+       Fire-and-forget catch p/ nao bloquear response 401 (timing-attack mitigation). */
+    const safeUaForensic = mask.text((req.headers['user-agent'] || '').slice(0, 60));
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES (NULL, 'system', 'auth.login.user_not_found', 'email', NULL, 'warn', $1::JSONB)`,
+      [JSON.stringify({
+        ip: req.ip,
+        ua_prefix: safeUaForensic,
+        email_hash: crypto.createHash('sha256').update(email).digest('hex').slice(0, 16),
+      })]
+    ).catch(() => {});
     return next(errorHandler.unauthorized('invalid_credentials', 'Email ou senha invalidos'));
   }
   const user = r.rows[0];
