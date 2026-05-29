@@ -37228,3 +37228,56 @@ Pattern V8 W8 visual consistency:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply (11 PARTIAL/composite indexes)
+
+## Pass 506 - W17 VAULT/SECURITY: withRetry deadlock defense /rotate + admin /keys
+
+PRE-FIX BUG (paridade lagged cross-svc cadeia withRetry):
+2 endpoints vault-svc CRITICAL com tx() sem withRetry wrap:
+
+1. POST /keys/:id/rotate (linha 935) - admin rotaciona AES-256-GCM key
+   - INSERT new + UPDATE old (revoke) + audit_log atomic
+   - Sem withRetry: deadlock 40P01 abandona mid-rotation
+   - Cenarios: 2 admins concurrent rotate mesma key OR /use pool concurrent
+   - Mid-rotation crash sem retry = stack trace 500 vazado + sem audit log
+   - Admin re-tenta -> potencial duplicate INSERT (2 new keys p/ 1 rotation)
+
+2. POST /keys (linha 187) - admin provision new key
+   - Sem withRetry: deadlock race com /rotate concurrent OR audit_log burst
+   - Admin clicking provision ansiosamente -> duplicate INSERT race window
+
+Pattern V8 W17 atomicity cadeia (paridade lagged):
+- pass 25 BUG 4 admin /revoke tx() atomic (callback INSERT/UPDATE)
+- pass 269 seller /keys/me provision tx() (atomicity)
+- pass 310 /use pool withRetry deadlock (paridade qa-svc + payment-svc)
+- pass 493 seller /keys/me/:id/revoke tx() + withRetry (LGPD/SOC2 audit)
+- /rotate (pass 506 este) - LAGGED em withRetry
+- admin /keys (pass 506 este) - LAGGED em withRetry
+
+Compliance impact:
+- SOC2 CC7.3: monitoring changes em PII assets (vault keys = secrets)
+- LGPD Art 37: registro de tratamento dados criptografados
+- Vault = AES-256-GCM secret material - mid-operation crash sem retry =
+  forensic gap + admin re-tenta sem certeza de estado
+
+POST-FIX:
+- /rotate: withRetry('vault.rotate.tx', async () => await tx(...))
+- admin /keys: withRetry('vault.admin_provision.tx', async () => await tx(...))
+- Both 3 attempts backoff exponencial
+- Pattern V8 cross-svc consolidated: vault, qa-svc, payment-svc, review-svc
+
+Cadeia W17 VAULT withRetry consolidation completa:
+- /use pool: pass 310 ✓
+- admin /revoke (callback): pass 25 (tx only - audit_log fail catch swallow)
+- seller /keys/me provision: pass 269 (tx only)
+- seller /keys/me/:id/revoke: pass 493 (tx + withRetry)
+- admin /keys provision: pass 506 ✓ NOVO
+- /keys/:id/rotate: pass 506 ✓ NOVO
+- Gaps remaining: passes 25 + 269 ainda sem withRetry (proximo iter)
+
+238 passes acumulados (268->506) sem deploy VPS
+9 CRITICAL + 36 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply (11 PARTIAL/composite indexes)
+- pass 25 + 269 receber withRetry consolidation

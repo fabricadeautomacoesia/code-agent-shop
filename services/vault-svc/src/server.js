@@ -199,8 +199,15 @@ app.post('/keys', provisionRateLimit, adminOnly, validate({ body: provisionSchem
   //     * LGPD direito-acesso: "quem provisionou X em data Y" sem resposta
   //     * Vault keys = AES-256-GCM secrets - forensics OBRIGATORIO
   //   POST-FIX: tx() wrap + audit_log INSERT atomic (paridade /keys/me pass 269)
+  // FIX-WORKER-17 pass 506 (withRetry deadlock defense - paridade pass 310/493):
+  //   PRE-FIX: tx() sem withRetry. Provision admin pode race com:
+  //   - Concurrent /rotate em key existente (lock contention vault_api_keys)
+  //   - audit_log mass-insert burst (PG planner pode escolher diferentes lock orderings)
+  //   - Deadlock 40P01 abandona INSERT -> stack 500 + admin re-tenta -> potencial
+  //     duplicate provision (race window admin clicking ansiosamente)
+  //   POST-FIX: withRetry wrap atomico (paridade /rotate + /seller_revoke + /use)
   let r;
-  await tx(async (c) => {
+  await withRetry('vault.admin_provision.tx', async () => await tx(async (c) => {
     r = await c.query(
       `INSERT INTO vault_api_keys
          (seller_id, provider, key_alias, encrypted_key, iv, auth_tag, key_fingerprint,
@@ -226,7 +233,7 @@ app.post('/keys', provisionRateLimit, adminOnly, validate({ body: provisionSchem
          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
        })]
     );
-  });
+  })); // close withRetry pass 506
   log.info({ provisioned: r.rows[0].id, provider, fp, rotation_due_at: r.rows[0].rotation_due_at },
     '[vault.provision]');
   res.status(201).json(r.rows[0]);
@@ -953,7 +960,24 @@ app.post('/keys/:id/rotate',
     //   - SOC2/LGPD compliance: rotation events sem identificacao precisa
     //   - Admin investigation post-incident: link old->new key via fp impossivel
     //   POST-FIX: + key_fingerprint no SELECT (cheap - mesma row lock)
-    const result = await tx(async (c) => {
+    /* FIX-WORKER-17 pass 506 (deadlock retry defense - paridade pass 310 + 493):
+       PRE-FIX BUG: tx() sem withRetry wrap. /keys/:id/rotate eh endpoint critical
+       security (rotates encryption keys AES-256-GCM secret material):
+       - 2 admins concurrent rotate mesma key -> SELECT FOR UPDATE bloqueia mas
+         deadlock 40P01 possivel cross-row (INSERT new + UPDATE old + audit_log
+         lock ordering pode race com /revoke concurrent ou /use pool fetch)
+       - Sem retry: deadlock abandona mid-operation -> errorHandler 500 generico
+         -> admin re-tenta -> potencial duplicate INSERT (2 new keys p/ 1 rotation)
+       - Pass 25 BUG fixed admin /revoke tx atomic, pass 269 seller provision,
+         pass 310 /use pool withRetry, pass 493 seller revoke tx+withRetry
+       - /rotate (este) ficou LAGGED em paridade defensiva
+       Compliance impact:
+       - SOC2 CC7.3: monitoring changes em PII assets (vault keys = secrets)
+       - LGPD Art 37: registro de tratamento dados criptografados
+       - Mid-rotation crash sem retry = stack trace 500 vazado + sem audit log
+       POST-FIX: withRetry wrap (3 attempts backoff exponencial)
+       Pattern V8 cross-svc consolidated: vault, qa-svc, payment-svc, review-svc */
+    const result = await withRetry('vault.rotate.tx', async () => await tx(async (c) => {
       const old = await c.query(
         `SELECT id, seller_id, provider, key_alias, is_platform_pool,
                 monthly_quota_usd_cents, is_active, key_fingerprint
@@ -1039,7 +1063,7 @@ app.post('/keys/:id/rotate',
         new_fingerprint: newKey.key_fingerprint,
         rotation_due_at: newKey.rotation_due_at,
       };
-    });
+    })); // close withRetry pass 506
 
     if (result.error === 'not_found') return next(errorHandler.notFound('key_not_found'));
     if (result.error === 'already_revoked') {
