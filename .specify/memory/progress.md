@@ -39869,3 +39869,43 @@ MILESTONE FINAL: Blueprint V8 Pattern Atomicity 100% Consolidacao
   3. withRetry 40P01 backoff (3 attempts: 100/200/400ms)
 - Resilient PostgreSQL deadlock auto-recovery cross-svc
 - TODA mutation write path em TODOS svcs com defesa ANTIDEADLOCK
+
+============================================================================
+SESSAO 690-691 (W14 mig 126 qna PDP + W7 /sellers direction parity)
+============================================================================
+
+Pass 690 (W14 mig 126 idx_qna_product_pdp_sort PARTIAL 4-level DESC composite):
+- mig 007 idx_qna_product (product_id, asked_at DESC) PARTIAL is_hidden=FALSE
+  - cobre WHERE + 1-level ORDER apenas
+- PDP /:slug/qna ORDER 4-level:
+  is_pinned DESC, upvote_count DESC, asked_at DESC, id DESC
+- HOT PATH PDP Q&A tab + viral products mass-vote burst
+- POST-FIX: composite PARTIAL (product_id, is_pinned DESC, upvote_count DESC,
+  asked_at DESC, id DESC) WHERE is_hidden = FALSE
+- Latency: ~80-150ms External Sort eliminado -> ~10-20ms
+- Storage: ~2-5MB para 50k qnas prod (acceptable - PARTIAL excludes hidden)
+
+Pass 691 (W7 /sellers public listing 3 sorts direction parity):
+- DESCOBERTA: 4 SORT options mixed direction
+  - rep_desc + s.id ASC = MIXED (DESC chain + ASC tiebreaker)
+  - sales_desc + s.id ASC = MIXED
+  - newest (created_at DESC) + s.id ASC = MIXED
+  - rep_asc + s.id ASC = paridade OK
+- External Sort obligatorio em hot path /sellers public listing
+- POST-FIX: 3 sorts atualizados s.id DESC (paridade Regra D V8 cadeia 30+ sites)
+- rep_asc preserva ASC+ASC tiebreaker
+- Paridade pass 624 admin/sellers + pass 648 /search SORT_OPTIONS
+
+CADEIA W14 direction parity DESC+DESC migrations cumulative:
+- mig 102-125 (24 indexes consolidacao previa)
+- mig 126 idx_qna_product_pdp_sort PARTIAL 4-level (pass 690 este)
+- 25 indexes total apply pending VPS SSH
+
+CADEIA Regra D direction parity cross-svc consolidacao SORT_OPTIONS:
+- /search 6 sorts (pass 648)
+- /admin/sellers (pass 624)
+- /sellers public 3 sorts (pass 691 este)
+- /search/top-sellers (pass historico)
+- 4 sites cumulative consolidacao Regra D direction parity SORT_OPTIONS
+
+421 passes acumulados (268->691) sem deploy VPS
