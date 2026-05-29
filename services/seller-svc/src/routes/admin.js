@@ -800,7 +800,8 @@ const payoutsPendingCacheKey = (req) => {
 router.get('/payouts/pending',
   cache.cacheMiddleware(payoutsPendingCacheKey, 20),
   asyncHandler(async (req, res) => {
-    const statusParam = (req.query.status || 'pending').toString().toLowerCase();
+    // FIX pass 723: + .trim() paridade cacheKey linha 793 (cache hygiene mismatch fix)
+    const statusParam = (req.query.status || 'pending').toString().trim().toLowerCase();
     // FIX-WORKER-4 pass 356: + paid + rejected + all_states
     //   PRE-FIX: VALID = {pending, approved, all} - admin NAO podia ver
     //   payouts concluidos (paid) ou rejeitados via dashboard.
