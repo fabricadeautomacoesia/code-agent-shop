@@ -25,7 +25,13 @@ export const metadata = {
 export default function SobrePage() {
   return (
     <div className="container mx-auto px-6 py-8 max-w-4xl">
-      <Link href="/" className="text-sm text-white/60 hover:text-white">&larr; Voltar</Link>
+      {/* FIX-WORKER-8 pass 561 (a11y kbd nav - paridade pass 549/552 cadeia):
+          'Voltar' link sem focus-visible outline. Keyboard users perdiam
+          affordance ao tabular. Adicionado outline magenta + rounded. */}
+      <Link href="/"
+        className="text-sm text-white/60 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta rounded">
+        &larr; Voltar
+      </Link>
 
       <h1 className="font-display font-bold text-5xl mb-4 mt-4">
         Sobre a <span className="bg-gradient-vibe bg-clip-text text-transparent">Code & Agent Shop</span>
@@ -35,9 +41,13 @@ export default function SobrePage() {
         inteligencia artificial - todos validados por IA antes de chegar a vitrine.
       </p>
 
+      {/* FIX-WORKER-8 pass 561 (a11y - paridade pass 541 PDP cadeia):
+          Shield/Zap/Award icons decorativos com heading + texto descritivos.
+          SR (NVDA/JAWS) anunciava 'imagem Shield' antes de 'QA automatizado'.
+          Pattern V8 W8 a11y: icons decorativos + texto = aria-hidden. */}
       <section className="grid md:grid-cols-3 gap-6 mb-16">
         <div className="glass p-6">
-          <Shield className="w-10 h-10 text-magenta mb-3" />
+          <Shield className="w-10 h-10 text-magenta mb-3" aria-hidden="true" />
           <h3 className="font-display font-bold text-xl mb-2">QA automatizado</h3>
           <p className="text-sm text-white/60">
             Todo produto passa por pipeline LLM (OpenAI, Gemini e Groq) antes de ser aprovado.
@@ -45,7 +55,7 @@ export default function SobrePage() {
           </p>
         </div>
         <div className="glass p-6">
-          <Zap className="w-10 h-10 text-magenta mb-3" />
+          <Zap className="w-10 h-10 text-magenta mb-3" aria-hidden="true" />
           <h3 className="font-display font-bold text-xl mb-2">Asaas Split nativo</h3>
           <p className="text-sm text-white/60">
             Pagamentos via PIX, Cartao e Boleto com split automatico para vendedores.
@@ -53,7 +63,7 @@ export default function SobrePage() {
           </p>
         </div>
         <div className="glass p-6">
-          <Award className="w-10 h-10 text-magenta mb-3" />
+          <Award className="w-10 h-10 text-magenta mb-3" aria-hidden="true" />
           <h3 className="font-display font-bold text-xl mb-2">Reputacao Mercado Livre style</h3>
           <p className="text-sm text-white/60">
             6 niveis de reputacao (Iniciante a Lider Platinum) baseados em vendas, rating,
@@ -78,34 +88,41 @@ export default function SobrePage() {
         <div>
           <h2 className="font-display font-bold text-3xl mb-4">Para compradores</h2>
           <ul className="space-y-3 text-white/80">
-            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" />Automacoes e agentes IA validados por LLM (sem mocks vazios)</li>
-            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" />Reviews verificadas (apenas compradores reais)</li>
-            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" />Q&A direto com o vendedor antes da compra</li>
-            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" />Protecao ao comprador via disputas mediadas</li>
-            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" />Download imediato + suporte 365 dias</li>
+            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />Automacoes e agentes IA validados por LLM (sem mocks vazios)</li>
+            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />Reviews verificadas (apenas compradores reais)</li>
+            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />Q&A direto com o vendedor antes da compra</li>
+            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />Protecao ao comprador via disputas mediadas</li>
+            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />Download imediato + suporte 365 dias</li>
           </ul>
         </div>
         <div>
           <h2 className="font-display font-bold text-3xl mb-4">Para vendedores</h2>
           <ul className="space-y-3 text-white/80">
-            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" />82% liquido por venda (split nativo Asaas)</li>
-            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" />Audiencia B2B/B2C qualificada</li>
-            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" />Programa Cloud Code Ilimitado (Classe B) com API keys patrocinadas</li>
-            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" />Reputacao Mercado Livre style (6 tiers)</li>
-            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" />Pagamento sem 30 dias de espera</li>
+            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />82% liquido por venda (split nativo Asaas)</li>
+            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />Audiencia B2B/B2C qualificada</li>
+            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />Programa Cloud Code Ilimitado (Classe B) com API keys patrocinadas</li>
+            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />Reputacao Mercado Livre style (6 tiers)</li>
+            <li className="flex items-start gap-3"><Sparkles className="w-5 h-5 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />Pagamento sem 30 dias de espera</li>
           </ul>
         </div>
       </section>
 
       <section className="text-center glass p-10 mb-16">
-        <Code2 className="w-16 h-16 mx-auto mb-4 text-magenta" />
+        {/* FIX-WORKER-8 pass 561: Code2 icon aria-hidden + CTAs focus-visible magenta */}
+        <Code2 className="w-16 h-16 mx-auto mb-4 text-magenta" aria-hidden="true" />
         <h2 className="font-display font-bold text-3xl mb-3">Comece agora</h2>
         <p className="text-white/70 mb-6">
           Explore o catalogo ou comece a vender suas automacoes hoje mesmo.
         </p>
         <div className="flex flex-wrap gap-3 justify-center">
-          <Link href="/products" className="btn-primary">Ver produtos</Link>
-          <Link href="/register?role=seller" className="btn-ghost">Quero vender</Link>
+          <Link href="/products"
+            className="btn-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
+            Ver produtos
+          </Link>
+          <Link href="/register?role=seller"
+            className="btn-ghost focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
+            Quero vender
+          </Link>
         </div>
       </section>
 
