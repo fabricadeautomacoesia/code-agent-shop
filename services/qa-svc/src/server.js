@@ -404,7 +404,32 @@ function qaCallbackGuard(req, res, next) {
     valid = a.length === b.length && crypto.timingSafeEqual(a, b);
   } catch { valid = false; }
   if (!valid) {
-    log.warn({ ip: req.ip, /* FIX pass 323 DLP */ ua: mask.text(req.headers['user-agent'] || '') }, '[qa.callback.invalid_signature]');
+    const safeUaForensic = mask.text(req.headers['user-agent'] || '');
+    log.warn({ ip: req.ip, ua: safeUaForensic }, '[qa.callback.invalid_signature]');
+    /* FIX-WORKER-12 pass 462 (audit_log critical paridade pass 458 vault.invalid_internal_token):
+       PRE-FIX: log.warn apenas (Pino 7d retention) - NAO queryable forensic.
+       SCOPE CRITICAL:
+       - QA_CALLBACK_SECRET HMAC bypass = bypass entire LLM QA pipeline
+       - Attacker poderia forjar callback approving produto malicioso (LLM never ran)
+       - Successful exploit = pula moderacao -> produto live com payload
+       - Sem audit_log = SOC2 + LGPD forensic gap post-incident
+       POST-FIX: audit_log critical paridade vault.invalid_internal_token pass 458:
+       - actor NULL (anonymous external callback)
+       - target_type 'qa_callback' (NOVO - add VALID_TT aiops pass 455)
+       - severity critical
+       - sig_len_match preserved (forensic intel - paridade tok_len_match pass 4)
+       Fire-and-forget catch p/ nao bloquear 401 response. */
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES (NULL, 'anonymous', 'qa.callback.invalid_signature', 'qa_callback', NULL, 'critical', $1::JSONB)`,
+      [JSON.stringify({
+        ip: req.ip,
+        ua_prefix: safeUaForensic.slice(0, 60),
+        sig_len_match: String(sig).length === expected.length,
+      })]
+    ).catch((auditErr) => log.error({
+      err: mask.text(String(auditErr.message || '').slice(0, 200)),
+    }, '[qa.callback.invalid_signature.audit_fail]'));
     return res.status(401).json({ error: 'invalid_signature' });
   }
   // Apos validar, parseia para o handler downstream

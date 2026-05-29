@@ -34920,3 +34920,65 @@ DEVE ter ua_prefix masked (60 chars) - forensic admin investigation.
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 462 W12 QA PIPELINE: audit_log critical em qa.callback.invalid_signature (paridade pass 458)
+commit pendente
+GAP forensic qaCallbackGuard HMAC invalid sem audit_log
+PRE-FIX:
+- qaCallbackGuard linha 407: log.warn { ip, ua } apenas
+- Pino + datadog 7d retention default
+- NAO queryable forensic post-incident (audit_log 90d)
+- Pass 458 ja audit_log critical em vault.invalid_internal_token
+- qa.callback.invalid_signature lagged (mesmo padrao critical)
+
+SCOPE WHY CRITICAL:
+- QA_CALLBACK_SECRET HMAC bypass = bypass entire LLM QA pipeline
+- Attacker forja callback approving produto malicioso (LLM nunca rodou)
+- Successful exploit = pula moderacao -> produto live com payload malicioso
+- Buyer compra -> licenca download -> codigo malicioso executa
+- Sem audit_log = SOC2 + LGPD forensic gap post-incident
+- HMAC secret rotation lagged em n8n -> false positive massivo sem trail
+
+POST-FIX (paridade pass 458 vault.invalid_internal_token):
+- audit_log INSERT critical:
+  - actor_user_id NULL (anonymous external callback)
+  - actor_role 'anonymous'
+  - action 'qa.callback.invalid_signature'
+  - target_type 'qa_callback' (NOVO - add VALID_TT pass 462 expand)
+  - target_id NULL
+  - severity 'critical'
+  - payload: ip + ua_prefix masked + sig_len_match (forensic intel)
+- Fire-and-forget catch p/ nao bloquear response 401
+- VALID_TT aiops-svc + 'qa_callback' (cadeia consolidacao)
+
+VALID_TT enum cadeia consolidacao final:
+- pass 430: 10 valores iniciais
+- pass 455: 13 valores (+seller_payout, pending_wallet_payout, vault_api_key,
+  user_session, order_item)
+- pass 458: 14 valores (+vault_internal)
+- pass 462: 15 valores (+qa_callback) <- ESTE
+
+W17+W12 audit_log critical security events series consolidada FINAL:
+  pass 282 ua_prefix forensic auth-svc
+  pass 292 2fa.invalid_totp audit
+  pass 315 refresh_reuse_breach
+  pass 429 2fa.disable + activate invalid_token
+  pass 438 vault cross-endpoints ua_prefix
+  pass 443 refresh_banned + 2fa.decrypt ua_prefix
+  pass 458 vault.invalid_internal_token critical
+  pass 462 qa.callback.invalid_signature critical <- ESTE
+
+Pattern V8 W17+W12 invalid_credential audit critical pattern:
+- log.warn (operational visibility 7d)
+- + audit_log critical (forensic 90d retention)
+- + fail2ban report (bloqueio bruteforce - SE relevante; qa-svc has rate-limit upstream)
+- + DLP mask em PII (ua_prefix, ip)
+- Fire-and-forget catch (audit fail nao bloqueia response)
+- VALID_TT enum aiops-svc update
+
+195 passes acumulados (268->462) sem deploy VPS
+8 CRITICAL + 29 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 ALTA PRIORIDADE
