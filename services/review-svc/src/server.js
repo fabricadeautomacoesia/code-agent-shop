@@ -1235,11 +1235,28 @@ app.post('/reports',
 //   3 JOINs + 100 rows = ~50-200ms sem cache
 //   FIX: cache.cacheMiddleware 60s - acaba 99% hits em ms
 //   Cache key: per-seller (req.user.sub) + limit param
+// FIX-WORKER-18 pass 589 (cache key UUID validation gap paridade cadeia 13 sites
+// W7+W10+W13+W18 cache hygiene consolidacao - 14 sites total):
+//   PRE-FIX BUG (1 issue): sellerFilter já tinha .toLowerCase() (paridade pass 521)
+//   MAS faltava UUID_RE validation pre-cache. Handler valida (linha 1262) e retorna
+//   400 invalid_seller_id, mas cache key incluia raw seller_id leading to pollution:
+//   - ?seller_id=abc-invalid -> cache key 'sf=abc-invalid', handler 400
+//   - ?seller_id=garbage123 -> cache key 'sf=garbage123', handler 400
+//   - Cada tentativa malformada = entry Redis (storage waste + sprawl)
+//   - Probing atacante amplifica em listings admin (multi-seller dashboard)
+//   POST-FIX: + UUID validation pre-cache. Invalid -> '' (consistent cache key).
+//   Pattern V8 cache hygiene paridade cadeia 13 sites cross-svc consolidacao
+//   (pass 520/530/533/551/558/566/572/576/577/579/582/583/588).
+const SELLER_UUID_RE_CACHE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const sellerReceivedCacheKey = (req) => {
   const isAdmin = ['admin','staff'].includes(req.user?.role);
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
   const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
-  const sellerFilter = isAdmin && req.query.seller_id ? String(req.query.seller_id).toLowerCase() : '';
+  // Normalize seller_id: trim + lowercase + UUID validation (paridade handler linha 1262)
+  const sellerIdRaw = isAdmin && req.query.seller_id
+    ? String(req.query.seller_id).trim().toLowerCase() : '';
+  const sellerFilter = (sellerIdRaw && SELLER_UUID_RE_CACHE.test(sellerIdRaw))
+    ? sellerIdRaw : '';
   return `reviews:seller_received:${req.user?.sub || 'anon'}:adm=${isAdmin}:sf=${sellerFilter}:lim=${lim}:off=${off}`;
 };
 
