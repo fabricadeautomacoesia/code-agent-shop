@@ -1835,13 +1835,23 @@ async function reconcileWebhooks() {
     //   Same pattern em UPDATE processed_at = NOW() WHERE processed_at IS NULL
     //   (already implementado em pass 21 outros endpoints).
     const r = await query(
+      /* FIX-WORKER-11 pass 698 (Regra D direction parity tiebreaker cron reconcile):
+         PRE-FIX: ORDER BY retry_count ASC, received_at ASC sem id tiebreaker.
+         - Cron 5min reconcile claim rows FOR UPDATE SKIP LOCKED
+         - Mass-insert burst (Asaas burst webhook 100+ events same instant):
+           multiple rows mesma received_at second-precision -> heap order arbitrario
+         - LIMIT 20 picks ARBITRARY subset entre ties -> compounded over crons mensal
+         - Forensic non-deterministic em audit_log payload
+         POST-FIX: + id ASC tiebreaker (FIFO within ties, paridade pass 632 vault rotation)
+         - mig 110 idx_asaas_webhook_dead_admin (received_at DESC, id DESC) so cobre admin
+         - Cron reconcile pattern ASC+ASC paridade pass 489 audit cron actions */
       `SELECT id, payload, retry_count
          FROM asaas_webhook_events
         WHERE signature_valid = TRUE
           AND processed_at IS NULL
           AND retry_count BETWEEN 1 AND 5
           AND received_at > NOW() - INTERVAL '24 hours'
-        ORDER BY retry_count ASC, received_at ASC
+        ORDER BY retry_count ASC, received_at ASC, id ASC
         LIMIT 20
         FOR UPDATE SKIP LOCKED`
     );
