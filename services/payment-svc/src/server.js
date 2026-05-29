@@ -727,10 +727,28 @@ async function processTransferEvent(evt) {
         return;
       }
       const row = payout.rows[0];
-      // State machine: payout final states sao terminal
-      if (['paid', 'rejected'].includes(row.status) && row.status === action.newStatus) {
-        log.info({ event: eventName, payout_id: row.id, status: row.status },
-          '[webhook.transfer.idempotent] mesmo estado - noop');
+      /* FIX-WORKER-11 pass 447 (idempotency bug payouts_pending_wallet):
+         PRE-FIX: idempotent check `row.status === action.newStatus`
+         - seller_payouts.status enum: 'pending'|'approved'|'paid'|'rejected' ✓
+         - payouts_pending_wallet.status enum: 'pending'|'liquidated'|'forfeited' ✗
+         - action.newStatus = 'paid'|'rejected' (TRANSFER_MAP)
+         - 'liquidated' === 'paid' = false -> idempotent NEVER triggers p/ pending_wallet
+         - 2x webhook delivery -> 2x UPDATE + 2x audit_log INSERT (forensic noise)
+         POST-FIX: map action.newStatus para o equivalent terminal state PER TABLE.
+         - seller_payouts terminal = 'paid'|'rejected' (direct match)
+         - payouts_pending_wallet terminal = 'liquidated' (paid) | 'forfeited' (rejected)
+         - Comparar contra equivalent table-specific terminal value */
+      const tableTerminalMap = {
+        seller_payouts: { paid: 'paid', rejected: 'rejected' },
+        payouts_pending_wallet: { paid: 'liquidated', rejected: 'forfeited' },
+      };
+      const expectedTerminal = tableTerminalMap[table]?.[action.newStatus];
+      const terminalStates = table === 'seller_payouts'
+        ? ['paid', 'rejected']
+        : ['liquidated', 'forfeited'];
+      if (terminalStates.includes(row.status) && row.status === expectedTerminal) {
+        log.info({ event: eventName, payout_id: row.id, status: row.status, table },
+          '[webhook.transfer.idempotent] mesmo estado terminal - noop');
         return;
       }
       // UPDATE conforme tabela

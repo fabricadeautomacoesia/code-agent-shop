@@ -34115,3 +34115,47 @@ W4 paridade admin/* preview series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 ALTA PRIORIDADE
+
+## PASS 447 W11 PAYMENT/ASAAS: TRANSFER idempotency bug payouts_pending_wallet
+commit pendente
+BUG idempotency check NUNCA triggers p/ payouts_pending_wallet
+PRE-FIX:
+- processTransferEvent linha 731: row.status === action.newStatus
+- seller_payouts status enum: pending|approved|paid|rejected ✓
+- payouts_pending_wallet status enum: pending|liquidated|forfeited ✗
+- action.newStatus = 'paid'|'rejected' (TRANSFER_MAP)
+- 'liquidated' === 'paid' = false -> idempotent NEVER triggers
+- 2x webhook delivery (Asaas retry pattern) -> 2x UPDATE + 2x audit_log INSERT
+
+SCOPE forensic + perf:
+- audit_log duplicado: forensic noise + bloat (~2x rows transfer events)
+- /admin/audit-log filter pass 430 mostra entries duplicadas confuso
+- UPDATE re-execution idempotent SQL-level (same final state) MAS
+  PG row lock + audit duplicate = waste DB + I/O
+- Scenario Asaas retry pattern: 3x retry = 3x audit (bloat * 3)
+
+POST-FIX:
+- tableTerminalMap dictionary:
+  - seller_payouts: { paid:'paid', rejected:'rejected' }
+  - payouts_pending_wallet: { paid:'liquidated', rejected:'forfeited' }
+- expectedTerminal = tableTerminalMap[table][action.newStatus]
+- terminalStates conditional per table
+- Idempotent check correto p/ ambos tables agora
+
+Pattern V8 W11: state machine cross-tables com enum diferente requer
+mapping explicit (nao assume status names alinhados cross-schema)
+
+W11 webhook hardening series:
+  pass 7 ALLOWED_TRANSITIONS state machine
+  pass 22 tx atomic
+  pass 222 PAYMENT_REFUND_FAILED semantica
+  pass 371 TRANSFER handler completo
+  pass 418 INSERT idempotent guards
+  pass 447 TRANSFER idempotent payouts_pending_wallet <- ESTE
+
+180 passes acumulados (268->447) sem deploy VPS
+7 CRITICAL + 28 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE
