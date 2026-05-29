@@ -38989,3 +38989,30 @@ W14 indexes cumulative cadeia mig 102-118:
 - 17 indexes total apply pending VPS SSH
 
 354 passes acumulados (268->624) sem deploy VPS
+
+============================================================================
+SESSAO 625-626 (W14 direction parity migrations 119 + 120)
+============================================================================
+
+Pass 625 (W14 mig 119 idx_qa_runs_product_started_id):
+- mig 034 PRE-FIX: idx_qa_runs_product_started (product_id, started_at DESC) SEM id DESC
+- qa-svc /qa/runs/:product_id ORDER started_at DESC, id DESC = External Sort
+- POST-FIX: (product_id, started_at DESC, id DESC) direction parity Regra D V8
+- Latency: ~3-8ms External Sort eliminado
+- Coverage: dashboard-admin /admin/qa-queue + dashboard-seller /products/[id]/qa-history
+
+Pass 626 (W14 mig 120 idx_orders_buyer_created_id):
+- mig 006 PRE-FIX: idx_orders_buyer (buyer_user_id, created_at DESC) SEM id DESC
+- order-svc GET / ORDER created_at DESC, id DESC = External Sort
+- /conta/pedidos HOT PATH user page polling pos-checkout
+- LATERAL JOIN items_preview ainda mais sensivel a External Sort overhead
+- POST-FIX: (buyer_user_id, created_at DESC, id DESC) direction parity Regra D V8
+- Latency: ~5-15ms External Sort eliminado -> ~2-5ms
+
+CADEIA W14 direction parity DESC+DESC migrations consolidacao:
+- mig 102-118 (17 indexes sessao previa + atual)
+- mig 119 idx_qa_runs_product_started_id (pass 625 este)
+- mig 120 idx_orders_buyer_created_id (pass 626 este)
+- 19 indexes total apply pending VPS SSH
+
+356 passes acumulados (268->626) sem deploy VPS
