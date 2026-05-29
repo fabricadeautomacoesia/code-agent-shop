@@ -39909,3 +39909,37 @@ CADEIA Regra D direction parity cross-svc consolidacao SORT_OPTIONS:
 - 4 sites cumulative consolidacao Regra D direction parity SORT_OPTIONS
 
 421 passes acumulados (268->691) sem deploy VPS
+
+============================================================================
+SESSAO 692-693 (W14+W17 vault keys idx + W6 CRITICAL gateway payment block)
+============================================================================
+
+Pass 692 (W14+W17 mig 127 idx_vault_keys_created_id direction parity DESC+DESC):
+- mig 003 PARTIAL idxs (seller/provider/platform_pool/rotation) - filters separados
+- NENHUM cobre admin /keys ORDER BY created_at DESC, id DESC global
+- POST-FIX: composite (created_at DESC, id DESC) admin /admin/vault listing
+- Latency: ~30-80ms External Sort -> ~3-8ms
+
+Pass 693 (W6 CRITICAL gateway block /api/payments/asaas/create + /asaas/refund):
+- DESCOBERTA: /api/payments/asaas/create + /asaas/refund expostos via gateway publico
+- AMBOS internal-only (asaasCreateGuard + refund timingSafe pass 644):
+  - /asaas/create: REAL MONEY OUT - bypass = denial-of-wallet (charges arbitrarios)
+  - /asaas/refund: REAL MONEY OUT - bypass = refund arbitrario
+- Layer 2 (svc guards) JA protege MAS gateway expoe rota = fail2ban waste
+- Internal cross-svc calls (order-svc -> payment-svc) usam Docker network direct
+- POST-FIX: regex block /asaas/create + /asaas/refund + sub-paths defensive
+  + log.warn '[gateway.payment_blocked]' forensic + 403 internal_only_endpoint
+
+CADEIA W6 gateway block defense-in-depth COMPLETA real-money internal-only:
+- pass 514 /api/loyalty/earn (trailing-slash + case bypass)
+- pass 567 /api/vault/use (CRITICAL crypto key)
+- pass 627 /api/vault/usage (billing fraud vector)
+- pass 693 /api/payments/asaas/create + /asaas/refund (este - REAL MONEY)
+= 5+ endpoints gateway block layer-1 defense-in-depth consolidacao
+
+CADEIA W14 direction parity DESC+DESC migrations cumulative:
+- mig 102-126 (25 indexes consolidacao previa)
+- mig 127 idx_vault_keys_created_id (pass 692 este)
+- 26 indexes total apply pending VPS SSH
+
+423 passes acumulados (268->693) sem deploy VPS
