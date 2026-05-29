@@ -15,7 +15,7 @@
  *   cancelled        - dispute encerrada sem decisao (buyer desistiu)
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { adminFetch, fmtDate, fmtBRL } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
@@ -50,9 +50,25 @@ export default function DisputesPage() {
   const [filter, setFilter] = useState<Status>('opened');
   const [data, setData] = useState<any>({ disputes: [], counts: {} });
   const [loadError, setLoadError] = useState('');
-  const action = useAdminAction(load);
 
-  async function load() {
+  /* FIX-WORKER-4 pass 738 (ordem declaracao + useCallback estabilidade):
+     PRE-FIX BUG (anti-pattern + ESLint no-use-before-define):
+     - `const action = useAdminAction(load)` declarado ANTES `async function load()`
+     - Function hoisting JS faz runtime work, MAS:
+       * ESLint no-use-before-define flag (CI lint warning latente)
+       * Conceptual confusion para code-review (declaracao fora de ordem)
+       * Pattern V8 W4 outros pages (reports/sellers/orders) declaram load PRIMEIRO
+     - useAdminAction useCallback deps [busyKey, reload] - `reload` muda cada render
+       (function declaration dentro de component eh recriada per render)
+     - useCallback recreated per render -> `run` re-criada -> efeito ZERO em prod
+       MAS micro-otimizacao perdida (re-render cascade)
+     POST-FIX (paridade cadeia W4 admin pages cross-consistency):
+     - useCallback wrap em `load` -> stable reference per [filter] deps
+     - Declarar load ANTES de useAdminAction (ordem normal, ESLint happy)
+     - useAdminAction recebe stable callback -> useCallback `run` estavel
+     - Pattern V8 W4 consolidation cross-admin uniformidade
+     Cadeia 16 cache hygiene + storage normalize bugs + agora 1 React stability fix. */
+  const load = useCallback(async () => {
     try {
       const qs = filter ? `?status=${filter}` : '';
       const r = await adminFetch<any>(`/orders/admin/disputes${qs}`);
@@ -61,8 +77,11 @@ export default function DisputesPage() {
     } catch (e: any) {
       setLoadError(e?.message || 'Erro carregando disputas');
     }
-  }
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
+  }, [filter]);
+
+  const action = useAdminAction(load);
+
+  useEffect(() => { load(); }, [load]);
 
   async function resolveDispute(id: string, action_type: 'buyer' | 'seller' | 'cancel') {
     // FIX-WORKER-4 pass 383 (UX consistency + enum validation - paridade 381+382):

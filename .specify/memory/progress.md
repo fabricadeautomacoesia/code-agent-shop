@@ -40885,3 +40885,29 @@ CADEIA cache hygiene + storage normalize cross-svc cumulative 16 sites:
 - pass 735 (sellers tier double-check)
 - pass 736 (qa/runs UUID case mismatch)
 - pass 737 (este - notif prefs template_code case-drift LGPD)
+
+## PASS 738 (W4 ADMIN /admin/disputes useAdminAction ordem + useCallback stability)
+
+apps/dashboard-admin/src/app/disputes/page.tsx linhas 18+53
+
+PRE-FIX BUG (anti-pattern + ESLint no-use-before-define):
+- const action = useAdminAction(load) declarado ANTES async function load()
+- Function hoisting JS faz runtime work MAS:
+  * ESLint no-use-before-define flag (CI lint warning latente)
+  * Conceptual confusion para code-review (declaracao fora de ordem)
+  * Pattern V8 W4 outros pages (reports/sellers/orders) declaram load PRIMEIRO
+- useAdminAction useCallback deps [busyKey, reload] - `reload` muda cada render
+  (function declaration dentro de component eh recriada per render)
+- useCallback recreated per render -> `run` re-criada -> efeito ZERO em prod
+  MAS micro-otimizacao perdida (re-render cascade)
+
+POST-FIX:
+- useCallback wrap em load com [filter] deps -> stable reference
+- Declarar load ANTES de useAdminAction (ordem normal, ESLint happy)
+- import { useCallback, useEffect, useState } adicionar useCallback
+- useAdminAction recebe stable callback -> useCallback `run` estavel
+- Pattern V8 W4 consolidation cross-admin uniformidade
+
+CADEIA cumulative cross-svc + UI bugs:
+- 16 cache hygiene + storage normalize (618, 719-737)
+- + 1 React stability fix (738)
