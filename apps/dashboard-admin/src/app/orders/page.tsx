@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { adminFetch, fmtBRL, fmtDate } from '@/lib/admin-api';
 import { TrendingUp, ShoppingBag, Clock } from 'lucide-react';
 
@@ -126,14 +127,38 @@ export default function AdminOrdersPage() {
                       - buyer_email -> <a mailto:> (admin pode contactar buyer direto)
                       - rel=noopener noreferrer defensive
                   */}
+                  {/* FIX-WORKER-4 pass 451 (audit-log forensic link consume pass 430):
+                      PRE-FIX: order_number era copyable button mas SEM detail/investigation flow.
+                      - Admin via incident no /admin/orders mas tinha que:
+                        1. Copy order_number
+                        2. Navegar manualmente /admin/audit-log
+                        3. Filtrar manualmente OR psql direto
+                      - Zero one-click investigation flow
+                      - /admin/orders/[id] route NAO existe (gap)
+                      - /conta/pedidos/[id] eh buyer-side (token cross-app issue)
+                      POST-FIX: 2 acoes consolidadas no order_number cell:
+                      1. Button copy clipboard (preservado)
+                      2. + Link "audit" -> /admin/audit-log?target_id={uuid}&target_type=order
+                         Consume pass 430 filter (target_id + target_type)
+                         Admin clica -> ve TODA timeline order (created, paid, refunded, etc)
+                      Pattern V8 W4: CRITICAL admin pages = one-click investigation */}
                   <td className="py-3">
-                    <button type="button"
-                      onClick={() => navigator.clipboard?.writeText(o.order_number).catch(() => {})}
-                      aria-label={`Copiar numero do pedido ${o.order_number}`}
-                      title="Click para copiar"
-                      className="font-mono text-xs hover:text-magenta-glow cursor-pointer focus-visible:outline-2 focus-visible:outline-magenta rounded px-1 -mx-1">
-                      {o.order_number}
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button type="button"
+                        onClick={() => navigator.clipboard?.writeText(o.order_number).catch(() => {})}
+                        aria-label={`Copiar numero do pedido ${o.order_number}`}
+                        title="Click para copiar"
+                        className="font-mono text-xs hover:text-magenta-glow cursor-pointer focus-visible:outline-2 focus-visible:outline-magenta rounded px-1 -mx-1">
+                        {o.order_number}
+                      </button>
+                      <Link
+                        href={`/audit-log?target_id=${o.id}&target_type=order`}
+                        aria-label={`Ver audit log do pedido ${o.order_number}`}
+                        title="Ver audit log"
+                        className="text-[10px] text-white/30 hover:text-magenta-glow underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                        audit
+                      </Link>
+                    </div>
                   </td>
                   <td>
                     <div>{o.buyer_name || '-'}</div>

@@ -1,8 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+export const dynamic = 'force-dynamic';
+
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
-import { FileText, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { FileText, Filter, ChevronLeft, ChevronRight, X } from 'lucide-react';
 
 /**
  * FIX-WORKER-4 pass 12: /admin/audit-log dashboard.
@@ -26,6 +29,16 @@ const SEVERITY_COLOR: Record<string, string> = {
 const PAGE_SIZE = 50;
 
 export default function AdminAuditLogPage() {
+  return <Suspense fallback={<div className="p-6 text-white/60">Carregando audit-log...</div>}><AuditLogInner /></Suspense>;
+}
+
+function AuditLogInner() {
+  // FIX-WORKER-4 pass 451 (URL params target_id + target_type consume pass 430 backend):
+  //   Permite deep-link p/ /admin/audit-log?target_id={uuid}&target_type=order
+  //   de outras admin pages (orders, sellers, etc) - one-click investigation.
+  const sp = useSearchParams();
+  const initialTargetId = sp.get('target_id') || '';
+  const initialTargetType = sp.get('target_type') || '';
   const [entries, setEntries] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [actions, setActions] = useState<{ action: string; count: number }[]>([]);
@@ -34,7 +47,9 @@ export default function AdminAuditLogPage() {
   // Filtros
   const [filterAction, setFilterAction] = useState('');
   const [filterSeverity, setFilterSeverity] = useState('');
-  const [filterDays, setFilterDays] = useState(7);
+  const [filterDays, setFilterDays] = useState(initialTargetId ? 90 : 7); // default 90d se target deep-link (forensic full)
+  const [filterTargetId, setFilterTargetId] = useState(initialTargetId);
+  const [filterTargetType, setFilterTargetType] = useState(initialTargetType);
   const [offset, setOffset] = useState(0);
 
   async function load() {
@@ -46,6 +61,9 @@ export default function AdminAuditLogPage() {
       qs.set('offset', String(offset));
       if (filterAction) qs.set('action', filterAction);
       if (filterSeverity) qs.set('severity', filterSeverity);
+      // FIX pass 451: forward target_id + target_type ao backend (pass 430)
+      if (filterTargetId) qs.set('target_id', filterTargetId);
+      if (filterTargetType) qs.set('target_type', filterTargetType);
       const r = await adminFetch<{ entries: any[]; total: number }>(`/aiops/audit-log?${qs}`);
       setEntries(r.entries || []);
       setTotal(r.total || 0);
@@ -63,11 +81,11 @@ export default function AdminAuditLogPage() {
     } catch { /* silent */ }
   }
 
-  useEffect(() => { load(); }, [filterAction, filterSeverity, filterDays, offset]);
+  useEffect(() => { load(); }, [filterAction, filterSeverity, filterDays, filterTargetId, filterTargetType, offset]);
   useEffect(() => { loadActions(); }, []);
 
-  // Reset offset quando muda filtro
-  useEffect(() => { setOffset(0); }, [filterAction, filterSeverity, filterDays]);
+  // Reset offset quando muda filtro (FIX pass 451: + target filters)
+  useEffect(() => { setOffset(0); }, [filterAction, filterSeverity, filterDays, filterTargetId, filterTargetType]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
@@ -105,6 +123,20 @@ export default function AdminAuditLogPage() {
           <option value="error">error</option>
           <option value="critical">critical</option>
         </select>
+        {/* FIX pass 451: target_id + target_type filter chip (deep-link de outras admin pages) */}
+        {(filterTargetId || filterTargetType) && (
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-magenta/20 border border-magenta/30 text-xs">
+            <span className="text-magenta-glow">target:</span>
+            {filterTargetType && <span className="text-white/80">{filterTargetType}</span>}
+            {filterTargetId && <span className="font-mono text-white/60">{filterTargetId.slice(0, 8)}</span>}
+            <button type="button"
+              onClick={() => { setFilterTargetId(''); setFilterTargetType(''); }}
+              aria-label="Remover filtro de target"
+              className="ml-1 text-white/60 hover:text-red-400 focus-visible:outline-2 focus-visible:outline-magenta rounded">
+              <X className="w-3 h-3" aria-hidden="true" />
+            </button>
+          </div>
+        )}
         <div className="ml-auto text-xs text-white/40">
           {total > 0 ? `${total} registro(s) - pagina ${currentPage}/${totalPages}` : 'Sem registros'}
         </div>

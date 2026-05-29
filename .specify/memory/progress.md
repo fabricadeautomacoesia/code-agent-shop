@@ -34296,3 +34296,52 @@ Pattern V8: TODA listing dashboard-seller/admin com refer publico deve ter
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 ALTA PRIORIDADE
+
+## PASS 451 W4 ADMIN: orders audit-log forensic link (consume pass 430 + audit-log URL filter)
+commit pendente
+GAP /admin/orders sem one-click investigation flow
+PRE-FIX:
+- order_number era button copy clipboard apenas
+- Admin via incident -> manual:
+  1. Copy order_number
+  2. Navegar /admin/audit-log
+  3. Filtrar manualmente OR psql direto
+- Zero forensic flow integrado
+- Pass 430 backend ja suporta ?target_id + ?target_type mas frontend nao usava
+- /admin/audit-log nao consumia URL params
+
+POST-FIX 2 partes:
+1. /admin/orders order_number cell:
+   - Mantem button copy clipboard
+   - + Link "audit" -> /admin/audit-log?target_id={uuid}&target_type=order
+2. /admin/audit-log page enhance:
+   - useSearchParams (Suspense wrap p/ NextJS 16)
+   - filterTargetId + filterTargetType state initial de URL
+   - filterDays default 90d se target deep-link (forensic full)
+   - Visual chip "target: order {uuid_slice}" + X clear button
+   - Reset offset quando target muda (paridade outros filters)
+   - Backend params forwarded (pass 430 target_id + target_type)
+
+UX flow agora:
+- Admin /admin/orders ve incident no order R$5000 refunded
+- Click "audit" no order_number cell
+- /admin/audit-log?target_id=X&target_type=order
+- Page abre com chip target visivel + days=90d auto
+- Mostra TODA timeline order: created, paid, refunded, dispute opened, etc
+- Pattern V8 W4: investigation one-click
+
+Cadeia consume pass 430:
+  pass 430 aiops-svc /audit-log target_id+target_type filter
+  pass 451 dashboard-admin order_number link + audit-log URL params <- ESTE
+
+W4 admin investigation flow series:
+  pass 401 orders order_number copy + buyer_email mailto
+  pass 446 qa-queue title preview link
+  pass 451 orders audit-log forensic link + audit-log URL <- ESTE
+
+184 passes acumulados (268->451) sem deploy VPS
+7 CRITICAL + 28 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 ALTA PRIORIDADE
