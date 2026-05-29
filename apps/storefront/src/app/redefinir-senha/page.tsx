@@ -161,8 +161,17 @@ function ResetInner() {
               autoComplete="new-password"
               className="w-full px-10 py-2.5 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none" />
           </div>
+          {/* FIX-WORKER-1 pass 702 (a11y aria-live pw-confirm-hint - SR feedback dinamico):
+              PRE-FIX: pw-confirm-hint shown conditionally MAS sem aria-live.
+              - SR (NVDA/JAWS) nao anuncia "Senhas ainda nao coincidem" quando aparece
+              - User com deficiencia visual digita confirm, ouve nada, submete -> erro
+              - aria-describedby={pw-confirm-hint} no input ja preserva semantica
+                MAS dynamic content sem aria-live nao re-announce
+              POST-FIX: + aria-live=polite + role=status no hint
+              Paridade pass 549 esqueci-senha SR announce + pass 137 qna-form counter. */}
           {confirm.length > 0 && password !== confirm && (
-            <div id="pw-confirm-hint" className="text-xs text-yellow-400 mt-1">Senhas ainda nao coincidem</div>
+            <div id="pw-confirm-hint" role="status" aria-live="polite"
+              className="text-xs text-yellow-400 mt-1">Senhas ainda nao coincidem</div>
           )}
         </div>
 
@@ -176,7 +185,16 @@ function ResetInner() {
           </div>
         )}
 
-        <button type="submit" disabled={loading} className="btn-primary w-full disabled:opacity-50">
+        {/* FIX-WORKER-1 pass 702 (a11y submit CTA paridade cadeia 9 sites W1 AUTH):
+            PRE-FIX: btn sem aria-busy/aria-label dinamico/focus-visible
+            - Sem aria-busy: SR nao anuncia 'busy' durante save
+            - Sem focus-visible: keyboard users sem affordance
+            - Paridade pass 549 esqueci-senha submit + cadeia auth CTAs
+            POST-FIX: aria-busy + aria-label + focus-visible outline magenta */}
+        <button type="submit" disabled={loading}
+          aria-busy={loading}
+          aria-label={loading ? 'Salvando nova senha' : 'Redefinir senha agora'}
+          className="btn-primary w-full disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
           {loading ? 'Salvando...' : 'Redefinir senha'}
         </button>
       </form>
