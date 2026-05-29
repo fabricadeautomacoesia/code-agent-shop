@@ -37433,3 +37433,52 @@ Cadeia W5 SELLER a11y consolidacao 100%:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply
+
+## Pass 510 - W1 AUTH: NotificationBell footer link UX honesty
+
+PRE-FIX BUG (false promise UX):
+- NotificationBell footer linha 304-308:
+    <Link href="/conta">Ver todas em Minha Conta</Link>
+- User clica esperando lista de TODAS notifs (read+unread+paginacao)
+- Lands em /conta dashboard generic com cards (orders, products, KYC, etc)
+- "Ver todas" = false promise -> confusao UX + perda de confianca
+- /conta/notificacoes existe MAS e prefs page (LGPD opt-in/out)
+- Sem dedicated /conta/notificacoes/inbox listing page
+
+Investigacao:
+- /conta = dashboard (h1: 'Ola, NomeUser')
+- /conta/notificacoes = preferences (h1: 'Preferencias de Notificacao')
+- Cards de /conta apontam para /conta/notificacoes (pass 228)
+- Notification bell ja mostra ~30 notifs recentes (suficiente p/ ~99% users)
+
+POST-FIX (honesty UX):
+- Link aponta /conta/notificacoes (notification-related page)
+- Text: 'Gerenciar preferencias' (reflete real destino)
+- Adicionado focus-visible:outline-2 outline-magenta keyboard a11y
+- Sem false promise "ver todas" (que nao existe)
+- User entende que vai gerenciar opt-in/out
+
+Lesson learned:
+- UX honesty > marketing language
+- Pass 228 criou /conta/notificacoes prefs MAS bell footer ficou lagged
+- Notifications cadeia: pass 4 (NotificationBell base), 7 (markRead optimistic),
+  228 (/conta/notificacoes link), 510 (este - footer text alignment)
+
+Cadeia W1 NotificationBell UX:
+- pass 2 refetch ao reabrir (stale fix)
+- pass 4 /unread-count poll 30s lightweight
+- pass 7 markRead optimistic + rollback
+- pass 160 a11y aria-label dinamico count
+- pass 228 /conta/notificacoes prefs page link
+- pass 267 markRead UUID validation + log.error observability
+- pass 306 defensive date guard
+- pass 355 SELLER_DASH_URL env-driven
+- pass 434 deep-link hash #qna-{uuid} consume product-tabs
+- pass 510 (este) footer link UX honesty
+
+242 passes acumulados (268->510) sem deploy VPS
+9 CRITICAL + 36 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply (11 PARTIAL/composite indexes)

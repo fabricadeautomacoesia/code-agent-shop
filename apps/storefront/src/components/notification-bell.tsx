@@ -301,9 +301,23 @@ export function NotificationBell() {
             </div>
 
             {notifs.length > 0 && (
+              /* FIX-WORKER-1 pass 510 (footer link UX honesty):
+                 PRE-FIX BUG: link "Ver todas em Minha Conta" -> /conta (dashboard)
+                 - User expecta lista de TODAS notifs (read + unread + pagination)
+                 - Lands em /conta dashboard generic com cards (orders, products, etc)
+                 - "Ver todas" = false promise -> confusao UX, perda confianca
+                 - /conta/notificacoes existe MAS e prefs page (LGPD opt-in/out)
+                 - Sem dedicated /conta/notificacoes/inbox listing
+                 POST-FIX (honesty UX):
+                 - Link aponta /conta/notificacoes (prefs page - notification-related)
+                 - Text "Gerenciar preferencias" - reflete real destino
+                 - Sem false promise "ver todas" (que nao existe ainda)
+                 - User sabe que vai gerenciar opt-in/out, nao listar notifs
+                 - Futuro: criar /conta/notificacoes/inbox dedicated listing
+                   page se necessidade aparecer (atualmente bell suficiente p/ ~30 recents) */
               <footer className="p-3 border-t border-white/10 text-center">
-                <Link href="/conta" onClick={() => setOpen(false)} className="text-xs text-magenta hover:underline">
-                  Ver todas em Minha Conta
+                <Link href="/conta/notificacoes" onClick={() => setOpen(false)} className="text-xs text-magenta hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                  Gerenciar preferencias
                 </Link>
               </footer>
             )}
