@@ -32,9 +32,33 @@ const router = express.Router();
 const SELLER_TIER_ENUM = new Set(['bronze','silver','gold','platinum']);
 
 router.get('/',
+  /* FIX-WORKER-18 pass 617 (cache key normalization 5 params paridade cadeia 28 sites
+     W7+W10+W12+W13+W17+W18 cache hygiene cross-svc consolidacao - 29 sites total):
+     PRE-FIX BUGS (5 issues cache pollution vs handler):
+     1. Raw q.page sem Math.max(1, ...) clamp (handler linha 43).
+     2. Raw q.limit sem Math.max/Math.min [1, 100] clamp (handler linha 42).
+     3. Raw q.sort sem whitelist check (handler nao valida MAS query injection
+        risk - PG ORDER BY clause derived from sort param).
+     4. Raw q.tier sem VALID_TIER whitelist (handler valida linha 59).
+        Invalid stored 400 cached em chave.
+     5. Raw q.search sem trim/lowercase/slice cap DoS defense (handler escapa).
+     POST-FIX: normalize cache key SAME way handler normalizes.
+     Paridade cadeia 28 sites cache hygiene cross-svc (passes 520-616). */
   cache.cacheMiddleware((req) => {
     const q = req.query;
-    return `sellers:list:p=${q.page||1}:lim=${q.limit||24}:s=${q.sort||'rep_desc'}:t=${q.tier||''}:q=${q.search||''}`;
+    const page = Math.max(1, parseInt(q.page, 10) || 1);
+    const lim = Math.max(1, Math.min(100, parseInt(q.limit, 10) || 24));
+    // sort: bounded enum (paridade VALID_TIER whitelist handler-side)
+    const sortRaw = String(q.sort || 'rep_desc').toLowerCase();
+    const VALID_SORT = new Set(['rep_desc','rep_asc','newest','oldest','name']);
+    const sort = VALID_SORT.has(sortRaw) ? sortRaw : 'rep_desc';
+    // tier: VALID_TIER whitelist (handler linha 58)
+    const tierRaw = String(q.tier || '').toLowerCase();
+    const VALID_TIER_CACHE = new Set(['iniciante','bronze','prata','ouro','platinum']);
+    const tier = VALID_TIER_CACHE.has(tierRaw) ? tierRaw : '';
+    // search: .trim().toLowerCase().slice(0, 100) DoS cap (handler escapa wildcards)
+    const search = (q.search || '').toString().trim().toLowerCase().slice(0, 100);
+    return `sellers:list:p=${page}:lim=${lim}:s=${sort}:t=${tier}:q=${search}`;
   }, 120),
   asyncHandler(async (req, res) => {
   const { page = 1, limit = 24, sort = 'rep_desc', tier, search } = req.query;
