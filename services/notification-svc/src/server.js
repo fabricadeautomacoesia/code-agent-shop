@@ -1120,6 +1120,33 @@ async function processOutbox() {
         // Email JA foi enviado por nos (acima). Loga warn p/ investigacao.
         log.warn({ id: n.id, worker: WORKER_ID, channel: n.channel },
           '[notif.race.duplicate_send] outro worker tomou lock - email duplicado possivelmente enviado');
+        /* FIX-WORKER-13 pass 548 (audit_log duplicate-send race - compliance trail):
+           PRE-FIX BUG: log.warn apenas - sem audit_log trail.
+           Cenario REAL: user recebe email duplicado, abre ticket suporte.
+           Admin investiga: log.warn em Pino/Loki tem context mas:
+           - Nao queryable cross-svc (audit_log = forensic DB queryable)
+           - Sem severity='warn' marker para alert/dashboard threshold
+           - Compliance LGPD Art 37 (registro operacional incidentes):
+             notification incident sem trail estruturado
+           - SOC2 CC7.3: operational anomaly tracking required
+           POST-FIX: + audit_log INSERT atomic com severity='warn'.
+           - action='notif.race.duplicate_send'
+           - target_type='notification', target_id=n.id
+           - actor_role='system' (nao user-initiated)
+           - payload: worker_id + channel + template_code (queryable)
+           - Severity warn (nao critical - eh defensive log, email JA enviado OK)
+           Fire-and-forget .catch (audit_log fail nao deve crash outbox loop). */
+        query(
+          `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+           VALUES (NULL, 'system', 'notif.race.duplicate_send', 'notification', $1::UUID, 'warn', $2::JSONB)`,
+          [n.id, JSON.stringify({
+            worker_id: WORKER_ID,
+            channel: n.channel,
+            template_code: n.template_code,
+            user_id: n.user_id,
+          })]
+        ).catch((e) => log.error({ err: mask.text(String(e.message || '').slice(0, 200)) },
+          '[notif.race.audit_log_fail]'));
       } else {
         log.info({ id: n.id, channel: n.channel, to: mask.text(n.email || '') }, '[notif.sent]');
       }
