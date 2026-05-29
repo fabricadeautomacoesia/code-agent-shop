@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII, notifCache } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 60: LGPD role-tier helper.
 // Aplica maskPII em email+full_name p/ role STAFF (admin vê full).
@@ -137,8 +137,14 @@ router.post('/:id/suspend',
                  $2, 3)`,
         [s.user_id, `Motivo: ${req.body.reason}. Entre em contato com o suporte para mais informacoes.`]
       );
+      outcome = outcome || {};
+      outcome.notified_user_id = s.user_id;
     });
 
+    /* FIX-WORKER-4 pass 476 (notifCache cross-svc - seller_suspended priority 3 critical):
+       Suspended seller PRECISA ver "sua conta foi suspensa" IMEDIATO ao tentar acessar.
+       Cache 20s delay = confusion (porque login bloqueado sem alerta visivel). */
+    if (outcome?.notified_user_id) notifCache.invalidate(outcome.notified_user_id);
     if (outcome?.error === 'not_found') return next(errorHandler.notFound('seller_not_found'));
     if (outcome?.error === 'already_suspended') {
       return res.status(409).json({

@@ -2,7 +2,7 @@
 
 const cron = require('node-cron');
 const { query, tx } = require('@cas/db-client');
-const { logger, mask } = require('@cas/shared');
+const { logger, mask, notifCache } = require('@cas/shared');
 
 const log = logger.child({ svc: 'seller-svc', mod: 'sla-checker' });
 
@@ -29,6 +29,13 @@ async function checkSlaDeadlines() {
                                           AND NOW() + ($1 || ' days')::INTERVAL + INTERVAL '1 hour'`,
       [days]
     );
+    /* FIX-WORKER-5 pass 476 (notifCache cross-svc - SLA warnings cron):
+       PRE-FIX: SLA warning notif cron sem invalidate cache.
+       - Seller proximo de SLA deadline = priority warning (cash flow risk)
+       - Seller refresh dashboard /financeiro -> stale ate 20s
+       - SLA warnings (7d/3d/1d) sao engagement-critical
+       POST-FIX: capture warnedUserIds[] + invalidateBulk apos loop. */
+    const warnedUserIds = [];
     for (const seller of r.rows) {
       await query(
         `INSERT INTO notifications (user_id, channel, template_code, title, body, payload)
@@ -46,7 +53,9 @@ async function checkSlaDeadlines() {
          VALUES ($1, 'warning_sent', $2, $3)`,
         [seller.id, seller.sla_next_deadline_at, `warning ${days}d`]
       );
+      warnedUserIds.push(seller.user_id);
     }
+    if (warnedUserIds.length) notifCache.invalidateBulk(warnedUserIds);
     log.info({ days, sellers_warned: r.rows.length }, '[sla.warning]');
   }
 
@@ -102,6 +111,10 @@ async function checkSlaDeadlines() {
          seller.id]
       );
     });
+    /* FIX-WORKER-5 pass 476 (notifCache - sla_revoked priority 2 critical):
+       SLA revogado = seller perde acesso vault + sessoes. Notif imediata = essencial
+       p/ seller saber 'por que nao acesso?' antes do refresh manual. */
+    notifCache.invalidate(seller.user_id);
     log.warn({ seller_id: seller.id, store: seller.store_name }, '[sla.revoked]');
   }
 

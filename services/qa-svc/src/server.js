@@ -368,6 +368,9 @@ app.post('/qa/run',
                   JSON.stringify({ product_id, run_id, error: safeErr.slice(0, 200) })
                 ]
               );
+              // FIX-WORKER-12 pass 476 (notifCache cross-svc - qa_dispatch_failed)
+              // Seller submitted produto pra QA -> dispatch falhou -> espera ver alerta IMEDIATO
+              notifCache.invalidate(sellerUser.rows[0].user_id);
             }
           } catch (notifErr) {
             log.warn({ err: notifErr.message }, '[qa.dispatch.notif.fail]');
@@ -973,6 +976,9 @@ async function timeoutStuckRuns() {
                 JSON.stringify({ product_id: run.product_id, run_id: run.id, minutes })
               ]
             );
+            // FIX-WORKER-12 pass 476 (notifCache cross-svc - qa_run_timeout)
+            // Seller esperou QA processar 10min+ -> timeout -> espera reenvio IMEDIATO
+            notifCache.invalidate(sellerInfo.rows[0].user_id);
           }
         });
         log.info({ run_id: run.id, minutes }, '[qa.timeout.ok]');

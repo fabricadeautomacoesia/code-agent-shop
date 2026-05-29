@@ -35789,3 +35789,58 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096+097+098 ALTA PRIORIDADE
 - Continuar consume notifCache 8+ sites pendentes
+
+## PASS 476 W7+W12+W5 notifCache: qa-svc + seller-svc cron + seller admin (4 sites)
+commit pendente
+GAP discover audit: mais 4 sites notifCache lagged em 3 svcs
+PRE-FIX descoberta de audit cross-svc:
+- qa-svc/server.js linhas 361 (qa_dispatch_failed) + 966 (qa_run_timeout) lagged
+- seller-svc/cron/sla-checker.js linhas 34 (sla_warning) + 91 (sla_revoked) lagged
+- seller-svc/admin.js linha 134 (seller_suspended priority 3) lagged
+
+SCOPE:
+- qa_dispatch_failed (priority 2): seller submetido produto QA falhou - precisa reenviar
+- qa_run_timeout (priority 2): QA ficou >10min - cron auto-cancel - reenvio liberado
+- sla_warning (cron bulk warning): seller 7/3/1 dias antes vencer
+- sla_revoked (priority 2 critical): vault keys revogadas + sessoes encerradas
+- seller_suspended (priority 3 maximo): conta suspensa, login bloqueado
+
+POST-FIX 5 sites:
+1. qa-svc 361: notifCache.invalidate(sellerUser.rows[0].user_id) post-INSERT
+2. qa-svc 966: notifCache.invalidate(sellerInfo.rows[0].user_id) post-INSERT
+3. seller-svc sla-checker warnings: warnedUserIds[] capture + invalidateBulk apos loop
+4. seller-svc sla-checker revoke: notifCache.invalidate(seller.user_id) post-tx
+5. seller-svc admin suspend: outcome.notified_user_id + notifCache.invalidate post-tx
+
+Import notifCache em todos 3 arquivos
+
+Cadeia consume pass 467 cross-svc CONSOLIDATED:
+  pass 467 helper + auth 2fa.activate (1)
+  pass 468 payment hot path (2)
+  pass 469 order dispute + free (2)
+  pass 470 qa.callback dual (1)
+  pass 471 auth-svc 5 sites
+  pass 472 seller loyalty + product version (2)
+  pass 473 product force-approve + review qna_new (2)
+  pass 474 payment refund + payout + pending (3)
+  pass 475 review-svc 4 sites
+  pass 476 qa-svc + seller cron + seller admin (5 sites) <- ESTE
+
+Total sites consume agora: 27/30+ (~90% consolidation)
+
+PROXIMOS PASSES (~3 sites pendentes):
+  - seller-svc/admin.js linha 226 (reactivate) + 576 (outro evento)
+  - vault-svc remaining check
+
+Pattern V8 cross-svc notifCache:
+- cron paths (sla-checker, qa timeout) precisam invalidateBulk array capture
+- Account-state changes (suspended/revoked) priority 3 = anti-takeover immediate
+- 90% consolidation = sistema cross-svc UX bell badge realtime end-to-end
+
+209 passes acumulados (268->476) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096+097+098 ALTA PRIORIDADE
+- Continuar consume notifCache ~3 sites pendentes
