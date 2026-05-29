@@ -769,7 +769,54 @@ app.post('/use',
           ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
         }),
       ]
-    ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)), key_id: k.id }, '[vault.use.audit_fail]'));
+    ).catch((e) => {
+      /* FIX-WORKER-17 pass 555 (audit gap escalation - SECURITY CRITICAL observability):
+         PRE-FIX: log.warn em catch quando audit_log INSERT fail.
+         - Vault /use eh boundary AES-256-GCM = retorna plain crypto key
+         - LGPD Art 37 + SOC2 CC7.3 + ISO 27001 A.12.4: TODO acesso a
+           secrets material precisa trail forense queryable
+         - audit fail = response continua (fail-open) MAS sem trail
+         - Comentario afirma 'audit gap sera detectado por aiops monitoring'
+           MAS nao ha mecanismo aiops currently detecting gaps
+         - log.warn em Pino/Loki NAO dispara alerta operacional
+         - Cenario worst-case: atacante post-XSS forca audit_log DB outage
+           timing -> vault.use response sem trail = compromise invisivel
+         POST-FIX:
+         1. log.error (vs log.warn) - severity bump
+         2. + audit_log fallback INSERT em audit_log com severity='critical'
+            (mesma tabela mas action='vault.use.audit_fail' - se PRIMARY
+            audit falhou, FALLBACK pode succeed em retry/connection recovery)
+         3. Tag '[vault.use.audit_fail.CRITICAL]' p/ alertmanager regex match
+         4. payload inclui key_id + user_id + ip + ua (forensic fallback) */
+      log.error({
+        err: mask.text(String(e.message || '').slice(0, 300)),
+        key_id: k.id,
+        user_id: req.user?.sub || null,
+        ip: req.ip,
+      }, '[vault.use.audit_fail.CRITICAL] PRIMARY audit_log INSERT failed - vault.use boundary breach risk');
+      // FALLBACK audit_log INSERT with severity=critical (different transaction)
+      // If primary failed due to constraint/lock, this may succeed via retry connection
+      query(
+        `INSERT INTO audit_log
+          (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'vault.use.audit_fail', 'vault_key', $3, 'critical', $4::JSONB)`,
+        [
+          req.user?.sub || null,
+          req.user?.role || (req.headers['x-internal-token'] ? 'internal' : 'unknown'),
+          k.id,
+          JSON.stringify({
+            primary_audit_error: mask.text(String(e.message || '').slice(0, 200)),
+            provider: k.provider,
+            fingerprint: k.key_fingerprint,
+            ip: req.ip,
+            ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+          }),
+        ]
+      ).catch((e2) => log.error({
+        err: mask.text(String(e2.message || '').slice(0, 200)),
+        key_id: k.id,
+      }, '[vault.use.audit_fail.FALLBACK_ALSO_FAILED] DB outage suspected - investigate'));
+    });
 
     // POST-fix audit-first ordering: response apenas APOS trail gravado
     res.json({
