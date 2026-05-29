@@ -36153,3 +36153,70 @@ Pattern V8 W10+W4 admin workflow completeness:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 096+097+098+099+100 ALTA PRIORIDADE
+
+## PASS 483 W4 ADMIN: /admin/alerts UI rebuild (consume pass 432 filters + pass 482 acknowledge)
+commit pendente
+GAP /admin/alerts UI 49 linhas minimal sem consume pass 432+482 backend
+PRE-FIX:
+- Pass 432 backend filter ?severity + ?source + ?acknowledged
+- Pass 482 backend POST /alerts/:id/acknowledge
+- UI tinha ZERO consume - apenas auto-poll /alerts/recent
+- Admin sem capacidade ack via dashboard (psql direto OR esperar TTL)
+- Workflow loop quebrado em UI
+
+SCOPE:
+- /admin/alerts = primary security monitoring dashboard
+- Sem UI consume = backend cobertura inutilizavel admin diario
+- Cadeia: backend pass 432 -> backend pass 482 -> UI pass 483 <- ESTE FECHA
+
+POST-FIX UI rebuild (49 -> 168 linhas):
+1. Filters bar (consume pass 432):
+   - Severity dropdown (info/warn/error/critical/all)
+   - Source input (aiops, fail2ban, spike-detector, etc)
+   - Toggle "Mostrar acked" - default oculta (focus pendentes)
+2. Acknowledge button per row (consume pass 482):
+   - CheckCircle2 icon + busy state (paridade qa-queue pass 446)
+   - useAdminAction hook (paridade payouts pass 3)
+   - Hide if already acked
+3. Visual acked state:
+   - opacity-60 + badge "acked" + timestamp
+4. role=alert banners (a11y paridade pass 427 cross-admin)
+5. Empty states contextual (loadError vs unacked vs full empty)
+
+useEffect deps [filterSeverity, filterSource, showAcked]:
+- Refresh automatico ao mudar filter
+- Auto-poll 15s (preservado pass 1 behavior)
+
+UX flow agora completo:
+- Admin /admin/alerts ve unacked default
+- Filter "critical" + "fail2ban" -> ve apenas critical fail2ban events
+- Click "Ack" -> POST /alerts/:id/acknowledge (pass 482)
+- audit_log entry criado (pass 482 audit compliance)
+- Cache invalidate -> auto-refresh remove acked
+- Workflow loop fechado em UI
+
+W4 admin workflow series final consolidacao:
+  pass 401 orders order_number copy + buyer mailto
+  pass 446 qa-queue title preview link
+  pass 451 orders audit forensic + URL params
+  pass 452 sellers KYC investigation
+  pass 455 payouts audit + VALID_TT fix
+  pass 464 webhooks forensic links
+  pass 477 seller admin + vault rotation
+  pass 483 /admin/alerts UI rebuild <- ESTE (consume pass 432+482 backend FECHA)
+
+Cadeia consume backend->UI consolidada:
+  pass 432 backend filters (10 fields) + pass 482 backend ack endpoint
+  pass 483 UI filters + ack button <- ESTE FECHA loop
+
+Pattern V8 W4 UI consume backend completeness:
+- TODO backend filter/mutation precisa matching UI consume
+- list endpoint + filter + mutation = workflow loop fechado
+- Cadeia: backend filter -> backend mutation -> UI consume -> auto-refresh
+
+216 passes acumulados (268->483) sem deploy VPS
+8 CRITICAL + 32 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 096-100 ALTA PRIORIDADE
