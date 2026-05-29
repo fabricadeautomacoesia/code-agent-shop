@@ -103,12 +103,42 @@ async function withCache(key, ttlSec, loader) {
 
 /**
  * Middleware Express. keyFn(req) -> string. Apenas GET.
+ *
+ * FIX-WORKER-18 pass 709 (silent cache-disabled detection - paridade pass 618):
+ * PRE-FIX: try { keyFn(req) } catch { return next(); } - silently disables cache
+ * - Pass 618 descobriu admin/reports cacheMiddleware({obj}) NUNCA executou cache
+ *   por ~580 passes (silent failure - sem log warn)
+ * - Same vulnerabilidade pode ocorrer em qualquer endpoint - drift entre keyFn
+ *   signature e call site = silent cache-disable
+ * POST-FIX: defensive typeof check + log.warn ONCE per cache key
+ * - keyFn nao funcao -> log.warn explicit (operational visibility)
+ * - Erros runtime durante keyFn(req) ainda fallback safe next() mas com log
+ * - Trade-off: <1ms overhead per request (typeof check + WeakSet dedup log)
  */
+const _cacheMiddlewareWarnedKeys = new WeakSet();
 function cacheMiddleware(keyFn, ttlSec = 60) {
+  // FIX pass 709: defensive type check upfront (boot-time validation)
+  if (typeof keyFn !== 'function') {
+    const keyFnDesc = String(keyFn).slice(0, 80);
+    if (typeof keyFn === 'object' && keyFn !== null && !_cacheMiddlewareWarnedKeys.has(keyFn)) {
+      _cacheMiddlewareWarnedKeys.add(keyFn);
+      logger.warn({ keyFnType: typeof keyFn, keyFnDesc },
+        '[cache.invalid_keyfn] cacheMiddleware called with non-function - cache effectively disabled. Did you pass an options object? Signature is cacheMiddleware(keyFn, ttlSec).');
+    } else if (typeof keyFn !== 'object') {
+      logger.warn({ keyFnType: typeof keyFn, keyFnDesc },
+        '[cache.invalid_keyfn] cacheMiddleware called with non-function - cache effectively disabled.');
+    }
+    // Cache disabled - pass-through middleware
+    return (req, res, next) => next();
+  }
   return async (req, res, next) => {
     if (req.method !== 'GET') return next();
     let key;
-    try { key = keyFn(req); } catch { return next(); }
+    try { key = keyFn(req); } catch (e) {
+      // Runtime error in keyFn - log warn (operational visibility, paridade pass 618 fix)
+      logger.warn({ err: e.message, op: 'cacheMiddleware.keyFn' }, '[cache.keyfn_runtime_err]');
+      return next();
+    }
     if (!key) return next();
     const cached = await get(key);
     if (cached !== null) {
