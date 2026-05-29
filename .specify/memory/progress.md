@@ -39016,3 +39016,45 @@ CADEIA W14 direction parity DESC+DESC migrations consolidacao:
 - 19 indexes total apply pending VPS SSH
 
 356 passes acumulados (268->626) sem deploy VPS
+
+============================================================================
+SESSAO 627-628 (W6 gateway CRITICAL vault block extend + W7+W14 PDP changelog)
+============================================================================
+
+Pass 627 (W6 CRITICAL gateway extend pass 567 - bloquear /api/vault/usage):
+- DESCOBERTA: pass 567 cobriu apenas '/use' (read AES key) - '/usage' (write
+  vault_key_usage records) ficou EXPOSTO via gateway publico
+- Threat /api/vault/usage:
+  - Admin JWT leaked -> spam INSERT vault_key_usage fake billing 
+  - UPDATE vault_api_keys.usage_this_month_cents corrupcao
+  - Audit pollution (false records mass-import)
+  - Billing fraud seller competidor
+- POST-FIX: regex extends - block /use, /usage + sub-paths trailing slash defense
+- log.warn '[gateway.vault_blocked]' forensic trail
+- Pattern V8 W6 layer-1 defense-in-depth: gateway bulletproof + svc layer-2 reforco
+- Internal calls (qa-worker -> vault) usam Docker network direct - ZERO regressao
+
+Pass 628 (W7+W14 PDP changelog tiebreaker DESC+DESC + mig 121):
+- DESCOBERTA: product-svc /:slug subquery versions json_agg sem id tiebreaker
+- ORDER BY pv.created_at DESC sem direction parity:
+  - Cron import bulk product_versions (5+ rows same created_at) -> non-deterministic
+  - PDP "Changelog" tab ordem variavel entre requests -> UX inconsistente
+- POST-FIX:
+  1. public.js linha 944 + pv.id DESC tiebreaker (paridade cadeia 30+ sites)
+  2. db/migrations/121 idx_pv_product_created_id (product_id, created_at DESC, id DESC)
+- Latency: ~1-3ms External Sort eliminado por PDP fetch
+- Storage: ~500KB-1MB para typical 10k product_versions
+
+CADEIA W14 direction parity DESC+DESC migrations cumulative:
+- mig 102-118 (17 indexes sessao previas)
+- mig 119 idx_qa_runs_product_started_id (pass 625)
+- mig 120 idx_orders_buyer_created_id (pass 626)
+- mig 121 idx_pv_product_created_id (pass 628 este)
+- 20 indexes total apply pending VPS SSH
+
+CADEIA W6 gateway block defense-in-depth:
+- pass 514 /api/loyalty/earn (trailing-slash + case bypass fix)
+- pass 567 /api/vault/use (CRITICAL crypto key)
+- pass 627 /api/vault/usage (este - CRITICAL billing fraud vector)
+
+358 passes acumulados (268->628) sem deploy VPS
