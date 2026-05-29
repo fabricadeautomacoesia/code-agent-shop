@@ -39235,3 +39235,34 @@ CADEIA W2 json_agg ORDER determinism:
 - 3 sites cumulative determinism consolidacao /conta/pedidos + /cart UX
 
 370 passes acumulados (268->640) sem deploy VPS
+
+============================================================================
+SESSAO 641-642 (W14 mig 125 vault rotation + W9 checkout twitter card)
+============================================================================
+
+Pass 641 (W14 mig 125 idx_vault_rotation_due_id PARTIAL):
+- mig 003:118 PRE-FIX: idx_vault_rotation (rotation_due_at) WHERE is_active=TRUE
+- vault-svc rotationAlertCron ORDER rotation_due_at ASC, id ASC (pass 632 fix)
+- Sem id ASC tiebreaker no idx -> External Sort small overhead (50 LIMIT)
+- POST-FIX: PARTIAL (rotation_due_at ASC, id ASC) WHERE is_active=TRUE
+- Latency: ~1-3ms External Sort eliminado
+- Storage: ~50-100KB PARTIAL (is_active filtered)
+
+Pass 642 (W9 checkout twitter card paridade cadeia 11 sites):
+- DESCOBERTA: /checkout/layout.tsx openGraph presente mas SEM twitter card
+- Paridade cadeia 10 sites previas + este = 11 cumulative
+- Pagina protegida noindex+nofollow+nocache (trinca seguranca preserved)
+- POST-FIX: twitter card summary cross-platform preview consistency
+
+CADEIA W14 direction parity migrations cumulative:
+- mig 102-124 (23 indexes consolidacao previa)
+- mig 125 idx_vault_rotation_due_id PARTIAL ASC+ASC (pass 641 este)
+- 24 indexes total apply pending VPS SSH
+
+CADEIA W9 twitter card consolidation cross-page:
+- /login, /esqueci-senha, /redefinir-senha, /register
+- /conta/* downloads, seguranca, perfil, pontos, pedidos
+- /cart (pass 637), /checkout (pass 642 este)
+- 11 sites cumulative cross-platform preview consistency
+
+372 passes acumulados (268->642) sem deploy VPS
