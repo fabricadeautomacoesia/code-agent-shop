@@ -1041,6 +1041,18 @@ async function timeoutStuckRuns() {
     //   NOTA: lock liberado em commit do tx() seguinte - aqui select
     //   isolado consome o lock implicit ao read transaction.
     //   Workaround correto: usar UPDATE...RETURNING para claim atomico.
+    /* FIX-WORKER-12 pass 711 (Regra D direction parity tiebreaker - cron forensic determinism):
+       PRE-FIX: ORDER BY started_at ASC LIMIT 20 sem id tiebreaker.
+       - Cron timeoutStuckRuns (5min interval) claim oldest stuck runs first
+       - Mass-timeout burst: 50+ qa_runs stuck mesma started_at second-precision
+         (cron callback batch timeout - n8n down period)
+       - LIMIT 20 picks ARBITRARY 20 entre ties -> remaining 30 nao processados
+         ate proximo cron tick (5min delay)
+       - Forensic non-deterministic em audit_log (qual subset foi timed-out?)
+       - Compounded over months: drift accumulado em qa.timeout pattern detection
+       POST-FIX: + id ASC tiebreaker (paridade pass 632 vault rotation +
+       pass 698 payment reconcile cron consolidacao ASC+ASC cron variants).
+       Pattern V8 W14 forensic determinism cron FIFO. */
     const stuck = await query(
       `WITH claimed AS (
          UPDATE product_qa_runs
@@ -1049,7 +1061,7 @@ async function timeoutStuckRuns() {
             SELECT id FROM product_qa_runs
              WHERE verdict = 'running'
                AND started_at < NOW() - INTERVAL '10 minutes'
-             ORDER BY started_at ASC LIMIT 20
+             ORDER BY started_at ASC, id ASC LIMIT 20
              FOR UPDATE SKIP LOCKED
           )
           RETURNING id, product_id, started_at,
