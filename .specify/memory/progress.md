@@ -38123,3 +38123,56 @@ Cadeia W18 cache normalization consolidation:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-105 ALTA PRIORIDADE apply
+
+## Pass 522 - W7 PRODUCT-SVC: /price-alerts/check cache paridade wishlist pass 178
+
+PRE-FIX BUG (paridade lagged - hot path PDP sem cache):
+- price-alerts.js linha 93 GET /check/:product_id:
+    SELECT 1 FROM product_price_alerts WHERE user_id=$1 AND product_id=$2 LIMIT 1
+  Sem cacheMiddleware - hit DB cada PDP open
+- Wishlist /check (pass 178) JA tem cacheMiddleware 60s:
+    wishlist.js linha 217-219: cache.cacheMiddleware(checkCacheKey, 60)
+- Pattern V8 W7 W18: ALL boolean check endpoints hot path = cache 60s
+
+Hot path impact:
+- User abre PDP -> WishlistButton check (cache 60s OK)
+- PriceAlertButton check -> DB hit cada visit
+- 100 users navegando PDPs = 100 queries DB sem cache
+- Index (user_id, product_id) ajuda mas roundtrip + WAL writes desperdicio
+- 60s cache TTL aceitavel (state mudou apenas via POST/DELETE explicit)
+
+Comparacao paridade:
+- Wishlist /check: cache 60s + invalidation pos POST/DELETE (pass 178)
+- Price-alerts /check: SEM cache + SEM invalidation (este lagged)
+
+POST-FIX:
+- import cache from @cas/shared
+- priceAlertCheckCacheKey: `pricealert:check:${user}:${product}`
+- cache.cacheMiddleware(keyFn, 60) paridade wishlist
+- cache.del exato key pos POST (paridade pass 178 wishlist invalidate)
+- cache.del exato key pos DELETE (idem)
+- Comment expansivo explica paridade + impact
+
+Latencia esperada:
+- Cache HIT: ~3ms (Redis) vs ~5ms (PG query indexed)
+- Pequeno mas multiplicado por 100s users/min = significant
+- DB pool relief + WAL writes reduzidos
+
+Cadeia W7 PRODUCT-SVC cache hygiene + paridade wishlist:
+- pass 178 wishlist /check + invalidation
+- pass 232 autocomplete short-circuit pre-cache
+- pass 350 products:detail cache key lowercase
+- pass 358 mega menu cache invalidation
+- pass 386 /products/me cache 30s
+- pass 487 is_top_seller NULL category guard
+- pass 490 /compare cache key UUID filter
+- pass 512 /admin/:id/archive tx atomicity + DLP
+- pass 513 /also-bought + /related cache key/query normalize
+- pass 522 (este) /price-alerts/check cache + invalidation paridade pass 178
+
+254 passes acumulados (268->522) sem deploy VPS
+9 CRITICAL + 37 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-105 ALTA PRIORIDADE apply

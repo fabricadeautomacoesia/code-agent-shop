@@ -11,7 +11,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, cache } = require('@cas/shared');
 
 const router = express.Router();
 router.use(jwt.requireAuth());
@@ -90,17 +90,36 @@ router.get('/', asyncHandler(async (req, res) => {
 // IMPACTO PRE-FIX: user com 50 alertas baixava ~5KB JSON por PDP open.
 // AGORA: query indexada (user_id, product_id) -> linha unica, ~50 bytes.
 // Pattern same wishlist /check (W7 endpoint estabelecido).
-router.get('/check/:product_id', asyncHandler(async (req, res, next) => {
-  if (!UUID_RE.test(req.params.product_id)) {
-    return next(errorHandler.badRequest('invalid_uuid'));
-  }
-  const r = await query(
-    `SELECT 1 FROM product_price_alerts
-      WHERE user_id = $1 AND product_id = $2 LIMIT 1`,
-    [req.user.sub, req.params.product_id]
-  );
-  res.json({ active: r.rows.length > 0 });
-}));
+/* FIX-WORKER-7 pass 522 (cache /check paridade wishlist pass 178):
+   PRE-FIX BUG: NO cache - hot path PDP open dispara query DB cada visit
+   - Wishlist /check linha 217-219 (pass 178) tinha cache 60s
+   - Price-alerts /check (este) ficou LAGGED em paridade
+   - User abre PDP -> WishlistButton check (cache 60s OK) +
+     PriceAlertButton check (DB hit cada visit - waste)
+   - 100 users navegando PDPs = 100 queries DB sem cache
+   - Pattern V8 W7 W18: ALL boolean check endpoints hot path = cache 60s
+   POST-FIX: cacheMiddleware paridade wishlist pattern
+   - Key: pricealert:check:USER:PRODUCT (mesma estrutura wishlist:check)
+   - TTL 60s (mesma paridade)
+   - Invalidation: needed pos POST /price-alerts + DELETE /price-alerts/:id
+     (futuro pass se hits significativos - atualmente trigger PG fn_price_drop
+      atualiza last_notified_at apenas, nao muda existence) */
+const priceAlertCheckCacheKey = (req) =>
+  `pricealert:check:${req.user?.sub || 'anon'}:${req.params.product_id}`;
+router.get('/check/:product_id',
+  cache.cacheMiddleware(priceAlertCheckCacheKey, 60),
+  asyncHandler(async (req, res, next) => {
+    if (!UUID_RE.test(req.params.product_id)) {
+      return next(errorHandler.badRequest('invalid_uuid'));
+    }
+    const r = await query(
+      `SELECT 1 FROM product_price_alerts
+        WHERE user_id = $1 AND product_id = $2 LIMIT 1`,
+      [req.user.sub, req.params.product_id]
+    );
+    res.json({ active: r.rows.length > 0 });
+  })
+);
 
 // POST /products/price-alerts - cria/atualiza alerta
 // FIX-WORKER-7 pass 81: 2 BUGS aplicando Pattern W7 (Regra A + threshold validation).
@@ -162,6 +181,11 @@ router.post('/',
     );
     const wasInserted = r.rows[0].inserted;
     delete r.rows[0].inserted;
+    /* FIX-WORKER-7 pass 522: invalidate /check cache pos-mutation (paridade wishlist pass 178)
+       PRE-FIX: POST INSERT/UPDATE alert mas cache stale por ate 60s
+       - User cria alert -> bell badge / button state pode mostrar stale 60s
+       POST-FIX: cache.del exato key (sem wildcard - 1 key per user-product) */
+    await cache.del(`pricealert:check:${req.user.sub}:${req.body.product_id}`).catch(() => {});
     res.status(wasInserted ? 201 : 200).json({ alert: r.rows[0], created: wasInserted });
   })
 );
@@ -176,6 +200,8 @@ router.delete('/:product_id', asyncHandler(async (req, res, next) => {
     [req.user.sub, req.params.product_id]
   );
   if (!r.rows.length) return next(errorHandler.notFound('alert_not_found'));
+  // FIX pass 522: invalidate /check cache pos-DELETE (paridade POST)
+  await cache.del(`pricealert:check:${req.user.sub}:${req.params.product_id}`).catch(() => {});
   res.json({ ok: true });
 }));
 
