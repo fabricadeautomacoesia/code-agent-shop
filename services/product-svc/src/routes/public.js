@@ -809,18 +809,25 @@ router.get('/',
     params.push(String(req.query.seller).trim().toLowerCase());
   }
 
-  // BUG 1: + p.id ASC tiebreaker em TODOS sorts
-  // FIX-WORKER-7 pass 125: + recent_sales (sync c/ search-svc SORT_OPTIONS).
-  // Tiebreaker p.id ASC mantem Regra D em todos (W7 pass 12).
+  /* FIX-WORKER-7 pass 700 (Regra D direction parity SORT_OPTIONS - paridade cadeia 7 sites):
+     PRE-FIX (pass 125): + p.id ASC tiebreaker MAS chains DESC + id ASC = MIXED direction
+     - 6 sorts MIXED: relevance/newest/price_desc/rating/sales/recent_sales
+     - price_asc paridade OK (ASC + ASC)
+     - External Sort obligatorio hot path /products listing public
+     POST-FIX: 6 sorts DESC chains com p.id DESC explicit
+     - price_asc preserva ASC chain consistency
+     - 8th site SORT_OPTIONS cross-svc consolidacao Regra D V8
+     - Paridade pass 648 /search + pass 691 /sellers + pass 696 related/also-bought +
+       pass 699 /seller/:slug/products */
   const order = ({
-    relevance:    'p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id ASC',
-    newest:       'p.published_at DESC NULLS LAST, p.id ASC',
+    relevance:    'p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id DESC',
+    newest:       'p.published_at DESC NULLS LAST, p.id DESC',
     price_asc:    'p.price_cents ASC, p.id ASC',
-    price_desc:   'p.price_cents DESC, p.id ASC',
-    rating:       'p.avg_rating DESC NULLS LAST, p.review_count DESC, p.id ASC',
-    sales:        'p.sales_count DESC, p.id ASC',
-    recent_sales: 'p.last_sale_at DESC NULLS LAST, p.sales_count DESC, p.id ASC',
-  })[req.query.sort] || 'p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id ASC';
+    price_desc:   'p.price_cents DESC, p.id DESC',
+    rating:       'p.avg_rating DESC NULLS LAST, p.review_count DESC, p.id DESC',
+    sales:        'p.sales_count DESC, p.id DESC',
+    recent_sales: 'p.last_sale_at DESC NULLS LAST, p.sales_count DESC, p.id DESC',
+  })[req.query.sort] || 'p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id DESC';
 
   params.push(lim, off);
   // BUG 8: LEFT JOIN explicit em vez de 3 subqueries correlacionadas
