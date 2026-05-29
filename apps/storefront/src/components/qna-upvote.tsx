@@ -64,13 +64,24 @@ export function QnaUpvote({ qnaId, initialCount = 0 }: { qnaId: string; initialC
 
   return (
     <div className="inline-flex flex-col gap-1 items-start">
+      {/* FIX-WORKER-3 pass 649 (aria-busy paridade cadeia 8 sites W3 PDP CTA):
+          PRE-FIX: disabled={loading} mas SEM aria-busy.
+          - SR (NVDA/JAWS) nao distingue 'disabled' (permanent state) de 'busy'
+            (temporary processing) - pattern industry aria-busy DURING fetch
+          - Some SR (NVDA modern) usam aria-busy p/ silenciar live regions
+            durante processing - sem aria-busy pode re-anunciar ariaLabel multiple
+          - Pattern V8 W3 PDP CTA cadeia 8 sites: AddToCart, WishlistButton (2 variants),
+            QnaForm, PriceAlertButton, ShareButton, ProgressiveCouponTeaser, FlashPromoTimer
+          - QnaUpvote era 9o site W3 CTA lagged
+          POST-FIX: + aria-busy={loading} paridade cadeia completa. */}
       <button onClick={toggle} disabled={loading}
         type="button"
         aria-pressed={voted}
+        aria-busy={loading}
         aria-label={ariaLabel}
         className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors focus-visible:outline-2 focus-visible:outline-magenta ${
           voted ? 'bg-magenta/20 text-magenta-glow' : 'bg-white/5 hover:bg-white/10 text-white/60'
-        } disabled:opacity-50`}
+        } disabled:opacity-50 disabled:cursor-wait`}
         title={voted ? 'Voto registrado - clique para remover' : 'Util? Vote para destacar'}>
         <ChevronUp className={`w-4 h-4 ${voted ? 'fill-magenta' : ''}`} aria-hidden="true" />
         <span className="font-mono">{count}</span>
