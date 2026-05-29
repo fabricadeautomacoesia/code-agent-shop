@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
 import { Plus, Trash2, KeyRound, RefreshCw } from 'lucide-react';
@@ -271,8 +272,30 @@ export default function VaultPage() {
                 : '-';
               return (
                 <tr key={k.id} className="border-b border-white/5 hover:bg-white/5">
+                  {/* FIX-WORKER-4 pass 543 (vault audit forensic link consolidacao -
+                      paridade pass 451 orders + 452 sellers + 455 payouts):
+                      PRE-FIX: vault keys table key_alias plain text - SEM
+                      investigation flow apesar de vault ser SECURITY CRITICAL.
+                      Real risk vault: AES-256-GCM keys = compromise = data leak.
+                      Admin via "rotate" / "revoke" buttons mas SEM:
+                      a. Trail forense por key (quem rotacionou, quando, motivo)
+                      b. One-click drill-down ao audit_log
+                      c. Cross-svc cross-reference (vault.* actions queryable)
+                      POST-FIX: + Link "audit" target_id=k.id target_type=vault_api_key.
+                      Consume pass 430 backend (audit_log target filtering).
+                      Forensic flow consolidado todos 4 admin critical pages:
+                      orders + sellers + payouts + vault (este). */}
                   <td className="py-3">
-                    <div className="font-mono text-xs">{k.key_alias}</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="font-mono text-xs">{k.key_alias}</div>
+                      <Link
+                        href={`/audit-log?target_id=${k.id}&target_type=vault_api_key`}
+                        aria-label={`Audit log da chave ${k.key_alias}`}
+                        title="Ver audit log da chave (forensic)"
+                        className="text-[10px] text-white/30 hover:text-magenta-glow underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                        audit
+                      </Link>
+                    </div>
                     <div className="text-[10px] text-white/40" title={`fingerprint completa: ${k.key_fingerprint}`}>
                       fp: {fpMasked}
                     </div>
