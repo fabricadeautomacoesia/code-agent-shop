@@ -312,9 +312,10 @@ app.post('/:id/reply',
     }
 
     const isAdmin = ['admin','staff'].includes(req.user.role);
+    // FIX-WORKER-13 pass 668 (withRetry review reply deadlock defense)
     let outcome;
     let result;
-    await tx(async (c) => {
+    await withRetry('review.reply.tx', async () => await tx(async (c) => {
       // FIX bugs 1+2+5: SELECT FOR UPDATE com checks consolidados
       // Admin path: skip ownership JOIN. Seller path: enforce dono.
       const reviewQuery = isAdmin
@@ -377,7 +378,7 @@ app.post('/:id/reply',
       const slugRow = await c.query(`SELECT slug FROM products WHERE id = $1::UUID`, [r.product_id]);
       // FIX pass 475: expose buyer_user_id p/ post-tx notifCache invalidate
       result = { ok: true, slug: slugRow.rows[0]?.slug, reply_by_admin: isAdmin, notified_buyer_user_id: r.buyer_user_id || null };
-    });
+    }));
 
     if (outcome?.error === 'review_not_found' || outcome?.error === 'not_found_or_not_owner') {
       return res.status(404).json({ error: outcome.error });
@@ -449,9 +450,10 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
     //
     // BUG 5 *** Regra J *** parent product validation atomic
     //   FIX: tudo dentro tx() + FOR UPDATE product valida orphan
+    // FIX-WORKER-13 pass 669 (withRetry qna create deadlock defense)
     let outcome;
     let qna;
-    await tx(async (c) => {
+    await withRetry('qna.create.tx', async () => await tx(async (c) => {
       // Regras A+B+J: SELECT product valido (FOR UPDATE seria desnecessario
       // - product nao muta - usa SHARE lock que basta p/ orphan detection)
       // FIX-WORKER-7 pass 420 (+ title p/ notification context):
@@ -539,7 +541,7 @@ app.post('/qna',  // GW reroteia para /api/qna -> /qna
       } else {
         outcome = { ok: true, slug: p.rows[0].slug };
       }
-    });
+    }));
 
     if (outcome?.error === 'product_not_found') {
       return res.status(404).json({ error: 'product_not_found' });
@@ -624,7 +626,8 @@ app.post('/qna/:id/upvote', qnaVoteLimiter, jwt.requireAuth(),
     let outcome;
     let result;
     let productSlug = null; // FIX pass 349: capture slug p/ cache invalidation
-    await tx(async (c) => {
+    // FIX-WORKER-13 pass 670 (withRetry qna upvote deadlock defense)
+    await withRetry('qna.upvote.tx', async () => await tx(async (c) => {
       // FIX bug 1+6+7 (Regras K+is_hidden+J): SELECT FOR UPDATE qna + checks
       // FIX-WORKER-16 pass 349 (MLB-2 cache invalidation):
       //   PRE-FIX: upvote endpoint NAO invalida cache products:qna:${slug}:*
@@ -684,7 +687,7 @@ app.post('/qna/:id/upvote', qnaVoteLimiter, jwt.requireAuth(),
         // FIX bug 8: voted = !wasVoted (deterministic apos toggle no mesmo tx)
         voted: !wasVoted,
       };
-    });
+    }));
 
     if (outcome?.error === 'qna_not_found') return next(errorHandler.notFound('qna_not_found'));
     if (outcome?.error === 'qna_hidden') {
@@ -953,9 +956,10 @@ app.post('/qna/:id/answer',
     }
 
     const isAdmin = ['admin','staff'].includes(req.user.role);
+    // FIX-WORKER-13 pass 671 (withRetry qna answer deadlock defense)
     let outcome;
     let result;
-    await tx(async (c) => {
+    await withRetry('qna.answer.tx', async () => await tx(async (c) => {
       // FIX bug 1+2+4: SELECT FOR UPDATE qna com checks consolidados
       // Admin path: aceita qualquer qna. Seller path: enforce ownership via JOIN.
       const qnaQuery = isAdmin
@@ -1015,7 +1019,7 @@ app.post('/qna/:id/answer',
       const slugRow = await c.query(`SELECT slug FROM products WHERE id = $1::UUID`, [q.product_id]);
       // FIX pass 475: expose asker_user_id p/ post-tx notifCache invalidate qna_answered
       result = { ok: true, slug: slugRow.rows[0]?.slug, answered_by_admin: isAdmin, notified_asker_user_id: q.asked_by_user_id || null };
-    });
+    }));
 
     if (outcome?.error === 'qna_not_found' || outcome?.error === 'not_found_or_not_owner') {
       return res.status(404).json({ error: outcome.error });
@@ -1125,9 +1129,10 @@ app.post('/reports',
       return next(errorHandler.badRequest('cannot_report_self'));
     }
 
+    // FIX-WORKER-13 pass 672 (withRetry reports create deadlock defense)
     let outcome;
     let report;
-    await tx(async (c) => {
+    await withRetry('reports.create.tx', async () => await tx(async (c) => {
       // FIX bug 5 (Regra B): deleted_at IS NULL aplicavel a products + users
       // (sellers + reviews + qna usam is_hidden/is_active separadas).
       const hasDeletedAt = ['products','users'].includes(tbl);
@@ -1194,7 +1199,7 @@ app.post('/reports',
         [`Nova denuncia: ${req.body.reason_code}`, alertMsg,
          req.body.target_type, req.body.target_id]
       );
-    });
+    }));
 
     if (outcome?.error === 'target_not_found') return next(errorHandler.notFound('target_not_found'));
     if (outcome?.error === 'cannot_report_own_product') {
@@ -1549,8 +1554,9 @@ app.post('/reports/:id/resolve', jwt.requireAuth({ roles: ['admin','staff'] }),
       return next(errorHandler.notFound('report_not_found'));
     }
 
+    // FIX-WORKER-13 pass 673 (withRetry reports/resolve - COMPLETA review-svc 8/8 tx atomicity)
     let outcome;
-    await tx(async (c) => {
+    await withRetry('reports.resolve.tx', async () => await tx(async (c) => {
       // BUG 4: SELECT FOR UPDATE (Regra K race entre 2 admins)
       const cur = await c.query(
         `SELECT id, status, reporter_user_id, target_type, target_id, reason_code
@@ -1615,7 +1621,7 @@ app.post('/reports/:id/resolve', jwt.requireAuth({ roles: ['admin','staff'] }),
         outcome = outcome || {};
         outcome.notified_reporter_user_id = r.reporter_user_id;
       }
-    });
+    }));
 
     if (outcome?.error === 'not_found') {
       return next(errorHandler.notFound('report_not_found'));
