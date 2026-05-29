@@ -39342,3 +39342,36 @@ CADEIA W17 HMAC bypass critical defense COMPLETA 7/7 endpoints:
 - payment.refund.invalid_internal_token (pass 644 ESTE)
 
 374 passes acumulados (268->644) sem deploy VPS
+
+============================================================================
+SESSAO 645 (W8 FlashPromoTimer a11y aria-live SR countdown)
+============================================================================
+
+Pass 645 (W8 FlashPromoTimer accessibility countdown screen reader):
+- DESCOBERTA: FlashPromoTimer sem aria-live/role - SR user nao percebe time
+- CENARIO CRITICAL:
+  - Visually impaired user clica PDP -> ouve "Zap icon Promocao Relampago -X%"
+  - Tempo restante mudando 1/seg invisivel ao NVDA/JAWS
+  - User compra normalmente sem saber timer prestes a expirar
+  - Pos-compra descobre desconto NAO aplicado (timer expirou pre-checkout)
+  - UX a11y broken cross PDP + /promocoes pages
+- POST-FIX:
+  - role=region + aria-label scope com discountPct semantico
+  - sr-only span aria-live=polite com srText agg humano:
+    "Promocao relampago: faltam X dias, Y horas e Z minutos"
+  - Cadence updates por minuto (1/seg seria spam SR)
+  - aria-hidden=true em icons + visual cluster (anti redundant announce)
+  - Badge desconto preserva visual + SR sabe context via region label
+
+CADEIA W8 a11y cumulative storefront components:
+- AddToCart aria-busy (pass 67/3 PDP CTA)
+- WishlistButton aria-busy ambas variants (pass 575)
+- QnaForm aria-busy (pass 553)
+- PriceAlertButton aria-busy (pass 573)
+- ShareButton 4 menuitems focus + aria-live Copy (pass 562)
+- ProgressiveCouponTeaser mobile flex-wrap a11y (pass 539)
+- Installments icons aria-hidden (pass 553)
+- FlashPromoTimer aria-live SR countdown (pass 645 este)
+- 8 components a11y consolidacao cumulative
+
+375 passes acumulados (268->645) sem deploy VPS
