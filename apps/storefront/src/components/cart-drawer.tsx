@@ -24,6 +24,23 @@ export function CartDrawer() {
   const { cartOpen, setCartOpen } = useUI();
   const [cart, setCart] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  /* FIX-WORKER-15 pass 501 (paridade pass 494 cart page mutations):
+     PRE-FIX BUG (3 issues simetricos ao /cart page pre-pass-494):
+     1. removeItem(): await sem try/catch -> unhandled rejection silent
+        - Sem busy guard: 2 cliques < 16ms = 2 DELETE concorrentes
+        - Sem error feedback: user clica X icon, nada acontece, silent fail
+     2. setQty(): try { ... } catch {} silent swallow
+        - Optimistic update flippa, mas backend nao confirma -> stale state
+        - User altera qty no drawer, cart real nao muda, sem feedback
+     3. CartDrawer mobile 375px: price div pode overflow se Total R$50k+
+        (10+ char text-sm + qty group 3 buttons em flex-row gap-2)
+     POST-FIX (paridade pass 494):
+     - removingId state per-item (granular vs global busy)
+     - try/catch + setErr + load() em finally (sync backend)
+     - setQty: error feedback explicit + load() em catch tambem
+     - Bonus mobile: min-w-0 + truncate em price div (overflow defesa) */
+  const [err, setErr] = useState('');
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   async function load() {
     if (!token) { setCart(null); return; }
@@ -38,9 +55,17 @@ export function CartDrawer() {
   // agora gerencia Escape close + body scroll lock + focus management.
 
   async function removeItem(id: string) {
-    if (!token) return;
-    await Api.cartDel(token, id);
-    load();
+    if (!token || removingId) return;
+    setRemovingId(id);
+    setErr('');
+    try {
+      await Api.cartDel(token, id);
+    } catch (e: any) {
+      setErr(e?.data?.message || e?.message || 'Erro ao remover item');
+    } finally {
+      setRemovingId(null);
+      load();
+    }
   }
 
   // FIX-WORKER-15: paridade com /cart - mudar quantidade direto no drawer
@@ -48,12 +73,20 @@ export function CartDrawer() {
     if (!token) return;
     if (qty < 1) return removeItem(id);
     if (qty > 99) return;
+    setErr('');
     // optimistic local + reload
     setCart((c: any) => c ? ({
       ...c,
       items: c.items?.map((it: any) => it.id === id ? { ...it, quantity: qty, line_total_cents: it.unit_price_cents * qty } : it) || c.items,
     }) : c);
-    try { await Api.cartSetQty(token, id, qty); load(); } catch {}
+    try {
+      await Api.cartSetQty(token, id, qty);
+      load();
+    } catch (e: any) {
+      // FIX pass 501 (silent swallow -> explicit error + rollback via load)
+      setErr(e?.data?.message || e?.message || 'Erro ao atualizar quantidade');
+      load(); // rollback optimistic via authoritative state
+    }
   }
 
   const items = cart?.items || [];
@@ -86,6 +119,17 @@ export function CartDrawer() {
       </header>
 
         <div className="flex-1 overflow-y-auto p-5">
+          {/* FIX pass 501 (a11y paridade pass 457 cart + pass 492 auth):
+              error banner com role=alert + aria-live + dismiss button focus-visible */}
+          {err && (
+            <div role="alert" aria-live="assertive"
+              className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-3 flex items-start justify-between gap-2">
+              <span className="flex-1">{err}</span>
+              <button type="button" onClick={() => setErr('')}
+                aria-label="Fechar mensagem de erro"
+                className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
+            </div>
+          )}
           {!token ? (
             <div className="text-center py-12">
               <p className="text-white/60 mb-4">Faca login para ver seu carrinho</p>
@@ -140,13 +184,17 @@ export function CartDrawer() {
                           <Plus className="w-3 h-3" aria-hidden="true" />
                         </button>
                       </div>
-                      <div className="font-display font-bold text-sm text-magenta-glow">{Api.formatBRL(it.line_total_cents)}</div>
+                      {/* FIX pass 501: min-w-0 + truncate p/ totals R$50k+ em 375px (overflow defesa) */}
+                      <div className="font-display font-bold text-sm text-magenta-glow min-w-0 truncate" title={Api.formatBRL(it.line_total_cents)}>{Api.formatBRL(it.line_total_cents)}</div>
                     </div>
                   </div>
-                  {/* FIX-WORKER-1 pass 157 (a11y): aria-label dinamico + type='button' */}
+                  {/* FIX-WORKER-1 pass 157 (a11y): aria-label dinamico + type='button'
+                      FIX pass 501: disabled + aria-busy + cursor-wait paridade /cart page */}
                   <button type="button" onClick={() => removeItem(it.id)}
+                    disabled={removingId === it.id}
+                    aria-busy={removingId === it.id}
                     aria-label={`Remover ${it.product?.title || 'produto'} do carrinho`}
-                    className="text-white/40 hover:text-red-400 p-1 h-fit focus-visible:outline-2 focus-visible:outline-red-400 rounded">
+                    className="text-white/40 hover:text-red-400 p-1 h-fit focus-visible:outline-2 focus-visible:outline-red-400 rounded disabled:opacity-50 disabled:cursor-wait">
                     <Trash2 className="w-4 h-4" aria-hidden="true" />
                   </button>
                 </div>

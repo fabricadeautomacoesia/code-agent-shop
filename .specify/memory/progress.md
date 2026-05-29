@@ -36971,3 +36971,45 @@ Cadeia W18 PARTIAL indexes (cron-driven W14/18 fusion):
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 aguardando)
 - Mig 094-103 ALTA PRIORIDADE apply (10 PARTIAL/composite indexes)
+
+## Pass 501 - W15 MOBILE: CartDrawer mutations paridade pass 494 + 375px overflow
+
+PRE-FIX (3 bugs simetricos ao /cart page pre-pass-494):
+1. removeItem() linhas 40-44:
+   - await sem try/catch -> unhandled rejection silent
+   - Sem busy guard: 2 cliques < 16ms = 2 DELETE concorrentes
+   - Sem error feedback: user clica X icon, nada acontece, silent fail
+2. setQty() linha 56: try { ... } catch {} silent swallow
+   - Optimistic update flippa, mas backend nao confirma -> stale state
+   - User altera qty no drawer, cart real nao muda, sem feedback
+   - Sem load() em catch -> optimistic permanece (drift backend)
+3. Mobile 375px price overflow:
+   - text-sm price div sem min-w-0 + truncate
+   - Total R$ 50.000,00+ (10+ chars) + qty group 3 buttons em flex gap-2
+   - Em containers ~135px-150px disponiveis o div poderia overflow horizontal
+
+Cadeia W2/W15 cart mutations consolidation:
+- pass 494 /cart page remove() try/catch + removingId
+- pass 501 (este) CartDrawer paridade: removeItem + setQty + mobile fix
+- Pattern V8 W2/W15: TODA mutation cart (page + drawer) precisa paridade
+
+POST-FIX (paridade pass 494):
+- removingId state per-item (granular busy, outros items clicaveis)
+- err state + role=alert + aria-live=assertive banner (paridade pass 457)
+- removeItem: try/catch + setErr + finally setRemovingId(null) + load()
+- setQty: error feedback explicit + load() em catch (rollback authoritative)
+- Buttons: disabled={removingId === it.id} + aria-busy + cursor-wait
+- dismiss button focus-visible:outline-red-400 (paridade pass 492)
+- Mobile fix: price div min-w-0 + truncate + title attr (overflow defesa 375px)
+
+Banner UX paridade cart page pass 457:
+- role=alert aria-live=assertive (SR announce financial flow critical)
+- flex-1 span p/ texto longo nao push close button offscreen
+- dismiss button aria-label "Fechar mensagem de erro" + focus-visible
+
+233 passes acumulados (268->501) sem deploy VPS
+9 CRITICAL + 35 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
+- Mig 094-103 ALTA PRIORIDADE apply (10 PARTIAL/composite indexes)
