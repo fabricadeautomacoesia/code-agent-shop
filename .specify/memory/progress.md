@@ -40469,3 +40469,38 @@ CADEIA cache key case-insensitive consolidacao cross-svc 32 sites:
 = 32 sites cumulative consolidacao Pattern V8 cache key normalize
 
 446 passes acumulados (268->716) sem deploy VPS
+
+============================================================================
+SESSAO 717-718 (W2 orders case-insensitive + W6 auth PATCH /me withRetry)
+============================================================================
+
+Pass 717 (W2 /conta/pedidos case-insensitive status normalize):
+- DESCOBERTA: ordersListCacheKey + handler case-sensitive (.trim() apenas)
+- ?status=Paid vs paid -> bad UX (400 handler invalid_status)
+- POST-FIX: + .toLowerCase() ANTES whitelist check (cache + handler consistent)
+- 33rd site cadeia cache key case-insensitive cross-svc
+
+Pass 718 (W6 auth-svc PATCH /me withRetry deadlock defense):
+- DESCOBERTA: tx() PATCH /me sem withRetry wrap
+- Pass 654/655 ja consolidou forgot+reset password tx atomicity
+- /me PATCH ficou lagged
+- Cenarios deadlock:
+  - User double-click "Salvar perfil" 2 concurrent UPDATE
+  - Race com /auth/2fa/enable mesma row users
+  - Race com cron user_activity update
+- POST-FIX: withRetry('auth.patch_me.tx') wrap 3 attempts
+
+CADEIA W6 auth-svc atomicity tx withRetry FINAL 7/7:
+- /register, /login, /refresh (passes historicos + 546)
+- banned cascade revoke (pass 526)
+- /forgot-password (pass 654)
+- /reset-password (pass 655)
+- PATCH /me (pass 718 este)
+= 7 tx writes auth-svc COMPLETA cross-svc atomicity 100%
+
+CADEIA cache key case-insensitive cross-svc 33 sites:
+- W4 admin endpoints + W7 product + W10 search + W17 vault + W18 cache hygiene
+- W2 orders + disputes (passes 715/717 este)
+= 33 sites cumulative consolidacao Pattern V8 cache key normalize
+
+448 passes acumulados (268->718) sem deploy VPS
