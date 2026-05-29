@@ -35663,3 +35663,68 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096+097+098 ALTA PRIORIDADE
 - Continuar consume notifCache 15+ sites pendentes
+
+## PASS 474 W11 PAYMENT: notifCache consume PAYMENT_REFUNDED + payout_paid + payout_pending_liquidated
+commit pendente
+GAP 4 sites lagged em payment-svc consume notifCache:
+- PAYMENT_REFUNDED/CHARGEBACK buyer + sellers (linha 1232+1246)
+- payout_paid dual channel in_app + email (linha 1508+1514)
+- payouts_pending.liquidated seller (linha 1963)
+
+PRE-FIX:
+- Pass 468 cobriu 3 sites hot path (PAYMENT_RECEIVED + refund_failed admins)
+- Estes 4 sites restantes lagged:
+  - Refund/chargeback = priority 2 financial events critical
+  - payout_paid = cash flow critical (seller esperando recebimento)
+  - payout_pending_liquidated = post-wallet-config event (engagement)
+- Cache 20s delay em todos = UX gap pos-financial event
+
+SCOPE WHY:
+- ALL events priority 2+ (financial/cash flow)
+- Refund: buyer + seller AMBOS esperam confirmacao
+- payout_paid: seller cash flow waiting verificacao
+- payout_pending_liquidated: re-engagement signal apos wallet config
+
+POST-FIX 3 sites consume notifCache:
+1. PAYMENT_REFUNDED/CHARGEBACK (linha 1232+1246):
+   - Capture refundSellerIds[] no for loop
+   - notifCache.invalidate(buyer) + invalidateBulk(refundSellerIds)
+2. payout_paid (linha 1508+1514):
+   - Apos dual INSERT (in_app + email)
+   - notifCache.invalidate(u.rows[0].user_id)
+3. payouts_pending_liquidated (linha 1963):
+   - Apos INSERT email
+   - notifCache.invalidate(row.user_id)
+
+Cadeia consume pass 467 cross-svc CONSOLIDATED:
+  pass 467 helper + auth 2fa (1)
+  pass 468 payment hot path PAYMENT_RECEIVED + refund_failed (2)
+  pass 469 order dispute + free (2)
+  pass 470 qa.callback (1 dual)
+  pass 471 auth-svc 5 sites
+  pass 472 seller loyalty + product version (2)
+  pass 473 product force-approve + review qna_new (2)
+  pass 474 payment-svc refund + payout_paid + pending_liquidated (3) <- ESTE
+
+Total sites consume agora: 18/30+ (~60% consolidation)
+
+PROXIMOS PASSES (~12 sites pendentes):
+  - review-svc: outras 4 INSERTs (qna_answered, review_new, dispute, etc)
+  - notification-svc admin /test (1 site)
+  - aiops-svc alerts admin notif (~5 sites)
+  - product-svc seller-mgmt drafts/patches (4 sites)
+  - payment-svc remaining 2 sites (PAYMENT_OVERDUE)
+
+Pattern V8 W11 financial events:
+- ALL financial events (refund, payout, chargeback) precisam invalidacao IMEDIATA
+- Multi-recipient: capture array + invalidateBulk
+- Dual channel (in_app + email) STILL precisa cache invalidate
+  (email outbox lento, in_app cache bypass via invalidate)
+
+207 passes acumulados (268->474) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096+097+098 ALTA PRIORIDADE
+- Continuar consume notifCache 12+ sites pendentes

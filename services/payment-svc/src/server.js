@@ -1241,6 +1241,7 @@ async function processWebhookEvent(evt) {
            JOIN sellers s ON s.id = oi.seller_id JOIN products p ON p.id = oi.product_id
           WHERE oi.order_id = $1`, [order.id]
       );
+      const refundSellerIds = [];
       for (const seller of refundSellers.rows) {
         await c.query(
           `INSERT INTO notifications (user_id, channel, template_code, title, body, priority)
@@ -1249,7 +1250,17 @@ async function processWebhookEvent(evt) {
            `Venda estornada: ${seller.title}`,
            `A venda do produto "${seller.title}" foi estornada. Seu saldo foi ajustado.`]
         );
+        refundSellerIds.push(seller.user_id);
       }
+      /* FIX-WORKER-11 pass 474 (notifCache cross-svc - PAYMENT_REFUNDED/CHARGEBACK):
+         PRE-FIX: refund notif buyer + sellers SEM cache invalidate.
+         - Refund = priority 2 - financial event critical
+         - Buyer needs IMMEDIATE feedback (esperando refund processou?)
+         - Seller cash flow critical (sale revertida)
+         - Cache 20s delay = ansiedade pos-refund pra ambos lados
+         POST-FIX: invalidate(buyer) + invalidateBulk(sellers) post-INSERT */
+      notifCache.invalidate(order.buyer_user_id);
+      notifCache.invalidateBulk(refundSellerIds);
       log.warn({ event: evt.event, order_id: order.id, revoked_items: earnTx.rows.length },
         '[refund.processed]');
     }
@@ -1504,6 +1515,12 @@ app.post('/payments/payouts/:id/process',
              VALUES ($1, 'email', 'payout_paid', $2, $3, 2, $4::JSONB)`,
             [u.rows[0].user_id, notifTitle, notifBody, notifPayload]
           ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payout.notif.email.fail]'));
+          /* FIX-WORKER-11 pass 474 (notifCache cross-svc payout_paid):
+             Pass 396 ja dual channel (in_app + email) p/ instantaneidade.
+             MAS sem invalidate cache -> sininho mostra badge mas lista lag 20s.
+             Seller refresh dashboard -> count atualiza mas conteudo lista stale.
+             POST-FIX: notifCache.invalidate seller imediato apos dual INSERT. */
+          notifCache.invalidate(u.rows[0].user_id);
         }
       } catch (_) { /* best-effort */ }
     }
@@ -1951,6 +1968,12 @@ async function liquidatePendingWalletPayouts() {
            `Voce configurou sua wallet Asaas e seu payout pendente foi liquidado. Valor: R$ ${(Number(row.amount_cents)/100).toFixed(2)}. Transfer ID: ${transfer.id}.`,
            JSON.stringify({ pending_id: row.id, order_id: row.order_id, asaas_transfer_id: transfer.id })]
         ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payouts_pending.notif.fail]'));
+        /* FIX-WORKER-11 pass 474 (notifCache cross-svc payout_pending_liquidated):
+           Seller esperou que platform liquidaria pending wallet pos-wallet config.
+           "Voce configurou wallet -> payout liquidado" = high-priority engagement signal.
+           Cache 20s delay = seller refresh dashboard ainda ve "pending" stale.
+           POST-FIX: notifCache.invalidate seller imediato. */
+        notifCache.invalidate(row.user_id);
         log.info({ pending_id: row.id, transfer_id: transfer.id }, '[payouts_pending.liquidated.ok]');
       } catch (e) {
         log.error({ pending_id: row.id, /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[payouts_pending.liquidate.fail]');
