@@ -24,6 +24,8 @@ export default function CartPage() {
   const [redeemBusy, setRedeemBusy] = useState(false);
   // FIX-WORKER-2 pass 255: coupon busy guard (mesma logica anti-double-click)
   const [couponBusy, setCouponBusy] = useState(false);
+  // FIX-WORKER-2 pass 494: remove busy guard per-item (anti-double-click + error feedback)
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   async function load() {
     if (!token) return;
@@ -87,9 +89,38 @@ export default function CartPage() {
       .catch(() => setCouponPreview(null));
   }, [cart?.coupon_code, cart?.subtotal_cents, token]);
 
+  /* FIX-WORKER-2 pass 494 (CRITICAL error handling + busy guard):
+     PRE-FIX BUG:
+       async function remove(id) {
+         await Api.cartDel(token!, id);  // unhandled rejection se 4xx/5xx
+         load();                          // skipped se await throw
+       }
+     - Sem try/catch -> Promise rejection nao tratada, log "Unhandled rejection"
+     - Sem error feedback -> user clica Trash icon, nada acontece, item persiste
+       UI sem saber se network/backend falhou (silent fail = pior UX)
+     - Sem busy guard -> 2 cliques em <16ms = 2 DELETE concurrent backend
+       Backend tem idempotency parcial mas audit_log gera 2 entries duplicados
+     - Pattern V8 cart mutations: setQty (linhas 96-111), applyRedeem (54-66),
+       applyCoupon (118+) TODAS tem try/catch + busy guard + setErr
+       remove() ficou lagged - regressao a11y/UX
+     POST-FIX:
+     - try/catch com setErr (paridade setQty pattern)
+     - removingId state per-item (granular vs global busy: outros items
+       continuam clicaveis enquanto 1 specific delete in-flight)
+     - finally setRemovingId(null) garante reset mesmo em error
+     - finally load() sempre re-fetch (sync com backend authoritative state) */
   async function remove(id: string) {
-    await Api.cartDel(token!, id);
-    load();
+    if (!token || removingId) return;
+    setRemovingId(id);
+    setErr('');
+    try {
+      await Api.cartDel(token, id);
+    } catch (e: any) {
+      setErr(e?.data?.message || e?.message || 'Erro ao remover item do carrinho');
+    } finally {
+      setRemovingId(null);
+      load();
+    }
   }
 
   // FIX-WORKER-2: alterar quantidade via PATCH com optimistic update
@@ -262,9 +293,12 @@ export default function CartPage() {
                     <div className="font-display font-bold text-magenta-glow">{Api.formatBRL(it.line_total_cents)}</div>
                   </div>
                 </div>
+                {/* FIX-WORKER-2 pass 494: disabled + busy aria during remove */}
                 <button type="button" onClick={() => remove(it.id)}
+                  disabled={removingId === it.id}
+                  aria-busy={removingId === it.id}
                   aria-label={`Remover ${it.product?.title || 'produto'} do carrinho`}
-                  className="text-white/40 hover:text-red-400 p-2 focus-visible:outline-2 focus-visible:outline-red-400 rounded">
+                  className="text-white/40 hover:text-red-400 p-2 focus-visible:outline-2 focus-visible:outline-red-400 rounded disabled:opacity-50 disabled:cursor-wait">
                   <Trash2 className="w-5 h-5" aria-hidden="true" />
                 </button>
               </div>

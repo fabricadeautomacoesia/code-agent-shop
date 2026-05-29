@@ -36672,3 +36672,54 @@ Cadeia W17 VAULT atomicity:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 494 - W2 CHECKOUT: cart remove() error handling + busy guard
+
+PRE-FIX BUG (critical UX regression):
+- storefront /cart/page.tsx linhas 90-93:
+    async function remove(id: string) {
+      await Api.cartDel(token!, id);  // unhandled rejection se 4xx/5xx
+      load();                          // skipped se await throw
+    }
+- Sem try/catch: Promise rejection nao tratada (log "Unhandled rejection")
+- Sem error feedback: user clica Trash icon, nada acontece UI silent fail
+- Sem busy guard: 2 cliques em <16ms = 2 DELETE concurrent backend
+  - Backend tem idempotency parcial (404 segunda call OK)
+  - MAS audit_log gera 2 entries duplicados em payment-svc cascade
+- Inconsistencia cart mutations:
+  - setQty (linhas 96-111): try/catch + load() em rollback
+  - applyRedeem (54-66): redeemBusy guard
+  - applyCoupon (118+): couponBusy guard + try/catch
+  - remove() (este): SEM nenhum dos 3 (regressao silencioso)
+
+Cenarios de falha (sem fix):
+- Network blip: user clica X icon -> nada (silent fail) -> usuario tenta de
+  novo achando que falhou click visual -> 2 DELETE -> 1a OK 2a 404
+- Backend 429 rate-limit: silent fail UX
+- Backend 500 transient: silent fail UX
+- Pattern V8 W2: TODA mutation cart precisa try/catch + busy guard
+
+POST-FIX:
+- removingId state per-item (granular vs global busy):
+  - Outros items continuam clicaveis enquanto 1 specific delete in-flight
+  - aria-busy={removingId === it.id} per-row (SR announce)
+  - disabled + opacity-50 + cursor-wait visual feedback
+- try/catch com setErr (paridade setQty pattern)
+- finally setRemovingId(null) garante reset mesmo em error
+- finally load() sempre re-fetch (sync backend authoritative state)
+- aria-label preservado (pass 137 a11y)
+
+Cadeia W2 CHECKOUT busy guard consolidacao:
+- pass 249 applyRedeem redeemBusy
+- pass 255 applyCoupon couponBusy
+- pass 196 friendlyCheckoutError mapping
+- pass 229 empty cart UX
+- pass 457 err display a11y (role=alert + aria-live)
+- pass 494 (este) remove() try/catch + busy guard per-item
+
+227 passes acumulados (268->494) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply
