@@ -19,9 +19,31 @@ export function CompareDrawer() {
   const { items, remove, clear } = useCompare();
   const [mounted, setMounted] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  // FIX-WORKER-8 pass 537 (a11y/UX - confirm destructive clear):
+  // Antes: clicar Trash2 limpava 3-4 produtos selecionados imediatamente,
+  // sem undo. User podia perder lista de 5+ minutos de selecao por clique
+  // acidental (especialmente em mobile com botoes proximos).
+  // Agora: primeiro clique muda label para "Confirmar?" + cor red, segundo
+  // clique executa. Auto-reset 3s se nao confirmar (UX MLB pattern).
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => setMounted(true), []);
+  // FIX-WORKER-8 pass 537: auto-reset confirm state se idle 3s.
+  useEffect(() => {
+    if (!confirmClear) return;
+    const t = setTimeout(() => setConfirmClear(false), 3000);
+    return () => clearTimeout(t);
+  }, [confirmClear]);
   if (!mounted || items.length === 0) return null;
+
+  const handleClear = () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
+    clear();
+    setConfirmClear(false);
+  };
 
   const compareUrl = `/comparar?ids=${items.map((i) => i.id).join(',')}`;
   const canCompare = items.length >= 2;
@@ -41,9 +63,17 @@ export function CompareDrawer() {
             className="p-1 rounded hover:bg-white/10 transition-colors focus-visible:outline-2 focus-visible:outline-magenta">
             {collapsed ? <ChevronUp className="w-4 h-4" aria-hidden="true" /> : <ChevronDown className="w-4 h-4" aria-hidden="true" />}
           </button>
-          <button type="button" onClick={clear}
-            aria-label={`Limpar comparacao (${items.length} ${items.length === 1 ? 'item' : 'itens'})`}
-            className="p-1 rounded hover:bg-red-500/20 hover:text-red-300 transition-colors focus-visible:outline-2 focus-visible:outline-red-400">
+          {/* FIX-WORKER-8 pass 537: confirm 2-click destructive clear. */}
+          <button type="button" onClick={handleClear}
+            aria-label={confirmClear
+              ? `Confirmar limpar ${items.length} ${items.length === 1 ? 'item' : 'itens'} da comparacao`
+              : `Limpar comparacao (${items.length} ${items.length === 1 ? 'item' : 'itens'})`}
+            title={confirmClear ? 'Clique novamente para confirmar' : 'Limpar comparacao'}
+            className={`p-1 rounded transition-colors focus-visible:outline-2 focus-visible:outline-red-400 ${
+              confirmClear
+                ? 'bg-red-500/30 text-red-200 ring-1 ring-red-400/60'
+                : 'hover:bg-red-500/20 hover:text-red-300'
+            }`}>
             <Trash2 className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
@@ -83,9 +113,14 @@ export function CompareDrawer() {
 
           <div className="p-3 border-t border-white/10 bg-black/20">
             {canCompare ? (
+              /* FIX-WORKER-8 pass 537: focus-visible outline magenta paridade
+                 buttons header. Sem outline keyboard-users perdem affordance
+                 ao tabular (so cursor mouse sabia que era clicavel).
+                 aria-label explicito (gradient CTA com icon-only at end). */
               <Link href={compareUrl}
-                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-gradient-vibe text-white text-sm font-semibold hover:opacity-90 transition-opacity">
-                Comparar agora <ArrowRight className="w-4 h-4" />
+                aria-label={`Comparar agora ${items.length} produtos selecionados`}
+                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-gradient-vibe text-white text-sm font-semibold hover:opacity-90 transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
+                Comparar agora <ArrowRight className="w-4 h-4" aria-hidden="true" />
               </Link>
             ) : (
               <div className="text-center text-xs text-white/50 py-2">
