@@ -36406,3 +36406,45 @@ Paridade cross-svc consistency:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 488 - W11 PAYMENT/ASAAS: interest_pct conformidade BACEN (installments preview)
+
+PRE-FIX BUG CRITICAL (conformidade financeira):
+- payment-svc /installments/preview linhas 144-156
+- com juros compostos (n > 3):
+    totalCalc = round(amount * (1 + r)^(n-1))   // real cobrado
+    perCents  = floor(totalCalc / n)
+    totalCents = perCents * n                    // < totalCalc (rounding loss)
+    interestPct = ((totalCents - amount) / amount) * 100  // <-- ERRADO
+    out.push({ total_cents: totalCalc, interest_pct: interestPct })
+- User PAGA totalCalc (first_cents compensa rounding loss = perCents + (totalCalc - totalCents))
+- Response mostra total_cents=totalCalc (correto) mas interest_pct calculado
+  em totalCents (menor) -> juros REAL maior que exibido
+- Exemplo amount=10001 n=4:
+    totalCalc=10925, totalCents=10924
+    PRE: interest_pct = 9.23%
+    REAL: (10925-10001)/10001 = 9.24%
+- Em valores grandes ou n=12 a diferenca acumula centavos
+- Conformidade BACEN exige CET correto exibido
+
+POST-FIX:
+- interestPct = ((totalCalc - amount) / amount) * 100
+- Label tambem reflete % real
+- Comment FIX-WORKER-11 pass 488 com exemplo concreto p/ rastreabilidade
+
+Cadeia W11 PAYMENT conformidade:
+- pass 134 minimum amount validation (>= R$ 1.00)
+- pass 439 CRITICAL refundPayment value=0 trap (Number.isFinite check)
+- pass 453 CRITICAL liquidate race window (__claimed marker)
+- pass 463 + asaas_webhook em VALID_TT (audit signature errors)
+- pass 488 (este) interest_pct BACEN conformidade
+
+Hot endpoint: /installments/preview cache 600s -> miss rate alta com
+amount variavel por carrinho. Mas miss recalcula com valor correto agora.
+
+221 passes acumulados (268->488) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply

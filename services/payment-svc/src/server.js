@@ -147,7 +147,20 @@ app.get('/payments/installments/preview',
       perCents = Math.floor(totalCalc / n);
       if (perCents < minWithFee) continue;
       totalCents = perCents * n;
-      interestPct = ((totalCents - amount) / amount) * 100;
+      /* FIX-WORKER-11 pass 488 (CRITICAL conformidade financeira BACEN):
+         PRE-FIX BUG: interestPct calculado com base em totalCents (= perCents*n)
+         que e MENOR que totalCalc por causa do Math.floor (rounding loss
+         capturado em first_cents). User paga totalCalc real, mas response
+         mostrava interest_pct calculado em totalCents (menor) -> juros real
+         maior que o exibido. Conformidade BACEN exige CET correto exibido.
+         Exemplo concreto: amount=10001 n=4
+           totalCalc=10925, totalCents=10924
+           PRE: interest_pct = (10924-10001)/10001 = 9.23%
+           ACTUAL paid = 10925 -> real = (10925-10001)/10001 = 9.24%
+         Em valores grandes ou n=12 a diferenca acumula centavos.
+         POST-FIX: interestPct usa totalCalc (real pago via first_cents adj).
+         Label tambem reflete % real. */
+      interestPct = ((totalCalc - amount) / amount) * 100;
       out.push({
         count: n, per_cents: perCents, first_cents: perCents + (totalCalc - totalCents),
         total_cents: totalCalc, interest_pct: parseFloat(interestPct.toFixed(2)),
