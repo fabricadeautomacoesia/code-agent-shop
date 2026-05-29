@@ -855,8 +855,11 @@ app.get('/qna/seller/pending', jwt.requireAuth({ roles: ['seller','admin'] }),
     let params;
     if (isAdmin) {
       // Admin path: opcional ?seller_id filter (sem ownership check)
-      const sellerIdFilter = req.query.seller_id || null;
-      if (sellerIdFilter && !QNA_UUID_RE.test(String(sellerIdFilter))) {
+      // FIX pass 730: + .trim().toLowerCase() paridade cacheKey linha 837 (cache hygiene mismatch)
+      const sellerIdFilter = req.query.seller_id
+        ? String(req.query.seller_id).trim().toLowerCase()
+        : null;
+      if (sellerIdFilter && !QNA_UUID_RE.test(sellerIdFilter)) {
         return res.status(400).json({ error: 'invalid_seller_id' });
       }
       whereClause = sellerIdFilter
@@ -1283,10 +1286,14 @@ app.get('/seller/received',
        - + ?offset paginacao V8 Regra E
        - + COUNT(*) OVER() window aggregate + strip _total */
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (isAdmin && req.query.seller_id && !UUID_RE.test(String(req.query.seller_id))) {
+    // FIX pass 731: + .trim().toLowerCase() paridade cacheKey linha 1267 (cache hygiene mismatch)
+    const sellerIdRaw = isAdmin && req.query.seller_id
+      ? String(req.query.seller_id).trim().toLowerCase()
+      : null;
+    if (sellerIdRaw && !UUID_RE.test(sellerIdRaw)) {
       return res.status(400).json({ error: 'invalid_seller_id', expected: 'UUID v4 format' });
     }
-    const sellerFilter = isAdmin && req.query.seller_id ? req.query.seller_id : null;
+    const sellerFilter = sellerIdRaw || null;
 
     const sql = isAdmin
       ? `SELECT r.id, r.rating, r.title, r.body, r.is_verified_purchase,
