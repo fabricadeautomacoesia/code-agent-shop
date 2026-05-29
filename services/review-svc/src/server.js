@@ -808,11 +808,35 @@ app.get('/qna/:id/voted', jwt.requireAuth(),
 //   - Per-user (seller A nao vê seller B no cache)
 //   - Invalidation natural via TTL (qna_responder fluxo bate /qna/:id/answer)
 //   - Pattern V8 cross-svc paridade ja existing (pass 200/202/216/289).
+// FIX-WORKER-18 pass 588 (cache key normalization paridade cadeia W7+W10+W13+W18):
+//   PRE-FIX BUGS (3 issues cache pollution + inconsistency vs handler):
+//   1. Raw q.limit. Handler clamps Math.max/Math.min [1, 100] (linha 822).
+//      ?limit=99999 -> cache key 'lim=99999', handler clamp 100
+//      ?limit=100 -> cache key 'lim=100' SAME response (pollution 2 entries)
+//   2. Raw q.offset. Handler Math.max(0, ...) (linha 823).
+//      ?offset=-5 -> cache key 'off=-5', handler -> 0
+//   3. Raw q.seller_id (admin path). Handler valida QNA_UUID_RE (linha 830).
+//      Invalid UUIDs poluem cache - admin probe atacker pollution amplifica.
+//
+//   Cenario amplifica: dashboard-seller QNA tab polling 30s + multi-seller
+//   sessions = N polls hit cache pollution sites diferentes.
+//
+//   POST-FIX: normalize cache key SAME way handler normalizes.
+//   Pattern V8 cache hygiene invariante cross-svc cadeia consolidacao (13 sites
+//   passes 520/530/533/551/558/566/572/576/577/579/582/583/588 este).
+const QNA_UUID_RE_CACHE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const qnaSellerPendingCacheKey = (req) => {
   const q = req.query;
   const isAdmin = req.user?.role === 'admin';
-  const sellerId = isAdmin ? (q.seller_id || 'all') : (req.user?.sub || 'anon');
-  return `qna:seller:pending:u=${sellerId}:lim=${q.limit||50}:off=${q.offset||0}`;
+  // Normalize seller_id same way handler validates (linha 830)
+  const sellerIdRaw = isAdmin ? (q.seller_id || '').toString().trim().toLowerCase() : '';
+  const sellerIdNorm = (sellerIdRaw && QNA_UUID_RE_CACHE.test(sellerIdRaw)) ? sellerIdRaw : '';
+  const sellerKey = isAdmin
+    ? (sellerIdNorm || 'all')
+    : (req.user?.sub || 'anon');
+  const lim = Math.max(1, Math.min(100, parseInt(q.limit, 10) || 50));
+  const off = Math.max(0, parseInt(q.offset, 10) || 0);
+  return `qna:seller:pending:u=${sellerKey}:lim=${lim}:off=${off}`;
 };
 
 app.get('/qna/seller/pending', jwt.requireAuth({ roles: ['seller','admin'] }),
