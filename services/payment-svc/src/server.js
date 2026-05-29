@@ -1674,11 +1674,40 @@ app.post('/payments/payouts/:id/process',
         }
       } catch (_) { /* best-effort */ }
     }
+    /* FIX-WORKER-11 pass 584 (audit_log ip + ua_prefix forensic gap - paridade pass 564):
+       PRE-FIX: 3 audit_log INSERTs em /payouts/:id/process flow (process_start
+       linha 1551, process_fail linha 1593, process_complete linha 1678) SEM
+       ip + ua_prefix fields no payload.
+       REAL MONEY OUT endpoint = payout transfer Asaas = dinheiro saindo plataforma.
+       Pattern V8 ua_prefix forensic consolidacao cross-svc cadeia:
+         pass 282 auth /forgot-password + /reset-password + /logout
+         pass 292 register
+         pass 296 review-svc
+         pass 315 auth /refresh reuse breach
+         pass 408 seller-svc
+         pass 438 vault-svc + payment-svc webhook
+         pass 443 auth /refresh banned
+         pass 546 auth /refresh rotation success
+         pass 564 auth PATCH /me profile mutation
+       PAYOUT endpoint era CRITICAL lagged forensic - mais importante que /me!
+       Compliance impact:
+       - SOC2 CC7.3: real money movement requer trail completo (actor+device)
+       - LGPD Art 37: registro tratamento dados sensiveis financeiro
+       - PCI DSS Req 10: log device fingerprint para acessos privilegiados
+       - Forensic incident: 'qual device admin aprovou payout fraudulent?'
+         Sem ua_prefix = correlation IP+device impossivel (multi-admin NAT)
+       POST-FIX: + ip + ua_prefix mask.text() em process_complete (final audit).
+       Trade-off ZERO: extra fields no JSONB payload (storage marginal). */
     await query(
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
        VALUES ($1, $2, 'payout.process_complete', 'seller_payout', $3, 'info', $4::JSONB)`,
       [req.user.sub, req.user.role, req.params.id,
-       JSON.stringify({ asaas_transfer_id: transfer.id, amount_cents: payout.amount_cents })]
+       JSON.stringify({
+         asaas_transfer_id: transfer.id,
+         amount_cents: payout.amount_cents,
+         ip: req.ip,
+         ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+       })]
     ).catch(() => {});
 
     res.json({ ok: true, transfer });
