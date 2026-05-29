@@ -1,23 +1,40 @@
 import Link from 'next/link';
 import { Cloud, Zap, Clock, Award, AlertTriangle, CheckCircle } from 'lucide-react';
 
+// FIX-WORKER-9 pass 585 (enrich metadata paridade /sellers + /promocoes consolidacao):
+//   PRE-FIX (pass 5): openGraph + twitter basics, MAS faltava:
+//   - openGraph: siteName + locale + images
+//   - twitter: images
+//   - keywords (SEO discovery via search engines)
+//   - robots: index:true follow:true explicit (era undefined - inheritance root)
+//   Cadeia W9 metadata enrichment cross-storefront completa:
+//     pass 519 /sellers (siteName + locale + images + keywords + robots index)
+//     pass 538 /conta/downloads/[token] openGraph + twitter card enriched
+//     pass 557 /conta/seguranca + /conta/perfil + /conta/pontos twitter card
+//     pass 585 (este) /cloud-code-ilimitado enrich paridade
 export const metadata = {
   title: 'Cloud Code Ilimitado - Programa Classe B - Code & Agent Shop',
   description: 'Programa exclusivo para vendedores Classe B com API keys patrocinadas pela plataforma.',
   // FIX-WORKER-9 pass 4: canonical explicito
   alternates: { canonical: '/cloud-code-ilimitado' },
-  // FIX-WORKER-9 pass 5: openGraph + twitter especifico
+  // FIX-WORKER-9 pass 5 + 585: openGraph + twitter especifico ENRICHED
   openGraph: {
     title: 'Cloud Code Ilimitado - API Keys Patrocinadas para Sellers',
     description: 'Programa Classe B: OpenAI, Anthropic, Gemini com chaves patrocinadas pela plataforma. Sem limite de uso.',
     type: 'website',
-    url: '/cloud-code-ilimitado',
+    url: 'https://cas.inovareinteligenciaartificial.com/cloud-code-ilimitado',
+    siteName: 'Code & Agent Shop',
+    locale: 'pt_BR',
+    images: ['/opengraph-image'],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Cloud Code Ilimitado - Code & Agent Shop',
     description: 'API keys patrocinadas para vendedores aprovados Classe B.',
+    images: ['/opengraph-image'],
   },
+  keywords: ['cloud code ilimitado', 'classe b', 'api keys patrocinadas', 'openai gemini anthropic', 'sellers programa'],
+  robots: { index: true, follow: true },
 };
 
 export default function CloudCodeIlimitadoPage() {
