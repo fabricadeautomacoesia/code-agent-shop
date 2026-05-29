@@ -340,12 +340,41 @@ app.post('/qa/run',
            Paridade pass 277/285/289 error tracking DLP cross-svc. */
         const safeErr = mask.text(String(e.message || '').slice(0, 500));
         log.error({ run_id, err: safeErr }, '[qa.dispatch_failed]');
-        await query(
-          `UPDATE product_qa_runs SET verdict = 'error', finished_at = NOW(),
-                                       reasons = ARRAY[$1] WHERE id = $2`,
-          [`dispatch_failed: ${safeErr}`, run_id]
-        );
-        await query(`UPDATE products SET status = 'qa_pending', qa_verdict = 'pending' WHERE id = $1`, [product_id]);
+        /* FIX-WORKER-12 pass 498 (atomicity dispatch_failed - paridade pass 27 BUG 5):
+           PRE-FIX BUG: 2 UPDATEs sem tx() wrapping:
+             await query('UPDATE product_qa_runs SET verdict=error ...')  // 1
+             await query('UPDATE products SET status=qa_pending ...')      // 2
+           - UPDATE 1 succeeds, UPDATE 2 fails (deadlock 40P01/network/lock)
+             -> qa_run.verdict='error' MAS product.status='qa_running' (still)
+             -> Cron stuck-cleanup procura 'qa_running' > 10min - encontra
+                eventualmente MAS state divergence ate la (UI seller confusa)
+             -> Late callback chega: TERMINAL_VERDICTS.has('error')=TRUE -> NOOP
+                MAS product remains 'qa_running' permanentemente
+           - Sem withRetry: deadlock 40P01 abandona sem retry -> setImmediate
+             swallow exception silently
+           - Bonus bug: produto previamente 'approved' (re-QA v2) ao falhar
+             dispatch revertia para 'qa_pending' (perda de estado approved)
+             -> v2 falhou QA mas v1 estava live, dispatch error escondia v1
+           POST-FIX:
+           - tx() wrapping atomico
+           - withRetry para deadlock 40P01 cross-svc paridade pass 310
+           - Trade-off: revertendo p/ qa_pending (estado seguro pre-QA) ainda
+             eh correto para v1 since pass 28 BUG 4 requires re-trigger explicit
+             (status qa_pending allows seller retry). Counter sellers nao mexe
+             aqui pois /qa/run nao incrementou (so callback incrementa em pass 4) */
+        await withRetry('qa.dispatch_failed.tx', async () => {
+          await tx(async (c) => {
+            await c.query(
+              `UPDATE product_qa_runs SET verdict = 'error', finished_at = NOW(),
+                                           reasons = ARRAY[$1] WHERE id = $2`,
+              [`dispatch_failed: ${safeErr}`, run_id]
+            );
+            await c.query(
+              `UPDATE products SET status = 'qa_pending', qa_verdict = 'pending' WHERE id = $1`,
+              [product_id]
+            );
+          });
+        });
         // FIX-WORKER-12 pass 6: notifica seller (dispatch silenciava falhas).
         // Antes: seller via "status = qa_pending" eternamente, sem entender porque
         // QA nao saiu de pending. Agora: notificacao explicita + sugestao retry.

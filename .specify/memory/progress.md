@@ -36867,3 +36867,57 @@ Cadeia W6 GATEWAY security:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS fix aguardando deploy)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 498 - W12 QA PIPELINE: dispatch_failed atomicity (paridade pass 27 BUG 5)
+
+PRE-FIX BUG (state machine drift catastrofico):
+- services/qa-svc/src/server.js linhas 343-348:
+    const safeErr = mask.text(String(e.message || '').slice(0, 500));
+    await query('UPDATE product_qa_runs SET verdict=error ...')  // 1
+    await query('UPDATE products SET status=qa_pending ...')      // 2
+
+Cenarios de falha:
+1. UPDATE 1 commit (qa_run.verdict='error') -> UPDATE 2 falha (deadlock
+   40P01/network/lock transient)
+   - qa_run terminal state ('error')
+   - products.status permanece 'qa_running' (state set por /qa/run linha 229)
+   - Cron stuck-cleanup procura qa_running > 10min - encontra eventualmente
+   - MAS state divergence durante 10min+ - UI seller mostra "Em QA..."
+     mesmo apos dispatch_failed notification
+2. Late callback chega tarde: TERMINAL_VERDICTS.has('error')=TRUE -> NOOP
+   (pass 27 BUG 2) MAS product remains 'qa_running' permanentemente
+   ate cron cleanup -> orfa state
+
+Sem withRetry:
+- setImmediate handler swallow exception silently
+- deadlock 40P01 abandona sem retry attempt
+- Cross-svc cadeia pass 310 ja consolidada (asaas.js, payment, vault, qa.callback)
+- qa.dispatch_failed lagged - regressao
+
+Bonus bug observado (nao corrigido aqui - escopo):
+- Produto previamente approved (re-QA v2) ao falhar dispatch revertia
+  para qa_pending -> v2 falhou QA mas v1 estava live, dispatch error
+  escondia v1 (visibility gap). Defer fix proxima iter.
+
+POST-FIX:
+- tx() wrapping ambas UPDATEs (atomic - paridade pass 27 BUG 5)
+- withRetry('qa.dispatch_failed.tx') 3 attempts backoff exponencial
+- Comment expansivo explica state machine + late callback interaction
+
+Cadeia W12 QA atomicity consolidation:
+- pass 27 BUG 5 callback INSERT/UPDATE atomic
+- pass 28 BUG 5 /qa/run INSERT+UPDATE atomic
+- pass 310 withRetry callback deadlock defense
+- pass 235 DLP callback_secret_hint removed payload
+- pass 295 internal-token triggered_by bypass
+- pass 303 mask.text dispatch error DLP
+- pass 394 N8N -> worker fallback resilience
+- pass 470 notifCache approved+rejected
+- pass 498 (este) dispatch_failed tx() + withRetry
+
+231 passes acumulados (268->498) sem deploy VPS
+9 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-102 ALTA PRIORIDADE apply
