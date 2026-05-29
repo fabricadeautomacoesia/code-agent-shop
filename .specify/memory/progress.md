@@ -40704,3 +40704,58 @@ CADEIA cache hygiene MISMATCH bugs cumulative 12 sites:
 = 12 cache hygiene MISMATCH bugs ATIVA AUDITORIA cross-svc
 
 462 passes acumulados (268->732) sem deploy VPS
+
+## PASS 733 (W7 PRODUCT-SVC public.js /:slug/reviews sort MISMATCH)
+
+services/product-svc/src/routes/public.js linha 1101
+
+PRE-FIX:
+- cacheKey linha 1092: sort = (req.query.sort || 'helpful').toString().toLowerCase()
+- handler linha 1101: sort = req.query.sort || 'helpful' (RAW)
+- ?sort=Helpful -> cacheKey 'helpful' MAS handler 'Helpful'
+- REVIEW_SORT_ENUM.has('Helpful') = false -> 400 invalid_sort spurious
+- Cache sprawl entries case-variants (Redis storage waste)
+
+POST-FIX:
+- handler: const sort = (req.query.sort || 'helpful').toString().trim().toLowerCase()
+- Paridade EXATA cacheKey linha 1092
+
+CADEIA 13 cache hygiene MISMATCH bugs cumulative cross-svc:
+- pass 618 (cache shape errado)
+- pass 719-731 (10 sites case + trim mismatches)
+- pass 732 (target_id UUID case mismatch aiops)
+- pass 733 (este - reviews sort case mismatch product-svc)
+
+Pattern V8 invariante: cacheKey MUST mirror handler normalization EXACTLY.
+
+## PASS 734 (W2 CHECKOUT cart.js /coupon storage normalize)
+
+services/order-svc/src/routes/cart.js linha 421-444
+
+PRE-FIX BUG:
+- INSERT INTO carts (coupon_code) VALUES ($2) com req.body.code RAW
+- UPDATE carts SET coupon_code = $1 com req.body.code RAW
+- Preview cacheKey (linha 264) ja normaliza .toUpperCase()
+- coupons.code DB canonical UPPERCASE convencao
+- Cart pode armazenar 'Promo10' MAS coupons.code 'PROMO10'
+- Admin dashboards listando cart.coupon_code mostram case-variado UX
+- Audit_log inconsistencia (payload coupon.code DB UPPER vs cart storage raw)
+- Recompute futuro recalcCart pode usar carts.coupon_code direto sem UPPER()
+  -> coupon_invalid spurious 404
+
+POST-FIX:
+- const couponCodeNorm = String(req.body.code).toUpperCase()
+- Aplicar couponCodeNorm em INSERT + UPDATE carts.coupon_code
+- Storage canonical UPPERCASE consistente com DB convencao
+
+Pattern V8 W2 storage hygiene: dados persistidos = canonical form
+(paridade cacheKey normalization invariante cadeia 13 sites W7/W18).
+
+## BLOQUEIO INFRAESTRUTURA
+
+1. VPS SSH continua blocked (462+ passes em origin/main aguardando deploy)
+2. NOVO: disco C: dev box ficou 100% cheio durante sessao
+   - npm-cache 887M liberado para destravar git commit
+   - 527M livre remaining - apertado mas funcional
+   - Necessario: cleanup adicional ou disk expansion na proxima sessao
+

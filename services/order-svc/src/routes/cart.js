@@ -417,6 +417,19 @@ router.post('/coupon',
 
     // BUG 3 Regra K: tx() + SELECT FOR UPDATE em carts (anti-race /coupon vs /items)
     // FIX-WORKER-2 pass 681 (withRetry coupon apply deadlock defense)
+    /* FIX-WORKER-2 pass 734 (coupon_code storage normalize - paridade cacheKey + DB canonical):
+       PRE-FIX BUG: INSERT/UPDATE carts.coupon_code armazena req.body.code RAW.
+       - Preview cacheKey (linha 264) ja normaliza .toUpperCase()
+       - coupons.code DB canonical eh uppercase (convencao)
+       - Cart pode ter coupon_code='Promo10' MAS tabela coupons 'PROMO10'
+       - Admin dashboards listando cart.coupon_code mostram case-variado UX bug
+       - Audit_log payload (linha 453 coupon.code DB ja uppercase OK) inconsistente
+         vs cart storage raw - forense confuso
+       - Recompute futuro: recalcCart pode usar carts.coupon_code direto sem UPPER()
+         (inferencia humana razoavel) -> coupon_invalid spurious 404
+       POST-FIX: normalize uppercase antes INSERT/UPDATE - storage canonical.
+       Pattern V8 W2 storage hygiene: dados persistidos = canonical form. */
+    const couponCodeNorm = String(req.body.code).toUpperCase();
     let cartId;
     await withRetry('cart.coupon.tx', async () => await tx(async (cli) => {
       const cartR = await cli.query(
@@ -429,14 +442,14 @@ router.post('/coupon',
           `INSERT INTO carts (user_id, coupon_code) VALUES ($1::UUID, $2)
            ON CONFLICT (user_id) DO UPDATE SET coupon_code = EXCLUDED.coupon_code, updated_at = NOW()
            RETURNING id`,
-          [req.user.sub, req.body.code]
+          [req.user.sub, couponCodeNorm]
         );
         cartId = ins.rows[0]?.id;
       } else {
         cartId = cartR.rows[0].id;
         await cli.query(
           `UPDATE carts SET coupon_code = $1, updated_at = NOW() WHERE id = $2::UUID`,
-          [req.body.code, cartId]
+          [couponCodeNorm, cartId]
         );
       }
       // recalcCart dentro do tx() - atomic + lock liberado em commit
