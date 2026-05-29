@@ -449,6 +449,13 @@ router.get('/all',
 // + cache.cacheMiddleware 30s (KYC submissions rates baixos vs payouts)
 // + Strip _total interno
 // LGPD mask preserved (admin full, staff masked - critico p/ KYC data)
+// FIX-WORKER-17 pass 614 (cache key normalization paridade cadeia 27 sites
+// W7+W10+W12+W13+W17+W18 cache hygiene cross-svc consolidacao - 28 sites total):
+//   PRE-FIX BUGS: raw q.limit / q.offset sem clamp.
+//   Handler clamps Math.max/Math.min [1, 200] (linha 465) + Math.max(0, ...) (linha 466).
+//   - ?limit=99999 -> cache key 'lim=99999', handler clamp 200 SAME response.
+//   - ?offset=-5 -> cache key 'off=-5', handler -> 0.
+//   POST-FIX: clamp pre-cache paridade handler.
 const pendingKycCacheKey = (req) => {
   const q = req.query;
   // FIX pass 414: + q search no cache key
@@ -456,7 +463,9 @@ const pendingKycCacheKey = (req) => {
   const crypto = require('node:crypto');
   const qNorm = (q.q || '').toString().trim().toLowerCase().slice(0, 100);
   const qHash = qNorm ? crypto.createHash('sha256').update(qNorm).digest('hex').slice(0, 12) : '';
-  return `seller:admin:pending-kyc:lim=${q.limit||50}:off=${q.offset||0}:q=${qHash}`;
+  const lim = Math.max(1, Math.min(200, parseInt(q.limit, 10) || 50));
+  const off = Math.max(0, parseInt(q.offset, 10) || 0);
+  return `seller:admin:pending-kyc:lim=${lim}:off=${off}:q=${qHash}`;
 };
 
 router.get('/pending-kyc',
