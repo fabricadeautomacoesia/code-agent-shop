@@ -41082,3 +41082,44 @@ Pattern V8 React stability cadeia 9 sites cross-dashboard:
 CADEIA cumulative cross-svc:
 - 16 cache hygiene + storage normalize bugs (618, 719-737)
 - 9 React stability fixes cross-dashboard (738-746)
+
+## PASS 747 (W4 ADMIN /payouts useCallback - cadeia 10 sites)
+
+apps/dashboard-admin/src/app/payouts/page.tsx linhas 37-48
+
+PRE-FIX BUG: async function load() referencia statusFilter via closure.
+- useEffect deps [statusFilter] re-roda load - OK funcional
+- useAdminAction(load) recebe nova ref cada render -> action.run re-criada
+- approve/reject/transfer CRITICAL financial actions (Asaas transfers)
+- Cascading re-renders durante operacoes financeiras
+
+POST-FIX:
+- useCallback wrap em load com [statusFilter] deps -> stable per filter
+- useAdminAction recebe stable callback -> action.run estavel
+- useEffect deps [load] - paridade ESLint exhaustive-deps
+
+Pattern V8 React stability cadeia 10 sites cross-dashboard:
+738 disputes, 739 payouts-pending, 740 financeiro, 741 loja,
+742 alerts (15s poll), 743 orders (state-stale FIX), 744 vault (security),
+745 sellers (debounced search), 746 qa-queue (force-approve critical),
+747 payouts (CRITICAL Asaas financial actions)
+
+## W9 SEO AUDIT (100% COVERAGE)
+
+Audit completo storefront pages: TODAS tem metadata especifica (layout.tsx OR
+in-file export const metadata):
+- /login, /register, /esqueci-senha, /redefinir-senha: layout.tsx
+- /products, /sellers, /status: layout.tsx
+- /sobre, /privacidade, /termos: in-file metadata
+- /comparar, /promocoes, /cloud-code-ilimitado: in-file metadata
+- /conta + sub-routes (favoritos, seguranca, notificacoes, pontos, perfil, pedidos): metadata coverage
+- Root /, layout.tsx: metadata coverage
+- Dashboard-admin + dashboard-seller layout: metadata coverage
+
+Status: W9 SEO 100% Blueprint V8 metadata coverage cross-app.
+Nada para adicionar nesta sessao - todas pages indexaveis Google + OG cards
+preview WhatsApp/Telegram/Twitter funcionais.
+
+CADEIA cumulative cross-svc:
+- 16 cache hygiene + storage normalize bugs (618, 719-737)
+- 10 React stability fixes cross-dashboard (738-747)

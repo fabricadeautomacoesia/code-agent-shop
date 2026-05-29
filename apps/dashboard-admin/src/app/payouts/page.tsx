@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { adminFetch, fmtBRL, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
@@ -34,7 +34,18 @@ export default function PayoutsPage() {
   //   Backend agora suporta 6 valores - UI expoe 5 (all_states substitui exclusive view).
   const [statusFilter, setStatusFilter] = useState<'pending'|'approved'|'paid'|'rejected'|'all_states'>('pending');
 
-  async function load() {
+  /* FIX-WORKER-4 pass 747 (useCallback stable closure - cadeia 10 sites):
+     PRE-FIX BUG: async function load() referencia statusFilter via closure.
+     - useEffect deps [statusFilter] re-roda load - OK funcional
+     - useAdminAction(load) recebe nova ref cada render -> action.run re-criada
+     - approve/reject/transfer CRITICAL financial actions (Asaas transfers)
+     - Cascading re-renders durante operacoes financeiras
+     POST-FIX:
+     - useCallback wrap em load com [statusFilter] deps -> stable per filter
+     - useAdminAction recebe stable callback -> action.run estavel
+     - useEffect deps [load] - paridade ESLint exhaustive-deps
+     Pattern V8 React stability cadeia 10 sites cross-dashboard. */
+  const load = useCallback(async () => {
     setLoading(true);
     // FIX pass 508: clear stale list immediate (prevent action button race on wrong status)
     setList([]);
@@ -44,8 +55,8 @@ export default function PayoutsPage() {
     }
     catch (e: any) { setLoadError(e.message); }
     finally { setLoading(false); }
-  }
-  useEffect(() => { load(); }, [statusFilter]);
+  }, [statusFilter]);
+  useEffect(() => { load(); }, [load]);
 
   // FIX-WORKER-4 pass 3: refactor para usar useAdminAction hook (W4 pass 2).
   // Antes inline try/catch + 3 states (busyId, error, success) duplicados ~30 linhas.
