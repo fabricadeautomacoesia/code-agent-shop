@@ -34761,3 +34761,55 @@ Pattern V8 W17 consolidado:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 459 W13 NOTIFICATION: PATCH /prefs cache invalidation (consume pass 436)
+commit pendente
+GAP /prefs PATCH sem cache.del cross-mutation
+PRE-FIX:
+- PATCH /prefs UPSERT user_notification_prefs (bulk UNNEST pass 408)
+- NAO invalida cache:
+  - notifs:list:{user}:* (cache 20s pass 322)
+  - notifs:unread-count:{user} (cache 20s pass 175)
+- Pass 436 fix LGPD adicionou LEFT JOIN user_notification_prefs em ambos endpoints
+- Resultado das queries depende de prefs.is_enabled
+- Cache 20s persiste resultado pre-toggle ate TTL expirar
+- Outros endpoints mutation ja invalidam:
+  - /:id/read (pass 404)
+  - /read-all (pass 422)
+  - /prefs PATCH lagged
+
+CENARIO LGPD/UX gap:
+- User /conta/notificacoes desativa product_qna_new in_app
+- PATCH /prefs success 200
+- User reabre bell -> notif ainda visivel ate 20s (cache stale)
+- "Configurei mas nao surte efeito - bug?"
+- LGPD: opt-out deve aplicar imediatamente cross-channels
+- Pass 436 entregava semantica correta mas cache 20s atrasava percepcao
+
+POST-FIX:
+- cache.del notifs:list:{user}:* + notifs:unread-count:{user} post-UPDATE
+- Paridade pass 422 (/read-all) + pass 404 (/:id/read)
+- Fire-and-forget catch (Redis down nao quebra response)
+- Only invalidate quando updated > 0 (skip noop pref toggles)
+
+Cadeia consume pass 436 LGPD opt-out:
+  pass 436 LEFT JOIN user_notification_prefs em GET / + /unread-count
+  pass 437 functional idx LOWER(template_code)
+  pass 459 cache invalidation cross-mutation <- ESTE (cadeia LGPD fechada)
+
+W13 cache invalidation series:
+  pass 175 notifs:unread-count cache 20s
+  pass 322 notifs:list cache 20s
+  pass 404 /:id/read invalidation
+  pass 422 /read-all invalidation
+  pass 459 /prefs PATCH invalidation <- ESTE
+
+Pattern V8 W13: TODA mutation que afeta visibility/count deve invalidate
+ambos caches list + count (paridade)
+
+192 passes acumulados (268->459) sem deploy VPS
+8 CRITICAL + 29 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 ALTA PRIORIDADE

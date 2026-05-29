@@ -672,6 +672,29 @@ app.patch('/prefs', jwt.requireAuth(), asyncHandler(async (req, res) => {
     updated = r.rowCount;
   }
 
+  /* FIX-WORKER-13 pass 459 (cache invalidation cross-mutation - paridade pass 422):
+     PRE-FIX: PATCH /prefs UPSERT user_notification_prefs MAS NAO invalida cache:
+     - notifs:list:{user}:* (pass 322 cache 20s LEFT JOIN consume pass 436)
+     - notifs:unread-count:{user} (pass 175 cache 20s, pass 436 LEFT JOIN)
+     - Pass 436 fix LGPD adicionou LEFT JOIN com user_notification_prefs em
+       ambos endpoints. Resultado das queries depende de prefs.is_enabled.
+     - Cache 20s persiste resultado pre-toggle ate TTL expirar.
+     CENARIO:
+     - User /conta/notificacoes desativa product_qna_new in_app
+     - PATCH /prefs success 200
+     - User reabre bell -> notif ainda visivel ate 20s (cache stale)
+     - "Configurei mas nao surte efeito - bug?"
+     POST-FIX: cache.del notifs:list + notifs:unread-count post-UPDATE.
+     Paridade pass 422 (/read-all) + pass 404 (/:id/read).
+     Pattern V8 W13: TODA mutation que afeta visibility = invalidate cache.
+     Fire-and-forget catch (Redis down nao quebra response). */
+  if (updated > 0) {
+    Promise.all([
+      cache.del(`notifs:list:${req.user.sub}:*`),
+      cache.del(`notifs:unread-count:${req.user.sub}`),
+    ]).catch(() => {});
+  }
+
   res.json({ ok: true, updated, skipped });
 }));
 
