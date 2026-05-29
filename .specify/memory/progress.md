@@ -39970,3 +39970,32 @@ CADEIA W6 gateway block defense-in-depth COMPLETA cross-svc:
 = 6 endpoints layer-1 defense gateway block consolidacao
 
 424 passes acumulados (268->694) sem deploy VPS
+
+============================================================================
+SESSAO 695-696 (W9 /conta layout + W7 related/also-bought direction parity)
+============================================================================
+
+Pass 695 (W9 /conta root layout metadata enrichment - 12 sites cumulative):
+- DESCOBERTA: /conta/layout.tsx era sparse (3 campos minimo)
+- POST-FIX: canonical + openGraph + twitter card paridade cadeia
+- Cadeia W9 metadata 12 sites:
+  /login + /esqueci-senha + /redefinir-senha + /register
+  /conta/* (downloads, seguranca, perfil, pontos, pedidos) + /conta root (este)
+  /cart + /checkout
+
+Pass 696 (W7 product-svc related + also-bought direction parity):
+- DESCOBERTA: 2 endpoints com DESC chain + id ASC = MIXED direction
+- /products/:slug/related (linha 436-438): sales DESC + rating DESC + id ASC
+- /products/:slug/also-bought (linha 362): co_buyers DESC + sales DESC + id ASC
+- External Sort obligatorio (idx composite nao bate)
+- POST-FIX: p.id DESC paridade cadeia Regra D 30+ sites cross-svc
+
+CADEIA Regra D direction parity SORT_OPTIONS consolidacao:
+- /search 6 sorts (pass 648)
+- /admin/sellers (pass 624)
+- /sellers public 3 sorts (pass 691)
+- /products/:slug/related (pass 696 este)
+- /products/:slug/also-bought (pass 696 este)
+= 6 sites direction parity cross-svc consolidacao
+
+426 passes acumulados (268->696) sem deploy VPS
