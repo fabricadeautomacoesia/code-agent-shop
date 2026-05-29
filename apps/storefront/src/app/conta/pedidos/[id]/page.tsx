@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { CheckCircle, Clock, Download, AlertCircle, Copy } from 'lucide-react';
+import { CheckCircle, Clock, Download, AlertCircle, Copy, Check } from 'lucide-react';
 import { Api } from '@/lib/api';
 import { useAuth } from '@/lib/store';
 import { ReviewForm } from '@/components/review-form';
@@ -29,6 +29,37 @@ export default function PedidoPage() {
   const [order, setOrder] = useState<any>(null);
   const [items, setItems] = useState<any[]>([]);
   const [err, setErr] = useState('');
+  /* FIX-WORKER-2 pass 518 (PIX copy UX paridade /checkout pass 488):
+     PRE-FIX BUG: copy button sem try/catch + sem feedback visual
+     - navigator.clipboard.writeText e ASYNC + pode throw:
+       * Permission denied (iframe sem 'clipboard-write' permission)
+       * Insecure context (HTTP em vez de HTTPS - dev local edge)
+       * iOS Safari < 13 sem Clipboard API
+       * User browser preference 'never allow'
+     - Sem try/catch -> unhandled rejection silent
+     - Sem feedback -> user clica icon Copy, nada acontece, silent fail
+     - Cenario real:
+       1. User completa checkout PIX desktop -> ve order detail
+       2. Clica copy icon -> nada (silent fail OR sucesso silencioso)
+       3. User pensa que copiou -> cola no app banco -> texto velho/vazio
+       4. Pagamento incompleto = perda revenue + UX broken
+     POST-FIX: paridade /checkout/page.tsx pass 488 copyPix function
+     - pixCopied state + setTimeout 2.5s reset
+     - Check icon visual feedback (green) durante copied state
+     - try/catch fallback textarea.select() para legacy clients */
+  const [pixCopied, setPixCopied] = useState(false);
+
+  async function copyPix(code: string) {
+    try {
+      await navigator.clipboard.writeText(code);
+      setPixCopied(true);
+      setTimeout(() => setPixCopied(false), 2500);
+    } catch {
+      // Fallback iOS antigo / contexto inseguro - seleciona textarea
+      const ta = document.querySelector<HTMLTextAreaElement>('textarea#pix-copy');
+      if (ta) { ta.select(); ta.setSelectionRange(0, 99999); }
+    }
+  }
 
   useEffect(() => {
     if (!token) { router.push('/login'); return; }
@@ -92,20 +123,28 @@ export default function PedidoPage() {
           </h2>
           {order.payment_method === 'pix' && order.asaas_pix_qrcode && (
             <div className="text-center">
-              <img src={`data:image/png;base64,${order.asaas_pix_qrcode}`} alt="PIX" className="w-56 h-56 mx-auto bg-white p-2 rounded-lg mb-4" />
+              {/* FIX pass 518: alt text descritivo (a11y paridade /checkout pass 488) */}
+              <img src={`data:image/png;base64,${order.asaas_pix_qrcode}`}
+                alt="QR Code para pagamento PIX" className="w-56 h-56 mx-auto bg-white p-2 rounded-lg mb-4" />
               {order.asaas_pix_copy_paste && (
                 <div className="max-w-md mx-auto">
-                  {/* FIX-WORKER-2 pass 163 (a11y): htmlFor + id + type=button + aria-label + autoComplete=off PII */}
+                  {/* FIX-WORKER-2 pass 163 (a11y): htmlFor + id + type=button + aria-label + autoComplete=off PII
+                      FIX-WORKER-2 pass 518: copy button feedback paridade /checkout pass 488 */}
                   <label htmlFor="pix-copy" className="text-xs text-white/60 block mb-1 text-left">Copia e cola PIX</label>
                   <div className="flex gap-2">
                     <textarea id="pix-copy" readOnly value={order.asaas_pix_copy_paste}
                       autoComplete="off"
                       aria-describedby="pix-copy-help"
+                      onFocus={(e) => e.target.select()}
                       className="flex-1 p-2 rounded bg-white/5 border border-white/10 text-xs font-mono" rows={3} />
-                    <button type="button" onClick={() => navigator.clipboard.writeText(order.asaas_pix_copy_paste)}
-                      aria-label="Copiar codigo PIX para area de transferencia"
-                      className="p-2 hover:bg-white/5 rounded h-fit focus-visible:outline-2 focus-visible:outline-magenta">
-                      <Copy className="w-4 h-4" aria-hidden="true" />
+                    <button type="button"
+                      onClick={() => copyPix(order.asaas_pix_copy_paste || '')}
+                      disabled={!order.asaas_pix_copy_paste}
+                      aria-label={pixCopied ? 'Codigo PIX copiado' : 'Copiar codigo PIX para area de transferencia'}
+                      className="p-2 hover:bg-white/5 rounded h-fit focus-visible:outline-2 focus-visible:outline-magenta disabled:opacity-40 inline-flex items-center gap-1 text-xs">
+                      {pixCopied
+                        ? <><Check className="w-4 h-4 text-green-400" aria-hidden="true" /> <span className="text-green-400">Copiado!</span></>
+                        : <><Copy className="w-4 h-4" aria-hidden="true" /> <span>Copiar</span></>}
                     </button>
                   </div>
                   <span id="pix-copy-help" className="sr-only">Cole este codigo no app do banco para pagar via PIX</span>

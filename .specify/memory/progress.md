@@ -37884,3 +37884,57 @@ Cadeia W11 PAYMENT defensive Asaas integration:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)
+
+## Pass 518 - W2 CHECKOUT: /conta/pedidos/[id] PIX copy UX paridade /checkout pass 488
+
+PRE-FIX (3 issues UX paridade lagged):
+1. PIX copy button SEM try/catch + SEM feedback visual:
+   - navigator.clipboard.writeText ASYNC + pode throw:
+     * Permission denied (iframe sem 'clipboard-write')
+     * Insecure context (HTTP local dev)
+     * iOS Safari < 13 sem Clipboard API
+   - Sem feedback -> silent fail
+   - Cenario:
+     1. User completa checkout PIX -> ve order detail
+     2. Clica copy icon -> nada (silent fail)
+     3. User pensa que copiou -> cola texto vazio no banco
+     4. Pagamento incompleto = perda revenue + UX broken
+
+2. img alt="PIX" generico (WCAG 1.1.1):
+   - SR anuncia apenas "PIX, imagem" - sem context
+   - Pass 488 /checkout ja tinha alt="QR Code para pagamento PIX"
+   - paridade lagged em /conta/pedidos/[id]
+
+3. textarea onFocus sem select() automatico:
+   - User clica textarea quer selecionar - precisa Ctrl+A manual
+   - Pass 488 /checkout ja tinha onFocus={(e) => e.target.select()}
+
+POST-FIX (paridade /checkout pass 488 + WCAG):
+- pixCopied state + copyPix() async function
+- try/catch fallback textarea.select() para legacy clients
+- setTimeout 2500ms reset (paridade pass 488)
+- Check icon green + 'Copiado!' text visual feedback
+- aria-label dinamico (acked vs pre-copy)
+- disabled={!order.asaas_pix_copy_paste} defensive
+- alt text: 'QR Code para pagamento PIX' (paridade /checkout)
+- textarea onFocus automatic select (UX paridade)
+
+Cadeia W2 CHECKOUT consolidacao pix-flow:
+- pass 2 polling com backoff Asaas async setImmediate
+- pass 4 hasCpf preventive UX
+- pass 6 copyPix /checkout function (com try/catch)
+- pass 196 friendlyCheckoutError mapping
+- pass 229 empty cart UX condicional
+- pass 268 tabnabbing rel=noopener noreferrer (boleto/credit links)
+- pass 316 Api.formatDate defensive helper
+- pass 488 W11 BACEN interest_pct (cross-svc)
+- pass 494 cart remove() try/catch + busy guard
+- pass 501 CartDrawer mutations paridade
+- pass 518 (este) order detail PIX copy paridade /checkout
+
+250 passes acumulados (268->518) sem deploy VPS
+9 CRITICAL + 37 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)
