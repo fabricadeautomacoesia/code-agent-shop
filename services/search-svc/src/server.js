@@ -142,8 +142,15 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
   if (free)      where.push(`p.is_free = TRUE`);
   if (tier)      { where.push(`s.reputation_tier = $${i++}`); params.push(tier); }
   if (tag) {
+    /* FIX-WORKER-18 pass 535 (tag case-sensitivity bug - paridade pass 533 category):
+       PRE-FIX BUG: params.push(tag) RAW - case-sensitive PG t.slug match
+       - User search ?tag=AI-Agents -> tag slug='AI-Agents' -> 0 rows
+       - tags.slug DB lowercase canonical (mig 005)
+       - Search retorna 0 results em vez de matchar tag
+       - Mesma classe pass 533 category - lagged paridade
+       POST-FIX: .toString().trim().toLowerCase() paridade pass 533 + cross-svc */
     where.push(`EXISTS(SELECT 1 FROM product_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.product_id=p.id AND t.slug=$${i++})`);
-    params.push(tag);
+    params.push(String(tag).trim().toLowerCase());
   }
 
   // MLB-NEW WORKER 16: filtro recently_sold (24h window) usa idx_products_last_sale partial

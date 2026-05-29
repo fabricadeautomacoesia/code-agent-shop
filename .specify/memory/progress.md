@@ -38848,3 +38848,57 @@ Cadeia W13 NOTIFICATION cache coherence consolidation:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-107 ALTA PRIORIDADE apply (14 PARTIAL/composite indexes)
+
+## Pass 535 - W18 PERFORMANCE: slug filters case-sensitivity 3 sites (final cleanup)
+
+PRE-FIX BUGS (3 sites paridade lagged cross-svc):
+
+1. search-svc GET / tag filter (linha 145):
+   - params.push(tag) RAW
+   - User search ?tag=AI-Agents -> 0 rows (tags.slug DB lowercase)
+   - Mesma classe pass 533 category - paridade lagged
+
+2. product-svc /products listing category filter (linha 716):
+   - params.push(req.query.category) RAW
+   - User /products?category=AI-Agents -> WHERE c.slug='AI-Agents' -> 0 rows
+   - Pattern V8 W7 W18: slug params filter sempre normalize
+
+3. product-svc /products listing seller filter (linha 732):
+   - params.push(req.query.seller) RAW
+   - User /products?seller=Foo-Bar -> WHERE s.store_slug='Foo-Bar' -> 0 rows
+   - sellers.store_slug DB lowercase canonical (constraint mig 003)
+
+POST-FIX (paridade pass 533 cross-svc + 380 sellers + 350 products):
+- search-svc tag: String(tag).trim().toLowerCase()
+- product-svc category: idem
+- product-svc seller: idem
+
+Pattern V8 W7 W10 W18 cache key/query/filter consistency FINAL FINAL (13 sites case-insensitive):
+- products /:slug detail (pass 350+531) ✓
+- products /:slug/also-bought (pass 513) ✓
+- products /:slug/related (pass 513) ✓
+- products /:slug/reviews 3 sites (pass 529) ✓
+- products /:slug/qna 3 sites (pass 529) ✓
+- sellers /:slug detail (pass 380) ✓
+- sellers /:slug/stats (pass 521) ✓
+- sellers /:slug/products 3 sites (pass 531) ✓
+- search /top-sellers/:category 3 sites (pass 533) ✓
+- search GET / ?category (pass 533) ✓
+- search GET / ?tag (pass 535 este) ✓ NEW
+- product /products ?category filter (pass 535 este) ✓ NEW
+- product /products ?seller filter (pass 535 este) ✓ NEW
+
+100% paridade cross-svc cache key/query/filter case-insensitive end-to-end achieved.
+
+Impact UX:
+- User pode digitar URLs com qualquer case e search retorna resultados consistentes
+- No more "filter returns 0" mysteries por case mismatch
+- SEO: case variants de URL retornam same content (canonical preservation)
+- Cache hit rate: case variants colapse para canonical lowercase
+
+267 passes acumulados (268->535) sem deploy VPS
+9 CRITICAL + 39 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-107 ALTA PRIORIDADE apply (14 PARTIAL/composite indexes)

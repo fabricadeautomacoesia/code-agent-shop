@@ -710,10 +710,19 @@ router.get('/',
   const params = [];
   let i = 1;
 
+  /* FIX-WORKER-18 pass 535 (slug filters case-sensitivity - paridade pass 533/cross-svc):
+     PRE-FIX BUG: 2 filter params usavam req.query RAW:
+     - category linha 716: WHERE c.slug=$X com raw category
+     - seller linha 732: WHERE s.store_slug=$X com raw seller
+     Slugs DB lowercase canonical (categories + sellers + tags + products).
+     User /products?category=AI-Agents -> 0 results (case-sensitive PG).
+     Mesma classe pass 533 search top-sellers/category - paridade lagged.
+     POST-FIX: .toString().trim().toLowerCase() em ambos filters.
+     Pattern V8 W7 W18 invariant: slug params filter sempre normalize. */
   if (req.query.category) {
     // FIX-WORKER-7 pass 417: is_active filter paridade cross-svc (search 417)
     where.push(`p.category_id = (SELECT id FROM categories WHERE slug = $${i++} AND is_active = TRUE)`);
-    params.push(req.query.category);
+    params.push(String(req.query.category).trim().toLowerCase());
   }
   if (req.query.kind) {
     where.push(`p.kind = $${i++}`); params.push(req.query.kind);
@@ -729,7 +738,7 @@ router.get('/',
   // BUG 7: ?seller filter implementado
   if (req.query.seller) {
     where.push(`s.store_slug = $${i++}`);
-    params.push(req.query.seller);
+    params.push(String(req.query.seller).trim().toLowerCase());
   }
 
   // BUG 1: + p.id ASC tiebreaker em TODOS sorts
