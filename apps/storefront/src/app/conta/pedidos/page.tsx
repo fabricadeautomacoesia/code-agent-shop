@@ -73,13 +73,17 @@ export default function PedidosPage() {
       )}
 
       {loading ? (
-        <div className="text-center py-12 text-white/60">Carregando...</div>
+        <div role="status" aria-live="polite" className="text-center py-12 text-white/60">Carregando...</div>
       ) : error ? null : orders.length === 0 ? (
-        <div className="glass p-12 text-center">
-          <Package className="w-16 h-16 mx-auto mb-4 text-white/30" />
+        /* FIX-WORKER-15 pass 556 (a11y + paridade pass 544 empty state):
+            Package + ArrowRight icons aria-hidden (decorativos + texto descritivo).
+            role=status no container empty state (SR announce zero state). */
+        <div role="status" className="glass p-12 text-center">
+          <Package className="w-16 h-16 mx-auto mb-4 text-white/30" aria-hidden="true" />
           <p className="text-xl mb-4">Voce ainda nao fez nenhum pedido</p>
-          <Link href="/products" className="btn-primary inline-flex items-center gap-2">
-            Explorar catalogo <ArrowRight className="w-4 h-4" />
+          <Link href="/products"
+            className="btn-primary inline-flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
+            Explorar catalogo <ArrowRight className="w-4 h-4" aria-hidden="true" />
           </Link>
         </div>
       ) : (
@@ -87,9 +91,24 @@ export default function PedidosPage() {
           {orders.map((o) => {
             const b = STATUS_BADGE[o.status] || STATUS_BADGE.cart;
             return (
-              <Link key={o.id} href={`/conta/pedidos/${o.id}`} className="glass p-4 hover:border-magenta transition-colors flex items-center gap-4 group">
+              /* FIX-WORKER-15 pass 556 (mobile 375px layout fix - row overflow):
+                  PRE-FIX BUG: flex items-center gap-4 horizontal sempre.
+                  - Em 375px mobile: 3 thumbs (~120px) + content (~150px) +
+                    price block (~90px) + ArrowRight (~20px) + gaps = ~370-400px
+                  - Para orders com long status 'Aguardando pagto' + multi-item
+                    title (line-clamp-1 mas content header forca min-width):
+                    overflow horizontal scroll OR squashed thumbs
+                  - Pattern V8 W15 mobile-first responsive (paridade checkout pass 194)
+                  POST-FIX: flex-col em <640px (mobile/tablet) + sm:flex-row sm:items-center.
+                  - Mobile: thumbs row -> content block -> price row (3 rows stacked)
+                  - sm:+ retorna ao layout horizontal compact
+                  - ArrowRight oculta em mobile (hidden sm:block) - redundante com
+                    Link wrapper cursor + hover bg
+                  Tambem icons aria-hidden consolidation (paridade pass 541/553). */
+              <Link key={o.id} href={`/conta/pedidos/${o.id}`}
+                className="glass p-4 hover:border-magenta transition-colors flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 group focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta rounded-xl">
                 {/* FIX-WORKER-8 pass 2: <img> stack -> next/image stack */}
-                <div className="flex gap-2 -space-x-3">
+                <div className="flex gap-2 -space-x-3 flex-shrink-0">
                   {o.items_preview?.slice(0, 3).map((it: any, i: number) => (
                     it.cover && (
                       <div key={i} className="w-12 h-12 relative rounded border-2 border-cyber-dark overflow-hidden flex-shrink-0">
@@ -99,7 +118,7 @@ export default function PedidosPage() {
                     )
                   ))}
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <div className="font-mono text-sm text-magenta">{o.order_number}</div>
                   {/* FIX-WORKER-2 pass 317: Api.formatDate defensive guard paridade pass 316
                       created_at null/invalid -> '-' (vs 'Invalid Date'). paid_at sempre tem
@@ -112,13 +131,15 @@ export default function PedidosPage() {
                     {o.items_preview?.map((it: any) => it.title).filter(Boolean).join(', ')}
                   </div>
                 </div>
-                <div className="text-right">
+                {/* FIX pass 556: mobile -> text-left expand to full width; sm:+ -> text-right compact */}
+                <div className="text-left sm:text-right flex sm:block items-center justify-between sm:justify-start gap-2 flex-shrink-0">
                   <div className="font-display font-bold text-lg">{Api.formatBRL(o.total_cents)}</div>
-                  <div className={`text-xs flex items-center gap-1 justify-end ${b.cls}`}>
-                    <b.Icon className="w-3 h-3" /> {b.label}
+                  <div className={`text-xs flex items-center gap-1 sm:justify-end ${b.cls}`}>
+                    <b.Icon className="w-3 h-3" aria-hidden="true" /> {b.label}
                   </div>
                 </div>
-                <ArrowRight className="w-5 h-5 text-white/30 group-hover:text-magenta transition-colors" />
+                {/* FIX pass 556: ArrowRight hidden em mobile (redundante com Link clickability) */}
+                <ArrowRight className="hidden sm:block w-5 h-5 text-white/30 group-hover:text-magenta transition-colors flex-shrink-0" aria-hidden="true" />
               </Link>
             );
           })}
