@@ -35037,3 +35037,67 @@ Pattern V8 consolidado FINAL invalid_signature/credential:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 464 W4 ADMIN: /admin/webhooks forensic link (consume pass 463 asaas_webhook target)
+commit pendente
+GAP /admin/webhooks SEM linkage com audit_log critical pass 463
+PRE-FIX:
+- Dead letter webhooks shown como tabela read+reset
+- Cadeia consume pass 451+455+458+462+463 audit forensic
+- payment-svc pass 463: audit_log critical asaas.webhook.invalid_signature
+- aiops-svc pass 463: VALID_TT + 'asaas_webhook'
+- MAS admin UI /webhooks SEM ponte:
+  - Sem botao "ver tentativas invalid_signature"
+  - Sem per-row audit link
+- Admin investigando signature bypass forcado psql direto
+
+SCOPE forensic gap:
+- Pass 463 cria audit_log entries criticas mas admin nao tem UI consume
+- Admin: "como ver attacks invalid_signature?" -> psql/grep logs
+- Cadeia incompleta sem ponte UI
+- Pattern consolidado pass 451 (orders), 452 (sellers), 455 (payouts) - missing webhooks
+
+POST-FIX:
+1. Top of page: "Tentativas invalid_signature" Link (red destaque):
+   /audit-log?target_type=asaas_webhook&severity=critical&days=30
+   - ShieldAlert icon (visual security cue)
+   - Bg red/border red (alta visibilidade)
+2. Per-row audit Link consume pass 451 URL params:
+   /audit-log?target_id={w.id}&target_type=asaas_webhook&days=30
+   - text-[10px] discreto (paridade outras pages)
+   - Hover magenta-glow
+
+UX flow agora completo:
+- Admin /admin/webhooks ve dead letters
+- Click "Tentativas invalid_signature" -> ALL bypass attempts critical 30d
+- Click "audit" per row -> timeline ESPECIFICA daquele webhook
+- Investigation forensic completa pela primeira vez (sem psql)
+
+W4 admin investigation flow series FINAL:
+  pass 401 orders order_number copy + buyer_email mailto
+  pass 446 qa-queue title preview link
+  pass 451 orders audit forensic + audit-log URL params
+  pass 452 sellers KYC investigation
+  pass 455 payouts audit + VALID_TT fix
+  pass 464 webhooks forensic + invalid_signature link <- ESTE (cadeia FECHADA)
+
+Cadeia consume cross-svc COMPLETA:
+- backend pass 430 filter target_id+target_type
+- aiops VALID_TT pass 430->455->458->462->463 (16 valores)
+- audit-log URL params pass 451
+- admin links consume: orders pass 451, sellers pass 452, payouts pass 455,
+  webhooks pass 464 <- ESTE
+- audit_log INSERT critical cross-svc:
+  vault pass 458, qa pass 462, asaas pass 463
+
+Pattern V8 W4: TODA admin listing page com sec-relevant items deve ter:
+- Per-row "audit" link (per-entity forensic timeline)
+- Top "ver tentativas X" link (cross-entity critical events filter)
+- VALID_TT enum aligned cross-svc
+
+197 passes acumulados (268->464) sem deploy VPS
+8 CRITICAL + 29 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 ALTA PRIORIDADE

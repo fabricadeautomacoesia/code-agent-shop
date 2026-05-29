@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { adminFetch, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
-import { AlertOctagon, Clock, ExternalLink, RefreshCw } from 'lucide-react';
+import { AlertOctagon, Clock, ExternalLink, RefreshCw, ShieldAlert } from 'lucide-react';
 
 /**
  * FIX-WORKER-4 pass 8: dashboard /admin/webhooks consome W11 pass 7 endpoint
@@ -64,6 +65,22 @@ export default function AdminWebhooksPage() {
               Atualizado: {lastUpdate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </p>
           )}
+          {/* FIX-WORKER-4 pass 464 (forensic link consume pass 463 asaas_webhook):
+              PRE-FIX: /admin/webhooks mostrava dead-letter mas SEM linkage com
+              audit_log critical entries do pass 463 (asaas.webhook.invalid_signature)
+              - Admin investiga signature bypass attempts forcado psql direto
+              - Cadeia pass 451+455+458+462+463 audit forensic SEM ponte UI aqui
+              POST-FIX: + link "Tentativas invalid_signature" -> /admin/audit-log
+                filtra target_type=asaas_webhook + severity=critical + days=30
+              Botao destacado red/orange p/ visibilidade security alerts */}
+          <Link
+            href="/audit-log?target_type=asaas_webhook&severity=critical&days=30"
+            aria-label="Ver tentativas de invalid_signature em webhooks Asaas (forensic critical)"
+            title="Audit log: signature bypass attempts"
+            className="text-xs px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20 transition-colors inline-flex items-center gap-1 focus-visible:outline-2 focus-visible:outline-red-400">
+            <ShieldAlert className="w-3 h-3" aria-hidden="true" />
+            Tentativas invalid_signature
+          </Link>
           {/* FIX-WORKER-4 pass 172 (a11y V8 R23): type=button + aria-label */}
           <button type="button" onClick={load} disabled={loading}
             aria-label="Recarregar lista de webhooks dead letter"
@@ -178,7 +195,8 @@ export default function AdminWebhooksPage() {
                       <div className="text-[10px] text-white/40 font-mono mt-1">id: {w.id.slice(0, 8)}...</div>
                     </td>
                     {/* FIX-WORKER-11 pass 8: botao Reset (substitui workflow psql) */}
-                    <td className="text-right">
+                    {/* FIX-WORKER-4 pass 464: + audit link per-row (forensic timeline) */}
+                    <td className="text-right space-x-2">
                       {/* FIX-WORKER-4 pass 172 (a11y V8 R23): type=button */}
                       <button type="button" onClick={() => resetWebhook(w.id)}
                         disabled={action.busyKey === `reset-${w.id}`}
@@ -187,6 +205,15 @@ export default function AdminWebhooksPage() {
                         <RefreshCw className={`w-3 h-3 ${action.busyKey === `reset-${w.id}` ? 'animate-spin' : ''}`} aria-hidden="true" />
                         {action.busyKey === `reset-${w.id}` ? '...' : 'Reset'}
                       </button>
+                      {/* FIX pass 464: forensic audit link per-webhook
+                          consume pass 451 backend + pass 463 target_type asaas_webhook */}
+                      <Link
+                        href={`/audit-log?target_id=${w.id}&target_type=asaas_webhook&days=30`}
+                        aria-label={`Audit log forensic do webhook ${w.event_type} ${w.id.slice(0, 8)}`}
+                        title="Ver audit log deste webhook"
+                        className="text-[10px] text-white/30 hover:text-magenta-glow underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                        audit
+                      </Link>
                     </td>
                   </tr>
                 ))}
