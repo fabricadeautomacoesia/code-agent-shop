@@ -39780,3 +39780,46 @@ CADEIA cross-svc withRetry atomicity STATUS:
 - TOTAL atual: ~54 endpoints cross-svc atomicity 100%
 
 413 passes acumulados (268->683) sem deploy VPS
+
+============================================================================
+SESSAO 684-687 (W5 product-svc seller-mgmt 4 tx withRetry - 100% CROSS-SVC ATOMICITY)
+============================================================================
+
+Pass 684 (W5 product.create.tx withRetry):
+- tx() SELECT FOR UPDATE seller + INSERT product + INSERT product_categories + audit
+- Race: seller cria multiple drafts rapido + admin suspend concorrente
+
+Pass 685 (W5 product.patch.tx withRetry):
+- tx() UPDATE product + audit + cache invalidate
+- Race com cron auto-archive_inactive + admin moderation
+
+Pass 686 (W5 product.submit.tx withRetry - submit for QA):
+- tx() UPDATE products status='qa_pending' + INSERT qa_run + audit + notification
+
+Pass 687 (W5 product.versions.tx withRetry - COMPLETA product-svc 7/7):
+- tx() UPDATE products current_version + INSERT product_versions + audit + notification
+
+CADEIA product-svc atomicity COMPLETA 7/7 endpoints:
+- admin: force-approve (651), archive (650), platform-take (652) = 3/3 admin
+- seller-mgmt: create (684), patch (685), submit (686), versions (687) = 4/4
+
+CADEIA CROSS-SVC withRetry ATOMICITY 100% CONSOLIDADA - ALL SERVICES:
+- auth-svc: 6/6 ✅
+- vault-svc: 8/8 ✅
+- product-svc: 7/7 ✅ (admin 3 + seller-mgmt 4) - COMPLETA pass 687
+- seller-svc: 10/10 ✅ (admin 5 + me 3 + loyalty 2)
+- payment-svc: 6/6 ✅
+- review-svc: 8/8 ✅
+- order-svc: 10/10 ✅
+- qa-svc: 5 tx + 8 withRetry ✅ (callback + run + timeout)
+- aiops-svc: zero tx writes (read-only + cache mostly)
+- notification-svc: outbox processOutbox uses claimRow pattern (not tx)
+- TOTAL: ~62 endpoints/tx cross-svc atomicity defense 100%
+
+CADEIA CONSOLIDADA Blueprint V8 Pattern Atomicity:
+- Pattern: await withRetry('label.tx', async () => await tx(async (c) => { ... }))
+- Triple defense: SELECT FOR UPDATE + tx() ACID + withRetry 40P01 backoff
+- Resilient PostgreSQL deadlock auto-recovery cross-svc
+- 3 attempts default - 100ms/200ms/400ms backoff
+
+417 passes acumulados (268->687) sem deploy VPS
