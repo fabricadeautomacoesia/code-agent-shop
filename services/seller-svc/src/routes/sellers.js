@@ -167,16 +167,42 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
 //   PRE-FIX: 3 await sequenciais (qa + order + review). Latency = sum(3).
 //   FIX: Promise.all() concurrent - latency = max(3).
 router.get('/:slug/stats',
-  cache.cacheMiddleware((req) => `sellers:stats:${req.params.slug}:w=${Math.min(365, Math.max(1, parseInt(req.query.window_days, 10) || 90))}`, 180),
+  /* FIX-WORKER-18 pass 521 (cache key + query case normalization - paridade pass 380/513):
+     PRE-FIX BUGS (2 issues):
+     1. Cache key usa req.params.slug RAW:
+        - /sellers/Loja-Tech/stats vs /sellers/loja-tech/stats -> 2 Redis entries
+        - DoS amplification + memory waste em sellers populares
+        - Paridade /sellers/:slug detail pass 380 ja normalizava (este lagged)
+     2. Query usa req.params.slug RAW (case-sensitive PG):
+        - WHERE store_slug = 'LOJA-TECH' -> 0 rows (slugs DB lowercase canonical)
+        - Cache MISS + Query 0 rows -> 404
+        - Outro user: /sellers/loja-tech/stats -> Cache MISS (chave diferente) ->
+          Query OK -> cache.set (chave lowercase)
+        - Volta primeiro user: /sellers/LOJA-TECH/stats -> Cache MISS chave RAW
+          (Loja-Tech !== loja-tech) -> Query 0 -> 404 again
+        - Cache pollution + inconsistencia UX
+     3. Pattern V8 W18 cache key/query consistency:
+        - paridade pass 513 /products/:slug/related (PRE-FIX same bug)
+        - paridade pass 380 /sellers/:slug detail (already fixed)
+        - paridade pass 291 search top-sellers cat lowercase
+     POST-FIX: slugNorm uma vez, usar em cache key + query.
+     Trade-off ZERO: slugs DB lowercase canonical, normalize end-to-end. */
+  cache.cacheMiddleware((req) => {
+    const slugNorm = String(req.params.slug || '').trim().toLowerCase();
+    const w = Math.min(365, Math.max(1, parseInt(req.query.window_days, 10) || 90));
+    return `sellers:stats:${slugNorm}:w=${w}`;
+  }, 180),
   asyncHandler(async (req, res, next) => {
   const windowDays = Math.min(365, Math.max(1, parseInt(req.query.window_days, 10) || 90));
+  // FIX pass 521: normalize slug end-to-end (match cache key + DB canonical)
+  const slugNorm = String(req.params.slug || '').trim().toLowerCase();
 
   const seller = await query(
     `SELECT id, store_name, reputation_tier, reputation_score, total_sales, avg_rating,
             total_products_active, created_at,
             document_verified_at IS NOT NULL AS is_verified
        FROM sellers WHERE store_slug = $1 AND status = 'active' AND deleted_at IS NULL`,
-    [req.params.slug]
+    [slugNorm]
   );
   if (!seller.rows.length) return next(errorHandler.notFound('seller_not_found'));
   const s = seller.rows[0];

@@ -38066,3 +38066,60 @@ Cadeia W10 SEARCH/AIOPS cache hygiene:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)
+
+## Pass 521 - W18 PERFORMANCE: /sellers/:slug/stats cache key + query normalize paridade
+
+PRE-FIX BUGS (2 issues paridade lagged):
+
+1. Cache key usa req.params.slug RAW (linha 170):
+   `sellers:stats:${req.params.slug}:w=${windowDays}`
+   - /sellers/Loja-Tech/stats vs /sellers/loja-tech/stats -> 2 Redis entries
+   - DoS amplification + memory waste em sellers populares
+   - Paridade /sellers/:slug detail pass 380 ja normalizava (este lagged)
+
+2. Query usa req.params.slug RAW (case-sensitive PG):
+   `WHERE store_slug = $1`, [req.params.slug]
+   - Slugs DB sao lowercase canonical (constraint linha 64 mig 003)
+   - WHERE store_slug = 'LOJA-TECH' -> 0 rows -> 404
+
+Cenario complete bug (mesma classe pass 513 products):
+1. User: /sellers/LOJA-TECH/stats
+   - Cache MISS (chave RAW 'LOJA-TECH')
+   - Query 0 rows -> 404
+2. Outro user: /sellers/loja-tech/stats
+   - Cache MISS (chave 'loja-tech')
+   - Query OK -> cache.set 'loja-tech' key
+3. Volta primeiro user: /sellers/LOJA-TECH/stats
+   - Cache MISS (chave 'LOJA-TECH' diferente de 'loja-tech')
+   - Query 0 rows -> 404 again
+   - Cache pollution + UX inconsistent (caso-sensitive 404)
+
+POST-FIX (paridade pass 380 detail + pass 513 products):
+- const slugNorm = String(req.params.slug || '').trim().toLowerCase();
+- Cache key usa slugNorm (consistent end-to-end)
+- Query usa slugNorm (match DB canonical lowercase)
+- Trade-off ZERO: slugs DB lowercase canonical, normalize seamless
+
+Pattern V8 W18 cache key/query consistency invariant:
+- Cache key e query DEVEM usar mesma strategy de normalize
+- Slugs sempre lowercase (canonical DB), URLs case-insensitive
+- Paridade cross-svc: products (pass 513) + sellers detail (380) + stats (521)
+
+Cadeia W18 cache normalization consolidation:
+- pass 232 autocomplete short-circuit pre-cache (q<2)
+- pass 291 search top-sellers cat lowercase
+- pass 298 also-bought + related cache key lowercase (query bug pass 513)
+- pass 302 flash-promo cache key normalization
+- pass 350 products:detail cache key normalize
+- pass 380 sellers:detail cache key normalize
+- pass 490 /compare cache key UUID filter
+- pass 513 products /also-bought + /related query normalize
+- pass 520 aiops /llm-cost + /db/dead-indexes cache bypass silent
+- pass 521 (este) /sellers/:slug/stats cache key + query normalize paridade
+
+253 passes acumulados (268->521) sem deploy VPS
+9 CRITICAL + 37 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-105 ALTA PRIORIDADE apply
