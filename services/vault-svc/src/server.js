@@ -651,8 +651,24 @@ app.get('/keys',
 // BUG 7 *** operation PARAM UNUSED ***
 //   PRE-FIX: _operation destructured mas nunca usado. Pattern incompleto.
 //   FIX: incluir operation no audit_log payload (qual LLM call: chat/embed/etc).
+/* FIX-WORKER-17 pass 608 (VAULT_PROVIDER_ENUM alignment with provision schemas):
+   PRE-FIX BUG: VAULT_PROVIDER_ENUM listava 8 providers (4 LLM + 4 non-LLM
+   asaas/evolution/telegram/smtp) MAS provision schemas (provisionSchema linha 172
+   + sellerKeyProvisionSchema linha 1356) listam 8 LLM (openai/anthropic/gemini/
+   groq/cohere/mistral/azure-openai/custom). Discrepancy results:
+   - /use POST accept provider=asaas -> VAULT_PROVIDER_ENUM ok mas /keys provision
+     NUNCA aceita provider=asaas (Zod enum reject)
+   - Resultado: 4 dead code paths em /use (asaas/evolution/telegram/smtp) -
+     SEMPRE retornam no_key_available porque NUNCA podem ser provisionados
+   - Inverse: cohere/mistral/azure-openai/custom em provision -> /use rejeita
+   Arch: non-LLM keys (Asaas/Evolution/Telegram/SMTP) vem de ENV VARS, nao
+   vault DB. ASAAS_API_KEY no env. Vault e exclusivo p/ LLM BYOK + platform pool.
+   POST-FIX: alinhar VAULT_PROVIDER_ENUM com provision schemas (LLM-only).
+   Remove dead code paths + consistency cross-endpoints.
+   Trade-off ZERO: asaas/evolution/telegram/smtp NUNCA foram usaveis via /use.
+   Pattern V8 W17 schema parity cross-endpoints. */
 const VAULT_PROVIDER_ENUM = new Set([
-  'openai','anthropic','gemini','groq','asaas','evolution','telegram','smtp'
+  'openai','anthropic','gemini','groq','cohere','mistral','azure-openai','custom'
 ]);
 
 app.post('/use',
