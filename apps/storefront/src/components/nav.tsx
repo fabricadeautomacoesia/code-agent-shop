@@ -136,13 +136,27 @@ export function Nav() {
                   Minha conta ({user.display_name || user.full_name?.split(' ')[0]})
                 </Link>
                 {/* FIX-WORKER-15 pass 3: shortcuts mobile para Favoritos + Notificacoes
-                    (icons ocultos no nav header em < sm) */}
+                    (icons ocultos no nav header em < sm)
+                    FIX-WORKER-15 pass 511 (Notificacoes link UX honesty - paridade pass 510):
+                      PRE-FIX BUG: Notificacoes link -> /conta (mesma URL que "Minha conta")
+                      - 2 links no drawer apontavam pro mesmo destino:
+                        * "Minha conta" -> /conta (dashboard generic)
+                        * "Notificacoes" -> /conta (mesmo lugar!) - false promise
+                      - User clica Bell icon esperando ver notifs OR prefs
+                      - Lands no dashboard generic com cards (orders, products, KYC)
+                      - Confusao UX duplo: link redundante + destino errado
+                      - Pass 510 corrigiu NotificationBell footer mesma issue
+                      - Mobile drawer ficou LAGGED em paridade
+                      POST-FIX: /conta/notificacoes (notification-related page)
+                      - Aponta para preferences page (LGPD opt-in/out per channel)
+                      - Match paridade pass 510 bell footer + /conta cards pass 228
+                      - Mobile user com SR ja sabe: Bell -> prefs notifs */}
                 <Link href="/conta/favoritos" onClick={() => setMobileOpen(false)}
                   className="flex items-center gap-3 px-4 py-3.5 rounded-lg text-sm hover:bg-white/5 transition-colors">
                   <Heart className="w-4 h-4 opacity-70" />
                   Favoritos
                 </Link>
-                <Link href="/conta" onClick={() => setMobileOpen(false)}
+                <Link href="/conta/notificacoes" onClick={() => setMobileOpen(false)}
                   className="flex items-center gap-3 px-4 py-3.5 rounded-lg text-sm hover:bg-white/5 transition-colors">
                   <Bell className="w-4 h-4 opacity-70" />
                   Notificacoes

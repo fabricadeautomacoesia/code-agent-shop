@@ -37482,3 +37482,52 @@ Cadeia W1 NotificationBell UX:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply (11 PARTIAL/composite indexes)
+
+## Pass 511 - W15 MOBILE: Nav drawer Notificacoes link UX paridade pass 510
+
+PRE-FIX BUG (mobile drawer false promise UX):
+- nav.tsx mobile drawer linhas 145-149:
+    <Link href="/conta" ...>Notificacoes</Link>
+- 2 links no drawer apontavam para MESMO destino /conta:
+  1. "Minha conta" -> /conta (linha 133)
+  2. "Notificacoes" -> /conta (linha 145) <- BUG (redundante)
+- Confusao UX duplo:
+  - Link redundante (2 entries -> mesma URL)
+  - "Notificacoes" lands em dashboard generic (cards orders/products/KYC)
+  - Mobile user expecta ver notifs OR prefs page
+- Pass 510 corrigiu NotificationBell footer (mesma issue)
+- Mobile drawer (este) ficou LAGGED em paridade
+
+Investigacao:
+- /conta = dashboard generic (h1: "Ola, NomeUser")
+- /conta/notificacoes = preferences (h1: "Preferencias de Notificacao")
+- Pass 228 estabeleceu /conta/notificacoes como notification-related page
+- Pass 510 NotificationBell footer -> /conta/notificacoes (paridade)
+- nav.tsx drawer mobile (este) era ULTIMO link Notificacoes wrong
+
+POST-FIX:
+- Link "Notificacoes" -> /conta/notificacoes (notification-related)
+- Match paridade:
+  - Pass 510 NotificationBell footer
+  - Pass 228 /conta cards
+  - /conta/favoritos pattern (link tematico ao recurso especifico)
+- Mobile user SR ja sabe: Bell icon -> prefs notifs
+
+Cadeia notification-related UX paridade:
+- pass 228 /conta cards link /conta/notificacoes prefs
+- pass 510 NotificationBell footer "Gerenciar preferencias"
+- pass 511 (este) nav.tsx drawer mobile "Notificacoes" link
+- Cross-app pattern V8: notification icon/label -> /conta/notificacoes always
+
+Lesson learned (paridade cross-component):
+- Quando uma feature muda de URL/comportamento, TODOS pontos de entrada
+  devem ser auditados em paralelo (footer, drawer, cards, links inline)
+- Cross-grep critico: paridade cross-component nem sempre obvia
+- Pass 510 + 511 = full alignment notification entry points
+
+243 passes acumulados (268->511) sem deploy VPS
+9 CRITICAL + 36 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply
