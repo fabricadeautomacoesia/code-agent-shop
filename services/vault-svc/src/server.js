@@ -506,12 +506,35 @@ log.info('[vault.rotation.cron] daily rotation alert cron started');
 //   idx_vault_usage_failures, 200 rows * 3 subqueries = 600 statements PG.
 //   Cache 60s p/ admin dashboard refresh seguro (usage rate atualiza
 //   eventualmente apos vault_key_usage INSERTs).
+// FIX-WORKER-17 pass 595 (cache key normalization paridade cadeia 17 sites
+// cache hygiene cross-svc consolidacao - 18 sites total):
+//   PRE-FIX BUGS (3 issues cache pollution + inconsistency vs handler):
+//   1. prov raw .toLowerCase() sem trim e sem whitelist check. Handler aceita
+//      e parametriza em PG query - sem SQL inject (param safe) MAS:
+//      - ?provider=invalid_xyz -> cache key 'p=invalid_xyz', query 0 rows
+//      - Multiple invalid attempts pollution + storage waste
+//   2. act raw (req.query.is_active sem normalize). Handler:
+//      String(req.query.is_active) === 'true' (case-sensitive linha 536).
+//      - ?is_active=TRUE -> cache key 'a=TRUE', handler matches false -> 2 entries
+//      - ?is_active=true -> cache key 'a=true', handler matches true -> 1 entry
+//      Pollution + different responses cached sob keys diferentes.
+//   3. plat raw - SAME bug pattern as act.
+//
+//   POST-FIX: normalize cache key SAME way handler normalizes:
+//   - provider: whitelist VAULT_PROVIDER_ENUM check + lowercase
+//   - is_active/is_platform_pool: 'true'/'false' normalize boolean string
+//   Paridade cadeia 17 sites cache hygiene cross-svc (520-594 consolidacao).
 const keysListCacheKey = (req) => {
   const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
   const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
-  const prov = (req.query.provider || '').toString().toLowerCase();
-  const act = req.query.is_active;
-  const plat = req.query.is_platform_pool;
+  // Normalize provider: whitelist check pre-cache (VAULT_PROVIDER_ENUM declared linha 631)
+  const provRaw = (req.query.provider || '').toString().trim().toLowerCase();
+  const prov = VAULT_PROVIDER_ENUM.has(provRaw) ? provRaw : '';
+  // Normalize boolean strings: 'true'/'false' or '' for missing
+  const actRaw = String(req.query.is_active || '').toLowerCase();
+  const act = (actRaw === 'true' || actRaw === 'false') ? actRaw : '';
+  const platRaw = String(req.query.is_platform_pool || '').toLowerCase();
+  const plat = (platRaw === 'true' || platRaw === 'false') ? platRaw : '';
   return `vault:keys_list:lim=${lim}:off=${off}:p=${prov}:a=${act}:pl=${plat}`;
 };
 
