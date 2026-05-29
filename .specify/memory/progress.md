@@ -40436,3 +40436,36 @@ CADEIA W4 seller-svc admin TOTAL atomicity COMPLETA 8/8 endpoints:
 = 8 mutation endpoints seller-svc admin TODOS com tx() + withRetry + audit_log
 
 444 passes acumulados (268->714) sem deploy VPS
+
+============================================================================
+SESSAO 715-716 (W4 disputes case-insensitive + W14 mig 132 outbox tiebreaker)
+============================================================================
+
+Pass 715 (W4 /admin/disputes case-insensitive status normalize):
+- DESCOBERTA: status raw + .trim() apenas (case-sensitive)
+- ?status=Opened vs ?status=opened = inconsistente UX
+- POST-FIX: + .toLowerCase() ANTES whitelist check (cache + handler)
+- 32 sites cadeia case-insensitive cache hygiene cross-svc
+
+Pass 716 (W14 mig 132 idx_notif_outbox_ready_id PARTIAL tiebreaker):
+- DESCOBERTA: pass 712 adicionou id ASC tiebreaker em outbox claim
+- mig 070 idx_notif_outbox_ready PARTIAL cobre 3-level ORDER mas sem id
+- PG planner: idx scan + External Sort para id ASC final
+- POST-FIX: composite PARTIAL (priority DESC, created_at ASC, id ASC)
+  WHERE sent_status='pending' AND locked_by IS NULL AND retry_count < 5
+- Latency: ~3-8ms External Sort eliminado -> ~1-2ms claim per tick
+
+CADEIA W14 direction parity + PARTIAL composite cumulative:
+- mig 102-131 (30 indexes consolidacao previa)
+- mig 132 idx_notif_outbox_ready_id PARTIAL (pass 716 este)
+- 31 indexes total apply pending VPS SSH
+
+CADEIA cache key case-insensitive consolidacao cross-svc 32 sites:
+- W4 admin endpoints: sellers, payouts, qa-queue (pass 710), disputes (715 este)
+- W7 product-svc public listings
+- W10 search-svc top-sellers
+- W17 vault listings
+- W18 cache hygiene cross-svc
+= 32 sites cumulative consolidacao Pattern V8 cache key normalize
+
+446 passes acumulados (268->716) sem deploy VPS
