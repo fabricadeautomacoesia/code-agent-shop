@@ -982,13 +982,27 @@ router.get('/:slug/reviews',
     ratingFilter = rn;
   }
 
+  /* FIX-WORKER-7 pass 529 (cache key/query case-mismatch paridade pass 513):
+     PRE-FIX BUG (same class pass 513 /also-bought + /related):
+     - Cache key linha 959: slug.toLowerCase() normalize
+     - Query usa req.params.slug RAW (case-sensitive PG)
+     - User /products/Foo/reviews -> cache MISS (key normalized 'foo') ->
+       SELECT slug='Foo' -> 404 (slugs DB lowercase canonical)
+     - User /products/foo/reviews -> cache MISS -> SELECT 'foo' -> OK + cache.set
+     - User /products/Foo/reviews again -> cache HIT 'foo' data -> 200 OK
+     - Inconsistencia UX: case-confusion 404 vs 200
+     POST-FIX: normalize slug early, use in both pre-check + main query.
+     Paridade pass 513 (also-bought + related) + 521 (sellers stats). */
+  const normalizedSlug = (req.params.slug || '').toString().trim().toLowerCase();
+
   // BUG 2: Regra A status whitelist no pre-check
+  // FIX pass 529: usar normalizedSlug (match cache key + DB canonical lowercase)
   const exists = await query(
     `SELECT 1 FROM products
       WHERE slug = $1
         AND status IN ('approved','platform_owned')
         AND deleted_at IS NULL LIMIT 1`,
-    [req.params.slug]
+    [normalizedSlug]
   );
   if (!exists.rows.length) return next(errorHandler.notFound('product_not_found'));
 
@@ -1001,7 +1015,7 @@ router.get('/:slug/reviews',
   })[sort];
 
   const whereParts = [`p.slug = $1`, `r.is_hidden = FALSE`];
-  const params = [req.params.slug];
+  const params = [normalizedSlug];
   let i = 2;
   if (ratingFilter !== null) {
     whereParts.push(`r.rating = $${i++}`);
@@ -1064,7 +1078,7 @@ router.get('/:slug/reviews',
      FROM product_reviews r
      JOIN products p ON p.id = r.product_id
      WHERE p.slug = $1 AND r.is_hidden = FALSE`,
-    [req.params.slug]
+    [normalizedSlug]  // FIX pass 529: normalizedSlug paridade primary query
   );
   const agg = aggResult.rows[0] || {};
   const breakdown = {
@@ -1109,14 +1123,19 @@ router.get('/:slug/qna',
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 100));
   const off = (Math.max(parseInt(req.query.page, 10) || 1, 1) - 1) * lim;
   const answeredOnly = String(req.query.answered_only || '').toLowerCase() === 'true';
+  /* FIX-WORKER-7 pass 529 (cache key/query case-mismatch paridade pass 513 + /reviews):
+     Mesma classe de bug do /reviews endpoint - cache key normaliza slug
+     mas query usa req.params.slug RAW. Apply normalize end-to-end. */
+  const normalizedSlug = (req.params.slug || '').toString().trim().toLowerCase();
 
   // BUG 2: Regra A status whitelist no pre-check
+  // FIX pass 529: usar normalizedSlug (match cache key + DB canonical lowercase)
   const exists = await query(
     `SELECT 1 FROM products
       WHERE slug = $1
         AND status IN ('approved','platform_owned')
         AND deleted_at IS NULL LIMIT 1`,
-    [req.params.slug]
+    [normalizedSlug]
   );
   if (!exists.rows.length) return next(errorHandler.notFound('product_not_found'));
 
@@ -1138,7 +1157,7 @@ router.get('/:slug/qna',
       WHERE ${whereParts.join(' AND ')}
       ORDER BY q.is_pinned DESC, q.upvote_count DESC, q.asked_at DESC, q.id DESC
       LIMIT $2 OFFSET $3`,
-    [req.params.slug, lim, off]
+    [normalizedSlug, lim, off]  // FIX pass 529: normalizedSlug paridade pre-check
   );
 
   /* FIX-WORKER-7 pass 441 (window total = 0 quando OFFSET passa todas rows):
@@ -1158,12 +1177,13 @@ router.get('/:slug/qna',
   let total = r.rows[0]?._total ?? 0;
   if (r.rows.length === 0 && off > 0) {
     // OFFSET overflow path - count separate
+    // FIX pass 529: normalizedSlug paridade primary query (case-insensitive end-to-end)
     const c = await query(
       `SELECT COUNT(*)::INT AS total
          FROM product_qna q
          JOIN products p ON p.id = q.product_id
         WHERE ${whereParts.join(' AND ')}`,
-      [req.params.slug]
+      [normalizedSlug]
     );
     total = c.rows[0]?.total ?? 0;
   }

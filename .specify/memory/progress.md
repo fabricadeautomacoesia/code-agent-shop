@@ -38513,3 +38513,56 @@ Cadeia W8 visual consistency consolidacao:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
+
+## Pass 529 - W7 PRODUCT-SVC: /reviews + /qna cache key/query case-mismatch (paridade pass 513)
+
+PRE-FIX BUG (paridade lagged - 2 endpoints same class pass 513):
+- /:slug/reviews (linha 956) + /:slug/qna (linha 1099):
+  - Cache key (pass 298): slug.toLowerCase() normalize
+  - Query usa req.params.slug RAW (case-sensitive PG)
+  - 4 query sites cada endpoint (pre-check + main + breakdown agg + COUNT fallback)
+
+Cenarios bug (mesma classe pass 513):
+1. /products/Foo/reviews -> cache MISS (chave 'foo' normalized) ->
+   SELECT slug='Foo' -> 0 rows (DB lowercase canonical) -> 404
+2. /products/foo/reviews -> cache MISS -> SELECT 'foo' -> OK + cache.set
+3. /products/Foo/reviews again -> cache HIT 'foo' data -> 200 OK
+4. Inconsistencia UX case-confusion
+
+Detalhes endpoint /reviews:
+- pre-check (linha 988): WHERE slug = $1 -> [req.params.slug] RAW
+- main query (linha 1024): JOIN p.slug = $1 -> [req.params.slug] em params array
+- breakdown agg (linha 1080): WHERE p.slug = $1 -> [req.params.slug]
+- 3 sites usando RAW = inconsistencia tripla
+
+Detalhes endpoint /qna:
+- pre-check (linha 1119): WHERE slug = $1 -> [req.params.slug]
+- main query (linha 1160): WHERE p.slug = $1 -> [req.params.slug, lim, off]
+- COUNT fallback (linha 1185): WHERE p.slug = $1 -> [req.params.slug]
+- 3 sites RAW = inconsistencia tripla
+
+POST-FIX (paridade pass 513 also-bought + related + 521 sellers stats):
+- const normalizedSlug = (req.params.slug || '').toString().trim().toLowerCase();
+- ALL query sites usam normalizedSlug (match cache key + DB canonical)
+- /reviews: 3 sites corrigidos
+- /qna: 3 sites corrigidos
+- Trade-off ZERO: slugs DB lowercase canonical
+
+Pattern V8 W7 W18 cache key/query consistency:
+- pass 291 search-svc top-sellers cat lowercase
+- pass 350 products:detail cache key lowercase (DETAIL endpoint)
+- pass 380 sellers:detail cache key lowercase
+- pass 513 also-bought + related query normalize
+- pass 521 sellers:stats cache key + query normalize
+- pass 529 (este) /reviews + /qna 6 sites total query normalize
+
+Total endpoints case-insensitive end-to-end agora: 7
+- Products: detail (pass 350) + also-bought (513) + related (513) + reviews (529) + qna (529)
+- Sellers: detail (380) + stats (521)
+
+261 passes acumulados (268->529) sem deploy VPS
+9 CRITICAL + 38 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
