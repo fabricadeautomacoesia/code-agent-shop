@@ -115,7 +115,9 @@ export default function SellerReviewsPage() {
       )}
 
       {reviews.length === 0 ? (
-        <div className="glass p-12 text-center text-white/60">
+        /* FIX-WORKER-5 pass 606 (a11y empty state role=status paridade cadeia
+           pass 544/556/565/580/586/592/597/605 - 8 sites consolidacao). */
+        <div role="status" className="glass p-12 text-center text-white/60">
           <MessageSquare className="w-16 h-16 mx-auto mb-4 text-white/30" aria-hidden="true" />
           {loadError ? 'Nao foi possivel carregar as avaliacoes.' : 'Voce ainda nao recebeu avaliacoes. Quando seus clientes avaliarem, elas aparecerao aqui.'}
         </div>
@@ -214,9 +216,17 @@ export default function SellerReviewsPage() {
                     }`}>
                     {replies[r.id]?.length || 0}/2000
                   </div>
-                  {/* FIX-WORKER-5 pass 172 (a11y V8 R23): type=button + aria-label */}
+                  {/* FIX-WORKER-5 pass 172 (a11y V8 R23): type=button + aria-label
+                      FIX-WORKER-5 pass 606 (aria-busy paridade cadeia 549/552/553/568/573/575/597
+                      W3+W5 CTA aria-busy consolidacao):
+                      PRE: button sem aria-busy. SR (NVDA modern) usam aria-busy p/
+                      silenciar live regions enquanto processing reply post.
+                      POST: aria-busy={busy} + aria-label upgrade contextual loading. */}
                   <button type="button" onClick={() => reply(r.id)} disabled={busy || !replies[r.id]?.trim()}
-                    aria-label={`Enviar resposta para avaliacao de ${r.buyer_name || 'cliente'}`}
+                    aria-busy={busy}
+                    aria-label={busy
+                      ? `Enviando resposta para avaliacao de ${r.buyer_name || 'cliente'}`
+                      : `Enviar resposta para avaliacao de ${r.buyer_name || 'cliente'}`}
                     className="btn-primary text-xs flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-magenta">
                     <Send className="w-3 h-3" aria-hidden="true" /> {busy ? 'Enviando...' : 'Responder'}
                   </button>
