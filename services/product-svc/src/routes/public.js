@@ -933,9 +933,17 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
               s.id AS seller_id, s.store_slug, s.store_name, s.store_logo_url,
               s.reputation_tier, s.reputation_score, s.avg_rating AS seller_rating,
               c.slug AS category_slug, c.name AS category_name,
+              /* FIX-WORKER-7 pass 629 (tags subquery ORDER MISSING - paridade Regra D):
+                 PRE-FIX: json_agg sem ORDER BY - PG planner default arbitrario.
+                 - Cache evict + refetch -> tags reordenam visualmente
+                 - PDP badge bar pisca quando user refresh page
+                 - SEO schema.org keywords stable order quebrado
+                 POST-FIX: + ORDER BY t.slug ASC (alfabetico previsivel UX)
+                 - Cobertura: idx tags.slug (mig 005 implicit unique constraint
+                   ja cria idx) + JOIN cost minimo (pt.tag_id PK lookup) */
               (SELECT json_agg(json_build_object(
                  'id', t.id, 'slug', t.slug, 'name', t.name
-               ))
+               ) ORDER BY t.slug ASC)
                  FROM tags t JOIN product_tags pt ON pt.tag_id = t.id
                  WHERE pt.product_id = p.id) AS tags,
               /* FIX-WORKER-7 pass 628 (Regra D direction parity tiebreaker - paridade cadeia 30+ sites):
@@ -954,10 +962,22 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
                  'is_current', pv.is_current, 'created_at', pv.created_at
                ) ORDER BY pv.created_at DESC, pv.id DESC)
                  FROM product_versions pv WHERE pv.product_id = p.id) AS versions,
+              /* FIX-WORKER-7 pass 629 (Regra D direction parity tiebreaker - paridade pass 628):
+                 PRE-FIX: ORDER BY pm.sort_order sem id tiebreaker.
+                 product_media seller upload bulk via /products/upload multi-file
+                 -> N rows mesmo sort_order=0 default (seller esquece reordenar)
+                 - PG planner default tiebreaker arbitrario (physical heap order)
+                 - PDP "Gallery" carousel ordem VARIAVEL entre requests
+                 - Cache evict + refetch -> medias reordenam visualmente
+                 - UX inconsistente: thumbnails trocam posicao aleatoria
+                 POST-FIX: + pm.id ASC tiebreaker (preserva chronologic insert order
+                 dentro mesmo sort_order). ASC porque media inserts sao FIFO
+                 (primeira foto inserida = primeira mostrada quando ties).
+                 Pattern V8 Regra D cross-svc cadeia consolidacao. */
               (SELECT json_agg(json_build_object(
                  'id', pm.id, 'media_type', pm.kind, 'url', pm.url,
                  'alt_text', pm.caption, 'sort_order', pm.sort_order
-               ) ORDER BY pm.sort_order)
+               ) ORDER BY pm.sort_order, pm.id ASC)
                  FROM product_media pm WHERE pm.product_id = p.id) AS media,
               /* FIX-WORKER-10 pass 487 (is_top_seller boolean + NULL category guard):
                  Paridade search-svc fix mesma pass. category_id e NULLABLE -
