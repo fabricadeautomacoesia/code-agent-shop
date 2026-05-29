@@ -164,17 +164,27 @@ app.get('/', searchLimiter, asyncHandler(async (req, res) => {
   // Antes: 'sales' so DESC sales_count, 'relevance' so rank+sales -> empate
   // arbitrario entre produtos com mesmo valor (UX layout "salta" entre cache evicts).
   // Pattern W7 pass 11 (/top-sellers) - 3-tier: principal + avg_rating + published_at.
+  /* FIX-WORKER-10 pass 648 (Regra D direction parity tiebreaker - completa SORT_OPTIONS):
+     PRE-FIX: 7 SORT_OPTIONS terminavam em `p.id` (PG default ASC) com chains DESC.
+     - relevance, newest, price_desc, rating, sales, recent_sales: DESC chain + id ASC = MIXED
+     - price_asc: ASC + ASC tiebreaker OK
+     - Mixed direction tiebreaker forca External Sort obligatorio (idx composite nao bate)
+     - /search HOT PATH (homepage facets/filters cada navigation)
+     - Pattern V8 Regra D cross-svc cadeia 30+ sites DESC+DESC consolidados
+     POST-FIX: `p.id DESC` explicit para chains DESC (paridade direction parity)
+     - price_asc mantem ASC tiebreaker (preserva ASC chain consistency)
+     - Direction parity Regra D V8 - elimina External Sort hot path */
   const SORT_OPTIONS = {
     relevance:    q
-      ? `rank DESC, p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id`
-      : `p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id`,
-    newest:       `p.published_at DESC NULLS LAST, p.id`,
-    price_asc:    `p.price_cents ASC, p.sales_count DESC, p.id`,
-    price_desc:   `p.price_cents DESC, p.sales_count DESC, p.id`,
-    rating:       `p.avg_rating DESC NULLS LAST, p.review_count DESC, p.id`,
-    sales:        `p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id`,
+      ? `rank DESC, p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.id DESC`
+      : `p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id DESC`,
+    newest:       `p.published_at DESC NULLS LAST, p.id DESC`,
+    price_asc:    `p.price_cents ASC, p.sales_count DESC, p.id ASC`,
+    price_desc:   `p.price_cents DESC, p.sales_count DESC, p.id DESC`,
+    rating:       `p.avg_rating DESC NULLS LAST, p.review_count DESC, p.id DESC`,
+    sales:        `p.sales_count DESC, p.avg_rating DESC NULLS LAST, p.published_at DESC NULLS LAST, p.id DESC`,
     // MLB-NEW WORKER 16: sort por venda mais recente (combina com idx_products_last_sale)
-    recent_sales: `p.last_sale_at DESC NULLS LAST, p.sales_count DESC, p.id`,
+    recent_sales: `p.last_sale_at DESC NULLS LAST, p.sales_count DESC, p.id DESC`,
   };
   const sortKey = String(req.query.sort || 'relevance');
   const order = SORT_OPTIONS[sortKey] || SORT_OPTIONS.relevance;
