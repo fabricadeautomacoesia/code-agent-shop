@@ -938,10 +938,21 @@ router.get('/:slug', asyncHandler(async (req, res, next) => {
                ))
                  FROM tags t JOIN product_tags pt ON pt.tag_id = t.id
                  WHERE pt.product_id = p.id) AS tags,
+              /* FIX-WORKER-7 pass 628 (Regra D direction parity tiebreaker - paridade cadeia 30+ sites):
+                 PRE-FIX: ORDER BY pv.created_at DESC sem id tiebreaker.
+                 product_versions cron import bulk pode produzir 5+ rows mesmo
+                 created_at second-precision. Sem id tiebreaker:
+                 - PG planner default tiebreaker arbitrario (physical heap order)
+                 - PDP "Changelog" tab mostra ordem VARIAVEL entre requests
+                 - Cache evict + refetch -> versions reordenados visualmente
+                 - UX inconsistente: user nota mudanca aleatoria em changelog
+                 POST-FIX: + pv.id DESC tiebreaker direction parity Regra D V8
+                 - Mesmo padrao consolidado mig 102-120 (19 indexes)
+                 - Cobertura idx_pv_product (mig 005:169) - composite mig 121 candidato */
               (SELECT json_agg(json_build_object(
                  'id', pv.id, 'version', pv.version, 'changelog', pv.changelog,
                  'is_current', pv.is_current, 'created_at', pv.created_at
-               ) ORDER BY pv.created_at DESC)
+               ) ORDER BY pv.created_at DESC, pv.id DESC)
                  FROM product_versions pv WHERE pv.product_id = p.id) AS versions,
               (SELECT json_agg(json_build_object(
                  'id', pm.id, 'media_type', pm.kind, 'url', pm.url,
