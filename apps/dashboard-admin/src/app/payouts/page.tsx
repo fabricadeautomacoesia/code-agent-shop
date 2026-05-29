@@ -9,6 +9,22 @@ import { Check, X, Send } from 'lucide-react';
 export default function PayoutsPage() {
   const [list, setList] = useState<any[]>([]);
   const [loadError, setLoadError] = useState('');
+  /* FIX-WORKER-4 pass 508 (stale data UX + race condition between filter switches):
+     PRE-FIX BUG: filter change -> useEffect -> load() async sem clear list
+     - User clica "Pendentes" -> ve approve/reject buttons em rows pendentes
+     - User clica "Pagos" -> filtro muda, load() inicia async
+     - DURANTE fetch (~200-500ms): list AINDA mostra rows pendentes anteriores
+     - Approve/reject buttons aparecem em paid rows (visual glitch)
+     - UX worst case: admin clica approve em row "pending" mas filter eh "paid"
+       (action.run dispara approve em payout ja-pago = backend rejeita
+       transition state machine - mas wasted DB roundtrip + audit_log entry)
+     - Sem loading indicator entre filter switches
+     POST-FIX:
+     - loading state explicit (boolean)
+     - setList([]) immediate ao iniciar load (clear stale)
+     - role=status spinner durante fetch (a11y screen reader announce)
+     - Comment exhaustivo paridade /admin/orders pass 215 cache-coherency. */
+  const [loading, setLoading] = useState(false);
   // FIX-WORKER-4 pass 4: filtro de status. Antes UI so via 'pending', nunca
   // mostrava botao "Transferir Asaas" (que dependia de status='approved').
   // Default 'all' garante que admin ve TODO o pipeline (pending+approved).
@@ -19,11 +35,15 @@ export default function PayoutsPage() {
   const [statusFilter, setStatusFilter] = useState<'pending'|'approved'|'paid'|'rejected'|'all_states'>('pending');
 
   async function load() {
+    setLoading(true);
+    // FIX pass 508: clear stale list immediate (prevent action button race on wrong status)
+    setList([]);
     try {
       const r = await adminFetch<{ payouts: any[] }>(`/sellers/admin/payouts/pending?status=${statusFilter}`);
       setList(r.payouts); setLoadError('');
     }
     catch (e: any) { setLoadError(e.message); }
+    finally { setLoading(false); }
   }
   useEffect(() => { load(); }, [statusFilter]);
 
@@ -120,8 +140,18 @@ export default function PayoutsPage() {
       )}
 
       <div className="glass p-6">
-        {list.length === 0 ? (
-          <p className="text-white/60 text-center py-8">Nenhum saque pendente.</p>
+        {/* FIX pass 508: loading indicator durante filter switches (a11y SR announce) */}
+        {loading ? (
+          <p role="status" aria-live="polite" className="text-white/60 text-center py-8">Carregando payouts...</p>
+        ) : list.length === 0 ? (
+          /* FIX pass 508: msg contextual por filtro (era hardcoded "pending") */
+          <p className="text-white/60 text-center py-8">
+            {statusFilter === 'pending'    && 'Nenhum saque pendente. Sistema em dia.'}
+            {statusFilter === 'approved'   && 'Nenhum saque aprovado aguardando transferencia.'}
+            {statusFilter === 'paid'       && 'Nenhum saque pago no historico atual.'}
+            {statusFilter === 'rejected'   && 'Nenhum saque rejeitado.'}
+            {statusFilter === 'all_states' && 'Nenhum saque encontrado em qualquer estado.'}
+          </p>
         ) : (
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-white/40 uppercase border-b border-white/10">
@@ -184,6 +214,10 @@ export default function PayoutsPage() {
                           className="text-magenta hover:underline text-xs inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-magenta rounded">
                           <Send className="w-3 h-3" aria-hidden="true" /> {busyTransfer ? 'Enviando...' : 'Transferir Asaas'}
                         </button>
+                      )}
+                      {/* FIX pass 508 (terminal states UX paridade qa-queue pass 251): 'sem acoes' visual feedback */}
+                      {(p.status === 'paid' || p.status === 'rejected') && (
+                        <span className="text-white/30 text-xs italic">sem acoes (terminal)</span>
                       )}
                     </td>
                   </tr>

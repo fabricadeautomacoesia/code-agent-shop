@@ -37328,3 +37328,53 @@ Compliance final:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply (11 PARTIAL/composite indexes)
+
+## Pass 508 - W4 ADMIN: /admin/payouts stale data race + terminal states UX
+
+PRE-FIX BUGS (3 UX issues em /admin/payouts):
+
+1. Stale data race condition entre filter switches:
+   - load() async sem clear list -> stale rows mostrados ate fetch complete
+   - User clica "Pendentes" -> ve approve/reject buttons em rows pendentes
+   - User clica "Pagos" -> filter muda, load() inicia
+   - DURANTE fetch (~200-500ms): list AINDA mostra rows pendentes
+   - approve/reject buttons aparecem em paid rows (visual glitch)
+   - Worst case: admin clica approve em pending row mas filter mostra paid
+     -> action.run dispara em payout ja-pago = backend rejeita
+     -> wasted DB roundtrip + audit_log entry (state machine violation)
+
+2. Loading indicator missing:
+   - Sem feedback durante fetch -> user nao sabe se sistema esta carregando
+   - SR (screen reader) silent durante filter switches (a11y gap)
+   - Pattern V8 admin pages outros tem loading state explicit
+
+3. Terminal states (paid/rejected) sem visual feedback:
+   - p.status === 'pending' -> approve/reject buttons
+   - p.status === 'approved' -> processTransfer button
+   - p.status === 'paid'    -> ACTIONS CELL VAZIA (visual confuso)
+   - p.status === 'rejected' -> ACTIONS CELL VAZIA (idem)
+   - qa-queue pass 251 ja consolidou pattern "sem acoes" message
+   - admin/payouts lagged em paridade
+
+POST-FIX:
+1. loading state explicit (boolean useState)
+2. setList([]) immediate ao iniciar load (clear stale prevent race)
+3. role=status aria-live=polite spinner durante fetch
+4. Empty state msg condicional por filtro (era hardcoded "pending")
+5. "sem acoes (terminal)" span para paid/rejected (paridade qa-queue pass 251)
+
+Cadeia W4 cross-admin UX consolidacao:
+- pass 215 orders cache + COUNT(*) OVER() + has_more
+- pass 251 qa-queue 'sem acoes' visual feedback
+- pass 356 payouts filter all_states + paid + rejected
+- pass 427 a11y role=alert + retry button cross-admin
+- pass 446 storefront URL env-driven preview links
+- pass 451 audit-log forensic link cross-admin pages
+- pass 508 (este) /admin/payouts stale data + loading + terminal states
+
+240 passes acumulados (268->508) sem deploy VPS
+9 CRITICAL + 36 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply
