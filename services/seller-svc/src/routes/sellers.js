@@ -399,15 +399,22 @@ router.get('/:slug/products',
   );
   if (!sellerCheck.rows.length) return next(errorHandler.notFound('seller_not_found'));
 
-  // BUG 2: + vp.id ASC tiebreaker
+  /* FIX-WORKER-7 pass 699 (Regra D direction parity SORT_OPTIONS 5/6 sorts - paridade cadeia 6 sites):
+     PRE-FIX: 5 sorts MIXED direction (DESC chain + vp.id ASC)
+     - relevance/newest/price_desc/rating/sales: DESC + id ASC = External Sort obligatorio
+     - price_asc: ASC + id ASC = paridade OK
+     Cadeia Regra D V8 cross-svc 30+ sites: DESC chain -> id DESC tiebreaker
+     POST-FIX: 5 sorts DESC chains com id DESC explicit (paridade pass 648 /search,
+     pass 691 /sellers public, pass 624 admin/sellers, pass 696 product related/also-bought)
+     Elimina External Sort hot path /seller/:slug/products listing. */
   const orderClause = ({
-    relevance:  'vp.sales_count DESC, vp.avg_rating DESC NULLS LAST, vp.id ASC',
-    newest:     'vp.created_at DESC, vp.id ASC',
+    relevance:  'vp.sales_count DESC, vp.avg_rating DESC NULLS LAST, vp.id DESC',
+    newest:     'vp.created_at DESC, vp.id DESC',
     price_asc:  'vp.price_cents ASC, vp.id ASC',
-    price_desc: 'vp.price_cents DESC, vp.id ASC',
-    rating:     'vp.avg_rating DESC NULLS LAST, vp.review_count DESC, vp.id ASC',
-    sales:      'vp.sales_count DESC, vp.id ASC',
-  })[sort] || 'vp.sales_count DESC, vp.id ASC';
+    price_desc: 'vp.price_cents DESC, vp.id DESC',
+    rating:     'vp.avg_rating DESC NULLS LAST, vp.review_count DESC, vp.id DESC',
+    sales:      'vp.sales_count DESC, vp.id DESC',
+  })[sort] || 'vp.sales_count DESC, vp.id DESC';
 
   // Build WHERE
   // FIX pass 531: slugNorm (paridade pre-check + cache key)
