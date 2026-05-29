@@ -161,13 +161,47 @@ const SELLER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 //     ser incluido (BUG SIDE: invalidate nao cobria) - fix aqui tambem.
 //   - Per-user (admin/seller_id) p/ isolation
 //   - Pattern V8 paridade pass 361 qna:seller:pending cache
+// FIX-WORKER-7 pass 566 (cache key normalization paridade cadeia W18 cache hygiene):
+//   PRE-FIX BUGS (4 issues cache pollution + inconsistency):
+//   1. Raw q.status sem trim/validation. Handler valida SELLER_PRODUCT_STATUS
+//      whitelist (linha 182-184). Cenarios:
+//      - ?status=DRAFT (capital) -> cache key 's=DRAFT', handler 400 (whitelist
+//        case-sensitive). Cache armazena response 400.
+//      - ?status=draft (lower) -> cache key 's=draft', handler filtra.
+//      2 entries diferentes para queries equivalentes (pollution).
+//   2. Raw q.kind sem trim. Mesmo pattern handler valida SELLER_PRODUCT_KIND.
+//      Pollution similar.
+//   3. Raw q.seller_id sem trim/lowercase. Handler valida SELLER_UUID_RE (linha
+//      200). Invalid UUIDs poluem cache.
+//   4. Raw q.limit / q.offset. Handler clamps Math.max/Math.min (linhas 177-178).
+//      ?limit=99999 -> cache key 'lim=99999', handler clamps 200.
+//      ?limit=200 -> cache key 'lim=200'. 2 entries mesmo response cache pollution.
+//
+//   POST-FIX: normalize cache key SAME way handler normalizes.
+//   - status whitelist validation pre-cache
+//   - kind whitelist validation pre-cache
+//   - seller_id UUID validation + lowercase pre-cache
+//   - limit clamp [1,200] / offset >= 0 pre-cache
+//
+//   Pattern V8 W7+W18 cache hygiene invariante: cache key MUST mirror handler
+//   normalization (passes 520/530/533/551/558).
 const productsMeCacheKey = (req) => {
   const q = req.query;
   const isAdmin = req.user?.role === 'admin';
+  // Normalize same way handler does (linhas 177-188)
+  const statusRaw = (q.status || '').toString().trim();
+  const statusNorm = SELLER_PRODUCT_STATUS.has(statusRaw) ? statusRaw : '';
+  const kindRaw = (q.kind || '').toString().trim();
+  const kindNorm = SELLER_PRODUCT_KIND.has(kindRaw) ? kindRaw : '';
+  // Seller_id: admin path uses UUID, normalize lowercase + validate format
+  const sellerIdRaw = isAdmin ? (q.seller_id || '').toString().trim().toLowerCase() : '';
+  const sellerIdNorm = (sellerIdRaw && SELLER_UUID_RE.test(sellerIdRaw)) ? sellerIdRaw : '';
   const owner = isAdmin
-    ? `admin:${q.seller_id || 'all'}`
+    ? `admin:${sellerIdNorm || 'all'}`
     : (req.user?.sub || 'anon');
-  return `products:me:${owner}:s=${q.status||''}:k=${q.kind||''}:lim=${q.limit||50}:off=${q.offset||0}`;
+  const lim = Math.max(1, Math.min(200, parseInt(q.limit, 10) || 50));
+  const off = Math.max(0, parseInt(q.offset, 10) || 0);
+  return `products:me:${owner}:s=${statusNorm}:k=${kindNorm}:lim=${lim}:off=${off}`;
 };
 
 router.get('/',
