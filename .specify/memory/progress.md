@@ -35159,3 +35159,57 @@ W14 audit_log idx series consolidacao DEFINITIVA:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 + 098 ALTA PRIORIDADE
+
+## PASS 466 W9 SEO/META: not-found.tsx metadata explicit (404 distinct from brand)
+commit pendente
+GAP not-found.tsx SEM export metadata
+PRE-FIX:
+- not-found.tsx default Next.js renders mas herda root layout metadata
+- Browser tab title: "Code & Agent Shop" (generic - era 404)
+- User compartilha URL quebrada em chat:
+  - Preview WhatsApp/Twitter mostra brand normal
+  - Parece link valido com produto OK
+  - Induz CONFIANCA FALSA em link broken
+- SEO impact: Google indexa 404 page com title de homepage
+  - Duplicate content sinaliza ao crawler
+  - Waste crawl budget (404 pages indexadas)
+- openGraph: share URL quebrada em WhatsApp/Twitter -> preview brand
+
+SCOPE:
+- 404 pages comuns em platforms B2B (link compartilhado expira, produto removed)
+- Pattern industry MLB/Amazon: 404 tem title/description distinct
+- robots noindex obrigatorio (Google guidance 404 NAO indexar)
+
+POST-FIX (paridade pattern industria):
+- title: "Pagina nao encontrada - 404 - Code & Agent Shop"
+- description curto explica erro
+- robots: { index: false, follow: false }
+- openGraph:
+  - type='website'
+  - locale='pt_BR'
+  - siteName='Code & Agent Shop'
+  - title/description specific
+- twitter card summary
+- Sem alternates.canonical (404 nao redirect, nao canonical)
+
+W9 SEO/META metadata series consolidacao:
+  pass 1 baseline conta/* layouts
+  pass 7 enriched conta/pontos+perfil+seguranca
+  pass 142 conta/pedidos/[id] + downloads/[token] dynamic
+  pass 232 /seller/[slug] generateMetadata dynamic
+  pass 287 / home page explicit
+  pass 431 conta/favoritos + notificacoes enriched
+  pass 466 not-found.tsx metadata <- ESTE
+
+Pattern V8 W9: TODA top-level routes em app/ deve ter metadata explicit:
+- pages com export const metadata (server)
+- layouts com export const metadata (client siblings)
+- not-found.tsx (404 distinct from brand)
+- error.tsx exception ('use client' - no direct metadata, herda)
+
+199 passes acumulados (268->466) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 + 098 ALTA PRIORIDADE
