@@ -1133,7 +1133,17 @@ async function processOutbox() {
       if (n.channel === 'email') {
         await sendEmail(n.email, title, body, bodyHtml);
       } else if (n.channel === 'telegram') {
-        await sendTelegram(`*${title}*\n${body}`);
+        /* FIX-WORKER-13 pass 701 (Telegram literal asterisks visual bug - consume pass 219):
+           PRE-FIX: sendTelegram(`*${title}*\n${body}`) - asteriscos para bold Markdown
+           - Pass 219 REMOVEU parse_mode='Markdown' (linha 230 sendTelegram body)
+           - Plain text mode default -> asteriscos APARECEM LITERAIS em Telegram chat
+           - User ve: "*Pedido aprovado*" (asteriscos visiveis em vez de bold)
+           - UX broken cross-template (todos templates usando *bold* pattern)
+           POST-FIX: Telegram plain text - sem markdown wrapping
+           - Title em CAPS LOCK (visual destaque sem markdown - safe plain text)
+           - Format: "TITLE\n\nbody" (newlines paragraph break)
+           Pattern V8 W13: parse_mode plain text = NO markdown chars literal in msg. */
+        await sendTelegram(`${title.toUpperCase()}\n\n${body}`);
       } else {
         // FIX-WORKER-13 pass 268 (unknown channel observability):
         //   PRE-FIX: channel != email/telegram cai no UPDATE 'sent' sem envio.
