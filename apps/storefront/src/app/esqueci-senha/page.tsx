@@ -31,7 +31,14 @@ export default function EsqueciSenhaPage() {
 
   if (sent) return (
     <div className="container mx-auto px-6 py-16 max-w-md">
-      <div className="glass p-8 text-center">
+      {/* FIX-WORKER-1 pass 549 (a11y success state announcement):
+          PRE-FIX: success card sem role=status/aria-live. SR (NVDA/JAWS)
+          nao anunciava o estado pos-submit. User com deficiencia visual
+          nao sabia se request completou - precisava 'tabular' p/ achar
+          o novo conteudo. UX critico em authflows.
+          POST-FIX: role='status' aria-live='polite' no container.
+          Paridade pass 519 /sellers + pass 544 qna seller empty state. */}
+      <div role="status" aria-live="polite" className="glass p-8 text-center">
         <CheckCircle className="w-16 h-16 mx-auto mb-4 text-green-400" aria-hidden="true" />
         <h1 className="font-display font-bold text-2xl mb-3">Email enviado</h1>
         <p className="text-white/70 mb-6">
@@ -42,7 +49,11 @@ export default function EsqueciSenhaPage() {
         <p className="text-xs text-white/40 mb-6">
           Nao recebeu? Verifique a pasta de spam ou aguarde 2-3min. Se persistir, contate suporte.
         </p>
-        <Link href="/login" className="btn-primary inline-block">Voltar ao login</Link>
+        {/* FIX pass 549: focus-visible outline magenta na CTA voltar (era ausente) */}
+        <Link href="/login"
+          className="btn-primary inline-block focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
+          Voltar ao login
+        </Link>
       </div>
     </div>
   );
@@ -78,12 +89,28 @@ export default function EsqueciSenhaPage() {
           </div>
         )}
 
-        <button type="submit" disabled={loading} className="btn-primary w-full disabled:opacity-50">
+        {/* FIX-WORKER-1 pass 549 (a11y CTA paridade pass 121 add-to-cart + pass 537 compare-drawer):
+            PRE-FIX BUG: submit button sem aria-busy/aria-label/focus-visible.
+            - Sem aria-busy: SR nao anunciava 'busy' durante request
+            - Sem aria-label: SR lia label estatico 'Enviar link de recuperacao'
+              mesmo quando state era 'Enviando...' (state out-of-sync)
+            - Sem focus-visible: keyboard users sem affordance ao tabular
+            - Padrao W1 AUTH a11y consolidacao authflows.
+            POST-FIX: aria-busy={loading} + aria-label dinamico + focus-visible
+            outline magenta paridade pass 537 compare-drawer CTA. */}
+        <button type="submit" disabled={loading}
+          aria-busy={loading}
+          aria-label={loading ? 'Enviando link de recuperacao de senha' : 'Enviar link de recuperacao de senha por email'}
+          className="btn-primary w-full disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta">
           {loading ? 'Enviando...' : 'Enviar link de recuperacao'}
         </button>
 
         <div className="text-center text-sm text-white/50">
-          <Link href="/login" className="text-magenta hover:underline">Voltar ao login</Link>
+          {/* FIX pass 549: focus-visible outline magenta nos secondary links (a11y kbd nav) */}
+          <Link href="/login"
+            className="text-magenta hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-magenta rounded">
+            Voltar ao login
+          </Link>
         </div>
       </form>
     </div>
