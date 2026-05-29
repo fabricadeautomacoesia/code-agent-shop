@@ -40350,3 +40350,28 @@ CADEIA Regra D direction parity FINAL bifurcacao consolidada:
 - alphabetic tiebreaker UX dropdown: audit_log_actions count DESC + action ASC
 
 441 passes acumulados (268->711) sem deploy VPS
+
+============================================================================
+SESSAO 712 (W13 outbox claim tiebreaker - 5th cron site forensic determinism)
+============================================================================
+
+Pass 712 (W13 outbox claim ORDER BY id ASC tiebreaker):
+- DESCOBERTA: processOutbox claim UPDATE...RETURNING ORDER priority DESC, created_at ASC
+- LIMIT 25 SEM id ASC tiebreaker -> mass-insert burst arbitrary subset
+- Cenarios:
+  - Payment webhook cascade (50+ notifs same priority+created_at second)
+  - Security alert broadcast (1 evento -> N users notificados burst)
+  - Multi-worker race claim parallel SKIP LOCKED compounded non-determinism
+- LIMIT 25 picks arbitrary 25 -> remaining 25 delay next 30s cron tick
+- POST-FIX: + id ASC tiebreaker
+- mig 070 idx_notif_outbox_ready PARTIAL ja cobre direction asc fallback
+
+CADEIA W14 ASC+ASC cron variants forensic determinism FINAL (5 sites):
+- qa-svc /qa/runs/stuck endpoint (pass historico) - admin polling
+- vault rotationAlertCron (pass 632) - cron diario
+- payment reconcile cron (pass 698) - cron 5min webhook reconcile
+- qa-svc timeoutStuckRuns cron (pass 711) - cron 5min QA timeout
+- notification outbox processOutbox claim (pass 712 este) - cron 30s
+= 5 sites cron FIFO ASC+ASC forensic determinism CONSOLIDACAO COMPLETA
+
+442 passes acumulados (268->712) sem deploy VPS
