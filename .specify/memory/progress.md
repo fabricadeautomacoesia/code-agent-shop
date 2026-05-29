@@ -36921,3 +36921,53 @@ Cadeia W12 QA atomicity consolidation:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 500 (MILESTONE) - W18 PERFORMANCE: idx_qa_runs_product_timeout PARTIAL
+
+PRE-FIX (hot path admin /qa-queue):
+- product-svc/routes/admin.js /qa-queue tc LATERAL (linha 148-152):
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::INT AS timeout_count
+        FROM product_qa_runs
+       WHERE product_id = p.id AND verdict = 'timeout'
+    ) tc ON TRUE
+- 50 LATERAL invocations per request (admin LIMIT default)
+- Indexes existing:
+  - idx_qa_runs_product (product_id, created_at DESC) - mig 005
+  - idx_qa_runs_verdict (verdict) - mig 005 (non-composite, weak)
+- Planner: Bitmap idx_qa_runs_product + Heap Filter verdict='timeout'
+- Para products com 1000+ runs (acumulated history cron retry): wasteful filter
+
+POST-FIX mig 103:
+- idx_qa_runs_product_timeout PARTIAL composite:
+    ON product_qa_runs (product_id) WHERE verdict = 'timeout'
+- Index Only Scan (idx covering product_id - tudo necessario p/ COUNT)
+- Predicate verdict='timeout' immutable - planner valida pre-scan
+- Para products SEM timeouts: idx vazio - COUNT=0 fast
+- Para products COM timeouts: scan apenas rows timeout (subset pequeno)
+
+Tamanho fisico:
+- Timeout runs raros (<1% qa_runs em prod normal)
+- 100k qa_runs total -> ~1k timeout rows
+- Idx PARTIAL ~50KB vs idx_qa_runs_product full ~10MB
+
+Latencia esperada:
+- Pre-fix: 50 invocations x ~5ms (scan + filter) = 250ms (sem cache)
+- Post-fix: 50 invocations x ~0.5ms (Index Only Scan PARTIAL) = 25ms
+- 10x improvement (cache 30s amortiza mas warmup melhora)
+
+Cadeia W18 PARTIAL indexes (cron-driven W14/18 fusion):
+- pass 086 idx_audit_severity_created PARTIAL warn+
+- pass 094 idx_audit_target_created PARTIAL NOT NULL
+- pass 098 idx_audit_target_type_severity PARTIAL critical
+- pass 100 idx_pwreset_pending_unused PARTIAL
+- pass 102 idx_notif_user_inapp_unread PARTIAL (mig 102)
+- pass 500 (este) idx_qa_runs_product_timeout PARTIAL (mig 103)
+
+35 migrations pendentes apply (era 34)
+232 passes acumulados (268->500) sem deploy VPS - MILESTONE 500
+9 CRITICAL pendentes deploy
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 aguardando)
+- Mig 094-103 ALTA PRIORIDADE apply (10 PARTIAL/composite indexes)
