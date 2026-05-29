@@ -218,7 +218,8 @@ export default function UploadPage() {
           <div>
             <label htmlFor="up-pkg" className="text-xs text-white/60 uppercase mb-2 block">Pacote do produto (ZIP/JSON)</label>
             <input id="up-pkg" type="file" accept=".zip,.json,.tar,.gz" onChange={(e) => handleFile('pkg', e)} className="text-sm" />
-            {uploading.pkg && <div className="text-xs text-magenta mt-1">Enviando...</div>}
+            {/* FIX-WORKER-5 pass 496 (a11y paridade linha 211 cover upload): role=status + aria-live */}
+            {uploading.pkg && <div role="status" aria-live="polite" className="text-xs text-magenta mt-1">Enviando...</div>}
             {form.package_url && (
               <div className="flex items-center gap-2 mt-2 text-sm text-green-400">
                 <FileArchive className="w-4 h-4" /> Pacote: <code className="font-mono text-xs">{form.package_url}</code>
@@ -227,23 +228,44 @@ export default function UploadPage() {
           </div>
         </section>
 
-        {/* FIX-WORKER-5 pass 5: banners hook + uploadError separado (paralelo a action) */}
+        {/* FIX-WORKER-5 pass 5: banners hook + uploadError separado (paralelo a action)
+            FIX-WORKER-5 pass 496 (a11y paridade pass 492 W1 + pass 457 cart):
+              PRE-FIX (3 banners regressao a11y):
+                1. uploadError: SEM role=alert (SR nao anuncia falha upload critica)
+                2. action.error: SEM role=alert (idem)
+                3. action.success: SEM role=status + aria-live (SR silent em sucesso)
+                4. 3 dismiss 'fechar' buttons: SEM aria-label (SR anuncia "fechar, button"
+                   ambiguo - close what? upload error? action error? success?)
+                5. 3 dismiss buttons: SEM focus-visible:outline (keyboard nav blind)
+                6. 3 banner spans: SEM flex-1 (texto longo pode empurrar close offscreen)
+              POST-FIX (paridade qna pass 248 + cart pass 457 + auth pass 492):
+                - role=alert em error states + role=status aria-live polite em success
+                - aria-label "Fechar mensagem de erro/sucesso" SR contextual
+                - focus-visible:outline-2 outline-red/green-400 (keyboard ring)
+                - flex-1 no span p/ texto longo nao overflow close button
+              Pattern V8 W5: TODOS banners cross-dashboard-seller precisam paridade. */}
         {uploadError && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg flex items-center justify-between">
-            <span>{uploadError}</span>
-            <button type="button" onClick={() => setUploadError('')} className="text-xs hover:underline">fechar</button>
+          <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg flex items-center justify-between gap-2">
+            <span className="flex-1">{uploadError}</span>
+            <button type="button" onClick={() => setUploadError('')}
+              aria-label="Fechar mensagem de erro de upload"
+              className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
           </div>
         )}
         {action.error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg flex items-center justify-between">
-            <span>{action.error}</span>
-            <button type="button" onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg flex items-center justify-between gap-2">
+            <span className="flex-1">{action.error}</span>
+            <button type="button" onClick={action.clear}
+              aria-label="Fechar mensagem de erro"
+              className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
           </div>
         )}
         {action.success && (
-          <div className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg flex items-center justify-between">
-            <span>{action.success}</span>
-            <button type="button" onClick={action.clear} className="text-xs hover:underline">fechar</button>
+          <div role="status" aria-live="polite" className="bg-green-500/10 border border-green-500/30 text-green-400 p-4 rounded-lg flex items-center justify-between gap-2">
+            <span className="flex-1">{action.success}</span>
+            <button type="button" onClick={action.clear}
+              aria-label="Fechar mensagem de sucesso"
+              className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-green-400 rounded">fechar</button>
           </div>
         )}
 

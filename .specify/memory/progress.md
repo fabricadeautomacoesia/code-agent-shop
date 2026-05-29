@@ -36768,3 +36768,46 @@ Cadeia W4 cross-admin investigation flow (corrigida agora):
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 496 - W5 SELLER DASH: /upload page a11y banners paridade pass 492/457
+
+PRE-FIX (5+ regressoes a11y no /upload):
+- 3 banner divs (uploadError, action.error, action.success) SEM:
+  - role=alert (errors) / role=status + aria-live polite (success)
+  - SR nao anuncia falha upload critica nem confirma sucesso
+- 3 dismiss 'fechar' buttons SEM:
+  - aria-label contextual (SR anuncia "fechar, button" ambiguo)
+  - focus-visible:outline (keyboard nav perde foco em dark mode)
+- 3 banner spans SEM flex-1 (texto longo pode empurrar close button offscreen)
+- Linha 221 uploading.pkg div SEM role=status (linha 211 cover JA tinha)
+  -> inconsistencia cross-upload feedback
+
+Pattern V8 cross-storefront a11y consolidacao:
+- /qna pass 248: role=alert + dismiss buttons OK ja
+- /cart pass 457: span flex-1 + role=alert + aria-live
+- /login + /esqueci + /redefinir pass 492: aria-label + focus-visible
+- /upload (este) lagged em 3 elementos
+
+POST-FIX:
+- role=alert nos 2 errors + role=status aria-live=polite no success
+- aria-label "Fechar mensagem de erro/sucesso/erro de upload" contextual
+- focus-visible:outline-2 outline-red-400/green-400 rounded
+- span flex-1 nos 3 banners (texto longo nao overflow)
+- gap-2 entre span e button (visual padding)
+- linha 221 uploading.pkg: role=status aria-live polite (paridade linha 211)
+
+Cadeia W5 SELLER a11y consolidation:
+- pass 5 baseline useSellerAction hook
+- pass 145 htmlFor + id (14 labels upload)
+- pass 147 aria-label dinamico qna textarea
+- pass 248 qna role=alert load error
+- pass 255 defensive number parse price_cents
+- pass 425 STOREFRONT_URL env-driven cross-link
+- pass 496 (este) /upload 3 banners + 2 dismiss buttons a11y
+
+229 passes acumulados (268->496) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply
