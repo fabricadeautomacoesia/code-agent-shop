@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { sellerFetch, fmtDate } from '@/lib/seller-api';
 import { useSellerAction } from '@/lib/use-seller-action';
 import { MessageCircle, Send, CheckCircle, ExternalLink } from 'lucide-react';
@@ -84,8 +85,12 @@ export default function SellerQnaPage() {
       )}
 
       {qna.length === 0 ? (
-        <div className="glass p-12 text-center">
-          <CheckCircle className="w-16 h-16 mx-auto mb-4 text-green-400" />
+        /* FIX-WORKER-5 pass 544 (a11y consolidation): CheckCircle empty state icon
+           decorativo precisa aria-hidden. Paridade pass 541 PDP + cadeia W3 a11y
+           (icons decorativos com texto descritivo no mesmo container = aria-hidden).
+           role=status p/ SR announce "Nenhuma pergunta pendente" no zero-state. */
+        <div role="status" className="glass p-12 text-center">
+          <CheckCircle className="w-16 h-16 mx-auto mb-4 text-green-400" aria-hidden="true" />
           <p className="text-xl mb-2">Nenhuma pergunta pendente!</p>
           <p className="text-sm text-white/60">Seus clientes nao tem duvidas no momento.</p>
         </div>
@@ -105,8 +110,16 @@ export default function SellerQnaPage() {
                     - Botao "Ver no site" -> storefront publico /product/{slug}#qna-{id}
                     Hash anchor #qna-{id} permite jump direto a pergunta na PDP. */}
                 <div className="flex items-start gap-4 mb-4">
+                  {/* FIX-WORKER-5 pass 544 (perf - paridade pass 4 compare-drawer):
+                      <img> raw -> Next.js <Image> com sizes='56px' + loading='lazy'.
+                      Sem sizes Next.js servia full-resolution product cover image
+                      para thumb 56x56 = waste bandwidth + LCP penalty.
+                      Lazy nao bloqueia render inicial (lista pode ter 20+ qnas
+                      pendente). alt="" decorativo (titulo proximo eh accessible name). */}
                   {q.cover_image_url && (
-                    <img src={q.cover_image_url} alt="" className="w-14 h-14 object-cover rounded" />
+                    <Image src={q.cover_image_url} alt="" width={56} height={56}
+                      sizes="56px" loading="lazy"
+                      className="w-14 h-14 object-cover rounded" />
                   )}
                   <div className="flex-1">
                     <Link href={`/products/${q.product_id}`} className="text-sm font-display font-semibold hover:text-magenta flex items-center gap-1">
@@ -127,8 +140,10 @@ export default function SellerQnaPage() {
                 </div>
 
                 <div className="bg-white/5 rounded-lg p-3 mb-3">
+                  {/* FIX-WORKER-5 pass 544 (a11y): MessageCircle icon decorativo
+                      precisa aria-hidden (paridade pass 541 PDP cadeia W3 a11y). */}
                   <div className="text-xs text-white/40 uppercase mb-1 flex items-center gap-1">
-                    <MessageCircle className="w-3 h-3" /> Pergunta
+                    <MessageCircle className="w-3 h-3" aria-hidden="true" /> Pergunta
                   </div>
                   <p className="text-sm">{q.question}</p>
                 </div>
