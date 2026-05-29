@@ -34702,3 +34702,62 @@ Pattern V8 W2 a11y financial flows consolidado:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 458 W17 VAULT/SECURITY: audit_log critical em invalid_internal_token + VALID_TT expand
+commit pendente
+GAP forensic vault.invalid_internal_token apenas log.warn (sem audit_log)
+PRE-FIX:
+- vaultUseGuard linha 81-85: log.warn { ip, ua, tok_len_match }
+- Pino + datadog 7d retention default
+- NAO queryable forensic post-incident (audit_log 90d)
+- /2fa endpoints pass 429 ja audit_log critical em invalid_token
+- vault.invalid_internal_token (CRITICAL maior que 2FA) lagged
+
+SCOPE WHY MORE CRITICAL than 2FA:
+- VAULT_INTERNAL_TOKEN da acesso a ALL platform keys cross-tenants
+- Asaas API key, OpenAI/Anthropic/Gemini secrets globais
+- Successful bruteforce = total platform key compromise
+- Vector: atacante seller_id-aware tenta bypass /use endpoint
+- Sem audit_log: SOC2 + LGPD direito-acesso forensic gap
+
+POST-FIX:
+- audit_log INSERT critical paridade /2fa/disable.invalid_token pass 429:
+  - actor_user_id NULL (atacante anonimo via bypass attempt)
+  - actor_role 'anonymous'
+  - action 'vault.invalid_internal_token'
+  - target_type 'vault_internal' (NOVO - VALID_TT expand)
+  - target_id NULL
+  - severity 'critical'
+  - payload: ip + ua_prefix masked + tok_len_match preserved (forensic intel)
+- Fire-and-forget catch p/ nao bloquear response 401
+- VALID_TT enum aiops-svc + 'vault_internal' (pass 455 paridade)
+
+Cadeia audit_log target_types consolidacao final:
+- pass 430: 10 valores iniciais
+- pass 455: 13 valores (+seller_payout, pending_wallet_payout, vault_api_key,
+  user_session, order_item)
+- pass 458: 14 valores (+vault_internal) <- ESTE
+
+W17 audit_log critical security events series:
+  pass 282 ua_prefix forensic auth-svc
+  pass 292 2fa.invalid_totp audit
+  pass 315 refresh_reuse_breach
+  pass 429 2fa.disable + activate invalid_token
+  pass 438 vault cross-endpoints ua_prefix
+  pass 443 refresh_banned + 2fa.decrypt ua_prefix
+  pass 458 vault.invalid_internal_token audit critical <- ESTE (consolidacao)
+
+Pattern V8 W17 consolidado:
+- TODO endpoint security-critical em invalid_credential path DEVE:
+  - log.warn (operational visibility, 7d retention)
+  - + audit_log critical (forensic 90d retention)
+  - + fail2ban report (bloqueio bruteforce)
+  - + DLP mask em PII (ua_prefix, ip)
+  - Fire-and-forget catch (audit fail nao bloqueia response 401)
+
+191 passes acumulados (268->458) sem deploy VPS
+8 CRITICAL + 29 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 ALTA PRIORIDADE

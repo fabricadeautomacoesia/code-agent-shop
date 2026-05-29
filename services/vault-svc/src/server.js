@@ -76,13 +76,38 @@ function vaultUseGuard(req, res, next) {
     // Com fail2ban + IP rotation, exploit ainda era viavel em horas.
     // Agora: log so registra IP/UA (audit forensics) sem oracle de tamanho.
     // tok_len_match (bool) preserva 1 bit de info util sem revelar comprimento real.
-    /* FIX-WORKER-17 pass 323: ua mask.text() paridade pass 322 auth-svc.
-       Pino log + datadog aggregator captura objeto inteiro -> PII leak. */
+    /* FIX-WORKER-17 pass 323: ua mask.text() paridade pass 322 auth-svc. */
+    const safeUaForensic = mask.text(req.headers['user-agent'] || '');
     log.warn({
       ip: req.ip,
-      ua: mask.text(req.headers['user-agent'] || ''),
+      ua: safeUaForensic,
       tok_len_match: String(internalTok).length === expected.length,
     }, '[vault.invalid_internal_token]');
+    /* FIX-WORKER-17 pass 458 (audit_log critical paridade /2fa pass 429):
+       PRE-FIX: log.warn apenas (Pino + datadog) - 7d retention default.
+       Internal token bruteforce e MUCH mais critical que 2FA invalid:
+       - VAULT_INTERNAL_TOKEN da acesso a ALL platform keys (encrypted + iv + tag)
+       - Successful bruteforce = total platform key compromise
+       - log.warn nao queryable forensic post-incident (audit_log 90d sim)
+       - SOC2 + LGPD direito-acesso forensic gap
+       POST-FIX: audit_log critical paridade /2fa/disable.invalid_token pass 429.
+       - actor_user_id NULL (atacante anonimo via internal-token bypass attempt)
+       - target_type 'vault_internal' (novo target - VALID_TT pass 455 expand needed)
+       - severity 'critical'
+       - + tok_len_match preservado (forensic intel)
+       - + ua_prefix masked (paridade pass 438)
+       Fire-and-forget catch p/ nao bloquear response 401 ja em flight. */
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES (NULL, 'anonymous', 'vault.invalid_internal_token', 'vault_internal', NULL, 'critical', $1::JSONB)`,
+      [JSON.stringify({
+        ip: req.ip,
+        ua_prefix: safeUaForensic.slice(0, 60),
+        tok_len_match: String(internalTok).length === expected.length,
+      })]
+    ).catch((auditErr) => log.error({
+      err: mask.text(String(auditErr.message || '').slice(0, 200)),
+    }, '[vault.invalid_internal_token.audit_fail]'));
   }
   return jwt.requireAuth({ roles: ['admin', 'staff', 'service'] })(req, res, next);
 }
