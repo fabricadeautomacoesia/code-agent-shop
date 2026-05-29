@@ -39479,3 +39479,39 @@ CADEIA W3 PDP CTA aria-busy a11y cumulative:
 = 9 components a11y consolidacao W3 PDP
 
 380 passes acumulados (268->650) sem deploy VPS
+
+============================================================================
+SESSAO 651-652 (W7 product-svc admin consolidacao 3/3 DLP+ua_prefix+withRetry)
+============================================================================
+
+Pass 651 (W7 admin/:id/force-approve 3 bugs paridade pass 512 archive):
+- DESCOBERTA 3 issues consolidacao:
+  1. tx() sem withRetry wrap (cenarios deadlock 40P01 mass force-approve)
+  2. reason RAW sem mask.text() DLP (Bearer/JWT/CPF risk)
+  3. NO ua_prefix forensic (XSS-stolen token investigation gap)
+- POST-FIX:
+  - withRetry('product.force_approve.tx') wrap 3 attempts backoff
+  - mask.text(reason) DLP defensive (paridade pass 512/295/433)
+  - + ua_prefix mask.text(headers.UA).slice(0,60) (paridade pass 438)
+
+Pass 652 (W7 admin/:id/platform-take DLP + forensic - completa 3/3):
+- DESCOBERTA 2 issues paridade:
+  1. reason RAW sem mask.text() DLP
+  2. NO ua_prefix forensic
+- Note: audit_log INSERT FORA tx() OK aqui (dup INSERT ja commit, audit follow-up)
+  vs archive/force-approve onde UPDATE+audit DEVEM ser atomic state machine
+- POST-FIX: mask.text(reason) + ua_prefix forensic paridade
+
+CADEIA W7 product-svc admin endpoints DLP+forensic+atomicity COMPLETA 3/3:
+- /admin/:id/force-approve (pass 651 este)
+- /admin/:id/platform-take (pass 652 este)
+- /admin/:id/archive (pass 512 + 650 withRetry)
+
+CADEIA cross-svc admin endpoints DLP mask reason + ua_prefix:
+- vault-svc revoke admin + seller (pass 295/433/438)
+- payment-svc refund + create (pass 644 timingSafeEqual + audit)
+- order-svc dispute resolve (pass historico)
+- product-svc admin: force-approve + archive + platform-take (passes 651/650/652 este)
+- Cadeia 8+ sites cross-svc consolidacao W7 ops admin DLP/forensic
+
+382 passes acumulados (268->652) sem deploy VPS
