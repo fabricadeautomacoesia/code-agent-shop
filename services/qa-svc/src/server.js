@@ -110,7 +110,35 @@ function qaRunGuard(req, res, next) {
       req._internalAuth = true;
       return next();
     }
-    log.warn({ ip: req.ip, /* FIX pass 323 DLP */ ua: mask.text(req.headers['user-agent'] || '') }, '[qa.run.invalid_internal_token]');
+    /* FIX-WORKER-12 pass 523 (audit_log critical paridade pass 458/462/463):
+       PRE-FIX: log.warn apenas (Pino 7d retention) - NAO queryable forensic.
+       SCOPE CRITICAL:
+       - X-Internal-Token bypass = bypass JWT requireAuth admin/staff/service
+       - product-svc -> qa-svc internal flow via this token
+       - Attacker successful forge = trigger QA runs sem auth (cost LLM API + DoS)
+       - Pattern V8 W17 pass 458 (vault.invalid_internal_token) ja estabeleceu pattern
+       - Pass 462 qa.callback.invalid_signature ja teve audit
+       - qa.run.invalid_internal_token (este) lagged - inconsistency cross-svc
+       POST-FIX: audit_log critical paridade pass 458:
+       - actor NULL (anonymous external attempt - JWT nao rodou ainda)
+       - actor_role 'anonymous'
+       - target_type 'qa_callback' (existing in VALID_TT aiops pass 462)
+       - severity critical (SOC2 + compliance forensic)
+       - tok_len_match preserved (forensic intel - paridade pass 462 sig_len_match)
+       Fire-and-forget catch p/ nao bloquear JWT fallback chain. */
+    const safeUaForensic = mask.text(req.headers['user-agent'] || '');
+    log.warn({ ip: req.ip, ua: safeUaForensic }, '[qa.run.invalid_internal_token]');
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES (NULL, 'anonymous', 'qa.run.invalid_internal_token', 'qa_callback', NULL, 'critical', $1::JSONB)`,
+      [JSON.stringify({
+        ip: req.ip,
+        ua_prefix: safeUaForensic.slice(0, 60),
+        tok_len_match: String(tok).length === QA_RUN_INTERNAL_TOKEN.length,
+      })]
+    ).catch((auditErr) => log.error({
+      err: mask.text(String(auditErr.message || '').slice(0, 200)),
+    }, '[qa.run.invalid_internal_token.audit_fail]'));
   }
   return jwt.requireAuth({ roles: ['admin', 'staff', 'service'] })(req, res, next);
 }

@@ -38176,3 +38176,61 @@ Cadeia W7 PRODUCT-SVC cache hygiene + paridade wishlist:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-105 ALTA PRIORIDADE apply
+
+## Pass 523 - W12 QA PIPELINE: qa.run.invalid_internal_token audit_log critical paridade
+
+PRE-FIX BUG (forensic queryability gap):
+- qa-svc qaRunGuard linha 113:
+    log.warn({ ip, ua: mask.text(...) }, '[qa.run.invalid_internal_token]');
+- Apenas log.warn Pino 7d retention -> NAO queryable em /admin/audit-log
+- Inconsistency cross-svc cadeia HMAC/token forensic:
+  - pass 458 vault.invalid_internal_token -> audit_log critical ✓
+  - pass 462 qa.callback.invalid_signature -> audit_log critical ✓
+  - pass 463 asaas.webhook.invalid_signature -> audit_log critical ✓
+  - qa.run.invalid_internal_token (este) -> log.warn apenas ✗
+
+Scope critical:
+- X-Internal-Token bypass = bypass JWT requireAuth admin/staff/service
+- product-svc -> qa-svc internal flow usa este token (auto-submit QA)
+- Attacker successful forge = trigger QA runs sem auth
+  - Cost LLM API ($0.05-0.50/call * spam) -> drain budget
+  - DoS pipeline (QA queue lotada com runs forjados)
+  - Sem audit_log = SOC2 + LGPD forensic post-incident gap
+- Pattern V8 W12 W17 invariant: ALL HMAC/signature/token validation
+  failures -> audit_log critical for queryable forensic
+
+POST-FIX (paridade pass 458 + 462 + 463):
+- INSERT audit_log critical em path invalid token:
+  - actor NULL (anonymous - JWT nao rodou ainda)
+  - actor_role 'anonymous'
+  - target_type 'qa_callback' (existing VALID_TT aiops pass 462)
+  - severity critical
+  - payload: ip + ua_prefix + tok_len_match forensic intel
+- Fire-and-forget .catch p/ nao bloquear JWT fallback chain
+- log.warn preserved (defense-in-depth dual layer)
+
+Comparacao cadeia HMAC/token audit forensic cross-svc (4 endpoints):
+- vault.invalid_internal_token (pass 458)
+- qa.callback.invalid_signature (pass 462)
+- asaas.webhook.invalid_signature (pass 463)
+- qa.run.invalid_internal_token (pass 523 este)
+
+Cadeia W12 QA security/forensic:
+- pass 27 callback IDEMPOTENCY catastrofico fix
+- pass 28 /qa/run 5 bugs Pattern W7
+- pass 235 DLP callback_secret_hint removed
+- pass 295 internal-token bypass req.user undefined fix
+- pass 303 DLP mask dispatch error
+- pass 310 withRetry callback deadlock
+- pass 394 N8N -> worker fallback resilience
+- pass 462 qa.callback.invalid_signature audit critical
+- pass 470 notifCache approved+rejected
+- pass 498 dispatch_failed atomicity + withRetry
+- pass 523 (este) qa.run.invalid_internal_token audit critical paridade
+
+255 passes acumulados (268->523) sem deploy VPS
+9 CRITICAL + 37 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-105 ALTA PRIORIDADE apply
