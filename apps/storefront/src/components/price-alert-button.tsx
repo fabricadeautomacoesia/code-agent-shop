@@ -91,9 +91,20 @@ export function PriceAlertButton({ productId, currentPriceCents: _unused }: Prop
   }
 
   return (
-    /* FIX-WORKER-3 pass 159 (a11y): type='button' defensive (V8 Regra 23) */
+    /* FIX-WORKER-3 pass 159 (a11y): type='button' defensive (V8 Regra 23)
+       FIX-WORKER-3 pass 573 (a11y - aria-busy paridade cadeia pass 549/552/553/568):
+       PRE-FIX: aria-label dinamico mas SEM aria-busy={loading}.
+       - SR (NVDA modern) usam aria-busy p/ silenciar live regions enquanto processing
+       - Sem aria-busy = SR pode anunciar 'Removendo alerta' continuamente
+       - Inconsistente com cadeia W1/W2/W3 authflows + CTAs (consolidacao
+         passes 549 esqueci-senha + 552 checkout + 553 qna-form + 568 financeiro).
+       POST-FIX: + aria-busy={loading} + aria-label upgrade durante loading.
+       Paridade pattern V8 W3 PDP CTAs (add-to-cart pass 121 + qna-form pass 553). */
     <button type="button" onClick={toggle} disabled={loading}
-      aria-label={active ? 'Remover alerta de preco' : 'Receber email quando o preco baixar'}
+      aria-busy={loading}
+      aria-label={loading
+        ? 'Processando alerta de preco'
+        : (active ? 'Remover alerta de preco' : 'Receber email quando o preco baixar')}
       aria-pressed={active}
       title={active ? 'Voce sera notificado se o preco baixar' : 'Receber email se o preco baixar'}
       className={`w-full px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-magenta ${
