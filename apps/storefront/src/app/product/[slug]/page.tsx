@@ -256,11 +256,17 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             {/* MLB-13 WORKER 16 pass 127: Compartilhar produto (WhatsApp/X/LinkedIn/Copy) */}
             <ShareButton title={product.title} productSlug={product.slug} productId={product.id} />
 
-            {/* MLB-NEW WORKER 16: Trust Signals badges (Garantia + Suporte + Updates) */}
+            {/* MLB-NEW WORKER 16: Trust Signals badges (Garantia + Suporte + Updates)
+                FIX-WORKER-3 pass 541 (a11y consistency): 4 icons trust signals
+                faltavam aria-hidden='true'. NVDA/JAWS anunciava "imagem RefreshCw"
+                + "imagem Headphones" + "imagem CheckCircle2" + "imagem MessageCircle"
+                antes de cada label - ruidoso (4 noise messages per PDP load).
+                Pattern V8 W3 a11y: icons decorativos com label texto = aria-hidden.
+                Paridade Star linha 201 + add-to-cart pass 238 + wishlist-button. */}
             <div className="mt-5 space-y-2.5 text-xs">
               {(product.warranty_days ?? 30) > 0 && (
                 <div className="flex items-start gap-2.5 text-white/80">
-                  <RefreshCw className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
+                  <RefreshCw className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
                   <div>
                     <div className="font-semibold">Garantia de {product.warranty_days ?? 30} dias</div>
                     <div className="text-white/50 text-[11px]">Reembolso integral se nao funcionar conforme descrito</div>
@@ -269,7 +275,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
               )}
               {(product.support_response_hours ?? 48) > 0 && (
                 <div className="flex items-start gap-2.5 text-white/80">
-                  <Headphones className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                  <Headphones className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
                   <div>
                     <div className="font-semibold">Suporte em ate {product.support_response_hours ?? 48}h</div>
                     <div className="text-white/50 text-[11px]">Via Q&A do produto ou email do vendedor</div>
@@ -278,7 +284,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
               )}
               {(product.includes_updates ?? true) && (
                 <div className="flex items-start gap-2.5 text-white/80">
-                  <CheckCircle2 className="w-4 h-4 text-magenta flex-shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-4 h-4 text-magenta flex-shrink-0 mt-0.5" aria-hidden="true" />
                   <div>
                     <div className="font-semibold">Atualizacoes gratuitas</div>
                     <div className="text-white/50 text-[11px]">Receba novas versoes sem custo adicional</div>
@@ -287,7 +293,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
               )}
               {product.includes_install_support && (
                 <div className="flex items-start gap-2.5 text-white/80">
-                  <MessageCircle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
+                  <MessageCircle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
                   <div>
                     <div className="font-semibold">Suporte na instalacao</div>
                     <div className="text-white/50 text-[11px]">Vendedor ajuda voce a configurar</div>
@@ -309,13 +315,14 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
 
             {product.store_slug && (
               <div className="mt-6 pt-6 border-t border-white/10 space-y-2">
+                {/* FIX-WORKER-3 pass 541 (a11y): Shield/Award icons decorativos com aria-hidden */}
                 <Link href={`/seller/${product.store_slug}`} className="text-sm flex items-center gap-2 hover:text-magenta">
-                  <Shield className="w-4 h-4" /> Vendido por <strong>{product.store_name}</strong>
+                  <Shield className="w-4 h-4" aria-hidden="true" /> Vendido por <strong>{product.store_name}</strong>
                 </Link>
                 {/* MLB-NEW WORKER 16: badges inline do seller no PDP */}
                 {product.reputation_tier && ['ouro','platinum','lider_platinum'].includes(product.reputation_tier) && (
                   <div className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
-                    <Award className="w-3 h-3" /> {product.reputation_tier === 'lider_platinum' ? 'Lider Platinum' : product.reputation_tier === 'platinum' ? 'Platinum' : 'Ouro'}
+                    <Award className="w-3 h-3" aria-hidden="true" /> {product.reputation_tier === 'lider_platinum' ? 'Lider Platinum' : product.reputation_tier === 'platinum' ? 'Platinum' : 'Ouro'}
                   </div>
                 )}
                 {/* MLB-17 WORKER 16 pass 169: Trust Mark destaque "Lider Premium / Verificado" */}
@@ -323,10 +330,11 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
               </div>
             )}
 
+            {/* FIX-WORKER-3 pass 541: 3 icons decorativos descritivos -> aria-hidden */}
             <div className="mt-4 space-y-2 text-xs text-white/50">
-              <div className="flex items-center gap-2"><Download className="w-3 h-3" /> Download imediato</div>
-              <div className="flex items-center gap-2"><Clock className="w-3 h-3" /> Suporte por 365 dias</div>
-              <div className="flex items-center gap-2"><Shield className="w-3 h-3" /> Validado por IA (QA score)</div>
+              <div className="flex items-center gap-2"><Download className="w-3 h-3" aria-hidden="true" /> Download imediato</div>
+              <div className="flex items-center gap-2"><Clock className="w-3 h-3" aria-hidden="true" /> Suporte por 365 dias</div>
+              <div className="flex items-center gap-2"><Shield className="w-3 h-3" aria-hidden="true" /> Validado por IA (QA score)</div>
             </div>
           </div>
         </aside>
