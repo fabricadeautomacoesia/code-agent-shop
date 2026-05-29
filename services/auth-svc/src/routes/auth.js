@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, validate, asyncHandler, fail2ban, errorHandler, logger, htmlEscape, rateLimiter, mask, notifCache } = require('@cas/shared');
+const { jwt, validate, asyncHandler, fail2ban, errorHandler, logger, htmlEscape, rateLimiter, mask, notifCache, withRetry } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 98: rate-limit /logout anti-spam.
 // PRE-FIX: zero limit em /logout. Vetores:
@@ -672,23 +672,61 @@ router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
   }
 
   // Rotacionar refresh
+  /* FIX-WORKER-6 pass 546 (withRetry + audit_log rotation - paridade pass 526):
+     PRE-FIX BUG 1 (deadlock 40P01 vulnerability):
+       tx() rotation sem withRetry wrap. Path eh executado em CADA refresh
+       (a cada ~15 min per active user). Sob load:
+       - Concurrent refresh same user diff tabs/devices = race em
+         user_sessions UPDATE + INSERT (lock ordering deadlock 40P01)
+       - Sem withRetry, deadlock = 500 generico ao user (refresh failed)
+       - User experiencia 'sessao expirada' falso positivo
+       - Pass 506/507 consolidou withRetry em todos vault tx writes
+       - Pass 526 consolidou withRetry em banned cascade revoke
+       - Pass 546 (este) consolida em rotation success path (mais executado)
+     PRE-FIX BUG 2 (audit_log gap - rotation sem trail):
+       Pass 526 audit_log em banned cascade. refresh_reuse_breach audit_log
+       (linha 556-568). Mas rotation 'normal' (success path) SEM audit_log:
+       - Compliance LGPD direito-acesso: 'mostrar todas atividades sessao'
+       - SOC2 CC7.3: forensic trail sessions rotated
+       - Admin investigation 'quando user X rotacionou tokens?' sem resposta
+     POST-FIX:
+       1. withRetry wrap (3 attempts backoff) - paridade vault 6/6 endpoints
+       2. + audit_log INSERT atomic dentro tx (severity=info - rotation eh
+          normal, mas queryable para forense)
+       3. Payload: ip + ua_prefix + old_session_id + new_session_id (atomic
+          link tracking pre/post rotation per refresh) */
   const newRefresh = jwt.signRefresh({ sub: user.id });
-  await tx(async (c) => {
+  const safeUaRotate = mask.text((req.headers['user-agent'] || '').slice(0, 200));
+  let newSessionId;
+  await withRetry('auth.refresh.rotation.tx', async () => await tx(async (c) => {
     await c.query('UPDATE user_sessions SET is_revoked = TRUE, revoked_at = NOW(), revoked_reason = $1 WHERE id = $2',
       ['rotated', s.rows[0].id]);
-    await c.query(
+    const insRes = await c.query(
       `INSERT INTO user_sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at)
-       VALUES ($1,$2,$3,$4, NOW() + INTERVAL '7 days')`,
+       VALUES ($1,$2,$3,$4, NOW() + INTERVAL '7 days')
+       RETURNING id`,
       // FIX-WORKER-6 pass 403 (DLP mask user_agent paridade audit_log pass 282)
       //   user_sessions.user_agent storage = forense + admin investigation
       //   Raw UA pode conter Bearer/JWT em corner cases (custom UAs corporate)
       //   + LGPD: minimização dados storage longos (sessions live 7d)
       //   mask.text(UA prefix 200 chars) - paridade audit_log/notifications
       [user.id, jwt.hashToken(newRefresh.token),
-       mask.text((req.headers['user-agent'] || '').slice(0, 200)) || null,
+       safeUaRotate || null,
        req.ip]
     );
-  });
+    newSessionId = insRes.rows[0]?.id;
+    // FIX pass 546: audit_log rotation success (info severity - forense queryable)
+    await c.query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, 'user', 'auth.refresh.rotated', 'user_session', $2, 'info', $3::JSONB)`,
+      [user.id, newSessionId, JSON.stringify({
+        ip: req.ip,
+        ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+        old_session_id: s.rows[0].id,
+        new_session_id: newSessionId,
+      })]
+    );
+  }));
 
   const access = jwt.signAccess({ sub: user.id, role: user.role, email: user.email });
   setRefreshCookie(res, newRefresh.token);
