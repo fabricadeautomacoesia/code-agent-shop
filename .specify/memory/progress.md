@@ -37994,3 +37994,75 @@ Cadeia W9 SEO/META cross-storefront consolidacao:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)
+
+## Pass 520 - W10 SEARCH/AIOPS: cache bypass silent BUG /llm-cost + /db/dead-indexes
+
+PRE-FIX BUG (cache silently disabled - 2 endpoints aiops-svc):
+
+1. /llm-cost (linha 894):
+   cache.cacheMiddleware('aiops:llm_cost:30d', 300)
+2. /db/dead-indexes (linha 783):
+   cache.cacheMiddleware('aiops:db_dead_indexes', 60)
+
+cache.cacheMiddleware signature (cache.js linha 107):
+   function cacheMiddleware(keyFn, ttlSec)
+- Linha 111: try { key = keyFn(req); } catch { return next(); }
+- Quando keyFn = string literal -> keyFn(req) chamada em string
+- TypeError 'keyFn is not a function' -> catch swallow silent
+- return next() -> CACHE SILENTLY DISABLED
+- ZERO log warning - sem visibility do bug
+
+Impact /llm-cost:
+- 3 expensive queries por request (30d GROUP BY + COUNT FILTER + DATE_TRUNC):
+  - byProvider: SUM/AVG/MAX cost_usd_cents + tokens GROUP BY provider+model
+  - total: COUNT FILTER verdicts (approved/rejected/error/timeout)
+  - daily: DATE_TRUNC day GROUP BY ORDER BY (30d sparkline)
+- Cada request ~150-300ms PG (no cache) vs ~5ms (cache hit esperado 300s)
+- Admin dashboard polling = repeated full scan product_qa_runs
+- Sem cache = high DB CPU em prod multi-admin
+
+Impact /db/dead-indexes:
+- pg_stat_user_indexes scan + pg_relation_size per idx (heavy query)
+- Cron-style admin check - polling sem cache = stress DB
+- Sem cache = repeated 100ms+ scan em prod
+
+Outros endpoints aiops-svc usam arrow function corretamente:
+- /status linha 269: () => 'aiops:status:public:v3' ✓
+- /status/detail linha 289: () => 'aiops:status:detail:v1' ✓
+- /metrics linha 354: metricsCacheKey function ✓
+- /alerts + /alerts/recent: alertsCacheKey function ✓
+- /audit-log: auditLogHandler function ✓
+- /audit-log/actions: auditActionsCacheKey function ✓
+
+Apenas /llm-cost + /db/dead-indexes lagged em paridade signature.
+
+POST-FIX:
+- /llm-cost: cache.cacheMiddleware(() => 'aiops:llm_cost:30d', 300)
+- /db/dead-indexes: cache.cacheMiddleware(() => 'aiops:db_dead_indexes', 60)
+- Arrow function ignora req (key estatica) mas cumpre signature
+- Trade-off ZERO: cache agora ATIVA -> 30x speedup esperado /llm-cost
+
+Pattern V8 W10 invariant:
+- TODOS cacheMiddleware calls usam keyFn function signature
+- String literal cache.set/get OK mas middleware exige function
+- Comment expansivo documenta bug pattern p/ futuras adicoes
+
+Latencia esperada:
+- /llm-cost cache hit: ~5ms (Redis) vs ~250ms (3 PG queries)
+- /db/dead-indexes cache hit: ~3ms vs ~100ms (pg_stat scan)
+- 50x improvement /llm-cost, 33x /db/dead-indexes
+
+Cadeia W10 SEARCH/AIOPS cache hygiene:
+- pass 4 facets ignored category/kind (cache.cacheMiddleware key issue)
+- pass 232 autocomplete short-circuit pre-cache
+- pass 291 search top-sellers cat lowercase normalize
+- pass 302 flash-promo cache key normalization
+- pass 487 is_top_seller NULL category guard
+- pass 520 (este) cache bypass silent /llm-cost + /db/dead-indexes
+
+252 passes acumulados (268->520) sem deploy VPS
+9 CRITICAL + 37 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)

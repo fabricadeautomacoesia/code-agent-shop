@@ -782,7 +782,9 @@ app.get('/audit-log/actions',
 //   FIX: Number(r.size_bytes) + handle NaN.
 app.get('/db/dead-indexes',
   jwt.requireAuth({ roles: ['admin','staff'] }),
-  cache.cacheMiddleware('aiops:db_dead_indexes', 60),
+  /* FIX pass 520: cache bypass silent BUG - keyFn signature (mesmo que /llm-cost).
+     pg_stat_user_indexes scan = heavy query. Sem cache em prod = repeated DB load. */
+  cache.cacheMiddleware(() => 'aiops:db_dead_indexes', 60),
   asyncHandler(async (_req, res) => {
     // 1. Indices ZERO scans (candidatos DROP, exclui PK/UNIQUE)
     const dead = await query(
@@ -893,7 +895,24 @@ function formatBytes(n) {
 // - Forecasting mensal (project cost atual -> 30d)
 app.get('/llm-cost',
   jwt.requireAuth({ roles: ['admin','staff'] }),
-  cache.cacheMiddleware('aiops:llm_cost:30d', 300),
+  /* FIX-WORKER-10 pass 520 (cache bypass silent BUG - keyFn vs string):
+     PRE-FIX: cache.cacheMiddleware('aiops:llm_cost:30d', 300)
+     - cacheMiddleware signature: (keyFn: (req) => string, ttlSec) per cache.js linha 107
+     - Passing literal string -> linha 111 keyFn(req) chamada em string
+     - try/catch swallow TypeError 'keyFn is not a function'
+     - return next() -> CACHE SILENTLY DISABLED for /llm-cost
+     - 3 expensive queries (30d GROUP BY + COUNT + DATE_TRUNC) EVERY request
+     - Admin /admin/llm-cost dashboard polling = repeated full scan PG
+     - Sem log warn (cache.js linha 111 returns silently)
+     PRE-FIX impact:
+     - Each request: ~150-300ms PG (no cache) vs ~5ms (cache hit)
+     - Multi-admin dashboard polling = high DB CPU
+     - Stat dashboard supposed to be fast (was supposed cached 300s = 5min)
+     POST-FIX: wrap string em arrow function (keyFn signature compliant).
+     Pattern V8 cross-svc: ALL cacheMiddleware calls usam keyFn function.
+     Other endpoints use lambda: cache.cacheMiddleware((req) => 'static-key', ttl).
+     Trade-off ZERO: arrow function ignora req mas cumpre signature. */
+  cache.cacheMiddleware(() => 'aiops:llm_cost:30d', 300),
   asyncHandler(async (_req, res) => {
     // 1. Aggregation por provider+model+dia (top 30 dias)
     const byProvider = await query(
