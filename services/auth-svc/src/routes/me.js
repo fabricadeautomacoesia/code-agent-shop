@@ -202,6 +202,23 @@ router.patch('/',
         const oldDigits = cur.rows[0].old_cpf ? String(cur.rows[0].old_cpf).replace(/\D/g, '') : '';
         const newDigits = req.body.cpf_cnpj || '';
         const cpfChanged = req.body.cpf_cnpj !== undefined && oldDigits !== newDigits;
+        /* FIX-WORKER-6 pass 564 (ua_prefix forensic gap - paridade cadeia pass 282/438):
+           PRE-FIX: PATCH /me audit_log payload tinha ip mas NAO ua_prefix.
+           Pattern V8 cross-svc consolidacao established:
+           - pass 282 auth-svc /forgot-password + /reset-password + /logout
+           - pass 292 register
+           - pass 296 review-svc audit
+           - pass 315 auth-svc /refresh reuse breach
+           - pass 408 seller-svc audit
+           - pass 438 vault-svc cross-endpoints + payment-svc webhook
+           - pass 443 auth-svc /refresh banned cascade
+           - PATCH /me era unico audit_log critical endpoint em auth-svc lagged
+           Cenarios reais impactados:
+           - Atacante post-XSS muda cpf_cnpj victim -> admin investiga incident
+           - audit_log mostra ip mas SEM ua_prefix -> correlation IP+UA p/ device
+             match impossivel (multiple users mesmo IP NAT = forensic broken)
+           - LGPD Art 37 forensic operational tracking incompleto
+           POST-FIX: + ua_prefix mask.text() em payload audit_log. */
         await c.query(
           `INSERT INTO audit_log
             (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
@@ -216,6 +233,8 @@ router.patch('/',
              // audit_log, admin UI, /me responses) + null-safe pra CPFs invalidos.
              cpf_masked: cpfChanged ? maskPII.cpf(req.body.cpf_cnpj) : null,
              ip: req.ip,
+             // FIX pass 564: ua_prefix forensic device fingerprint correlation
+             ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
            })]
         );
       });
