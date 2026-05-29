@@ -1238,7 +1238,33 @@ const sellerKeyProvisionSchema = z.object({
 });
 
 // GET /api/vault/keys/me - lista chaves do seller logado (sem encrypted)
-app.get('/keys/me', readRateLimit, sellerOrAdmin, asyncHandler(async (req, res) => {
+// FIX-WORKER-17 pass 542 (cache gap /keys/me paridade /keys admin pass 489):
+//   PRE-FIX: GET /keys/me (seller BYOK list) sem cache.cacheMiddleware.
+//   Admin equivalent /keys (linha 502) tem cache 60s desde pass 65/489 mas
+//   este endpoint seller ficou lagged. Dashboard-seller /conta/seguranca
+//   ou painel BYOK polling refresh => cada hit = JOIN-like select + window
+//   COUNT(*) OVER() em vault_api_keys (~50-100ms em sellers com 10+ keys
+//   multi-provider OpenAI+Anthropic+Groq BYOK accum).
+//   POST-FIX: cache.cacheMiddleware 60s vary by user+pagination.
+//   Cache key: per (user.sub, seller_filter, limit, offset).
+//   Invalidacao: TTL natural 60s (write-then-read freshness gap aceitavel
+//   - seller provision/revoke nao precisa instant view; UI optimistic update
+//   ja reflete mudanca client-side via componente local state).
+//   TODO futuro: cache.del('vault:keys_me:u='+req.user.sub+':*') em
+//   POST/revoke se UI feedback ficar slow (pattern wildcard del em cache.js).
+//   Pattern V8 W17 paridade cache: /keys admin (60s) + /keys/me (este 60s).
+//   Latency 50-100ms -> 1-2ms (Redis hit).
+const keysmeListCacheKey = (req) => {
+  const isAdmin = req.user && ['admin','staff'].includes(req.user.role);
+  const sellerKey = isAdmin && req.query.seller_id ? String(req.query.seller_id).toLowerCase() : (req.user?.sub || 'anon');
+  const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  return `vault:keys_me:u=${req.user?.sub || 'anon'}:s=${sellerKey}:lim=${lim}:off=${off}`;
+};
+
+app.get('/keys/me', readRateLimit, sellerOrAdmin,
+  cache.cacheMiddleware(keysmeListCacheKey, 60),
+  asyncHandler(async (req, res) => {
   // SECURITY: ownership via sellers.user_id (admin pode passar ?seller_id query)
   const isAdmin = req.user && ['admin','staff'].includes(req.user.role);
   // FIX-WORKER-17 pass 264 (UUID validation defense):
