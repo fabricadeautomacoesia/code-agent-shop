@@ -316,11 +316,31 @@ router.get('/:slug/products',
      - Query case-sensitive PG -> 'LOJA-TECH' nao matches DB 'loja-tech' -> 404
      POST-FIX: normalize early, use in cache key + ALL 3 query sites.
      Paridade pass 380 /sellers/:slug detail + pass 521 /:slug/stats + 529 reviews/qna */
+  /* FIX-WORKER-10 pass 590 (cache key normalization paridade cadeia 14 sites
+     W7+W10+W13+W18 cache hygiene cross-svc consolidacao - 15 sites total):
+     PRE-FIX BUGS (4 issues cache pollution vs handler):
+     1. Raw q.kind sem whitelist check. Handler valida SELLER_PRODUCTS_KIND
+        (linha 332). ?kind=INVALID -> cache key 'k=INVALID', handler 400.
+     2. Raw q.sort sem whitelist check. Handler valida SELLER_PRODUCTS_SORT
+        (linha 337). ?sort=GARBAGE -> cache key 's=GARBAGE', handler 400.
+     3. Raw q.page sem clamp. Handler Math.max(parseInt(...) || 1, 1) (linha 327).
+        ?page=99999 -> cache key 'p=99999', handler still 1 -> SAME response.
+     4. Raw q.limit sem clamp. Handler Math.max/Math.min [1, 100] (linha 326).
+     POST-FIX: normalize cache key SAME way handler normalizes (paridade
+     cadeia 14 sites pre-cache: 520/530/533/551/558/566/572/576/577/579/582/
+     583/588/589). */
   cache.cacheMiddleware((req) => {
     const slugNorm = String(req.params.slug || '').trim().toLowerCase();
-    const k = req.query.kind || '';
-    const s = req.query.sort || 'relevance';
-    return `sellers:products:${slugNorm}:p=${req.query.page||1}:lim=${req.query.limit||24}:k=${k}:s=${s}`;
+    // Normalize kind: whitelist or empty
+    const kindRaw = String(req.query.kind || '').trim();
+    const kindNorm = SELLER_PRODUCTS_KIND.has(kindRaw) ? kindRaw : '';
+    // Normalize sort: whitelist or default
+    const sortRaw = String(req.query.sort || '').trim();
+    const sortNorm = SELLER_PRODUCTS_SORT.has(sortRaw) ? sortRaw : 'relevance';
+    // Clamp page/limit (paridade handler linhas 326-327)
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 24, 100));
+    return `sellers:products:${slugNorm}:p=${page}:lim=${lim}:k=${kindNorm}:s=${sortNorm}`;
   }, 60),
   asyncHandler(async (req, res, next) => {
   const lim = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 24, 100));
