@@ -153,7 +153,12 @@ function LoginInner() {
         {error && (
           <div role="alert" className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center justify-between">
             <span>{error}</span>
-            <button type="button" onClick={() => setError('')} className="text-xs hover:underline ml-2">fechar</button>
+            {/* FIX-WORKER-1 pass 492 (a11y paridade register pass 183 + QnaForm pass 489):
+                + aria-label "Fechar mensagem de erro" (SR ambiguity "fechar, button" sem contexto)
+                + focus-visible:outline-2 focus-visible:outline-red-400 (keyboard nav visibility) */}
+            <button type="button" onClick={() => setError('')}
+              aria-label="Fechar mensagem de erro"
+              className="text-xs hover:underline ml-2 focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
           </div>
         )}
 

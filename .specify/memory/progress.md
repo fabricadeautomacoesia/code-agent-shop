@@ -36584,3 +36584,42 @@ Cadeia W9 SEO/META progression:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 492 - W1 AUTH: a11y dismiss buttons paridade register/QnaForm
+
+PRE-FIX (3 auth pages com regressao a11y vs register pass 183):
+- /login dismiss button erro:
+    <button onClick={() => setError('')} className="text-xs hover:underline ml-2">fechar</button>
+- /esqueci-senha dismiss button erro:
+    <button onClick={() => setErr('')} className="text-xs hover:underline">fechar</button>
+- /redefinir-senha dismiss button erro:
+    <button onClick={() => setErr('')} className="text-xs hover:underline">fechar</button>
+
+WCAG 4.1.2 + 2.4.7 violations:
+- Sem aria-label: SR (NVDA/JAWS) anuncia "fechar, button" ambiguo
+  (close what? user com 2+ alerts simultaneos perde contexto)
+- Sem focus-visible:outline: keyboard nav usuario nao ve foco no botao
+  (esp. dark mode com alta absorcao visual)
+- /register ja tinha fix pass 183 - 3 pages lagged atras
+- /QnaForm pass 489 ja tinha fix similar
+
+POST-FIX (paridade pass 183 register + pass 489 QnaForm):
+- + aria-label "Fechar mensagem de erro" (SR clarity)
+- + focus-visible:outline-2 focus-visible:outline-red-400 rounded
+  (keyboard accessible focus ring red matching error semantic)
+- 3 files modified, mesma 1-line fix por arquivo
+
+Cadeia W1 AUTH a11y consolidation:
+- pass 5 login role=alert + dismiss button
+- pass 183 register aria-label "Fechar mensagem de erro"
+- pass 4 esqueci-senha htmlFor + autoComplete
+- pass 3 redefinir-senha progressbar role + pwLabels
+- pass 489 QnaForm i18n native validation override
+- pass 492 (este) login + esqueci + redefinir a11y paridade register
+
+225 passes acumulados (268->492) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply

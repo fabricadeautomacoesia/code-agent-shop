@@ -152,7 +152,10 @@ function ResetInner() {
         {err && (
           <div role="alert" className="text-sm text-red-400 bg-red-500/10 p-3 rounded-lg flex items-center justify-between">
             <span>{err}</span>
-            <button type="button" onClick={() => setErr('')} className="text-xs hover:underline">fechar</button>
+            {/* FIX-WORKER-1 pass 492 (a11y paridade register pass 183 + QnaForm pass 489) */}
+            <button type="button" onClick={() => setErr('')}
+              aria-label="Fechar mensagem de erro"
+              className="text-xs hover:underline focus-visible:outline-2 focus-visible:outline-red-400 rounded">fechar</button>
           </div>
         )}
 
