@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache, rateLimiter, mask, notifCache } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, rateLimiter, mask, notifCache, withRetry } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 82: rate-limit anti-spam drafts.
 // PRE-FIX: POST /products/me SEM rate-limit. Seller pwned/bot pode spawn
@@ -329,7 +329,8 @@ router.post('/',
     let outcome;
     let product;
 
-    await tx(async (c) => {
+    // FIX-WORKER-5 pass 684 (withRetry product create deadlock defense)
+    await withRetry('product.create.tx', async () => await tx(async (c) => {
       // Regra K: SELECT FOR UPDATE seller (anti-race admin suspend during INSERT)
       const s = await c.query(
         `SELECT id FROM sellers WHERE user_id = $1 AND status = 'active' FOR UPDATE`,
@@ -412,7 +413,7 @@ router.post('/',
            ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
          })]
       );
-    });
+    }));
 
     if (outcome?.error === 'seller_not_active') return next(errorHandler.forbidden('seller_not_active'));
     if (outcome?.error === 'max_products_exceeded') {
@@ -505,8 +506,9 @@ router.patch('/:id', validate({ body: patchSchema }), asyncHandler(async (req, r
     return res.status(400).json({ error: 'no_fields_to_update', message: 'Nenhum campo valido fornecido.' });
   }
 
+  // FIX-WORKER-5 pass 685 (withRetry product PATCH deadlock defense)
   let outcome;
-  await tx(async (c) => {
+  await withRetry('product.patch.tx', async () => await tx(async (c) => {
     // BUG 2 Regra K: SELECT FOR UPDATE em products (anti-race)
     const owns = await c.query(
       `SELECT p.id, p.title, p.price_cents AS old_price, p.status
@@ -570,7 +572,7 @@ router.patch('/:id', validate({ body: patchSchema }), asyncHandler(async (req, r
     );
 
     outcome = { ok: true };
-  });
+  }));
 
   if (outcome?.error === 'invalid_field') return next(errorHandler.badRequest('invalid_field', 'Campo nao permitido detected'));
   if (outcome?.error === 'not_editable') return next(errorHandler.notFound('product_not_editable'));
@@ -645,7 +647,8 @@ router.post('/:id/submit',
     let outcome;
     let productInfo;
 
-    await tx(async (c) => {
+    // FIX-WORKER-5 pass 686 (withRetry product submit QA deadlock defense)
+    await withRetry('product.submit.tx', async () => await tx(async (c) => {
       // BUG 2 Regra K: SELECT FOR UPDATE + ownership + return state actual
       // FIX-WORKER-7 pass 279: include seller.asaas_wallet_id para warn seller
       // que payouts virao via debt queue se wallet nao configurada (paridade
@@ -710,7 +713,7 @@ router.post('/:id/submit',
       // FIX-WORKER-7 pass 279: wallet warning flag p/ frontend dashboard-seller
       const walletConfigured = !!(p.asaas_wallet_id && p.asaas_wallet_id !== '');
       productInfo = { id: p.id, title: p.title, wallet_configured: walletConfigured };
-    });
+    }));
 
     if (outcome?.error === 'not_found') return next(errorHandler.notFound('product_not_found'));
     if (outcome?.error === 'already_in_qa') {
@@ -840,11 +843,12 @@ router.post('/:id/versions',
       return next(errorHandler.notFound('product_not_found'));
     }
 
+    // FIX-WORKER-5 pass 687 (withRetry product versions create - COMPLETA product-svc 7/7 cross-svc atomicity)
     let outcome;
     let version;
     let prodMeta;
 
-    await tx(async (c) => {
+    await withRetry('product.versions.tx', async () => await tx(async (c) => {
       // BUG 2+3: Regra A status + Regra K SELECT FOR UPDATE
       const owns = await c.query(
         `SELECT p.id, p.title, p.slug, p.status
@@ -890,7 +894,7 @@ router.post('/:id/versions',
            ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
          })]
       );
-    });
+    }));
 
     if (outcome?.error === 'not_found_or_not_approved') {
       return next(errorHandler.notFound('product_not_found_or_not_approved'));
