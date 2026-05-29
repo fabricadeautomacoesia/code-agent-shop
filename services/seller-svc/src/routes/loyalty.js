@@ -4,7 +4,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache, mask, notifCache } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, mask, notifCache, withRetry } = require('@cas/shared');
 
 const log = logger.child({ svc: 'seller-svc', mod: 'loyalty' });
 const router = express.Router();
@@ -101,7 +101,8 @@ router.get('/me',
            3. SELECT user_loyalty re-fetch (line 109)
          POST-FIX: UPDATE...RETURNING capture row direto.
          2 queries vs 3 - 33% reduction welcome path. */
-      await tx(async (c) => {
+      // FIX-WORKER-16 pass 664 (withRetry loyalty welcome bonus deadlock defense)
+      await withRetry('loyalty.welcome_bonus.tx', async () => await tx(async (c) => {
         await c.query(
           `INSERT INTO loyalty_transactions (user_id, points_delta, reason)
            VALUES ($1, 100, 'welcome_bonus')`, [req.user.sub]
@@ -115,7 +116,7 @@ router.get('/me',
           [req.user.sub]
         );
         bal = upd; // refresh bal com novo balance
-      });
+      }));
       // FIX-WORKER-18 pass 259 (deterministic order tiebreaker):
       //   ORDER BY created_at DESC sem id tiebreaker -> mass-insert burst
       //   (multi tier_up bonus apos compra grande) com mesmo timestamp
@@ -175,9 +176,10 @@ router.post('/earn',
   asyncHandler(async (req, res, next) => {
     const { user_id, points, reason, reference_type, reference_id } = req.body;
 
+    // FIX-WORKER-16 pass 665 (withRetry loyalty earn cron internal deadlock defense - COMPLETA seller-svc 7/7)
     let outcome;
     let result;
-    await tx(async (c) => {
+    await withRetry('loyalty.earn.tx', async () => await tx(async (c) => {
       // FIX-WORKER-7 pass 191 (race-safe idempotency): INSERT loyalty_transactions
       // FIRST com ON CONFLICT DO NOTHING. Consume migration 061 partial UNIQUE
       // idx_loyalty_idempotency (user_id, reason, reference_id) WHERE reference_id IS NOT NULL.
@@ -294,7 +296,7 @@ router.post('/earn',
       );
 
       result = { ok: true, new_balance: null /* sera lido fora tx */, new_tier: newTier };
-    });
+    }));
 
     if (outcome?.duplicate) {
       return res.json({
