@@ -34982,3 +34982,58 @@ Pattern V8 W17+W12 invalid_credential audit critical pattern:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 463 W11 PAYMENT: audit_log critical em asaas.webhook.invalid_signature (paridade pass 458+462)
+commit pendente
+GAP forensic Asaas webhook invalid signature sem audit_log cross-cutting
+PRE-FIX:
+- asaas_webhook_events INSERT signature_valid=FALSE (event-level forensic OK)
+- log.warn { event, ip, ua }
+- NAO audit_log critical (cross-cutting forensic queryable)
+- Pass 458 (vault.invalid_internal_token) + pass 462 (qa.callback.invalid_signature)
+  estabeleceram pattern: TODO HMAC/signature invalid = audit_log critical
+- payment-svc Asaas webhook lagged - mesmo padrao crit
+
+SCOPE WHY CRITICAL:
+- Asaas webhook bypass = false PAYMENT_RECEIVED notifications
+- Attacker forja webhook -> order marcado paid -> license granted SEM dinheiro real
+- Free product fraud at scale:
+  - Atacante envia 1000 fake PAYMENT_RECEIVED webhooks com signatures invalid
+  - 1 sig vaza/fraqueza -> bypass real -> products gratis
+- audit_log + asaas_webhook_events sao DOIS LAYERS forensic complementares:
+  - asaas_webhook_events: event-level (tabela dedicada)
+  - audit_log: cross-cutting (queryable cross-svc /admin/audit-log)
+- Sem audit_log = forensic gap em admin UI (pass 451/452/455 filters)
+
+POST-FIX (paridade pass 458 + 462):
+- audit_log INSERT critical:
+  - actor NULL (anonymous external)
+  - target_type 'asaas_webhook' (NOVO - VALID_TT pass 463 expand)
+  - severity critical
+  - payload: ip + ua_prefix + event_type + asaas_event_id + asaas_payment_id
+- Fire-and-forget catch p/ nao bloquear 401 response
+- VALID_TT aiops-svc + 'asaas_webhook' (16 valores total)
+
+VALID_TT enum cadeia consolidacao DEFINITIVA:
+- pass 430 (10) -> 455 (13) -> 458 (14) -> 462 (15) -> 463 (16) <- ESTE
+
+W11+W12+W17 invalid_credential audit critical series FINAL:
+  pass 458 vault.invalid_internal_token
+  pass 462 qa.callback.invalid_signature
+  pass 463 asaas.webhook.invalid_signature <- ESTE (FECHA cadeia signature bypass cross-svc)
+
+Pattern V8 consolidado FINAL invalid_signature/credential:
+- log.warn (operational 7d retention)
+- + audit_log critical (forensic 90d retention queryable cross-svc)
+- + event-level table INSERT (when applicable - asaas_webhook_events)
+- + DLP mask em PII (ua_prefix, ip)
+- + signature/length validation evidence (sig_len_match, tok_len_match, event_type)
+- Fire-and-forget catch (audit fail nao bloqueia response 401)
+- VALID_TT enum aiops-svc update p/ admin filter
+
+196 passes acumulados (268->463) sem deploy VPS
+8 CRITICAL + 29 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 ALTA PRIORIDADE

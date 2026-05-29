@@ -527,11 +527,12 @@ const auditLogHandler = asyncHandler(async (req, res) => {
      - 'user_session' (auth-svc refresh_reuse_breach pass 315)
      - 'order_item' (review-svc dispute pass 29) */
   /* FIX-WORKER-17 pass 458: + 'vault_internal' (vault-svc audit critical)
-     FIX-WORKER-12 pass 462: + 'qa_callback' (qa-svc invalid_signature audit critical) */
+     FIX-WORKER-12 pass 462: + 'qa_callback' (qa-svc invalid_signature audit critical)
+     FIX-WORKER-11 pass 463: + 'asaas_webhook' (payment-svc invalid_signature audit critical) */
   const VALID_TT = new Set([
     'user','seller','product','order','order_item',
     'seller_payout','pending_wallet_payout','payouts_pending_wallet',
-    'vault_api_key','vault_key','vault_internal','user_session','qa_callback',
+    'vault_api_key','vault_key','vault_internal','user_session','qa_callback','asaas_webhook',
     'category','review','qna','dispute',
   ]);
   const targetIdFilter = (targetId && UUID_RE.test(targetId)) ? targetId : null;

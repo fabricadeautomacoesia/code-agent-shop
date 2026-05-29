@@ -586,7 +586,39 @@ app.post('/payments/asaas/webhook', asyncHandler(async (req, res) => {
        ON CONFLICT (asaas_event_id) DO NOTHING`,
       [data.event, data.id || null, data.payment?.id || null, JSON.stringify(data)]
     );
-    log.warn({ event: data.event, ip: req.ip, /* FIX pass 323 DLP */ ua: mask.text(req.headers['user-agent'] || '') }, '[webhook.invalid_signature]');
+    const safeUaForensic = mask.text(req.headers['user-agent'] || '');
+    log.warn({ event: data.event, ip: req.ip, ua: safeUaForensic }, '[webhook.invalid_signature]');
+    /* FIX-WORKER-11 pass 463 (audit_log critical Asaas webhook signature - paridade pass 458 + 462):
+       PRE-FIX: log.warn + asaas_webhook_events INSERT signature_valid=FALSE.
+       - asaas_webhook_events e event-level forensic (good)
+       - MAS sem cross-cutting audit_log = /admin/audit-log forensic gap
+       - Pass 458 (vault.invalid_internal_token) + pass 462 (qa.callback.invalid_signature)
+         estabeleceram pattern: TODO HMAC/signature invalid path = audit_log critical
+       SCOPE CRITICAL:
+       - Asaas webhook bypass = false PAYMENT_RECEIVED notifications
+       - Attacker forja webhook -> order marcado paid -> license granted SEM dinheiro real
+       - Free product fraud at scale (atacante consegue produtos premium gratis)
+       - Sem audit_log = SOC2 + LGPD forensic gap
+       POST-FIX: paridade vault + qa-svc critical audit_log:
+       - actor NULL (anonymous external webhook attempt)
+       - actor_role 'anonymous'
+       - target_type 'asaas_webhook' (NOVO - VALID_TT pass 463 expand)
+       - severity critical
+       - payload: ip + ua_prefix + event_type + asaas_event_id (forensic)
+       Fire-and-forget catch p/ nao bloquear response 401. */
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES (NULL, 'anonymous', 'asaas.webhook.invalid_signature', 'asaas_webhook', NULL, 'critical', $1::JSONB)`,
+      [JSON.stringify({
+        ip: req.ip,
+        ua_prefix: safeUaForensic.slice(0, 60),
+        event_type: data.event || null,
+        asaas_event_id: data.id || null,
+        asaas_payment_id: data.payment?.id || null,
+      })]
+    ).catch((auditErr) => log.error({
+      err: mask.text(String(auditErr.message || '').slice(0, 200)),
+    }, '[webhook.invalid_signature.audit_fail]'));
     return res.status(401).json({ error: 'invalid_signature' });
   }
 
