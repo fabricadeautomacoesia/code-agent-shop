@@ -40529,3 +40529,40 @@ CADEIA cache key case-insensitive cross-svc 35 sites cumulative:
 = 35 sites Pattern V8 cache key normalize consolidacao cross-svc
 
 450 passes acumulados (268->720) sem deploy VPS
+
+============================================================================
+SESSAO 721-722 (W10 aiops audit-log + alerts case-insensitive cadeia 36+ sites)
+============================================================================
+
+Pass 721 (W10 /audit-log severity case-insensitive):
+- DESCOBERTA: sevRaw .trim() apenas (cache + handler)
+- ?severity=Critical -> '' default no filter
+- POST-FIX: + .toLowerCase() ANTES whitelist check (cacheKey + handler)
+
+Pass 722 (W10 /alerts severity case-insensitive - CACHE MISMATCH BUG):
+- DESCOBERTA REAL BUG: cacheKey ja aplica .toLowerCase() linha 508
+  MAS handler linha 424 case-sensitive raw .trim() apenas
+- CENARIO REAL:
+  - ?severity=Critical -> cacheKey 'sev=critical' (normalize OK)
+  - cache MISS -> handler reject sevFilter=null -> sem filter
+  - Response stored sob key 'sev=critical' SEM filter applied
+  - Proxima request ?severity=Critical -> cache HIT response SEM filter
+  - User filtra Critical, ve TODOS severities = UX broken
+- Pattern V8 cache hygiene invariante VIOLADO (cacheKey + handler MISMATCH)
+- POST-FIX: + .toLowerCase() handler paridade cacheKey
+
+CADEIA cache key case-insensitive cross-svc 36+ sites cumulative:
+- W4 admin endpoints (sellers + payouts + qa-queue + disputes)
+- W7 product public + W17 vault listings
+- W2 orders + W5 /products/me + /payouts (passes 717/719/720)
+- W10 /audit-log severity (pass 721) + /alerts severity (pass 722)
+= 36 sites Pattern V8 cache key normalize consolidacao cross-svc
+
+CADEIA cache hygiene cross-svc invariante:
+- 35 sites pre-pass 721 normalize cache key
+- 1 site CACHE MISMATCH bug ATUAL (pass 722 alerts - cacheKey vs handler drift)
+- Lesson: pass 618 admin/reports cache shape errado (silent disabled)
+- Lesson: pass 722 cache key normalize vs handler MISMATCH (silent UX broken)
+= 2 lessons learned cache hygiene observability cumulative
+
+452 passes acumulados (268->722) sem deploy VPS
