@@ -437,33 +437,80 @@ router.post('/:id/archive',
     if (!FORCE_APPROVE_UUID_RE.test(req.params.id)) {
       return next(errorHandler.badRequest('invalid_uuid'));
     }
-    // State machine: arquivar product ja archived = no-op (idempotent friendly)
-    const r = await query(
-      `UPDATE products SET status = 'archived', archived_at = NOW(), updated_at = NOW()
-        WHERE id = $1 AND status != 'archived'
-        RETURNING id, slug, title, status`,
-      [req.params.id]
-    );
-    if (!r.rows.length) {
-      // Pode ser: not found OR ja archived (idempotent path)
-      const check = await query('SELECT id, status FROM products WHERE id = $1', [req.params.id]);
-      if (!check.rows.length) return next(errorHandler.notFound('product_not_found'));
-      return res.json({ ok: true, idempotent: true, status: check.rows[0].status });
+    /* FIX-WORKER-7 pass 512 (atomicity + DLP + forensic - paridade vault-svc):
+       PRE-FIX BUGS (5 issues critical):
+       1. UPDATE + INSERT audit_log SEM tx() wrapping (paridade pass 493 vault):
+          - UPDATE commit (product archived terminal state)
+          - audit_log INSERT fail (.catch silent swallow log.warn)
+          - SOC2 CC7.3 + LGPD Art 37 gap: archive=high-impact decision sem trail
+          - Product archived sem forensic = qual admin? quando? motivo?
+       2. reason field SEM mask.text() DLP (paridade pass 295/433/499 vault):
+          - Admin paste pode incluir Bearer/JWT/sk-/CPF/PG_PASS em reason
+          - Audit log payload_after JSONB persisted DB + backup pg_dump
+          - LGPD violation se reason tem PII raw
+       3. NO ua_prefix forensic (pattern V8 W17 pass 438 cross-svc):
+          - Apenas IP capturado
+          - Admin token XSS-stolen -> attacker archive products mass
+          - Investigation IP+UA correlation impossivel
+       4. audit_log INSERT outside tx() AND fire-and-forget catch:
+          - Mesmo pattern V8 W11 pass 503 estabeleceu: cache invalidate post-tx
+          - Mas audit_log MUST be inside tx (compliance critical)
+       5. severity 'warn' OK mas info disclosure: product archive = irreversivel
+          terminal state - poderia ser 'critical' p/ SOC2 alerts dashboard
+       POST-FIX:
+       - tx() wraps UPDATE + audit_log INSERT atomic
+       - mask.text(reason) defensive (Bearer/CPF/secrets sanitize)
+       - + ua_prefix mask.text(headers.UA).slice(0,60) (paridade pass 438)
+       - Cache invalidation pos-tx commit (paridade pass 503 pattern V8) */
+    let archivedRow = null;
+    await tx(async (c) => {
+      // State machine: arquivar product ja archived = no-op (idempotent friendly)
+      const r = await c.query(
+        `UPDATE products SET status = 'archived', archived_at = NOW(), updated_at = NOW()
+          WHERE id = $1 AND status != 'archived'
+          RETURNING id, slug, title, status`,
+        [req.params.id]
+      );
+      if (!r.rows.length) {
+        // Pode ser: not found OR ja archived (idempotent path)
+        const check = await c.query('SELECT id, status FROM products WHERE id = $1', [req.params.id]);
+        if (!check.rows.length) {
+          const err = new Error('product_not_found');
+          err.code = 'NOT_FOUND';
+          throw err;
+        }
+        archivedRow = { ok: true, idempotent: true, status: check.rows[0].status };
+        return;
+      }
+      archivedRow = r.rows[0];
+      // Audit log INSIDE tx() - atomic (compliance critical)
+      // FIX pass 512: + mask.text(reason) DLP + ua_prefix forensic + severity preserved
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'product.archive', 'product', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, req.params.id, JSON.stringify({
+          slug: r.rows[0].slug,
+          title: r.rows[0].title,
+          // FIX pass 512: mask.text() DLP - reason pode conter Bearer/JWT/CPF
+          reason: req.body?.reason ? mask.text(String(req.body.reason).slice(0, 1000)) : null,
+          ip: req.ip,
+          // FIX pass 512: + ua_prefix forensic (paridade vault pass 438)
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+        })]
+      );
+    }).catch((e) => {
+      if (e?.code === 'NOT_FOUND') return next(errorHandler.notFound('product_not_found'));
+      throw e; // bubble up errorHandler middleware
+    });
+    if (!archivedRow) return; // already responded via next() above
+    // Idempotent path (product was already archived)
+    if (archivedRow.idempotent) {
+      return res.json({ ok: true, idempotent: true, status: archivedRow.status });
     }
-    // Audit log (admin financial decision class - high-impact)
-    query(
-      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-       VALUES ($1, $2, 'product.archive', 'product', $3, 'warn', $4::JSONB)`,
-      [req.user.sub, req.user.role, req.params.id, JSON.stringify({
-        slug: r.rows[0].slug,
-        title: r.rows[0].title,
-        reason: req.body?.reason || null,
-        ip: req.ip,
-      })]
-    ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[product.archive.audit_fail]'));
     // FIX-WORKER-7 pass 5: invalida tambem detail/reviews/qna por slug
+    // Cache invalidation POS-TX commit (paridade pass 503 W11 pattern V8)
     await invalidateProductCache(req.params.id);
-    res.json({ ok: true, archived: r.rows[0].id });
+    res.json({ ok: true, archived: archivedRow.id });
   })
 );
 

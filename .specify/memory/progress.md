@@ -37531,3 +37531,66 @@ Lesson learned (paridade cross-component):
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply
+
+## Pass 512 - W7 PRODUCT-SVC: /admin/:id/archive 5 bugs (atomicity + DLP + forensic)
+
+PRE-FIX BUGS (5 issues critical em product-svc admin /archive):
+
+1. UPDATE + INSERT audit_log SEM tx() wrapping:
+   - UPDATE commit (product archived = terminal state)
+   - audit_log INSERT fail (.catch silent swallow log.warn)
+   - SOC2 CC7.3 + LGPD Art 37 gap: archive=high-impact decision sem trail
+   - Product archived sem forensic = qual admin? quando? motivo?
+   - Pattern V8 paridade pass 493 vault seller_revoke + pass 503 webhook
+
+2. reason field SEM mask.text() DLP:
+   - Admin paste pode incluir Bearer/JWT/sk-API/CPF/PG_PASS em reason
+   - audit_log payload_after JSONB persisted DB + backup pg_dump
+   - LGPD violation se reason tem PII raw
+   - Paridade vault pass 295/433/499 mask.text() pattern
+
+3. NO ua_prefix forensic:
+   - Apenas IP capturado em audit_log payload
+   - Admin token XSS-stolen -> attacker archive products mass
+   - Investigation post-incident IP+UA correlation impossivel
+   - Pattern V8 W17 pass 438 cross-svc estabeleceu ua_prefix:
+     mask.text(req.headers['user-agent'].slice(0,60))
+
+4. audit_log INSERT outside tx() fire-and-forget:
+   - Mesmo issue pass 503 corrigiu W11 webhook (cache invalidate post-tx)
+   - audit_log e compliance critical - DEVE ser dentro tx() atomic
+   - Cache invalidation correct location = POS-tx commit (pattern V8)
+
+5. severity classification info disclosure consideration:
+   - 'warn' OK mas archive eh IRREVERSIVEL terminal state
+   - SOC2 alerts dashboard pode filtrar 'critical' apenas
+   - Trade-off: 'critical' floods dashboard com admin actions normais
+   - Decisao: preservar 'warn' (semantic correct - intentional admin action)
+
+POST-FIX (paridade vault-svc + payment-svc consolidated):
+- tx() wraps UPDATE + audit_log INSERT atomic
+- Throw 'NOT_FOUND' code dentro tx + outer .catch handle next(notFound)
+- mask.text(reason) defensive DLP (Bearer/CPF/secrets sanitize)
+- + ua_prefix forensic mask.text(UA).slice(0,60)
+- Cache invalidation POS-tx commit (paridade pass 503)
+- Idempotent path preserved (product ja archived = no-op response)
+
+Cadeia W7 PRODUCT-SVC atomicity:
+- pass 5 invalidateProductCache helper (cache invalidation cross-routes)
+- pass 28 BUG 5 atomic /qa/run INSERT + UPDATE (referenced from qa-svc)
+- pass 487 is_top_seller NULL category guard cross-svc
+- pass 490 /compare cache key UUID filter
+- pass 512 (este) /archive 5 bugs (tx + DLP + forensic + pos-tx cache)
+
+Cross-svc cadeia atomicity pattern V8 (8 endpoints consolidated):
+- vault-svc 6/6 (passes 25/269/310/493/506/507)
+- payment-svc webhook (pass 503 cache deferral)
+- qa-svc dispatch_failed (pass 498)
+- product-svc archive (pass 512 este)
+
+244 passes acumulados (268->512) sem deploy VPS
+9 CRITICAL + 36 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply
