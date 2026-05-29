@@ -39999,3 +39999,36 @@ CADEIA Regra D direction parity SORT_OPTIONS consolidacao:
 = 6 sites direction parity cross-svc consolidacao
 
 426 passes acumulados (268->696) sem deploy VPS
+
+============================================================================
+SESSAO 697-698 (W7 also-bought CTE inner + W11 payment reconcile cron)
+============================================================================
+
+Pass 697 (W7 also-bought CTE inner ORDER direction parity DESC+DESC):
+- DESCOBERTA: CTE also_bought inner ORDER BY co_buyers DESC, oi.product_id (default ASC)
+  = MIXED direction tiebreaker
+- Pass 696 corrigiu outer ORDER mas inner CTE ficou lagged
+- POST-FIX: oi.product_id DESC paridade direction parity Regra D V8
+
+Pass 698 (W11 payment reconcile cron tiebreaker - forensic determinism):
+- DESCOBERTA: cron reconcile asaas_webhook_events ORDER ASC+ASC sem id tiebreaker
+- Mass-insert burst (Asaas 100+ events same instant) -> heap order arbitrario
+- LIMIT 20 FOR UPDATE SKIP LOCKED picks ARBITRARY subset entre ties
+- Compounded over crons mensal -> forensic non-deterministic audit_log
+- POST-FIX: + id ASC tiebreaker paridade pass 632 vault rotation cron + pass 489
+
+CADEIA Regra D direction parity cron variants ASC+ASC:
+- qa-svc /qa/runs/stuck (pass historico)
+- vault rotationAlertCron (pass 632)
+- payment reconcile cron (pass 698 este)
+= 3 sites cron forensic determinism cumulative
+
+CADEIA Regra D direction parity cross-svc TOTAL:
+- DESC+DESC: 30+ sites admin listings (orders, payouts, reports, qa-queue, ...)
+- DESC+DESC: search SORT_OPTIONS 6 sorts + /sellers 3 sorts (passes 648, 691)
+- DESC+DESC: product-svc related + also-bought outer (pass 696)
+- DESC+DESC: product-svc also-bought CTE inner (pass 697 este)
+- ASC+ASC: cron FIFO operational (3 sites: qa stuck, vault rotation, payment reconcile)
+- Mixed direction intencional: outbox processor priority DESC + created_at ASC
+
+428 passes acumulados (268->698) sem deploy VPS
