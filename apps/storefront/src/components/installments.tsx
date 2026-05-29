@@ -34,7 +34,11 @@ export function Installments({
 
   return (
     <div className="flex items-center gap-1.5 text-xs text-green-300 -mt-3 mb-5">
-      <CreditCard className="w-3.5 h-3.5" />
+      {/* FIX-WORKER-3 pass 553 (a11y - paridade pass 541 PDP icons consolidacao):
+          CreditCard icon decorativo - texto 'em ate Nx de R$X de juros' descritivo
+          completo. SR (NVDA/JAWS) anunciava 'imagem CreditCard' antes do texto =
+          ruidoso. Pattern V8 W3 a11y: icons decorativos + texto = aria-hidden. */}
+      <CreditCard className="w-3.5 h-3.5" aria-hidden="true" />
       <span>
         em ate <strong className="text-green-200">{inst.n}x de {Api.formatBRL(inst.perCents)}</strong>
         <span className="text-green-300/80"> sem juros</span>

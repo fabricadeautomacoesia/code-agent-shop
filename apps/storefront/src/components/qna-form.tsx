@@ -121,8 +121,15 @@ export function QnaForm({ productId, onSubmitted }: { productId: string; onSubmi
       {/* FIX-WORKER-3 pass 186 (a11y): aria-hidden em icone decorativo + focus-visible
           + aria-label dinamico contextual SR */}
       {/* FIX-WORKER-3 pass 413: button enabled apenas com submit real OR login CTA */}
+      {/* FIX-WORKER-3 pass 553 (a11y - aria-busy paridade pass 549/552 CTA cadeia):
+          PRE-FIX: aria-label dinamico cobria loading state mas SEM aria-busy.
+          Some SR (NVDA modern) usam aria-busy p/ silenciar live regions enquanto
+          processing. Sem aria-busy = SR pode anunciar 'Enviando pergunta'
+          continuamente conforme aria-label refresh.
+          POST-FIX: + aria-busy={loading} paridade authflows. */}
       <button type="submit"
         disabled={!canSubmit && !canLoginRedirect}
+        aria-busy={loading}
         aria-label={loading ? 'Enviando pergunta' : (token ? 'Enviar pergunta sobre o produto' : 'Fazer login para perguntar')}
         className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-magenta">
         <Send className="w-4 h-4" aria-hidden="true" /> {loading ? 'Enviando...' : (token ? 'Enviar pergunta' : 'Login para perguntar')}
