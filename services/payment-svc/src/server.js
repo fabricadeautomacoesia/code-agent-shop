@@ -914,6 +914,19 @@ async function processWebhookEvent(evt) {
     PAYMENT_DELETED:     { ps: 'failed',   os: 'cancelled' },
     // FIX pass 222: REFUND_FAILED nao transiciona state - log/alert only
     PAYMENT_REFUND_FAILED: { logOnly: true, severity: 'critical' },
+    /* FIX-WORKER-11 pass 559 (PAYMENT_REFUND_REQUESTED map gap):
+       PRE-FIX BUG: Comentario linha 908 documentava PAYMENT_REFUND_REQUESTED
+       como 'estado transitorio - log only' MAS evento NAO estava no map.
+       Quando Asaas envia este evento (admin iniciou refund flow):
+       - if (!action) trigger -> log.warn '[webhook.unknown_event]'
+       - Observability MENTE: reporta como evento desconhecido
+       - audit_log SEM entry (action != logOnly path inacessivel)
+       - Operador vê 'unknown_event' em alertas e investiga falsamente
+       POST-FIX: + entrada explicit logOnly severity='info' (transitorio
+       legitimate, nao alerta critico - admin sabe que iniciou refund).
+       audit_log + admin notif via logOnly branch (linha 1002+) ja existem.
+       Pattern V8 W11 webhook semantic completeness. */
+    PAYMENT_REFUND_REQUESTED: { logOnly: true, severity: 'info' },
   };
   const action = map[evt.event];
   // FIX-WORKER-7 pass 22 (bug 3): eventos desconhecidos LOG WARN
