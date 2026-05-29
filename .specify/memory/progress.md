@@ -40092,3 +40092,27 @@ MILESTONE: pass 700 - 8 SORT_OPTIONS sites COMPLETOS cross-svc consolidacao
 - ASC+ASC preserved para FIFO operacional + price_asc UX
 
 430 passes acumulados (268->700 MILESTONE)
+
+============================================================================
+SESSAO 701 (W13 Telegram literal asterisks visual bug - consume pass 219)
+============================================================================
+
+Pass 701 (W13 Telegram outbox visual bug - literal asterisks):
+- DESCOBERTA: sendTelegram(`*${title}*\n${body}`) - asteriscos para Markdown bold
+- Pass 219 REMOVEU parse_mode='Markdown' (linha 230 sendTelegram body)
+  Motivo pass 219: user content tendo _*[]() quebra Markdown -> 400 erro
+- POST-pass-219 plain text mode: asteriscos APARECEM LITERAIS Telegram chat
+- User ve "*Pedido aprovado*" em vez de bold rendering
+- UX broken cross-template (todos templates usando *bold* wrapping)
+- POST-FIX: format "TITLE EM CAPS\n\nbody" - destaque sem markdown
+- Pattern V8 W13: parse_mode plain text = NO markdown chars literal in msg
+
+CADEIA W13 Telegram consolidacao:
+- pass 5: throw em token revogado + http error
+- pass 219: parse_mode REMOVED + retry_after + URL token sanitize
+- pass 251: e.transient flag classification
+- pass 347: DLP mask network errors at source
+- pass 516: DLP mask em desc API errors (paridade pass 347)
+- pass 701 (este): visual bug literal asterisks - consume pass 219
+
+431 passes acumulados (268->701) sem deploy VPS
