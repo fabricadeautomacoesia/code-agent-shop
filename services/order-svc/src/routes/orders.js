@@ -491,11 +491,22 @@ router.get('/',
               COALESCE(items.preview, '[]'::JSON) AS items_preview,
               COUNT(*) OVER()::INT AS _total
          FROM orders o
+         /* FIX-WORKER-2 pass 639 (json_agg ORDER BY ASC+ASC paridade /:id detail linha 659):
+            PRE-FIX: items_preview json_agg sem ORDER BY - PG heap order arbitrario.
+            - /conta/pedidos listing mostra items thumbnails primeiros 1-5 itens
+            - Order detail (/:id linha 659) ORDER BY oi.created_at, oi.id - deterministic
+            - Listing path INCONSISTENT vs detail path:
+              listing tab 1: thumbs [prodA, prodB, prodC]
+              listing tab 2 (cache evict + refetch): thumbs [prodC, prodA, prodB]
+            - User percebe "Por que ordem dos produtos do meu pedido muda?"
+            POST-FIX: + ORDER BY oi.created_at, oi.id ASC+ASC (paridade detail path).
+            - mig 010+ idx_oi_order ja cobre (order_id) WHERE filter
+            - tiebreaker oi.id ASC determinism dentro mesmo created_at (rare bulk insert) */
          LEFT JOIN LATERAL (
            SELECT json_agg(json_build_object(
                     'title', snapshot->>'title',
                     'cover', snapshot->>'cover_image_url'
-                  )) AS preview
+                  ) ORDER BY created_at, id) AS preview
              FROM order_items
             WHERE order_id = o.id
          ) items ON TRUE
