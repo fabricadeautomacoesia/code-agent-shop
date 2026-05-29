@@ -359,7 +359,10 @@ router.get('/:slug/also-bought',
        JOIN products p ON p.id = ab.product_id
        -- FIX bug 4: JOIN sellers final (era subquery N scans)
        LEFT JOIN sellers s ON s.id = p.seller_id
-      ORDER BY ab.co_buyers DESC, p.sales_count DESC NULLS LAST, p.id ASC`,
+      /* FIX-WORKER-7 pass 696 (Regra D direction parity also-bought - paridade related):
+         PRE-FIX: 2-level DESC chain + p.id ASC = MIXED direction
+         POST-FIX: p.id DESC paridade cadeia cross-svc. */
+      ORDER BY ab.co_buyers DESC, p.sales_count DESC NULLS LAST, p.id DESC`,
     [parent.rows[0].id, lim]
   );
   res.json({ products: r.rows, count: r.rows.length, limit: lim });
@@ -433,9 +436,14 @@ router.get('/:slug/related',
           AND p2.id <> $2
           AND p2.status IN ('approved','platform_owned')
           AND p2.deleted_at IS NULL
+        /* FIX-WORKER-7 pass 696 (Regra D direction parity - paridade cadeia 30+ sites):
+           PRE-FIX: DESC chain + p2.id ASC = MIXED direction tiebreaker.
+           - External Sort obligatorio (idx composite nao bate)
+           - Paridade cadeia /search SORT_OPTIONS (648), /sellers (691), admin/sellers (624)
+           POST-FIX: p2.id DESC consistent DESC tiebreaker. */
         ORDER BY p2.sales_count DESC NULLS LAST,
                  p2.avg_rating DESC NULLS LAST,
-                 p2.id ASC
+                 p2.id DESC
         LIMIT $3
      )
      SELECT rp.id, rp.slug, rp.title, rp.subtitle, rp.short_description, rp.kind,
