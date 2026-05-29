@@ -405,6 +405,21 @@ router.get('/all',
       params.push(`%${qEscaped}%`); i++;
     }
     params.push(lim, off);
+    /* FIX-WORKER-14 pass 624 (Regra D direction parity DESC+DESC tiebreaker):
+       PRE-FIX: ORDER BY s.created_at DESC, s.id ASC (mixed direction)
+       - Mixed direction tiebreaker forca External Sort no PG planner
+         (idx composite (created_at DESC, id ASC) nao existe, so simple idx)
+       - Inconsistency vs cadeia Regra D V8 cross-svc (passes 102-117): TODOS
+         outros admin listings usam DESC+DESC (orders, payouts, reports, qa-queue,
+         disputes, alerts, audit-log) - sellers /all era unico outlier
+       - Within same second (race create_seller via admin batch import), id ASC
+         retorna oldest UUID primeiro - inversao vs pattern "most recent first"
+         que admin espera quando ordena "Novos sellers DESC"
+       POST-FIX: s.id DESC tiebreaker direction parity Regra D V8
+       - UUIDs nao sao monotonic (v4 random) mas dentro mesmo second batch
+         a probabilidade ordem id DESC ~= insertion order DESC eh alta
+       - Most importantly: consistente com cadeia 30+ sites cross-svc
+       - Cache key inalterado (mesmo prefix sellers admin list pass 613) */
     const r = await query(
       `SELECT s.id, s.store_slug, s.store_name, s.seller_class, s.status,
               s.reputation_tier, s.reputation_score, s.total_sales, s.total_products_active,
@@ -412,7 +427,7 @@ router.get('/all',
               COUNT(*) OVER()::INT AS _total
          FROM sellers s JOIN users u ON u.id = s.user_id
         WHERE ${where.join(' AND ')}
-        ORDER BY s.created_at DESC, s.id ASC
+        ORDER BY s.created_at DESC, s.id DESC
         LIMIT $${i} OFFSET $${i+1}`,
       params
     );
