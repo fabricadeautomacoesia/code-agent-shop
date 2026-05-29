@@ -346,7 +346,12 @@ router.get('/:slug/also-bought',
           AND p2.status IN ('approved','platform_owned')
           AND p2.deleted_at IS NULL
         GROUP BY oi.product_id
-        ORDER BY co_buyers DESC, oi.product_id
+        /* FIX-WORKER-7 pass 697 (Regra D direction parity CTE inner ORDER paridade pass 696):
+           PRE-FIX: ORDER BY co_buyers DESC, oi.product_id (default ASC) = MIXED direction
+           - Same root cause pass 696 fixou outer ORDER mas CTE inner ficou lagged
+           - oi.product_id UUID v4 random - ASC arbitrario nao traz benefit semantico
+           POST-FIX: oi.product_id DESC paridade direction parity Regra D V8 */
+        ORDER BY co_buyers DESC, oi.product_id DESC
         LIMIT $2
      )
      SELECT p.id, p.slug, p.title, p.subtitle, p.short_description, p.kind,
