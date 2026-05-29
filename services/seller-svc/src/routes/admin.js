@@ -3,7 +3,7 @@
 const express = require('express');
 const { z } = require('zod');
 const { query } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII, notifCache } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII, notifCache, withRetry, mask } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 60: LGPD role-tier helper.
 // Aplica maskPII em email+full_name p/ role STAFF (admin vê full).
@@ -85,8 +85,19 @@ router.post('/:id/suspend',
       return next(errorHandler.badRequest('invalid_uuid'));
     }
 
+    /* FIX-WORKER-4 pass 656 (withRetry deadlock defense suspend - cadeia W6 auth-svc consolidacao):
+       PRE-FIX: tx() sem withRetry wrap (linha 89).
+       - Cenarios deadlock 40P01:
+         1. Admin mass-suspend batch via dashboard -> tx concurrent lock ordering
+            (UPDATE sellers + UPDATE user_sessions + INSERT audit_log + INSERT notification)
+         2. Race com login attempt do seller suspendido (UPDATE user_sessions lock conflict)
+         3. Race com reactivate concorrente (admin dupla-decisao)
+       - Cadeia consolidacao cross-svc atomicity ja completou:
+         auth-svc 6/6, vault-svc 8/8, product-svc admin 3/3
+         seller-svc admin 5 tx LAGGED - este eh 1/5
+       POST-FIX: withRetry('seller.suspend.tx') wrap (3 attempts backoff) */
     let outcome;
-    await tx(async (c) => {
+    await withRetry('seller.suspend.tx', async () => await tx(async (c) => {
       // FIX bug 3+4 (Regra K + 404): SELECT FOR UPDATE + existence + status check
       const cur = await c.query(
         `SELECT id, user_id, status FROM sellers
@@ -139,7 +150,7 @@ router.post('/:id/suspend',
       );
       outcome = outcome || {};
       outcome.notified_user_id = s.user_id;
-    });
+    }));
 
     /* FIX-WORKER-4 pass 476 (notifCache cross-svc - seller_suspended priority 3 critical):
        Suspended seller PRECISA ver "sua conta foi suspensa" IMEDIATO ao tentar acessar.
@@ -191,8 +202,9 @@ router.post('/:id/reactivate',
       return next(errorHandler.badRequest('invalid_uuid'));
     }
 
+    // FIX-WORKER-4 pass 657 (withRetry deadlock defense reactivate paridade pass 656 suspend)
     let outcome;
-    await tx(async (c) => {
+    await withRetry('seller.reactivate.tx', async () => await tx(async (c) => {
       const cur = await c.query(
         `SELECT id, user_id, status FROM sellers
           WHERE id = $1::UUID FOR UPDATE`, [req.params.id]
@@ -237,7 +249,7 @@ router.post('/:id/reactivate',
       );
       outcome = outcome || {};
       outcome.notified_user_id = s.user_id;
-    });
+    }));
 
     // FIX-WORKER-4 pass 477 (notifCache - seller_reactivated good news engagement)
     if (outcome?.notified_user_id) notifCache.invalidate(outcome.notified_user_id);
