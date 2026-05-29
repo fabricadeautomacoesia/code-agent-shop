@@ -1435,9 +1435,17 @@ const maskName = maskPII.name;
 //   Latency impact: 30-80ms hot path admin queue -> ~1ms cache HIT
 //   500 queries/min -> ~16 queries/min (96.8% reducao DB load)
 const ADMIN_REPORTS_LIMIT_MAX = 200;
+/* FIX-WORKER-4 pass 729 (cache hygiene MISMATCH +.trim() paridade cadeia 8+ bugs):
+   PRE-FIX: cacheKey .toLowerCase() apenas (no .trim()) handler raw String
+   - Trailing whitespace ?status=open%20 -> cacheKey 'open' (lowercase) MAS
+     handler 'open ' -> 400 invalid_status (whitespace fail whitelist check)
+   - ?status=Open -> cacheKey 'open' (lowercase) MAS handler 'Open' -> 400 fail
+   - Pattern V8 cache hygiene invariante cross-svc (8+ MISMATCH bugs cumulative
+     passes 618/722/723/724/725/726/727/728 + este 729)
+   POST-FIX: + .trim() em cacheKey + .trim().toLowerCase() handler paridade */
 const adminReportsCacheKey = (req) => {
   const q = req.query;
-  const statusRaw = String(q.status || 'open').toLowerCase();
+  const statusRaw = String(q.status || 'open').trim().toLowerCase();
   const status = ADMIN_REPORTS_STATUS.has(statusRaw) ? statusRaw : 'open';
   const lim = Math.max(1, Math.min(ADMIN_REPORTS_LIMIT_MAX, parseInt(q.limit, 10) || 50));
   const off = Math.max(0, parseInt(q.offset, 10) || 0);
@@ -1450,7 +1458,8 @@ const adminReportsCacheKey = (req) => {
 app.get('/admin/reports', jwt.requireAuth({ roles: ['admin','staff'] }),
   cache.cacheMiddleware(adminReportsCacheKey, 30),
   asyncHandler(async (req, res) => {
-    const status = String(req.query.status || 'open');
+    // FIX pass 729: + .trim().toLowerCase() paridade cacheKey (cache hygiene mismatch)
+    const status = String(req.query.status || 'open').trim().toLowerCase();
     if (!ADMIN_REPORTS_STATUS.has(status)) {
       return res.status(400).json({ error: 'invalid_status', allowed: Array.from(ADMIN_REPORTS_STATUS) });
     }
