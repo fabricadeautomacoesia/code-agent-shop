@@ -40164,3 +40164,23 @@ CADEIA W14 direction parity + PARTIAL composite cumulative:
 - 27 indexes total apply pending VPS SSH
 
 433 passes acumulados (268->703) sem deploy VPS
+
+============================================================================
+SESSAO 704 (W9 /sellers public layout twitter card + openGraph enrichment)
+============================================================================
+
+Pass 704 (W9 /sellers public layout metadata enrichment):
+- DESCOBERTA: /sellers/layout.tsx openGraph minimo (4 campos) + sem twitter card
+- /sellers eh PUBLIC LISTING indexavel (sem noindex - high SEO value)
+- Compartilhamento /sellers em WhatsApp/Slack/X = high engagement social
+- twitter card primario para cross-platform preview consistency
+- POST-FIX: + url + siteName em openGraph + twitter summary card
+
+CADEIA W9 metadata enrichment cross-page 13 sites cumulative:
+- /login + /esqueci-senha + /redefinir-senha + /register (4 auth)
+- /conta/* downloads, seguranca, perfil, pontos, pedidos + /conta root (6)
+- /cart + /checkout (2 protected)
+- /sellers (este pass 704) - 13th cumulative
+= 13 sites W9 metadata enrichment cross-platform preview consistency
+
+434 passes acumulados (268->704) sem deploy VPS
