@@ -376,7 +376,44 @@ app.use('/api/products',      fail2ban.middleware(), proxy(UPSTREAMS.product,   
 // chain antes do fallback Groq, perdendo verdict gerado mas nao salvo.
 // POST-FIX: ambos para TIMEOUT_SLOW (60s), alinhado com /api/uploads e
 // /api/products/upload que ja eram SLOW.
-app.use('/api/qa',            fail2ban.middleware(), proxy(UPSTREAMS.qa,           { pathRewrite: (p) => '/qa' + p, timeout: TIMEOUT_SLOW }));
+/* FIX-WORKER-6 pass 694 (CRITICAL gateway block /api/qa/run internal-only - paridade pass 567/627/693):
+   PRE-FIX BUG: /api/qa/run exposto via gateway publico.
+   - qa-svc /qa/run (server.js linha 146) eh INTERNAL-ONLY:
+     - qaRunGuard (x-internal-token + admin/staff/service JWT fallback)
+     - dispatched by product-svc /products/:id/submit (cross-svc via Docker mesh)
+     - admin manual dispatch via dashboard-admin /admin/qa-queue force-rerun
+   - Layer 2 defense MAS gateway expoe rota publicamente
+   - Bypass success vectors:
+     - LLM cost spam (atacante dispara N QA runs gerando $$ OpenAI/Gemini bills)
+     - Token leaked admin -> mass QA dispatch para produtos rivais (DDoS)
+     - Internal token bruteforce via gateway probing
+   - Internal cross-svc calls (product-svc -> qa-svc) usam Docker network direct
+     (tasks.cas_qa-svc:port) - bypass gateway
+   - /qa/callback NAO bloqueada (publica - qa-worker callback HMAC-protected externamente)
+   POST-FIX: gateway block /qa/run + sub-paths defensive
+   - regex match exact OR sub-paths (trailing slash + case-insensitive normalize)
+   - log.warn '[gateway.qa_blocked]' forensic trail
+   - 403 + 'internal_only_endpoint' (paridade pass 567/627/693 response shape)
+   Pattern V8 W6 layer-1 defense-in-depth: internal-only endpoints gateway block. */
+app.use('/api/qa', fail2ban.middleware(), (req, res, next) => {
+  const normalizedPath = req.path.replace(/\/+$/, '').toLowerCase();
+  // /run exato OR /run/X sub-paths defensive (trailing slash + case-normalize handled)
+  const isBlockedQaPath = normalizedPath === '/run'
+    || normalizedPath.startsWith('/run/');
+  if (isBlockedQaPath) {
+    log.warn({
+      ip: req.realIp || req.ip,
+      path: req.originalUrl,
+      normalized: normalizedPath,
+      method: req.method,
+    }, '[gateway.qa_blocked] LAYER-1 defense - /qa/run internal-only (LLM cost spam vector)');
+    return res.status(403).json({
+      error: 'internal_only_endpoint',
+      message: 'Este endpoint nao esta disponivel via gateway publico.',
+    });
+  }
+  next();
+}, proxy(UPSTREAMS.qa, { pathRewrite: (p) => '/qa' + p, timeout: TIMEOUT_SLOW }));
 app.use('/api/orders',        fail2ban.middleware(), proxy(UPSTREAMS.order,        { pathRewrite: (p) => '/orders' + p }));
 /* FIX-WORKER-6 pass 693 (CRITICAL gateway block internal payment endpoints - paridade pass 627 vault):
    PRE-FIX BUG: /api/payments/asaas/create + /api/payments/asaas/refund expostos via gateway
