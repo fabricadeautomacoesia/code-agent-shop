@@ -39673,3 +39673,56 @@ CADEIA cross-svc withRetry atomicity STATUS FINAL:
 - TOTAL: ~36 endpoints/tx cross-svc consolidacao 100%
 
 395 passes acumulados (268->665) sem deploy VPS
+
+============================================================================
+SESSAO 666-673 (W13 review-svc 8/8 tx withRetry COMPLETA atomicity)
+============================================================================
+
+Pass 666 (W13 review create withRetry):
+- POST / tx (review insert + audit + notification seller)
+- Race: buyer double-click "Enviar avaliacao" + race com /vote concorrente
+
+Pass 667 (W13 review vote withRetry):
+- POST /:id/vote tx (SELECT FOR UPDATE review + UPSERT review_votes + UPDATE counter)
+- HIGH FREQUENCY race condition: 50 users clicam helpful simultaneo
+
+Pass 668 (W13 review reply withRetry):
+- POST /:id/reply tx (UPDATE review + audit + notification buyer)
+- Race com /vote concorrente em mesma review
+
+Pass 669 (W13 qna create withRetry):
+- POST /qna tx (INSERT qna + audit + notification seller)
+- Race com PDP cache refresh
+
+Pass 670 (W13 qna upvote withRetry):
+- POST /qna/:id/upvote tx (toggle vote + counter)
+- HIGH FREQUENCY (PDP popular)
+
+Pass 671 (W13 qna answer withRetry):
+- POST /qna/:id/answer tx (UPDATE qna + audit + notification asker)
+
+Pass 672 (W13 reports create withRetry):
+- POST /reports tx (INSERT report + alert admin)
+
+Pass 673 (W13 reports/resolve withRetry):
+- POST /reports/:id/resolve tx (UPDATE + audit + notification reporter)
+- ULTIMO review-svc tx lagged - COMPLETA 8/8
+
+CADEIA review-svc atomicity COMPLETA 8/8 endpoints:
+- review.create + review.vote + review.reply (3)
+- qna.create + qna.upvote + qna.answer (3)
+- reports.create + reports.resolve (2)
++ withRetry import @cas/shared (era ausente em server.js)
+
+CADEIA cross-svc withRetry atomicity STATUS REVISADO:
+- auth-svc: 6/6 ✅
+- vault-svc: 8/8 ✅
+- product-svc admin: 3/3 ✅
+- seller-svc: 10/10 ✅ (admin 5 + me 3 + loyalty 2)
+- payment-svc: 6 tx + 10 withRetry ✅
+- review-svc: 8/8 ✅ (passes 666-673 ESTA SESSAO)
+- order-svc: 10 tx LAGGED (proxima micro-tarefa)
+- product-svc seller-mgmt: 4 tx LAGGED
+- TOTAL atual: ~44 endpoints/tx cross-svc consolidacao
+
+403 passes acumulados (268->673) sem deploy VPS
