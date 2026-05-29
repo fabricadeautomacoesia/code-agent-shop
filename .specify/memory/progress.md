@@ -39439,3 +39439,43 @@ CADEIA Regra D direction parity status:
 - Mixed direction OK quando intencional (outbox priority DESC + created_at ASC FIFO)
 
 378 passes acumulados (268->648) sem deploy VPS
+
+============================================================================
+SESSAO 649-650 (W3 QnaUpvote aria-busy + W7 product/archive withRetry)
+============================================================================
+
+Pass 649 (W3 QnaUpvote aria-busy paridade cadeia 9 sites W3 PDP CTA):
+- DESCOBERTA: QnaUpvote button disabled={loading} mas SEM aria-busy
+- SR (NVDA/JAWS) nao distingue 'disabled' (permanent) de 'busy' (temporary)
+- Some SR (NVDA modern) usam aria-busy p/ silenciar live regions durante processing
+- POST-FIX: + aria-busy={loading} + disabled:cursor-wait
+- 9o site cadeia W3 PDP CTA aria-busy (AddToCart, WishlistButton 2 variants,
+  QnaForm, PriceAlertButton, ShareButton, ProgressiveCouponTeaser, FlashPromoTimer)
+
+Pass 650 (W7 admin/:id/archive withRetry deadlock defense):
+- DESCOBERTA: tx() sem withRetry wrap em /admin/:id/archive
+- Cenarios deadlock 40P01:
+  1. Admin mass-archive batch (10+ products) -> tx concurrent lock ordering
+  2. Race com /force-approve mesmo product (admin double-click)
+  3. Race com cron auto_archive_inactive (5min interval)
+- Cadeia withRetry consolidacao cross-svc:
+  vault-svc: 8/8 endpoints write (pass 643 completou)
+  payment-svc: refund + create (pass 644 + cross-svc)
+  order-svc: dispute resolve + checkout (pass historico)
+  product-svc admin: este endpoint lagged
+- POST-FIX: withRetry('product.archive.tx') wrap (3 attempts backoff)
+- + withRetry import @cas/shared (era ausente em product-svc/admin.js)
+
+CADEIA W3 PDP CTA aria-busy a11y cumulative:
+1. AddToCart (pass 67)
+2. QnaForm (pass 553)
+3. PriceAlertButton (pass 573)
+4. WishlistButton pdp variant (pass 575)
+5. WishlistButton card variant (pass 575)
+6. ShareButton menuitems + Copy aria-live (pass 562)
+7. ProgressiveCouponTeaser mobile a11y (pass 539)
+8. FlashPromoTimer aria-live SR countdown (pass 645)
+9. QnaUpvote (pass 649 este)
+= 9 components a11y consolidacao W3 PDP
+
+380 passes acumulados (268->650) sem deploy VPS
