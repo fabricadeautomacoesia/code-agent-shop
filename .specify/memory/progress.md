@@ -40680,3 +40680,27 @@ Pattern V8 cache hygiene REFORCADO:
 - Lesson: cacheKey + handler DEVE ter EXACTLY same normalize sequence
 
 461 passes acumulados (268->731) sem deploy VPS
+
+============================================================================
+SESSAO 732 (W10 /audit-log target_id case-insensitive cacheKey mismatch fix)
+============================================================================
+
+Pass 732 (W10 /audit-log target_id handler .toLowerCase() paridade):
+- DESCOBERTA: cacheKey linha 792 tidRaw.toLowerCase() apos validation
+- handler linha 645 .trim() apenas SEM .toLowerCase()
+- CENARIO REAL:
+  - ?target_id=ABC-123-... (uppercase UUID legitimate)
+  - cacheKey stored 'tid=abc-123-...' (lowercase)
+  - handler queries 'ABC-123-...' raw -> WHERE a.target_id = 'ABC-123-...'::UUID
+  - PG UUID storage canonical LOWERCASE -> WHERE comparison FAILS
+  - 0 rows returned mesmo com forensic match disponivel
+  - User filtra UUID em CAPS -> ve resposta vazia (UX broken)
+- POST-FIX: + .toLowerCase() handler paridade cacheKey
+
+CADEIA cache hygiene MISMATCH bugs cumulative 12 sites:
+- pass 618 (cache shape errado)
+- pass 722-731 (10 sites case + trim mismatches)
+- pass 732 (este - target_id UUID case mismatch)
+= 12 cache hygiene MISMATCH bugs ATIVA AUDITORIA cross-svc
+
+462 passes acumulados (268->732) sem deploy VPS
