@@ -980,30 +980,51 @@ router.post('/payouts/:id/reject',
     if (!UUID_RE.test(req.params.id)) {
       return next(errorHandler.badRequest('invalid_uuid'));
     }
-    const r = await query(
-      `UPDATE seller_payouts SET status = 'rejected', rejected_reason = $1
-       WHERE id = $2 AND status = 'pending'
-       RETURNING id, seller_id, amount_cents`,
-      [req.body.reason, req.params.id]
-    );
-    if (!r.rows.length) return next(errorHandler.notFound('payout_not_pending'));
-    // FIX-WORKER-18 pass 175: invalida cache seller (pos-UPDATE)
+    /* FIX-WORKER-4 pass 714 (CRITICAL atomicity audit_log compliance - paridade pass 713 /approve):
+       PRE-FIX BUGS (3 critical compliance issues - paridade pass 713):
+       1. UPDATE + INSERT audit_log NAO atomico (sem tx() wrap)
+          - SOC2 CC1.4 + LGPD Art 37 violation
+          - reject = financial decision (libera saldo seller? cancela payment?)
+            requer trail garantido (compliance forensic)
+       2. NO withRetry wrap (cadeia seller-svc admin atomicity pass 656-660)
+          - Race com /approve mesmo payout (admin dupla-decisao)
+       3. NO ua_prefix forensic (pattern V8 W17 pass 438)
+       POST-FIX: tx() + withRetry + ua_prefix + DLP mask reason (preserved pass 296). */
+    let rejected;
+    await withRetry('seller.payout_reject.tx', async () => await tx(async (c) => {
+      const r = await c.query(
+        `UPDATE seller_payouts SET status = 'rejected', rejected_reason = $1
+         WHERE id = $2 AND status = 'pending'
+         RETURNING id, seller_id, amount_cents`,
+        [req.body.reason, req.params.id]
+      );
+      if (!r.rows.length) {
+        const err = new Error('payout_not_pending');
+        err.code = 'NOT_FOUND';
+        throw err;
+      }
+      rejected = r.rows[0];
+      // FIX pass 714: INSERT audit_log DENTRO tx() - atomic compliance
+      await c.query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, $2, 'payout.reject', 'seller_payout', $3, 'warn', $4::JSONB)`,
+        [req.user.sub, req.user.role, rejected.id, JSON.stringify({
+          seller_id: rejected.seller_id,
+          amount_cents: rejected.amount_cents,
+          reason: mask.text(String(req.body.reason || '').slice(0, 500)),
+          ip: req.ip,
+          // FIX pass 714: + ua_prefix forensic (paridade pass 438 vault + 713 approve)
+          ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+        })]
+      );
+    })).catch((e) => {
+      if (e?.code === 'NOT_FOUND') return next(errorHandler.notFound('payout_not_pending'));
+      throw e;
+    });
+    if (!rejected) return;
+    // FIX-WORKER-18 pass 175: invalida cache seller (pos-tx commit)
     await invalidateSellerPayoutsCache(req.params.id);
-    // FIX-WORKER-4 pass 235: audit log (paridade com /approve - financial trail)
-    // FIX-WORKER-11 pass 296: DLP mask reason - paridade pass 295 vault
-    //   Admin escreve free-text reason - pode conter Bearer/JWT/CPF
-    //   pass 295 estabeleceu pattern em vault revoke endpoints
-    query(
-      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-       VALUES ($1, $2, 'payout.reject', 'seller_payout', $3, 'warn', $4::JSONB)`,
-      [req.user.sub, req.user.role, r.rows[0].id, JSON.stringify({
-        seller_id: r.rows[0].seller_id,
-        amount_cents: r.rows[0].amount_cents,
-        reason: require('@cas/shared').mask.text(req.body.reason.slice(0, 500)),
-        ip: req.ip,
-      })]
-    ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: require('@cas/shared').mask.text(String(e.message || '').slice(0, 300)) }, '[payout.reject.audit_fail]'));
-    res.json({ ok: true, rejected: r.rows[0].id });
+    res.json({ ok: true, rejected: rejected.id });
   })
 );
 
