@@ -919,7 +919,10 @@ app.get('/qa/runs/:product_id', jwt.requireAuth(),
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
   // BUG 6: verdict filter optional
-  const verdictFilter = req.query.verdict ? String(req.query.verdict) : null;
+  // FIX pass 727: + .trim().toLowerCase() paridade cacheKey linha 902 (cache hygiene mismatch)
+  const verdictFilter = req.query.verdict
+    ? String(req.query.verdict).trim().toLowerCase()
+    : null;
   if (verdictFilter && !QA_VERDICT_ENUM.has(verdictFilter)) {
     return res.status(400).json({ error: 'invalid_verdict', allowed: Array.from(QA_VERDICT_ENUM) });
   }

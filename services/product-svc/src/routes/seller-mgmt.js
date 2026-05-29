@@ -240,7 +240,10 @@ router.get('/',
 
   if (isAdmin) {
     // Admin path: opcional ?seller_id filter (sem ownership via JOIN sellers)
-    const sellerIdFilter = req.query.seller_id ? String(req.query.seller_id) : null;
+    // FIX pass 728: + .trim().toLowerCase() paridade cacheKey pass 719 (cache mismatch fix)
+    const sellerIdFilter = req.query.seller_id
+      ? String(req.query.seller_id).trim().toLowerCase()
+      : null;
     if (sellerIdFilter) {
       if (!SELLER_UUID_RE.test(sellerIdFilter)) {
         return res.status(400).json({ error: 'invalid_seller_id' });

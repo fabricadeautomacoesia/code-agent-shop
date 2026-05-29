@@ -77,7 +77,10 @@ router.get('/',
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
     // BUG 5: kind enum whitelist
-    const kindFilter = req.query.kind ? String(req.query.kind) : null;
+    // FIX pass 726: + .trim().toLowerCase() paridade cacheKey pass 630 (cache hygiene mismatch)
+    const kindFilter = req.query.kind
+      ? String(req.query.kind).trim().toLowerCase()
+      : null;
     if (kindFilter && !WISHLIST_KIND_ENUM.has(kindFilter)) {
       return res.status(400).json({ error: 'invalid_kind', allowed: Array.from(WISHLIST_KIND_ENUM) });
     }
