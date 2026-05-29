@@ -4,7 +4,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { jwt, asyncHandler, validate, errorHandler, logger, maskPII, rateLimiter, cache, mask } = require('@cas/shared');
+const { jwt, asyncHandler, validate, errorHandler, logger, maskPII, rateLimiter, cache, mask, notifCache } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 71: rate-limiter anti-spam dispute.
 // PRE-FIX: POST /:id/dispute SEM rate-limit. Atacante com conta legitima:
@@ -298,10 +298,30 @@ router.post('/checkout',
                 ip: req.ip,
               })]
             );
+            /* FIX-WORKER-2 pass 469 (free order notif gap - consume pass 445):
+               PRE-FIX: free order auto-fulfill skip payment-svc -> NO notification
+               - Pass 445 fix CRITICAL free order flow broken (status pending FOREVER)
+               - Resolveu order paid+fulfilled MAS sem notif buyer
+               - Buyer "Baixou gratis" -> NO bell badge -> "compra foi pra onde?"
+               - Order paid event NORMAL (payment-svc) cria notif order_paid
+               - Free path skip payment-svc = skip notification too
+               POST-FIX: + INSERT notification order_paid buyer (paridade payment-svc) */
+            await c.query(
+              `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
+               VALUES ($1, 'in_app', 'order_paid', $2, $3, 1, $4::JSONB)`,
+              [req.user.sub,
+               'Produto gratuito disponivel',
+               'Sua compra gratuita foi processada. Acesse seus produtos em Minha Conta.',
+               JSON.stringify({ order_id: result.id, order_number: result.order_number, free: true })]
+            );
           });
           log.info({ order_id: result.id, free: true }, '[order.free_auto_fulfill]');
           // Re-invalida cache p/ refletir status paid/fulfilled
-          cache.del(`orders:user:${req.user.sub}:*`).catch(() => {});
+          // FIX pass 469: + notifCache invalidate (consume pass 467 cross-svc cadeia)
+          await Promise.all([
+            cache.del(`orders:user:${req.user.sub}:*`),
+            notifCache.invalidate(req.user.sub),
+          ]).catch(() => {});
         } catch (e) {
           log.error({
             err: mask.text(String(e.message || '').slice(0, 500)),
@@ -990,20 +1010,33 @@ router.post('/admin/disputes/:id/resolve',
          `O administrador analisou sua disputa e tomou a seguinte acao: ${actionLabel}. ${req.body.refund_amount_cents ? 'Valor reembolsado: R$ ' + (req.body.refund_amount_cents / 100).toFixed(2) : ''}`,
          JSON.stringify({ dispute_id: req.params.id, resolution_action: req.body.resolution_action, order_id: d.order_id })]
       );
+      // FIX-WORKER-2 pass 469 (notifCache consume pass 467 cross-svc cadeia):
+      //   PRE-FIX: dispute_resolved buyer+seller INSERT SEM cache invalidate
+      //   - Dispute resolution = priority 2 (medium-high) UX critical
+      //   - User aguarda resolucao -> bell delay 20s = ansiedade
+      //   - Buyer compra com sucesso refund -> precisa ver imediato
+      //   POST-FIX: notifCache.invalidate(buyer) + invalidate(seller) post-INSERT
+      //   Capture sellerUserId outside conditional p/ unified invalidation.
+      let sellerUserId = null;
       // Notify seller (so se ha against_seller_id - some disputes sao buyer-only)
       if (d.against_seller_id) {
         const sellerR = await c.query('SELECT user_id FROM sellers WHERE id = $1::UUID', [d.against_seller_id]);
         if (sellerR.rows.length) {
+          sellerUserId = sellerR.rows[0].user_id;
           await c.query(
             `INSERT INTO notifications (user_id, channel, template_code, title, body, priority, payload)
              VALUES ($1::UUID, 'in_app', 'dispute_resolved_seller', $2, $3, 2, $4::JSONB)`,
-            [sellerR.rows[0].user_id,
+            [sellerUserId,
              `Disputa contra voce: ${actionLabel}`,
              `Uma disputa contra voce foi resolvida pelo administrador. Acao tomada: ${actionLabel}. Veja detalhes em /dashboard/disputes.`,
              JSON.stringify({ dispute_id: req.params.id, resolution_action: req.body.resolution_action })]
           );
         }
       }
+      /* FIX pass 469: notifCache invalidate buyer + seller post-INSERT.
+         Inside tx OK pq cache.del Redis tolera rollback worst-case (zero risk). */
+      notifCache.invalidate(d.opened_by_user_id);
+      if (sellerUserId) notifCache.invalidate(sellerUserId);
 
       outcome = { ok: true, dispute_id: req.params.id, new_status: req.body.next_status };
     });

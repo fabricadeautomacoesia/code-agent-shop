@@ -35349,3 +35349,68 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096+097+098 ALTA PRIORIDADE
 - Continuar consume notifCache 27+ sites pendentes
+
+## PASS 469 W2 CHECKOUT: notifCache consume order-svc dispute + free_order notif gap
+commit pendente
+GAP duplo consume cadeia pass 467+468:
+1. order-svc dispute resolve INSERT notifications SEM cache invalidate
+2. free order auto-fulfill (pass 445) SEM notification buyer
+
+PRE-FIX issue 1 (dispute resolve):
+- Linha 985+998 INSERT notifications buyer + seller (priority 2)
+- SEM notifCache.invalidate -> bell delay 20s
+- Dispute resolution = UX critical (user aguarda ansioso)
+- Buyer compra com sucesso refund -> precisa ver IMEDIATO
+
+PRE-FIX issue 2 (free order gap consume pass 445):
+- Pass 445 fix CRITICAL free order flow broken
+- Resolveu order paid+fulfilled em setImmediate apos skip payment-svc
+- MAS sem INSERT notification buyer -> notification gap
+- Buyer "Baixou gratis" -> NO bell badge -> "compra foi pra onde?"
+- Order paid event normal (payment-svc /webhook PAYMENT_RECEIVED line 1116)
+  cria notif order_paid mas free path skip payment-svc = skip notif tambem
+
+POST-FIX (2 fixes em order-svc):
+1. dispute resolve (linha 985-1009):
+   - Capture sellerUserId outside conditional
+   - notifCache.invalidate(buyer) + invalidate(seller) post-INSERT
+   - Promise.all Inside tx (zero risk rollback)
+2. free order auto-fulfill (linha 292+):
+   - + INSERT notification order_paid buyer (paridade payment-svc PAYMENT_RECEIVED)
+   - title 'Produto gratuito disponivel'
+   - body 'Sua compra gratuita foi processada'
+   - priority 1 (medium - free path NAO ha cash flow critical)
+   - + notifCache.invalidate(req.user.sub) post-setImmediate
+   - Promise.all orders + notifCache invalidations
+
+Import: notifCache adicionado ao require @cas/shared
+
+Cadeia consume pass 467 cross-svc:
+  pass 467 helper module + auth-svc 2fa.activate (1 site)
+  pass 468 payment-svc PAYMENT_RECEIVED + refund_failed (2 main sites)
+  pass 469 order-svc dispute resolve + free_order gap (2 sites) <- ESTE
+
+W2 CHECKOUT critical UX series:
+  pass 428 /conta/pedidos error handling FALSE NEGATIVE
+  pass 445 free order flow broken (7º CRITICAL)
+  pass 457 cart err banner role=alert
+  pass 469 dispute + free notif notifCache <- ESTE (complementa pass 445)
+
+PROXIMOS PASSES consume notifCache (~24 sites pendentes):
+  - payment-svc: PAYMENT_OVERDUE, payouts (5 sites)
+  - qa-svc: callback notif seller (1 site)
+  - review-svc: qna_new + answered (1+ sites)
+  - product-svc: version_publish (1 site)
+  - seller-svc loyalty: tier_up bonus (1 site)
+  - auth-svc: refresh_reuse_breach, /recovery, /disable (4 sites)
+
+Pattern V8 W2: TODO checkout flow path com side-effect notification critical
+DEVE invalidar cache imediato (UX trust signal compra processada).
+
+202 passes acumulados (268->469) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096+097+098 ALTA PRIORIDADE
+- Continuar consume notifCache 24+ sites pendentes
