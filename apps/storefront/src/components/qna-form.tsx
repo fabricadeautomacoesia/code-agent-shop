@@ -88,9 +88,22 @@ export function QnaForm({ productId, onSubmitted }: { productId: string; onSubmi
         <MessageCircle className="w-4 h-4 text-magenta" aria-hidden="true" /> Fazer uma pergunta
       </label>
       <div className="relative">
-        {/* FIX-WORKER-3 pass 137: id + aria-describedby p/ counter SR-friendly */}
+        {/* FIX-WORKER-3 pass 137: id + aria-describedby p/ counter SR-friendly
+            FIX-WORKER-3 pass 489 (i18n native validation override):
+              PRE-FIX: required + minLength HTML5 atributos disparavam tooltip
+              browser-native em English ("Please fill out this field" /
+              "Please lengthen this text to N or more characters") ANTES do
+              handler React rodar - usuario PT-BR via msg em ingles que
+              substituia a validacao PT-BR programada (linhas 59-63).
+              Tambem: required nao deixava CTA 'Login para perguntar' submeter
+              quando token=null AND textarea vazio (caso pass 413).
+              POST-FIX: remover required + minLength HTML5. JS valida tudo:
+              - !token: router.push login (linha 46-56)
+              - length < MIN: friendly PT-BR (linhas 59-63)
+              maxLength MANTIDO como hard cap UX (previne paste megabyte) -
+              counter red linha 101 ainda defensive cross-browser. */}
         <textarea id="qna-question" value={q} onChange={(e) => setQ(e.target.value)}
-          required minLength={MIN_LEN} maxLength={MAX_LEN} rows={3}
+          maxLength={MAX_LEN} rows={3}
           aria-describedby="qna-counter"
           placeholder="Ex: Quais APIs externas precisam? E compativel com Node 18+?"
           className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-magenta focus:outline-none text-sm" />

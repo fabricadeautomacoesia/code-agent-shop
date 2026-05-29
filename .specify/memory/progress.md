@@ -36448,3 +36448,47 @@ amount variavel por carrinho. Mas miss recalcula com valor correto agora.
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 489 - W3 PDP: QnaForm i18n native validation override fix
+
+PRE-FIX BUG (UX i18n):
+- storefront QnaForm textarea linha 93:
+    <textarea required minLength={MIN_LEN} maxLength={MAX_LEN} ...>
+- required + minLength HTML5 atributos disparam tooltip browser-NATIVE
+  ANTES do handler React rodar:
+  - Chrome/Firefox PT-BR: pode aparecer "Please fill out this field" /
+    "Please lengthen this text to 5 or more characters" (English fallback)
+  - Tooltip override completa o setErr() PT-BR programado (linhas 59-63):
+      'Pergunta muito curta (minimo 5 caracteres).'
+- Tambem conflito com pass 413 (canLoginRedirect):
+  - User !token + textarea vazio: button mostra 'Login para perguntar'
+  - Click submit: HTML5 required intercepta -> tooltip em vez de redirect login
+  - User fica preso (textarea required bloqueia mesmo CTA login)
+
+POST-FIX:
+- Remover required + minLength HTML5
+- React handler trata TODOS os casos com PT-BR i18n:
+  - !token: router.push('/login?next=...') (linha 46-56)
+  - length < MIN: setErr PT-BR (linhas 59-63)
+- maxLength MANTIDO (hard cap UX prevent paste megabyte)
+- Counter visual red defensive em case browser nao honra maxLength
+
+Trade-off ZERO: pattern V8 todas validacoes JS, HTML5 attrs apenas para
+hard limits. Paridade outros forms storefront (add-to-cart sem required,
+wishlist sem required, etc).
+
+Cadeia W3 PDP UX consistency:
+- pass 3 AddToCart double-click guard + finally reset
+- pass 4 WishlistButton guard + soft-nav
+- pass 137 a11y htmlFor + aria-describedby
+- pass 264 router.push soft-nav (paridade)
+- pass 413 canSubmit/canLoginRedirect (textarea token-aware button)
+- pass 456 errorMsg contextual aria-live
+- pass 489 (este) i18n native validation override fix
+
+222 passes acumulados (268->489) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply
