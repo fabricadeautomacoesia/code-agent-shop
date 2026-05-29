@@ -210,7 +210,16 @@ export default function BYOKPage() {
             </div>
           </div>
 
+          {/* FIX-WORKER-5 pass 597 (a11y CTA paridade cadeia 121/549/552/553/568/573/575):
+              PRE-FIX: button sem aria-busy + sem aria-label dinamico.
+              - SR (NVDA modern) usam aria-busy p/ silenciar live regions enquanto
+                processing AES-256-GCM encryption + provision (~300-800ms).
+              - Sem aria-busy + sem aria-label dinamico = SR pode anunciar label
+                continuamente como state out-of-sync.
+              POST-FIX: aria-busy={provisioning} + aria-label dinamico contextual. */}
           <button type="submit" disabled={provisioning}
+            aria-busy={provisioning}
+            aria-label={provisioning ? 'Criptografando e provisionando chave' : 'Provisionar nova chave de API'}
             className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-magenta">
             <KeyRound className="w-4 h-4" aria-hidden="true" />
             {provisioning ? 'Criptografando + provisionando...' : 'Provisionar chave'}
@@ -238,10 +247,14 @@ export default function BYOKPage() {
         {loadError && (
           <div role="alert" className="bg-red-500/10 border border-red-500/30 text-red-400 p-3 rounded-lg mb-4 text-sm">{loadError}</div>
         )}
+        {/* FIX-WORKER-5 pass 597 (a11y loading/empty state - paridade cadeia
+            pass 544/556/565/580/586/592):
+            PRE-FIX: <p> sem role - SR nao anunciava loading nem empty state.
+            POST-FIX: role='status' + aria-live polite p/ SR auto-announce. */}
         {loading && keys.length === 0 ? (
-          <p className="text-white/60 text-center py-8">Carregando...</p>
+          <p role="status" aria-live="polite" className="text-white/60 text-center py-8">Carregando...</p>
         ) : keys.length === 0 ? (
-          <p className="text-white/60 text-center py-8">Voce ainda nao tem chaves. Click "Nova chave" para comecar.</p>
+          <p role="status" className="text-white/60 text-center py-8">Voce ainda nao tem chaves. Click "Nova chave" para comecar.</p>
         ) : (
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-white/40 uppercase border-b border-white/10">
