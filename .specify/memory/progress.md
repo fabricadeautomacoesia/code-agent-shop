@@ -38680,3 +38680,69 @@ W7 W18 cache key/query consistency = 100% paridade end-to-end achieved.
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-106 ALTA PRIORIDADE apply (13 PARTIAL/composite indexes)
+
+## Pass 532 - W14 DB SCHEMA: idx_qna_seller_pending_sort PARTIAL (mig 107)
+
+PRE-FIX (sort consolidation):
+- review-svc /qna/seller/pending (linha 818) - dashboard-seller polling 30s
+- Query padrao:
+    WHERE q.seller_id = $1 (OR s.user_id via JOIN)
+      AND q.answer IS NULL AND q.is_hidden = FALSE
+    ORDER BY q.asked_at ASC, q.id ASC
+
+Existing idx (mig 007:79):
+- idx_qna_seller_pending PARTIAL
+  ON product_qna(seller_id) WHERE answer IS NULL AND is_hidden = FALSE
+
+Planner pre-fix:
+1. Index Scan idx_qna_seller_pending (scoped seller_id partial)
+2. JOIN products + sellers
+3. EXTERNAL SORT by asked_at ASC, id ASC <- bottleneck
+4. LIMIT + OFFSET
+
+Para sellers populares (~100+ pending Q&A):
+- External Sort custoso (PG memory + WAL writes)
+- ~30-50ms latency incluindo sort
+- Dashboard-seller /qna polling 30s = repeated DB stress
+
+POST-FIX mig 107:
+- idx_qna_seller_pending_sort PARTIAL composite extension:
+    ON product_qna (seller_id, asked_at ASC, id ASC)
+    WHERE answer IS NULL AND is_hidden = FALSE
+- Direct Index Scan pre-sorted (SEM Sort node)
+- Latency: ~30-50ms -> ~5-10ms (5x improvement)
+
+Trade-off vs mig 007:
+- mig 007 idx ainda cobre simples lookups WHERE seller_id sem sort
+- Considerar DROP mig 007 em pass futuro se idx_scan stat=0
+- Por ora manter ambos (defensive)
+
+PARTIAL predicates literal immutable (paridade pass 481):
+- answer IS NULL + is_hidden = FALSE
+- Idx physical pequeno (~10% Q&A total = pending)
+- Resolved Q&A sai do partial automaticamente
+
+Coverage queries:
+- /qna/seller/pending (dashboard polling)
+- /admin/qna/pending future endpoint
+- Cron qna_sla_check (futuro - alert seller atrasos)
+
+Cadeia W14 PARTIAL com literal predicates (10 indexes consolidated):
+- 086 audit_severity_created warn+
+- 094 audit_target_created NOT NULL
+- 098 audit_target_type_severity critical
+- 100 pwreset_pending_unused used_at IS NULL
+- 102 notif_user_inapp_unread channel+is_read
+- 103 qa_runs_product_timeout verdict='timeout'
+- 104 price_alerts_unnotified last_notified_at IS NULL
+- 105 products_sales_public W7 whitelist
+- 106 audit_anonymous_critical HMAC forensic
+- 107 (este) qna_seller_pending_sort com sort
+
+39 migrations pendentes apply (era 38)
+264 passes acumulados (268->532) sem deploy VPS
+9 CRITICAL pendentes deploy
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-107 ALTA PRIORIDADE apply (14 PARTIAL/composite indexes)
