@@ -47,10 +47,26 @@ const WISHLIST_KIND_ENUM = new Set([
   'php_script','prompt_pack','template','dataset','other'
 ]);
 
+/* FIX-WORKER-18 pass 630 (cache key normalization kind paridade cadeia 30+ sites W7+W10+W18):
+   PRE-FIX BUG: raw req.query.kind sem WISHLIST_KIND_ENUM whitelist check.
+   - Handler valida (linha 65-67) e retorna 400 invalid_kind para fora-enum.
+   - Atacante probe ?kind=junk1, ?kind=junk2, ...?kind=junkN -> N cache keys
+     'wishlist:USER:lim=50:off=0:k=junkN' guardando RESPOSTAS 400.
+   - Cache pollution amplifica: cada user pode poluir Redis com N keys de 400.
+   - Quando handler depois rejeita 400, set() ainda chama (cache.js linha 122
+     "Apenas cache de 2xx") - OK safe nesse path, MAS pre-cache check evita
+     hit Redis GET (~1ms) por entrada lixo.
+   POST-FIX: normalize kind ANTES key generation - SAME validation handler.
+   - Invalid kind colapsa para empty string -> same key path uncached
+   - Valid kind preservado normalizado
+   Pattern V8 cache hygiene invariante: cache key MUST mirror handler normalize.
+   31st site cadeia consolidacao consolidacao (W7+W10+W13+W17+W18 + W6 gateway). */
 const wishlistCacheKey = (req) => {
   const lim = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
   const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
-  const kind = req.query.kind || '';
+  // Normalize kind: handler check WISHLIST_KIND_ENUM (linha 65)
+  const kindRaw = (req.query.kind || '').toString().trim().toLowerCase();
+  const kind = WISHLIST_KIND_ENUM.has(kindRaw) ? kindRaw : '';
   return `wishlist:${req.user?.sub || 'anon'}:lim=${lim}:off=${off}:k=${kind}`;
 };
 
