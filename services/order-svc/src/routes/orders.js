@@ -420,9 +420,28 @@ const ORDER_STATUS_ENUM = new Set([
 // + COUNT(*) OVER()::INT AS _total window consolidation
 // + has_more boolean response
 // Performance: ~30ms (2 queries) -> ~17ms (1 query)
+// FIX-WORKER-18 pass 596 (cache key normalization paridade cadeia 18 sites
+// W7+W10+W13+W17+W18 cache hygiene cross-svc consolidacao - 19 sites total):
+//   PRE-FIX BUGS (3 issues cache pollution + inconsistency vs handler):
+//   1. Raw q.status sem whitelist check. Handler valida ORDER_STATUS_ENUM
+//      (linha 434). Cenarios:
+//      - ?status=INVALID -> cache key 's=INVALID', handler 400 invalid_status
+//      - Multiple invalid attempts pollution + Redis storage waste
+//      - WORST: 400 response cached em 'INVALID' key - user transient retry
+//        hits cached 400 mesmo se param valido eventualmente
+//   2. Raw q.limit. Handler clamps Math.max/Math.min [1, 100] (linha 431).
+//      ?limit=99999 -> cache key 'lim=99999', handler clamp 100 -> SAME response
+//   3. Raw q.offset. Handler Math.max(0, ...) (linha 432).
+//      ?offset=-5 -> cache key 'off=-5', handler -> 0
+//   POST-FIX: normalize cache key SAME way handler normalizes.
+//   Pattern V8 cache hygiene invariante cross-svc consolidacao 19 sites.
 const ordersListCacheKey = (req) => {
   const userId = req.user?.sub || 'anon';
-  return `orders:user:${userId}:s=${req.query.status||''}:lim=${req.query.limit||30}:off=${req.query.offset||0}`;
+  const statusRaw = (req.query.status || '').toString().trim();
+  const statusNorm = ORDER_STATUS_ENUM.has(statusRaw) ? statusRaw : '';
+  const lim = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 30));
+  const off = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  return `orders:user:${userId}:s=${statusNorm}:lim=${lim}:off=${off}`;
 };
 
 router.get('/',
@@ -517,9 +536,15 @@ router.get('/',
 // + COUNT(*) OVER() window aggregate -> total absolute
 // + has_more boolean
 // Stats query mantida (FILTER aggregates 90d) - small payload + ja em mesma cache hit
+// FIX-WORKER-18 pass 596 (cache key normalization paridade pass 596 ordersListCacheKey):
+//   PRE-FIX BUGS: raw q.limit / q.offset sem clamp.
+//   Same pattern bugs como ordersListCacheKey - cache key vs handler mismatch.
+//   POST-FIX: normalize cache key SAME way handler normalizes.
 const adminRecentOrdersCacheKey = (req) => {
   const q = req.query;
-  return `order:admin:recent:lim=${q.limit||100}:off=${q.offset||0}`;
+  const lim = Math.max(1, Math.min(200, parseInt(q.limit, 10) || 100));
+  const off = Math.max(0, parseInt(q.offset, 10) || 0);
+  return `order:admin:recent:lim=${lim}:off=${off}`;
 };
 
 router.get('/admin/recent',
