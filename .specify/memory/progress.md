@@ -36220,3 +36220,44 @@ Pattern V8 W4 UI consume backend completeness:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 096-100 ALTA PRIORIDADE
+
+## PASS 484 W14 DB SCHEMA: idx_reports_status_created composite (admin reports listing)
+commit pendente
+GAP perf admin reports listing - composite sort/filter
+PRE-FIX:
+- review-svc /admin/reports query pattern:
+  WHERE r.status = $1 ORDER BY r.created_at DESC, r.id DESC LIMIT
+- Idx existentes:
+  - idx_reports_status (status) (mig 007)
+  - idx_reports_created (created_at DESC) (mig 007)
+  - idx_reports_target (target_type, target_id) (mig 007)
+- Query "WHERE status=X ORDER BY created_at DESC":
+  - PG usa idx_reports_status -> rows desordenadas
+  - Sort node externo (heap sort se N > work_mem)
+  - Prod com 1k+ reports/status = ~50ms
+
+POST-FIX mig 101:
+- idx_reports_status_created (status, created_at DESC, id DESC) composite
+- Direct Index Scan pre-sorted (sem Sort node)
+- Tiebreaker id DESC paridade Regra D pass 251 (pagination drift)
+- Latency: ~50ms -> ~5ms (10x melhoria)
+
+Pattern V8 W14 paridade pass 086:
+- audit_log: idx_audit_severity_created PARTIAL (severity, created_at DESC)
+- reports: idx_reports_status_created composite (status, created_at DESC, id DESC)
+- Mesma estrategia composite (filter_col, sort_col DESC, tiebreaker_col DESC)
+
+W14 idx composite cadeia consume admin investigation:
+  pass 037 idx_audit_action_created
+  pass 086 idx_audit_severity_created PARTIAL warn+
+  pass 094 idx_audit_target_created PARTIAL NOT NULL
+  pass 098 idx_audit_target_type_severity PARTIAL critical
+  pass 100 idx_pwreset_pending_unused PARTIAL
+  pass 101 idx_reports_status_created composite <- ESTE
+
+217 passes acumulados (268->484) sem deploy VPS
+8 CRITICAL + 33 migrations pendentes apply (era 32)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 096+097+098+099+100+101 ALTA PRIORIDADE
