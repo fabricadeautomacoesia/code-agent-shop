@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { adminFetch, fmtBRL, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
 import { Check, X, Send } from 'lucide-react';
@@ -133,7 +134,24 @@ export default function PayoutsPage() {
                 const busyTransfer = action.busyKey === `transfer-${p.id}`;
                 return (
                   <tr key={p.id} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="py-3">{p.store_name}</td>
+                    {/* FIX-WORKER-4 pass 455 (payout investigation forensic - paridade pass 451+452):
+                        PRE-FIX: p.store_name plain text - admin nao podia investigar payout
+                        - Real money: approve/reject payout = decisao financeira critica
+                        - Sem audit trail one-click -> admin lazy approves
+                        - Pass 451 orders + pass 452 sellers ja consolidaram pattern
+                        - /admin/payouts era ultimo admin page sem investigation flow
+                        POST-FIX: + "audit" link target_id=p.id target_type=seller_payout
+                        Consume pass 430 backend + pass 451 URL params audit-log */}
+                    <td className="py-3">
+                      <div>{p.store_name}</div>
+                      <Link
+                        href={`/audit-log?target_id=${p.id}&target_type=seller_payout`}
+                        aria-label={`Audit log do payout de ${p.store_name}`}
+                        title="Ver audit log do payout"
+                        className="text-[10px] text-white/30 hover:text-magenta-glow underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-magenta rounded">
+                        audit
+                      </Link>
+                    </td>
                     <td className="font-display font-bold text-magenta-glow">{fmtBRL(p.amount_cents)}</td>
                     <td className="text-xs text-white/50">{fmtDate(p.requested_at)}</td>
                     {/* FIX-WORKER-4 pass 4: badge cor por status (era sempre amarelo pending) */}

@@ -34519,3 +34519,70 @@ W14 idx maintenance series:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 455 W4 ADMIN: payouts audit-log + VALID_TT enum fix (consume pass 430+451+452)
+commit pendente
+GAP duplo:
+1. /admin/payouts sem investigation flow (paridade pass 451+452)
+2. VALID_TT enum aiops-svc generica 'payout' nao matchava actual 'seller_payout'
+
+PRE-FIX issue 1 (UI):
+- /admin/payouts p.store_name plain text
+- Pass 451 (orders) + pass 452 (sellers) ja tinham audit link
+- Payouts = real money decision (approve/reject/Asaas transfer)
+- Sem investigation one-click -> admin lazy approve sem context
+
+PRE-FIX issue 2 (enum mismatch):
+- Pass 430 VALID_TT incluia 'payout' (generic)
+- Actual audit_log entries cross-svc usam:
+  - 'seller_payout' (payment-svc /process pass)
+  - 'pending_wallet_payout' (TRANSFER webhook handler pass 371)
+  - 'payouts_pending_wallet' (forfeit_batch)
+  - 'vault_api_key' (vault-svc pass 438)
+  - 'user_session' (auth-svc refresh_reuse_breach pass 315)
+  - 'order_item' (dispute pass 29)
+- Filter ?target_type=seller_payout rejeitado silenciosamente em pass 430
+- Cadeia broken: pass 451 link `?target_type=order` OK, mas extensoes
+  para seller_payout/vault_api_key NAO funcionavam
+
+POST-FIX (2 partes):
+1. /admin/payouts handler:
+   - + Link import
+   - + "audit" link target_id=p.id target_type=seller_payout
+   - Paridade pass 451 orders + pass 452 sellers
+2. aiops-svc VALID_TT enum expanded:
+   - 13 valores total (vs 10 antes)
+   - Match actual target_type values cross-svc:
+     * seller_payout, pending_wallet_payout, payouts_pending_wallet
+     * vault_api_key, vault_key, user_session, order_item
+
+UX flow agora payouts:
+- Admin /admin/payouts ve pendentes
+- Click "audit" no payout -> /admin/audit-log?target_id=X&target_type=seller_payout
+- Timeline TODA payout: requested, approved, process_start, process_complete, etc
+- Pode investigar SLA + Asaas transfer status
+- Approve/reject com full context
+
+Cadeia consume cross-svc consolidada:
+  pass 430 backend filter target_id+target_type
+  pass 451 orders frontend link + audit-log URL params consume
+  pass 452 sellers frontend link
+  pass 455 payouts frontend link + enum VALID_TT alinhamento <- ESTE
+
+W4 admin investigation flow fechada:
+  pass 401 orders order_number copy + buyer_email mailto
+  pass 446 qa-queue title preview link
+  pass 451 orders audit forensic + URL params
+  pass 452 sellers KYC investigation
+  pass 455 payouts audit + VALID_TT fix <- ESTE (consolidacao final admin)
+
+Pattern V8 W4: enum whitelists em backend precisam aligned com actual data values
+- Sem alignment: silent filter rejection (no error, results empty)
+- Manutencao: novos target_types em audit_log INSERT devem entrar VALID_TT
+
+188 passes acumulados (268->455) sem deploy VPS
+8 CRITICAL + 29 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 ALTA PRIORIDADE

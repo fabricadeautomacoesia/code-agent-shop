@@ -515,7 +515,23 @@ const auditLogHandler = asyncHandler(async (req, res) => {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const targetId = (req.query.target_id || '').toString().trim();
   const targetType = (req.query.target_type || '').toString().trim().toLowerCase();
-  const VALID_TT = new Set(['user','seller','product','order','payout','vault_key','category','review','qna','dispute']);
+  /* FIX-WORKER-4 pass 455 (VALID_TT alinhar com actual target_types cross-svc):
+     PRE-FIX (pass 430): 'payout' generic - mas svcs usam 'seller_payout' e
+     'pending_wallet_payout' especificos. Filter ?target_type=seller_payout
+     era rejeitado em silencio (sem match na enum whitelist).
+     POST-FIX: enum expanded p/ todos types reais audit_log cross-svc:
+     - 'seller_payout' (payment-svc /process)
+     - 'pending_wallet_payout' (payouts_pending_wallet)
+     - 'payouts_pending_wallet' (forfeit_batch)
+     - 'vault_api_key' (vault-svc cross-endpoints pass 438)
+     - 'user_session' (auth-svc refresh_reuse_breach pass 315)
+     - 'order_item' (review-svc dispute pass 29) */
+  const VALID_TT = new Set([
+    'user','seller','product','order','order_item',
+    'seller_payout','pending_wallet_payout','payouts_pending_wallet',
+    'vault_api_key','vault_key','user_session',
+    'category','review','qna','dispute',
+  ]);
   const targetIdFilter = (targetId && UUID_RE.test(targetId)) ? targetId : null;
   const targetTypeFilter = VALID_TT.has(targetType) ? targetType : null;
   // FIX-WORKER-4 pass 388: prefix a. apos JOIN aliasing (ambiguous otherwise)
