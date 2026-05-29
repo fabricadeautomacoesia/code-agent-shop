@@ -555,12 +555,25 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
 // Atacante com refresh token vazado pode tentar refresh repetido testando
 // se ainda valido + descobrir cookie path/format. Rate-limit defensive.
 // 60/min generoso (UI legitimo faz refresh ~1x a cada 14min = 4/hr).
+/* FIX-WORKER-6 pass 615 (keyGenerator x-real-ip - paridade cadeia consolidacao):
+   PRE-FIX BUG: keyGenerator usa req.ip (Express peer IP) - mas auth-svc esta
+   atras de Traefik+Gateway proxy chain.
+   - req.ip = Traefik shared IP (varios clients atras de NAT)
+   - Resultado: bucket compartilhado todos users -> shared bucket attack
+   - 1 atacante com 1 IP esgota 60 req/min global -> outros refresh bloqueados
+   - Mesmo bug vault-svc provisionRateLimit (pass 359 fixed cadeia)
+   - Outros auth-svc limiters (register linha 48 + forgot 55 + reset 62) ja
+     usam x-real-ip headers - refreshLimiter (este) era LAGGED
+   POST-FIX: keyGenerator x-real-ip header (paridade pattern V8 cross-svc).
+   - x-real-ip eh setado pelo Traefik/Gateway = real client IP
+   - Buckets isolados per-client real
+   - Trade-off ZERO: fallback req.ip se header ausente */
 const refreshLimiter = rateLimit({
   windowMs: 60_000, max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'rate_limit_exceeded' },
-  keyGenerator: (req) => req.ip, // per-IP (refresh sem auth context user pre-verify)
+  keyGenerator: (req) => req.headers['x-real-ip'] || req.ip,
 });
 
 router.post('/refresh', refreshLimiter, asyncHandler(async (req, res, next) => {
