@@ -36303,3 +36303,58 @@ VALID_TT cadeia evolution:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-101 ALTA PRIORIDADE apply
+
+## Pass 486 - W14 DB SCHEMA: idx_notif_user_inapp_unread PARTIAL (mig 102)
+
+PRE-FIX (cadeia regression historica):
+- mig 008: idx_notif_user_unread PARTIAL (user_id, created_at DESC) WHERE is_read=FALSE
+- mig 029 (W14 pass 2): DROPPED idx_notif_user_unread - raciocinio incorreto
+  ('idx_notif_user_channel_created cobre' - MAS NAO e PARTIAL)
+- mig 059: idx_notif_user_channel_created composite NAO partial
+- Para users com 100+ notifs lidas, planner le tudo + Heap Filter is_read=FALSE
+- NotificationBell poll 30s no storefront = waste IO repetido
+
+Hot queries identificadas (notification-svc/server.js linhas 498-509):
+  SELECT COUNT(*) FROM notifications
+   WHERE user_id=$1 AND channel='in_app' AND is_read=FALSE
+  (/unread-count + POST /:id/read returning remaining)
+
+  SELECT n.* FROM notifications n
+   WHERE ... AND is_read=FALSE ORDER BY created_at DESC LIMIT 20
+  (/me?unread_only=true)
+
+POST-FIX mig 102:
+- idx_notif_user_inapp_unread PARTIAL
+  ON notifications(user_id, created_at DESC)
+  WHERE channel='in_app' AND is_read=FALSE
+- Predicates immutable (literal channel + boolean)
+- Idx fisicamente pequeno (so unread in_app, usually < 5% total)
+- Cobre count + listing endpoints com Direct Index Scan
+
+Tradeoff: + 1 idx write per INSERT notification in_app unread.
+Aceitavel: WRITE barato, READ 30s poll x milhares users = ROI alto.
+
+Paridade pass 481 (pwreset PARTIAL used_at IS NULL):
+- PARTIAL com predicates immutable (channel literal + boolean)
+- Tabela ALTA escrita mas idx hot menor que full
+
+Racional vs mig 029:
+- Pass 029 errou ao dropar argumentando cobertura via composite nao-partial
+- Esta mig (102) RECRIA versao melhorada: + channel='in_app' no predicate
+  (cobre gap original mig 008 que matchava unread cross-channel)
+
+W14 idx PARTIAL cadeia consume hot paths:
+  pass 037 idx_audit_action_created
+  pass 086 idx_audit_severity_created PARTIAL warn+
+  pass 094 idx_audit_target_created PARTIAL NOT NULL
+  pass 098 idx_audit_target_type_severity PARTIAL critical
+  pass 100 idx_pwreset_pending_unused PARTIAL
+  pass 101 idx_reports_status_created composite
+  pass 102 idx_notif_user_inapp_unread PARTIAL <- ESTE
+
+219 passes acumulados (268->486) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply (era 33)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply (9 idx PARTIAL/composite)
