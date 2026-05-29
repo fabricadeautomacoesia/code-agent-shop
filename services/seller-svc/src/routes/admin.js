@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { z } = require('zod');
-const { query } = require('@cas/db-client');
+const { query, tx } = require('@cas/db-client');
 const { jwt, asyncHandler, validate, errorHandler, logger, cache, maskPII, notifCache, withRetry, mask } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 60: LGPD role-tier helper.
@@ -585,7 +585,7 @@ router.get('/pending-kyc',
 // - admin reject -> status='kyc_rejected' + reason (esta iter)
 // - pass 40 /payout SO aceita status='active' (combo defense complete)
 const KYC_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const { tx } = require('@cas/db-client');
+// FIX pass 713: tx import movido p/ top of file (linha 5) - DRY consolidacao
 
 router.post('/:id/kyc/approve',
   asyncHandler(async (req, res, next) => {
@@ -915,33 +915,61 @@ router.post('/payouts/:id/approve', asyncHandler(async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) {
     return next(errorHandler.badRequest('invalid_uuid'));
   }
-  const r = await query(
-    `UPDATE seller_payouts SET status = 'approved', approved_at = NOW(), approved_by = $1
-      WHERE id = $2 AND status = 'pending'
-      RETURNING id, seller_id, amount_cents`,
-    [req.user.sub, req.params.id]
-  );
-  if (!r.rows.length) return next(errorHandler.notFound('payout_not_pending'));
-  // FIX-WORKER-18 pass 175: invalida cache seller (pos-UPDATE)
+  /* FIX-WORKER-4 pass 713 (CRITICAL atomicity audit_log compliance + ua_prefix forensic):
+     PRE-FIX BUGS (3 critical compliance issues):
+     1. UPDATE + INSERT audit_log NAO atomico (sem tx() wrap)
+        - UPDATE commit (payout approved -> Asaas trigger downstream)
+        - INSERT audit_log fail (.catch silent swallow) -> audit gap
+        - SOC2 CC1.4 + LGPD Art 37 violation: high-impact decision sem trail
+        - Cenario REAL: deadlock 40P01 em audit_log durante peak admin actions
+     2. NO withRetry wrap (paridade pass 656 cadeia seller-svc admin atomicity)
+        - Race com /payouts/:id/reject mesmo payout (admin dupla-decisao)
+        - Race com cron payment-svc payoutProcessLimiter
+     3. NO ua_prefix forensic (pattern V8 W17 pass 438 cross-svc)
+        - Apenas IP capturado
+        - Admin token XSS-stolen -> attacker approve payouts mass
+        - Investigation IP+UA correlation impossivel
+     POST-FIX:
+     - tx() wraps UPDATE + INSERT audit_log atomic (compliance critical)
+     - withRetry('seller.payout_approve.tx') wrap 3 attempts backoff
+     - + ua_prefix mask.text(headers.UA).slice(0,60) forensic
+     - Cache invalidation post-tx commit (paridade pass 503 W11 pattern V8)
+     Pattern V8 W4 cross-svc consolidacao admin financial actions atomic. */
+  let approved;
+  await withRetry('seller.payout_approve.tx', async () => await tx(async (c) => {
+    const r = await c.query(
+      `UPDATE seller_payouts SET status = 'approved', approved_at = NOW(), approved_by = $1
+        WHERE id = $2 AND status = 'pending'
+        RETURNING id, seller_id, amount_cents`,
+      [req.user.sub, req.params.id]
+    );
+    if (!r.rows.length) {
+      const err = new Error('payout_not_pending');
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+    approved = r.rows[0];
+    // FIX pass 713: INSERT audit_log DENTRO tx() - atomic compliance critical
+    await c.query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, $2, 'payout.approve', 'seller_payout', $3, 'warn', $4::JSONB)`,
+      [req.user.sub, req.user.role, approved.id, JSON.stringify({
+        seller_id: approved.seller_id,
+        amount_cents: approved.amount_cents,
+        ip: req.ip,
+        // FIX pass 713: + ua_prefix forensic (paridade pass 438 vault + cross-svc)
+        ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+      })]
+    );
+  })).catch((e) => {
+    if (e?.code === 'NOT_FOUND') return next(errorHandler.notFound('payout_not_pending'));
+    throw e;
+  });
+  if (!approved) return;
+  // FIX-WORKER-18 pass 175: invalida cache seller (pos-tx commit)
   await invalidateSellerPayoutsCache(req.params.id);
-  // FIX-WORKER-4 pass 235 (audit gap admin financial decision):
-  //   Aprovacao de payout = decisao financeira critica que dispara Asaas transfer
-  //   real (dinheiro saindo). PRE-FIX: sem audit_log -> compliance gap LGPD
-  //   "direito de acesso" (user pede historico - operador X aprovou meu payout
-  //   quando?). SOC2 CC1.4: documented authorization decisions.
-  //   /payouts/:id/reject (linha 729) tambem faltava - fix conjunto.
-  //   POST-FIX: INSERT audit_log atomic (.catch nao quebrar response).
-  query(
-    `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
-     VALUES ($1, $2, 'payout.approve', 'seller_payout', $3, 'warn', $4::JSONB)`,
-    [req.user.sub, req.user.role, r.rows[0].id, JSON.stringify({
-      seller_id: r.rows[0].seller_id,
-      amount_cents: r.rows[0].amount_cents,
-      ip: req.ip,
-    })]
-  ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: require('@cas/shared').mask.text(String(e.message || '').slice(0, 300)) }, '[payout.approve.audit_fail]'));
   // payment-svc disparara Asaas transfer
-  res.json({ ok: true, approved: r.rows[0].id });
+  res.json({ ok: true, approved: approved.id });
 }));
 
 // POST /sellers/admin/payouts/:id/reject
