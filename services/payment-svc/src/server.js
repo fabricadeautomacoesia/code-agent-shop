@@ -517,12 +517,57 @@ app.post('/payments/asaas/create',
 //   Asaas webhook PAYMENT_REFUNDED (mapeado linha 730) finaliza status=refunded.
 //   Se Asaas falhar, PAYMENT_REFUND_FAILED webhook (pass 222) alerta admin.
 app.post('/payments/asaas/refund', asyncHandler(async (req, res, next) => {
-  // x-internal-token guard (paridade /payments/asaas/create pass 117)
+  /* FIX-WORKER-17 pass 644 (CRITICAL timing-attack + audit_log gap - REAL MONEY endpoint):
+     PRE-FIX BUGS (2 issues):
+     1. SECURITY *** TIMING ATTACK *** plain === comparison:
+        `req.headers['x-internal-token'] !== expected`
+        - Atacante mede latencia resposta varying chars: prefixo correto demora
+          ligeiramente mais (byte-by-byte compare interno do ===)
+        - Permite reconstruir PAYMENT_INTERNAL_TOKEN char-by-char em ~256 * N tentativas
+        - Defense W17 pass 4 ja estabeleceu timingSafeEqual cross-svc (vault/payment.create)
+        - /payments/asaas/refund FICOU LAGGED com === plain (mesmo padrao bug)
+     2. AUDIT_LOG MISSING *** /refund eh REAL MONEY endpoint (CRITICAL severity)
+        - Atacante bypass success = REFUND ARBITRARIO (atacante recebe dinheiro
+          em conta + buyer original perde acesso ao produto)
+        - log.warn Pino 7d retention - NAO queryable forensic cross-svc
+        - Pattern V8 W17 estabeleceu audit_log critical PARA TODO HMAC/token bypass:
+          pass 458 vault.use, pass 462 qa.run, pass 463 asaas.webhook,
+          pass 523 qa.callback, pass 591 payment.create
+        - /refund eh ULTIMO bypass endpoint payment-svc lagged
+     POST-FIX:
+     - crypto.timingSafeEqual (paridade asaasCreateGuard pass 591 + vault pass 4)
+     - audit_log critical (paridade cadeia 6 prior sites)
+     - fail2ban reportFailure (anti brute-force escalation)
+     - actor NULL (anonymous bypass attempt) + actor_role 'anonymous'
+     Pattern V8 W17 HMAC bypass critical defense COMPLETO 7/7 endpoints. */
   const expected = process.env.PAYMENT_INTERNAL_TOKEN;
-  if (expected && req.headers['x-internal-token'] !== expected) {
-    log.warn({ ip: req.ip }, '[refund.unauthorized]');
+  const tok = req.headers['x-internal-token'];
+  let valid = false;
+  if (expected && tok) {
+    try {
+      const a = Buffer.from(String(tok));
+      const b = Buffer.from(expected);
+      valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+    } catch { valid = false; }
+  }
+  if (expected && !valid) {
+    if (req.fail2ban) req.fail2ban.reportFailure();
+    const safeUaForensic = mask.text(req.headers['user-agent'] || '');
+    log.warn({ ip: req.ip, ua: safeUaForensic }, '[refund.unauthorized]');
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES (NULL, 'anonymous', 'payment.refund.invalid_internal_token', 'payment_refund', NULL, 'critical', $1::JSONB)`,
+      [JSON.stringify({
+        ip: req.ip,
+        ua_prefix: safeUaForensic.slice(0, 60),
+        tok_len_match: tok ? String(tok).length === expected.length : false,
+      })]
+    ).catch((auditErr) => log.error({
+      err: mask.text(String(auditErr.message || '').slice(0, 200)),
+    }, '[refund.unauthorized.audit_fail]'));
     return next(errorHandler.unauthorized('invalid_internal_token'));
   }
+  if (expected && req.fail2ban) req.fail2ban.reportSuccess();
   const { dispute_id, refund_amount_cents, reason } = req.body || {};
   if (!dispute_id) return next(errorHandler.badRequest('dispute_id_required'));
   /* FIX-WORKER-11 pass 439 (defensive guard refund_amount_cents - REAL MONEY):
