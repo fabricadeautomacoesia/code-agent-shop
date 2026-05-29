@@ -40277,3 +40277,27 @@ CADEIA W17 rate-limit defense consolidacao:
 - TOTAL: 23+ limiters cross-svc agora bulletproof against shared-bucket
 
 438 passes acumulados (268->708) sem deploy VPS
+
+============================================================================
+SESSAO 709 (W18 cacheMiddleware silent-disabled detection - paridade pass 618)
+============================================================================
+
+Pass 709 (W18 @cas/shared cacheMiddleware silent-disabled detection):
+- DESCOBERTA: pass 618 reativou cache em admin/reports (object shape errado)
+  por ~580 passes (silent fail) - sem alerta operacional
+- Mesma vulnerabilidade POTENCIAL em qualquer outro endpoint silent disabled
+- catch silencia keyFn(req) error -> next() sem hint cache desligado
+- POST-FIX defensive helper:
+  - typeof keyFn !== 'function' -> log.warn upfront + bypass middleware
+  - Runtime error em keyFn(req) -> log.warn (era catch silent)
+  - WeakSet dedup log object-shape mistakes (1 warn per problematic call site)
+  - Cache disabled = passes-through (mesma semantica MAS com observability)
+- Pattern V8 W18: silent failure observability - operational alerts antes
+  de descobrir 580 passes depois (pass 618 lesson learned)
+
+CADEIA cross-svc cache hygiene observability:
+- pass 618 admin/reports cache shape errado FIXED
+- pass 709 (este) helper compartilhado log warn detection
+- TOTAL: prevention + detection consolidacao
+
+439 passes acumulados (268->709) sem deploy VPS
