@@ -37186,3 +37186,45 @@ Paridade cadeia W14 PARTIAL IS NULL (immutable predicate):
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply (11 PARTIAL/composite indexes)
+
+## Pass 505 - W8 VISUAL/UX: /comparar sticky hover color inconsistency
+
+PRE-FIX BUG (color jitter visual):
+- /comparar/page.tsx linha 184:
+    [&_tr:hover_td.sticky]:bg-[#0a0b0f]
+- Hover sticky-left column hex hardcoded
+- tailwind.config cyber.dark = '#0A0F1C' (referenced via bg-cyber-dark linha 162+)
+- bg-[#0a0b0f] hex DIFERENTE:
+  - cyber.dark:    R=0A G=0F B=1C
+  - hover hardcode: R=0A G=0B B=0F
+  - G+B variam significativamente (vs cyber.dark)
+- Resultado visual: hover row -> sticky col flicker para shade DIFERENTE
+- Pattern V8 W8: brand consistency requires color tokens, NO hardcoded hex
+- User scan compara products row-by-row vê cell color jitter cada hover
+
+Impact UX:
+- /comparar = MLB feature (Comparator) - core UX feature
+- Hover affordance critico para "qual produto fica destacado"
+- Cor jitter quebra mental model: hover deveria ADICIONAR effect, nao TROCAR cor
+- Em mobile (375px hscroll), sticky col eh elemento central
+- Brand inconsistency: token cyber.dark vs hex aleatorio
+
+POST-FIX:
+- bg-[#0a0b0f] -> bg-cyber-dark (token tailwind consistente)
+- Hover effect mantido via [&_tr:hover]:bg-white/[0.02] overlay
+  (aplica em TODAS data cells, EXCETO sticky que mantem baseline)
+- Sticky col preserva bg-cyber-dark baseline durante hover
+- Comment expansivo documenta hex vs token diferenca
+
+Pattern V8 W8 visual consistency:
+- pass 2 prose-invert + glass paridade termos/privacidade
+- pass 3 /comparar hover affordance + cover responsive
+- pass 231 visual hover consistency wishlist
+- pass 505 (este) /comparar token vs hex inconsistency
+
+237 passes acumulados (268->505) sem deploy VPS
+9 CRITICAL + 36 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply (11 PARTIAL/composite indexes)

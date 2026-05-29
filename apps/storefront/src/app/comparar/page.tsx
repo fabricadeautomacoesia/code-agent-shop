@@ -180,8 +180,17 @@ export default async function CompararPage({ searchParams }: { searchParams: Pro
             </tr>
           </thead>
           {/* FIX-WORKER-8 pass 3: hover state em todas as data rows
-              (era flat sem affordance visual de scan) */}
-          <tbody className="divide-y divide-white/5 [&_tr:hover]:bg-white/[0.02] [&_tr:hover_td.sticky]:bg-[#0a0b0f]">
+              (era flat sem affordance visual de scan)
+              FIX-WORKER-8 pass 505 (color consistency):
+                PRE-FIX: bg-[#0a0b0f] hardcoded hex no hover sticky (visual bug)
+                - cyber.dark = '#0A0F1C' (tailwind config)
+                - bg-[#0a0b0f] hex diferente (G=0b vs 0F, B=0f vs 1c)
+                - User hover sticky column ve cor DIFERENTE do baseline = jitter
+                - Brand consistency violation (hardcoded hex bypass token)
+                POST-FIX: usar bg-cyber-dark token (paridade baseline tr non-hover)
+                - Hover effect via brightness/border, nao por mudar background
+                - O sticky col mantem bg-cyber-dark baseline durante hover */}
+          <tbody className="divide-y divide-white/5 [&_tr:hover]:bg-white/[0.02] [&_tr:hover_td.sticky]:bg-cyber-dark">
             <tr>
               <td className="p-3 font-semibold text-white/60 sticky left-0 bg-cyber-dark z-10">Preco</td>
               {products.map((p: any) => (
