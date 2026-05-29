@@ -242,10 +242,28 @@ router.post('/:id/force-approve',
       return next(errorHandler.notFound('product_not_found'));
     }
 
+    /* FIX-WORKER-7 pass 651 (withRetry deadlock defense + DLP mask + ua_prefix forensic):
+       PRE-FIX BUGS (3 issues paridade pass 512 archive consolidacao):
+       1. tx() sem withRetry wrap (paridade pass 650 archive)
+          - Cenarios deadlock 40P01: mass force-approve admin batch, race com QA callback,
+            race com /platform-take, race com cron timeoutStuckRuns
+       2. reason field SEM mask.text() DLP (paridade pass 295/433/499/512)
+          - Admin paste pode incluir Bearer/JWT/sk-/CPF/PG_PASS em justificativa
+          - audit_log payload_after JSONB persisted DB + backup pg_dump
+          - LGPD violation se reason tem PII raw
+          - /archive pass 512 ja aplicou mask.text() - /force-approve lagged
+       3. NO ua_prefix forensic (pattern V8 W17 pass 438 cross-svc)
+          - Apenas IP capturado - admin token XSS-stolen attack investigation gap
+          - vault-svc + product/archive pass 512 ja consolidaram ua_prefix
+       POST-FIX:
+       - withRetry('product.force_approve.tx') wrap (3 attempts backoff)
+       - mask.text(reason) DLP defensive
+       - + ua_prefix mask.text(headers.UA).slice(0,60) forensic
+       Pattern V8 W7 atomicity + DLP + forensic cross-svc paridade completa. */
     let outcome;
     let productMeta;
 
-    await tx(async (c) => {
+    await withRetry('product.force_approve.tx', async () => await tx(async (c) => {
       // BUG 2+3+4: SELECT FOR UPDATE + state machine
       const cur = await c.query(
         `SELECT id, status, title, slug, seller_id
@@ -284,9 +302,12 @@ router.post('/:id/force-approve',
          VALUES ($1,$2,'product.force_approve','product',$3,'warn',$4::JSONB)`,
         [req.user.sub, req.user.role, req.params.id,
          JSON.stringify({
-           reason: req.body.reason,
+           // FIX pass 651: mask.text() DLP - reason pode conter Bearer/JWT/CPF (paridade pass 512)
+           reason: mask.text(String(req.body.reason || '').slice(0, 1000)),
            previous_status: productMeta.previous_status,
            ip: req.ip,
+           // FIX pass 651: + ua_prefix forensic (paridade pass 512 archive + pass 438 vault)
+           ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
          })]
       );
 
@@ -321,7 +342,7 @@ router.post('/:id/force-approve',
       // expose user_id p/ post-tx cache invalidate
       outcome = outcome || {};
       outcome.notified_user_id = sellerNotifiedUserId;
-    });
+    }));
 
     if (outcome?.error === 'not_found') return next(errorHandler.notFound('product_not_found'));
     if (outcome?.error === 'invalid_state') {
