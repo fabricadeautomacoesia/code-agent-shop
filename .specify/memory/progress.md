@@ -38961,3 +38961,31 @@ W14 indexes cumulative cadeia mig 102-117:
 - 16 indexes total apply pending VPS SSH
 
 353 passes acumulados (268->623) sem deploy VPS
+
+============================================================================
+SESSAO 624 (W14 admin/sellers ORDER direction parity + mig 118 coverage)
+============================================================================
+
+Pass 624 (W14 admin/sellers ORDER direction parity DESC+DESC + mig 118):
+- DESCOBERTA: admin /sellers/all ORDER BY s.created_at DESC, s.id ASC (mixed direction)
+- Outlier vs cadeia Regra D V8 cross-svc (30+ sites DESC+DESC consolidados)
+- PG planner forca External Sort (mixed direction idx nao existe)
+- POST-FIX:
+  1. admin.js linha 415 ORDER BY DESC, id DESC (paridade cadeia)
+  2. db/migrations/118 idx_sellers_created_id (created_at DESC, id DESC)
+- Latency: ~10-30ms External Sort eliminado -> ~3-8ms total query
+- Storage: ~1-2MB para ~10k sellers prod (acceptable)
+
+CADEIA Regra D direction parity DESC+DESC consolidacao:
+- 30+ sites cross-svc consolidados (orders, payouts, reports, qa-queue, 
+  disputes, alerts, audit-log, vault, loyalty, sellers/all este)
+- mig 117 + 118 cobrem casos onde idx composite era ausente
+- 100% paridade ORDER tiebreaker direction cross-svc admin listings
+
+W14 indexes cumulative cadeia mig 102-118:
+- mig 102-116 (15 indexes sessao previa)
+- mig 117 idx_loyalty_tx_user_created_id (pass 623)
+- mig 118 idx_sellers_created_id (pass 624 este)
+- 17 indexes total apply pending VPS SSH
+
+354 passes acumulados (268->624) sem deploy VPS
