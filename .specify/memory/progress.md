@@ -40301,3 +40301,23 @@ CADEIA cross-svc cache hygiene observability:
 - TOTAL: prevention + detection consolidacao
 
 439 passes acumulados (268->709) sem deploy VPS
+
+============================================================================
+SESSAO 710 (W4 qa-queue case-insensitive status - cadeia cache hygiene 30+ sites)
+============================================================================
+
+Pass 710 (W4 product-svc qa-queue case-insensitive status normalize):
+- DESCOBERTA: req.query.status raw case-sensitive whitelist check
+- Cache key + handler ambos case-sensitive MAS UX broken case variance:
+  ?status=Qa_Pending vs ?status=qa_pending = 'all' default fallback
+- Multiple Redis entries para mesma logical query
+- POST-FIX: normalize trim+lowercase ANTES whitelist check
+  - cacheKey + handler ambos consistent paridade cadeia consolidacao
+  - 31st site cadeia cache key normalization cross-svc
+
+CADEIA cache key normalization 30+ sites cross-svc:
+- Pattern consolidacao: cache key MUST mirror handler normalization
+- Case-insensitive UX cross-platform
+- Cache pollution evitada (variantes case colapsam mesmo entry)
+
+440 passes acumulados (268->710) sem deploy VPS
