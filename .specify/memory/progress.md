@@ -40243,3 +40243,37 @@ CADEIA W14 direction parity + PARTIAL composite cumulative:
 - 30 indexes total apply pending VPS SSH
 
 437 passes acumulados (268->707) sem deploy VPS
+
+============================================================================
+SESSAO 708 (W17 CRITICAL shared rate-limiter shared-bucket vulnerability)
+============================================================================
+
+Pass 708 (W17 CRITICAL @cas/shared rate-limiter shared-bucket - 20+ limiters affected):
+- DESCOBERTA: createLimiter fallback usava req.ip (Traefik peer IP shared)
+- ARCHITECTURE: Servicos atras Traefik Docker Swarm reverse proxy
+- req.ip retorna PEER IP Traefik MESMO IP para TODOS os clients downstream
+- SHARED BUCKET ATTACK CRITICAL:
+  - 1 atacante esgota bucket -> bloqueia TODOS users legit cross-platform
+  - 20+ limiters cross-svc usam createLimiter SEM keyFn explicit
+  - Affected limiters cumulative cross-svc:
+    auth-svc: logoutLimiter, patchMeLimiter
+    aiops-svc: statusLimiter, ackAlertLimiter
+    order-svc: couponApplyLimiter, disputeOpenLimiter, checkoutLimiter
+    payment-svc: payoutProcessLimiter, webhookResetLimiter
+    product-svc: forceApproveLimiter, listLimiter, draftCreateLimiter,
+                 submitLimiter, versionPublishLimiter, qnaAnswerLimiter,
+                 uploadLimiter
+    review-svc: reviewLimiter, voteLimiter, replyLimiter, qnaCreateLimiter
+- Pass 304 + 359 ja fixou vault-svc rate-limits individuais com x-real-ip
+  MAS helper compartilhado @cas/shared/rate-limiter ficou lagged
+- POST-FIX: fallback chain x-api-key -> x-real-ip -> req.ip (legacy only)
+  - x-real-ip configurado em Traefik labels (deploy/stack.yml)
+  - 1 fix consolidado afeta 20+ limiters cross-svc automaticamente
+  - Trade-off ZERO: sem regressao funcional, sem code change per site
+
+CADEIA W17 rate-limit defense consolidacao:
+- Individual rate-limit fixes (vault-svc 3 limiters - pass 304/359)
+- Helper compartilhado fix (este pass 708) - 20+ limiters
+- TOTAL: 23+ limiters cross-svc agora bulletproof against shared-bucket
+
+438 passes acumulados (268->708) sem deploy VPS
