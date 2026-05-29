@@ -436,13 +436,27 @@ app.get('/top-sellers',
      nao. Resultado: cache miss rate alta + Redis MEMORY USAGE inflado.
      POST-FIX: aplicar mesma normalizacao toString().trim().toLowerCase()
      na cache key. paridade _autocompleteCacheKey pass 232. */
+  /* FIX-WORKER-10 pass 600 (Math.max(1, ...) clamp gap + handler PG LIMIT -N crash):
+     PRE-FIX 2 BUGS:
+     1. Cache key Math.min(...||4, 12) - missing Math.max(1, ...). Negative
+        values pollute (?per_category=-5 -> cache key 'per=-5').
+     2. CRITICAL Handler line 445: Math.min(parseInt(...) || 4, 12) - tambem
+        missing Math.max(1, ...). PG executa LIMIT $1 com -5 -> erro 22023
+        invalid_argument_for_function -> errorHandler 500 leak.
+        Cenario real: ?per_category=-5 -> 500 internal error
+        + cache key 'per=-5' poluido com null response (errors nao cached
+        mas key registered for non-error 200 path)
+     POST-FIX:
+     - cache key Math.max(1, Math.min(12, ... || 4)) paridade pass 594/599
+     - handler same normalization (LIMIT >= 1 sempre safe PG)
+     Pattern V8 cache hygiene + handler validation cross-svc consolidacao. */
   cache.cacheMiddleware((req) => {
-    const per = Math.min(parseInt(req.query.per_category || '4', 10) || 4, 12);
+    const per = Math.max(1, Math.min(12, parseInt(req.query.per_category, 10) || 4));
     const cat = (req.query.category || '').toString().trim().toLowerCase();
     return `search:top-sellers:per=${per}:cat=${cat}`;
   }, 120),
   asyncHandler(async (req, res) => {
-  const perCategory = Math.min(parseInt(req.query.per_category || '4', 10), 12);
+  const perCategory = Math.max(1, Math.min(12, parseInt(req.query.per_category, 10) || 4));
   /* FIX-WORKER-10 pass 577 (cache key vs query case-mismatch fake empty results):
      PRE-FIX BUG: Cache key (linha 441) normaliza .toLowerCase() MAS handler
      usava .trim() apenas sem lowercase. Cenario fake empty:
