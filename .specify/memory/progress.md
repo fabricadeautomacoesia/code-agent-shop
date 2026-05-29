@@ -36541,3 +36541,46 @@ Cadeia W7 cache hygiene:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 094-102 ALTA PRIORIDADE apply
+
+## Pass 491 - W9 SEO/META: /conta/pedidos/[id] enriched metadata
+
+PRE-FIX (basico pass inicial):
+- /conta/pedidos/[id]/layout.tsx tinha apenas:
+  - title `Pedido ${id.slice(0,8)} - Code & Agent Shop`
+  - description
+  - robots noindex + nofollow
+- SEM alternates.canonical (mesmo noindex e defensive)
+- SEM openGraph (compartilhar link com seller via support chat mostrava
+  "Code & Agent Shop" raw em vez de "Pedido #XXXXXXXX" no preview)
+- SEM locale pt_BR (pattern V8 metadata enriquecida)
+- SEM siteName (consistencia branding cross-pages)
+- title format lowercase id (vs uppercase pattern /downloads pass 142)
+
+POST-FIX (paridade pass 142 /conta/downloads/[token]):
+- title uppercase short hash 8 chars (UUID v4 = 128 bits entropy nao
+  reconstrutivel a partir de 8 chars hex)
+- alternates.canonical defensive (mesmo noindex)
+- openGraph completo:
+  - title "Pedido #XXXXXXXX" (sem siteName redundante)
+  - description identica ao top
+  - type 'website'
+  - url canonical
+  - locale 'pt_BR'
+  - siteName 'Code & Agent Shop'
+- robots noindex + nofollow + NOCACHE (browser nao guardar em historico
+  cache - paridade /downloads/[token] PII protect)
+- PII protected: id slice(0,8) hash NAO reconstrutivel
+
+Cadeia W9 SEO/META progression:
+- pass 121 /categoria/[slug] generateMetadata
+- pass 142 /conta/downloads/[token] hash mascarado + nocache
+- pass 142 /conta/pedidos/[id] basic (PRE-FIX deste)
+- pass 7 /conta/pontos enriched openGraph
+- pass 491 (este) /conta/pedidos/[id] enriched paridade /downloads
+
+224 passes acumulados (268->491) sem deploy VPS
+8 CRITICAL + 34 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 094-102 ALTA PRIORIDADE apply
