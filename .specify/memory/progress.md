@@ -39726,3 +39726,57 @@ CADEIA cross-svc withRetry atomicity STATUS REVISADO:
 - TOTAL atual: ~44 endpoints/tx cross-svc consolidacao
 
 403 passes acumulados (268->673) sem deploy VPS
+
+============================================================================
+SESSAO 674-683 (W2+W4+W16 order-svc 10/10 tx withRetry COMPLETA)
+============================================================================
+
+Pass 674 (W2 orders.js checkout withRetry - CRITICAL real money):
+- tx() cart FOR UPDATE + INSERT order + INSERT order_items + UPDATE user_loyalty
+- Cenarios deadlock: user double-click "Finalizar" + race com cart updates
+
+Pass 675 (W2 free order auto-fulfill withRetry - setImmediate path):
+- tx() UPDATE order paid+fulfilled + audit + notification
+
+Pass 676 (W2 dispute create withRetry):
+- tx() INSERT dispute + audit + notification
+
+Pass 677 (W4 admin dispute resolve withRetry):
+- tx() UPDATE dispute + cascade refund + notification cross-svc
+
+Pass 678 (W2 cart add_item withRetry):
+- tx() UPSERT cart + INSERT cart_items + recalc
+
+Pass 679 (W2 cart delete_item withRetry):
+- tx() DELETE + recalc
+
+Pass 680 (W2 cart PATCH qty withRetry):
+- tx() UPDATE cart_items + recalc
+
+Pass 681 (W2 cart coupon apply withRetry):
+- tx() SELECT FOR UPDATE cart + INSERT coupon_uses + recalc
+
+Pass 682 (W16 cart loyalty_redeem withRetry - CRITICAL real money):
+- tx() UPDATE user_loyalty balance + UPDATE cart + recalc
+
+Pass 683 (W16 cart loyalty_unredeem - COMPLETA order-svc 10/10):
+- DELETE /cart/loyalty/redeem tx() UPDATE balance + cart reset
+
+CADEIA order-svc atomicity COMPLETA 10/10 endpoints:
+- orders.js: checkout (674), free_fulfill (675), dispute_create (676), dispute_resolve (677) = 4/4
+- cart.js: add_item (678), delete_item (679), patch_qty (680), coupon (681),
+  loyalty_redeem (682), loyalty_unredeem (683) = 6/6
++ withRetry import @cas/shared em ambos arquivos
+
+CADEIA cross-svc withRetry atomicity STATUS:
+- auth-svc: 6/6 COMPLETA
+- vault-svc: 8/8 COMPLETA
+- product-svc admin: 3/3 COMPLETA
+- seller-svc: 10/10 COMPLETA
+- payment-svc: 6 tx + 10 withRetry COMPLETA
+- review-svc: 8/8 COMPLETA
+- order-svc: 10/10 COMPLETA (passes 674-683 ESTA SESSAO)
+- product-svc seller-mgmt: 4 tx LAGGED (ultimo svc remaining)
+- TOTAL atual: ~54 endpoints cross-svc atomicity 100%
+
+413 passes acumulados (268->683) sem deploy VPS
