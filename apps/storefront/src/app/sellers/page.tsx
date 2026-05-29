@@ -6,6 +6,20 @@ import type { Metadata } from 'next';
 export const revalidate = 120;
 
 // FIX-WORKER-9 pass 118: metadata explicita p/ /sellers (SEO listagem)
+// FIX-WORKER-9 pass 519 (twitter card + locale + siteName paridade /promocoes pass 133):
+//   PRE-FIX: 4 issues paridade lagged vs pages enriched neighbors:
+//   1. NO twitter card - Twitter shares mostravam openGraph fallback
+//      vs /promocoes pass 133 + /seller/[slug] pass 232 + /comparar pass 294
+//      ja tinham twitter card explicit
+//   2. openGraph SEM locale 'pt_BR' (paridade /cart/cloud-code-ilimitado/checkout)
+//   3. openGraph SEM siteName 'Code & Agent Shop' (consistency branding)
+//   4. NO robots explicit (default index:true mas defensive boa pratica para
+//      listing pages indexable)
+//   POST-FIX:
+//   - twitter card 'summary_large_image' (paridade /promocoes pass 133)
+//   - openGraph + locale + siteName (paridade outras pages)
+//   - robots index:true + follow:true explicit (SEO listing page deve indexar)
+//   Cadeia W9 metadata pages indexable cross-storefront completa
 export const metadata: Metadata = {
   title: 'Vendedores Verificados | Code & Agent Shop',
   description: 'Conheca os desenvolvedores e vendedores oficiais do Code & Agent Shop. Compre direto de criadores verificados com reputacao publica, KYC validado e reviews reais.',
@@ -16,8 +30,17 @@ export const metadata: Metadata = {
     title: 'Vendedores Verificados | Code & Agent Shop',
     description: 'Diretorio de desenvolvedores e vendedores oficiais com reputacao publica.',
     images: ['/opengraph-image'],
+    locale: 'pt_BR',
+    siteName: 'Code & Agent Shop',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Vendedores Verificados | Code & Agent Shop',
+    description: 'Diretorio de desenvolvedores e vendedores oficiais com reputacao publica.',
+    images: ['/opengraph-image'],
   },
   keywords: ['vendedores', 'desenvolvedores', 'criadores', 'marketplace', 'automacoes'],
+  robots: { index: true, follow: true },
 };
 
 async function fetchSafe<T>(path: string): Promise<T | null> {

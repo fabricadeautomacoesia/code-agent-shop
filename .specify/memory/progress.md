@@ -37938,3 +37938,59 @@ Cadeia W2 CHECKOUT consolidacao pix-flow:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)
+
+## Pass 519 - W9 SEO/META: /sellers twitter card + openGraph paridade /promocoes
+
+PRE-FIX (4 issues paridade lagged em /sellers indexable page):
+1. NO twitter card:
+   - Twitter shares mostravam openGraph fallback (default Twitter behavior)
+   - /promocoes pass 133 + /seller/[slug] pass 232 + /comparar pass 294 ja
+     tinham twitter card explicit
+   - Lagged paridade cross-pages indexable
+2. openGraph SEM locale 'pt_BR':
+   - Paridade /cart + /cloud-code-ilimitado + /checkout ja tinham
+3. openGraph SEM siteName 'Code & Agent Shop':
+   - Consistency branding cross-pages
+4. NO robots explicit:
+   - Default index:true OK mas defensive boa pratica
+   - Listing pages indexable explicit p/ SEO crawlers (clarity)
+
+Comparacao cross-pages cadeia W9:
+- /sobre pass 5 enriched (openGraph + twitter + canonical)
+- /termos + /privacidade pass 4 enriched
+- /promocoes pass 133 keywords + twitter + opengraph-image
+- /seller/[slug] pass 232 dynamic + twitter + profile type
+- /comparar pass 294 openGraph + twitter + locale
+- /pontos pass 7 enriched (passes anteriores)
+- /sellers (este) era ULTIMA listing page sem twitter card paridade
+
+POST-FIX (consolidacao cross-pages W9):
+- twitter card 'summary_large_image' (rich preview)
+- openGraph + locale 'pt_BR' (browser detect language)
+- openGraph + siteName 'Code & Agent Shop' (branding)
+- robots index:true + follow:true explicit
+- Comment expansivo com lista cross-pages paridade
+
+Impact SEO:
+- Twitter shares /sellers agora mostram rich preview
+- Multilingual signal (locale) para Google
+- siteName breadcrumb improvement nos search results
+- robots explicit reduces ambiguity for crawler
+
+Cadeia W9 SEO/META cross-storefront consolidacao:
+- pass 4 /termos /privacidade canonical
+- pass 5 /sobre openGraph + twitter
+- pass 7 /pontos enriched
+- pass 118 /sellers basic
+- pass 133 /promocoes keywords + opengraph-image
+- pass 232 /seller/[slug] dynamic
+- pass 294 /comparar twitter card
+- pass 491 /conta/pedidos/[id] enriched
+- pass 519 (este) /sellers twitter card + locale + siteName
+
+251 passes acumulados (268->519) sem deploy VPS
+9 CRITICAL + 37 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-105 ALTA PRIORIDADE apply (12 PARTIAL/composite indexes)
