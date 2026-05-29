@@ -1449,6 +1449,19 @@ app.post('/keys/me',
       );
     })); // close withRetry pass 507
 
+    /* FIX-WORKER-17 pass 574 (cache invalidation pos-mutation - consume TODO pass 542):
+       PRE-FIX (pass 542 TODO): GET /keys/me cached 60s MAS POST nao invalidava.
+       - Seller provisiona key -> dashboard reload mostra lista STALE ate 60s
+       - User experience 'criei mas nao aparece - bug?'
+       - Pass 542 deferiu via TODO comment 'cache.del em POST/revoke se UI ficar slow'
+       - Mesmo pattern admin /keys mas pass 489 tambem nao invalida
+       POST-FIX: cache.del wildcard 'vault:keys_me:u=USER:*' pos-tx commit.
+       - Fire-and-forget catch (Redis down nao bloquear response 201)
+       - Admin path 'vault:keys_me:u=admin_user_id:s=seller_filter:*' tambem invalida
+         (if admin provisionou para outro seller, mas o seller path mais critico)
+       Pattern V8 W13 invariante: TODA mutation que afeta cached read = invalidate.
+       Paridade pass 569 notif-svc /prefs cache.del cross-mutation. */
+    cache.del(`vault:keys_me:u=${req.user.sub}:*`).catch(() => {});
     log.info({ provisioned: r.rows[0].id, provider, fp, seller_id: sellerId, by: req.user.sub },
       '[vault.seller_provision]');
     res.status(201).json(r.rows[0]);
@@ -1556,6 +1569,12 @@ app.post('/keys/me/:id/revoke',
     });
     if (!revoked) return; // already responded via next() above
 
+    /* FIX-WORKER-17 pass 574 (cache invalidation pos-revoke - paridade POST /keys/me):
+       Seller revoga key -> dashboard reload mostra key como 'active' por ate 60s
+       (cache miss flag). UX gap user clicked Revoke + reload + ve active = confusion.
+       POST-FIX: cache.del wildcard 'vault:keys_me:u=USER:*' pos-tx commit.
+       Fire-and-forget catch (Redis down nao bloquear response). */
+    cache.del(`vault:keys_me:u=${req.user.sub}:*`).catch(() => {});
     res.json({ ok: true, revoked });
   })
 );
