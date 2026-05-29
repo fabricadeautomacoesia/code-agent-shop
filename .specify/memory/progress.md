@@ -35844,3 +35844,56 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096+097+098 ALTA PRIORIDADE
 - Continuar consume notifCache ~3 sites pendentes
+
+## PASS 477 W4 ADMIN: notifCache consume final - seller admin 3 sites + vault rotation cron
+commit pendente
+GAP discover audit: 4 sites remaining lagged FECHA cadeia consume 100%
+PRE-FIX:
+- seller-svc admin reactivate (linha 232) - good news engagement
+- seller-svc admin kyc_approved (linha 586) - cash flow unblock
+- seller-svc admin kyc_rejected (linha 663) - priority 3 blocking
+- vault-svc rotation cron bulk admin notifs (linhas 300+332)
+
+POST-FIX 4 sites:
+1. seller-svc admin reactivate: outcome.notified_user_id + notifCache.invalidate
+2. seller-svc admin kyc_approve: RETURNING user_id + notifCache.invalidate
+3. seller-svc admin kyc_reject: RETURNING user_id + notifCache.invalidate
+4. vault-svc rotation cron: lookup adminIds + notifCache.invalidateBulk
+
+Cadeia consume pass 467 cross-svc CONSOLIDATED FINAL 100%:
+  pass 467 helper module + auth-svc 2fa.activate (1 site)
+  pass 468 payment-svc hot path PAYMENT_RECEIVED + refund_failed (2)
+  pass 469 order-svc dispute resolve + free_order gap (2)
+  pass 470 qa-svc qa.callback (1 dual)
+  pass 471 auth-svc 5 sites
+  pass 472 seller-svc loyalty + product-svc version_publish (2)
+  pass 473 product-svc force-approve + review-svc qna_new (2)
+  pass 474 payment-svc refund + payout_paid + pending_liquidated (3)
+  pass 475 review-svc 4 sites (review/qna/report engagement)
+  pass 476 qa-svc + seller-svc cron + seller-svc admin (5 sites)
+  pass 477 seller-svc admin 3 + vault-svc rotation cron (4 sites) <- ESTE FECHA
+
+TOTAL sites consume agora: 31/30+ (100% consolidation) - CADEIA FECHADA
+MARCO MAJOR: notifCache cross-svc TODOS INSERT INTO notifications cobertos
+
+Pattern V8 W4+cross-svc COMPLETE:
+- TODO INSERT INTO notifications cross-svc DEVE chamar notifCache.invalidate(userId)
+- Multi-recipient bulk: lookup IDs + invalidateBulk
+- Helper @cas/shared/notif-cache.js single source of truth
+- Fire-and-forget catch pattern (Redis fail nao bloqueia caller)
+- Multiple svc passes (467-477) progressively built cross-svc consistency
+
+Impacto UX cross-svc:
+- Bell badge realtime end-to-end (sem delay 20s)
+- Anti-takeover signals (2FA, refresh_reuse) imediato
+- Engagement signals (review/qna/tier_up/payout) imediato
+- Account-state changes (suspend/revoke/kyc) imediato
+- Forensic signals (qa_dispatch_failed/vault_rotation_due) imediato
+
+210 passes acumulados (268->477) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 096+097+098 ALTA PRIORIDADE
+- Cadeia notifCache 100% pronta para deploy

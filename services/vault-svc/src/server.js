@@ -7,7 +7,7 @@ const nodeCrypto = require('node:crypto');
 const rateLimit = require('express-rate-limit');
 const { z } = require('zod');
 const { query, tx } = require('@cas/db-client');
-const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp, fail2ban, startup, cache, mask, withRetry } = require('@cas/shared');
+const { logger, sanitize, errorHandler, asyncHandler, jwt, validate, crypto: cryp, fail2ban, startup, cache, mask, withRetry, notifCache } = require('@cas/shared');
 
 // FIX-WORKER-17 pass 7: valida envs criticas ANTES de listen.
 // VAULT_AES_KEY 64-char hex obrigatorio (encrypt/decrypt de API keys).
@@ -350,6 +350,20 @@ async function rotationAlertCron() {
          )`,
       [keysJson]
     ).catch((e) => log.warn({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[vault.rotation.email.bulk.fail]'));
+    /* FIX-WORKER-17 pass 477 (notifCache cross-svc - vault_rotation_due admin alerts):
+       Cron diaria detecta keys vencendo - notifica TODOS admins via bulk INSERT.
+       Sem invalidate cache, admin abre dashboard manana e bell badge mostra
+       count stale ate TTL 20s. Vault rotation = security-critical alerts.
+       POST-FIX: lookup admin user_ids once + invalidateBulk uma vez ao fim. */
+    try {
+      const adminIds = await query(
+        `SELECT id FROM users WHERE role IN ('admin','staff') AND is_active = TRUE AND is_banned = FALSE`
+      );
+      const ids = adminIds.rows.map((r) => r.id);
+      if (ids.length) notifCache.invalidateBulk(ids);
+    } catch (cacheErr) {
+      log.warn({ err: mask.text(String(cacheErr.message || '').slice(0, 200)) }, '[vault.rotation.notif_cache.fail]');
+    }
   } catch (e) {
     log.error({ /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[vault.rotation.cron.fail]');
   }
