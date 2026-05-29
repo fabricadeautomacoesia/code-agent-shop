@@ -59,7 +59,41 @@ function asaasCreateGuard(req, res, next) {
     }
     // FIX-WORKER-17 pass 3: fail2ban reportFailure - ban after 5 attempts/15min
     if (req.fail2ban) req.fail2ban.reportFailure();
-    log.warn({ ip: req.ip, /* FIX pass 323 DLP */ ua: mask.text(req.headers['user-agent'] || '') }, '[payment.create.invalid_internal_token]');
+    /* FIX-WORKER-11 pass 591 (audit_log critical paridade pass 458/462/463/523/555):
+       PRE-FIX: log.warn '[payment.create.invalid_internal_token]' apenas (Pino).
+       SCOPE CRITICAL:
+       - asaasCreateGuard protege /payments/asaas/create (cria Asaas charges)
+       - Bypass success = atacante cria charges para ANY order_id (denial-of-wallet)
+       - + Receber invoice_url/pix_qrcode/boleto_url de QUALQUER pedido (PII leak)
+       - + Corromper status: UPDATE orders SET payment_status='authorized'
+       - log.warn Pino retention 7d - NAO queryable forensic cross-svc
+       - Pattern V8 W17 estabeleceu audit_log critical PARA TODO HMAC/token bypass:
+         pass 458 vault.use.invalid_internal_token (vault-svc)
+         pass 462 qa.run.invalid_internal_token (qa-svc)
+         pass 463 asaas.webhook.invalid_signature (payment-svc WEBHOOK)
+         pass 523 qa.callback.invalid_signature (qa-svc CALLBACK)
+         pass 555 vault.use.audit_fail FALLBACK (vault-svc)
+       - payment.create.invalid_internal_token era unico endpoint
+         HMAC bypass paymet-svc lagged sem audit_log (vs webhook ja consolidado)
+       POST-FIX: + audit_log critical (paridade cadeia 5 prior):
+       - actor NULL (anonymous bypass attempt - JWT nao rodou ainda)
+       - actor_role 'anonymous'
+       - target_type 'payment_create' (NOVO em VALID_TT aiops - future migration)
+       - severity 'critical'
+       - payload: ip + ua_prefix + tok_len_match (forensic intel paridade pass 462) */
+    const safeUaForensic = mask.text(req.headers['user-agent'] || '');
+    log.warn({ ip: req.ip, ua: safeUaForensic }, '[payment.create.invalid_internal_token]');
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES (NULL, 'anonymous', 'payment.create.invalid_internal_token', 'payment_create', NULL, 'critical', $1::JSONB)`,
+      [JSON.stringify({
+        ip: req.ip,
+        ua_prefix: safeUaForensic.slice(0, 60),
+        tok_len_match: String(tok).length === PAYMENT_INTERNAL_TOKEN.length,
+      })]
+    ).catch((auditErr) => log.error({
+      err: mask.text(String(auditErr.message || '').slice(0, 200)),
+    }, '[payment.create.invalid_internal_token.audit_fail]'));
   }
   return jwt.requireAuth({ roles: ['admin','staff','service'] })(req, res, next);
 }
