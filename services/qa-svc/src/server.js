@@ -198,11 +198,12 @@ app.post('/qa/run',
       }
     }
 
+    // FIX-WORKER-12 pass 688 (withRetry qa.run.dispatch deadlock defense - paridade pass 593 callback)
     let outcome;
     let product;
     let run_id;
 
-    await tx(async (c) => {
+    await withRetry('qa.run_dispatch.tx', async () => await tx(async (c) => {
       // FIX bug 1+2 (Regra K + B): SELECT FOR UPDATE products + deleted_at
       const p = await c.query(
         `SELECT id, title, description, kind, package_url, package_hash_sha256,
@@ -268,7 +269,7 @@ app.post('/qa/run',
         `UPDATE products SET status = 'qa_running', qa_verdict = 'running' WHERE id = $1`,
         [product_id]
       );
-    });
+    }));
 
     if (outcome?.error === 'product_not_found') {
       return res.status(404).json({ error: 'product_not_found' });
@@ -1061,7 +1062,8 @@ async function timeoutStuckRuns() {
     for (const run of stuck.rows) {
       const minutes = Math.floor(Number(run.minutes_running));
       try {
-        await tx(async (c) => {
+        // FIX-WORKER-12 pass 689 (withRetry timeoutStuck cron - COMPLETA qa-svc atomicity)
+        await withRetry('qa.timeout_stuck.tx', async () => await tx(async (c) => {
           // Marca run timeout
           await c.query(
             `UPDATE product_qa_runs
@@ -1100,7 +1102,7 @@ async function timeoutStuckRuns() {
             // Seller esperou QA processar 10min+ -> timeout -> espera reenvio IMEDIATO
             notifCache.invalidate(sellerInfo.rows[0].user_id);
           }
-        });
+        }));
         log.info({ run_id: run.id, minutes }, '[qa.timeout.ok]');
       } catch (e) {
         log.error({ run_id: run.id, /* FIX pass 343 DLP */ err: mask.text(String(e.message || '').slice(0, 300)) }, '[qa.timeout.fail]');
