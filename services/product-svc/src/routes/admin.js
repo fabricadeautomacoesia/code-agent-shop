@@ -441,10 +441,28 @@ router.post('/:id/platform-take',
         '[product.platform_take.race_resolved] outro request criou primeiro');
       return res.json({ ok: true, platform_product: raced.rows[0], race: true });
     }
+    /* FIX-WORKER-7 pass 652 (DLP mask reason + ua_prefix forensic paridade pass 512/651):
+       PRE-FIX BUGS (2 paridade consolidacao):
+       1. reason field SEM mask.text() DLP - admin paste pode incluir Bearer/JWT/CPF
+          /archive (pass 512) + /force-approve (pass 651) ja consolidaram mask.text()
+          /platform-take era unico admin endpoint product-svc lagged sem DLP
+       2. NO ua_prefix forensic (pattern V8 W17 pass 438 cross-svc)
+          Token admin XSS-stolen -> attacker platform-take products mass + audit gap
+       POST-FIX:
+       - mask.text(reason) DLP defensive (paridade pass 512/651)
+       - + ua_prefix forensic (paridade pass 438 vault + pass 512 archive)
+       Note: platform-take audit_log INSERT fora de tx() OK aqui - dup INSERT ja
+       confirmou commit (ON CONFLICT race-safe), audit eh follow-up forensic
+       (vs archive/force-approve onde UPDATE+audit DEVEM ser atomic state machine). */
     await query(
       `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
        VALUES ($1,$2,'product.platform_take','product',$3,'warn',$4::JSONB)`,
-      [req.user.sub, req.user.role, req.params.id, JSON.stringify({ reason: req.body.reason, duplicate_id: dup.rows[0].id })]
+      [req.user.sub, req.user.role, req.params.id, JSON.stringify({
+        reason: mask.text(String(req.body.reason || '').slice(0, 1000)),
+        duplicate_id: dup.rows[0].id,
+        ip: req.ip,
+        ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
+      })]
     );
     log.warn({ original: req.params.id, platform_copy: dup.rows[0].id }, '[product.platform_take]');
     // FIX-WORKER-7 pass 5: passa productId p/ invalidacao especifica detail/reviews/qna
