@@ -974,7 +974,18 @@ router.post('/forgot-password',
       const fullNameSafe = htmlEscape(fullName);  // FIX bug 1
       const resetUrl = `${process.env.APP_URL || 'https://cas.inovareinteligenciaartificial.com'}/redefinir-senha?token=${tok}`;
 
-      await tx(async (c) => {
+      /* FIX-WORKER-6 pass 654 (withRetry deadlock defense - paridade pass 526/546 cadeia auth tx):
+         PRE-FIX: tx() sem withRetry wrap (linha 977 antes deste fix).
+         - User clica "Enviar email" 3x rapido sequential (slow network = ansiedade)
+         - 3 concurrent tx() lock contention: UPDATE password_resets + INSERT + UPDATE audit_log
+         - Cenario deadlock 40P01: UPDATE password_resets bloqueia rows
+           pendentes do user enquanto INSERT cria novo + audit_log lock ordering conflict
+         - PRE-FIX impact: 1 dos 3 requests fail silent 500 -> user reabre form -> 5+ clicks
+         - Pass 526 (banned cascade) + pass 546 (refresh rotation) ja consolidaram withRetry
+         - forgot-password lagged ate este fix
+         POST-FIX: withRetry('auth.forgot_password.tx') wrap (3 attempts backoff)
+         Pattern V8 auth-svc cadeia atomicity completar consolidacao. */
+      await withRetry('auth.forgot_password.tx', async () => await tx(async (c) => {
         // FIX bug 4: invalida tokens previos pending (1 token per user max)
         await c.query(
           `UPDATE password_resets SET used_at = NOW()
@@ -1033,7 +1044,7 @@ router.post('/forgot-password',
             email_hash: crypto.createHash('sha256').update(req.body.email).digest('hex').slice(0, 16),
           })]
         );
-      });
+      }));
       /* FIX-WORKER-1 pass 471 (notifCache cross-svc - password_reset critical):
          password_reset notif priority 1 - user requested reset, espera email
          + bell badge. Cache 20s atrasa visualizacao em outras tabs ativas.
@@ -1084,8 +1095,22 @@ router.post('/reset-password',
     const bcrypt = require('bcrypt');
     const hash = crypto.createHash('sha256').update(req.body.token).digest('hex');
 
+    /* FIX-WORKER-6 pass 655 (withRetry deadlock defense reset-password - paridade pass 654):
+       PRE-FIX: tx() sem withRetry wrap.
+       - Cenarios deadlock 40P01:
+         1. User double-click "Reset password" submit btn (slow network ansiedade)
+            -> 2 concurrent tx() lock contention: UPDATE password_resets + UPDATE users
+            + UPDATE user_sessions cascade revoke + INSERT audit_log
+         2. Race com /login mesmo user (atacante tentando exploit token compromised)
+            -> UPDATE user_sessions concurrent lock ordering conflict
+         3. Race com cron expirePasswordResets (5min interval cleanup expired)
+       - Pass 526 (banned cascade) + pass 546 (refresh) + pass 654 (forgot)
+         ja consolidaram withRetry em paths auth tx critical
+       - reset-password lagged ate este fix (ULTIMO auth-svc tx sem withRetry)
+       POST-FIX: withRetry('auth.password_reset.tx') wrap (3 attempts backoff)
+       Pattern V8 auth-svc COMPLETA cadeia atomicity defense cross-tx. */
     let outcome;
-    await tx(async (c) => {
+    await withRetry('auth.password_reset.tx', async () => await tx(async (c) => {
       // FIX bug 3 (Regra K): SELECT FOR UPDATE password_resets anti-race
       const r = await c.query(
         `SELECT id, user_id FROM password_resets
@@ -1121,7 +1146,7 @@ router.post('/reset-password',
         })]
       );
       outcome = { sessions_revoked: revoked.rows.length };
-    });
+    }));
 
     if (outcome?.error === 'invalid_or_expired_token') {
       return next(require('@cas/shared').errorHandler.badRequest('invalid_or_expired_token'));
