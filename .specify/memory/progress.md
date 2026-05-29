@@ -35992,3 +35992,68 @@ Pattern V8 W13 admin endpoints:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
 - Mig 096+097+098+099 ALTA PRIORIDADE
+
+## PASS 480 W6 AUTH-SVC: audit_log critical login.account_locked + login.invalid_password
+commit pendente
+GAP forensic login bruteforce sem audit_log (security event primary vector)
+PRE-FIX:
+- Linha 297-313: bcrypt.compare fail path apenas:
+  - fail2ban?.reportFailure()
+  - UPDATE users failed_login_count (counter)
+  - log.warn account_locked path
+- ZERO audit_log entry em invalid_password OU account_locked
+- Pass 282 estabeleceu ua_prefix pattern audit_log
+- Pass 292 (2fa.invalid_totp) tem audit critical
+- Pass 429 (2fa.disable.invalid_token + activate) audit critical
+- Pass 443 (refresh_banned + 2fa.decrypt) ua_prefix
+- Pass 458 (vault.invalid_internal_token) audit critical
+- Pass 462 (qa.callback.invalid_signature) audit critical
+- Pass 463 (asaas.webhook.invalid_signature) audit critical
+- Pass 480 fecha: login.invalid_password + login.account_locked <- ULTIMO gap
+
+SCOPE WHY CRITICAL:
+- Bruteforce login = PRIMARY attack vector account takeover
+- fail2ban + per-account lockout = good defenses MAS sem forensic trail
+- log.warn (Pino 7d) != audit_log (90d queryable cross-svc)
+- LGPD/SOC2: account_locked event MUST audit_log
+- Incident response forensic: "quem brute force X tentativas user Y?"
+  - Sem audit_log: query psql + grep logs (slow + retention 7d cap)
+  - Com audit_log: /admin/audit-log filter target_id=user severity=critical (pass 430+451)
+
+POST-FIX (2 paths audit):
+1. account_locked path (atinge LOGIN_MAX_FAILURES):
+   - audit_log severity=critical
+   - action='auth.login.account_locked'
+   - payload: ip + ua_prefix + failed_count + lock_minutes + lock_until
+2. invalid_password path (cada tentativa < LOGIN_MAX_FAILURES):
+   - audit_log severity=warn
+   - action='auth.login.invalid_password'
+   - payload: ip + ua_prefix + failed_count + max_failures
+- Fire-and-forget catch p/ nao bloquear response 401
+- safeUaForensic compartilhado entre ambos paths
+
+W6+W17 invalid_credential audit critical series CONSOLIDATED FINAL:
+  pass 282 ua_prefix forensic auth-svc
+  pass 292 2fa.invalid_totp
+  pass 315 refresh_reuse_breach
+  pass 429 2fa.disable + activate invalid_token
+  pass 438 vault cross-endpoints
+  pass 443 refresh_banned + 2fa.decrypt
+  pass 458 vault.invalid_internal_token
+  pass 462 qa.callback.invalid_signature
+  pass 463 asaas.webhook.invalid_signature
+  pass 480 login.account_locked + invalid_password <- ESTE FECHA cadeia
+
+Pattern V8 W6 invalid_credential audit critical CONSOLIDATED:
+- TODO invalid_credential path (login, 2FA, refresh, webhook signature)
+  precisa audit_log severity=warn|critical
+- ua_prefix masked + ip + counter/details payload
+- Fire-and-forget catch (audit fail nao bloqueia 401 response)
+
+213 passes acumulados (268->480) sem deploy VPS
+8 CRITICAL + 31 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (BLOCKER PRINCIPAL)
+- Mig 096+097+098+099 ALTA PRIORIDADE
+- Pattern audit_log invalid_credential cross-svc COMPLETE

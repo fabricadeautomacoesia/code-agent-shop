@@ -298,6 +298,24 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
   if (!ok) {
     req.fail2ban?.reportFailure();
     const newCount = (user.failed_login_count || 0) + 1;
+    /* FIX-WORKER-6 pass 480 (audit_log gap em login.invalid_password + account_locked):
+       PRE-FIX:
+       - Linha 304-312 UPDATE users sem audit_log
+       - log.warn em account_locked path MAS sem audit_log entry queryable
+       - Pass 282/315 estabeleceram ua_prefix pattern em audit_log security events
+       - Pass 292 (2fa.invalid_totp) tem audit critical
+       - login.invalid_password (high-volume vector bruteforce) lagged
+       SCOPE:
+       - Bruteforce login = primary attack vector account takeover
+       - fail2ban + per-account lockout = good defenses MAS sem forensic trail
+       - Incident response: "quem tentou brute force X vezes user Y?" sem query
+       - LGPD/SOC2: account_locked event MUST audit_log
+       POST-FIX: audit_log em AMBOS paths (account_locked + invalid_password):
+       - account_locked: severity critical (atinge LOGIN_MAX_FAILURES)
+       - invalid_password (apenas counter increment): severity warn
+       - ua_prefix masked (paridade pass 282 cross-svc)
+       Fire-and-forget catch p/ nao bloquear response 401. */
+    const safeUaForensic = mask.text((req.headers['user-agent'] || '').slice(0, 60));
     // Auto-lock apos LOGIN_MAX_FAILURES atingido
     if (newCount >= LOGIN_MAX_FAILURES) {
       const lockUntil = new Date(Date.now() + LOGIN_LOCK_MINUTES * 60000);
@@ -306,10 +324,33 @@ router.post('/login', fail2ban.middleware(), validate({ body: loginSchema }), as
         [newCount, lockUntil, user.id]
       );
       log.warn({ userId: user.id, email: user.email, count: newCount, lockUntil }, '[login.account_locked_now]');
+      // FIX pass 480: audit critical account_locked (forensic trail)
+      query(
+        `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+         VALUES ($1, 'system', 'auth.login.account_locked', 'user', $1, 'critical', $2::JSONB)`,
+        [user.id, JSON.stringify({
+          ip: req.ip,
+          ua_prefix: safeUaForensic,
+          failed_count: newCount,
+          lock_minutes: LOGIN_LOCK_MINUTES,
+          lock_until: lockUntil.toISOString(),
+        })]
+      ).catch(() => {});
       return next(errorHandler.forbidden('account_locked',
         `Muitas tentativas falhas. Conta bloqueada por ${LOGIN_LOCK_MINUTES} minutos.`));
     }
     await query('UPDATE users SET failed_login_count = $1 WHERE id = $2', [newCount, user.id]);
+    // FIX pass 480: audit warn invalid_password (cada tentativa - forensic queryable)
+    query(
+      `INSERT INTO audit_log (actor_user_id, actor_role, action, target_type, target_id, severity, payload_after)
+       VALUES ($1, 'system', 'auth.login.invalid_password', 'user', $1, 'warn', $2::JSONB)`,
+      [user.id, JSON.stringify({
+        ip: req.ip,
+        ua_prefix: safeUaForensic,
+        failed_count: newCount,
+        max_failures: LOGIN_MAX_FAILURES,
+      })]
+    ).catch(() => {});
     return next(errorHandler.unauthorized('invalid_credentials', 'Email ou senha invalidos'));
   }
 
