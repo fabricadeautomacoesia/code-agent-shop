@@ -618,7 +618,8 @@ const auditLogHandler = asyncHandler(async (req, res) => {
   const lim = Math.min(Math.max(1, parseInt(req.query.limit || '50', 10)), 200);
   const off = Math.max(0, parseInt(req.query.offset || '0', 10));
   const action = (req.query.action || '').toString().trim();
-  const severity = (req.query.severity || '').toString().trim();
+  // FIX pass 721: + .toLowerCase() severity case-insensitive (paridade cacheKey)
+  const severity = (req.query.severity || '').toString().trim().toLowerCase();
   // Whitelist severities (anti SQL injection via param) - validates against enum
   const VALID_SEV = new Set(['info','warn','error','critical']);
   const sevFilter = VALID_SEV.has(severity) ? severity : null;
@@ -763,13 +764,20 @@ const AUDIT_VALID_TT = new Set([
   'category','review','qna','dispute',
 ]);
 const AUDIT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/* FIX-WORKER-10 pass 721 (case-insensitive severity normalize - paridade cadeia 35+ sites):
+   PRE-FIX: sevRaw .trim() apenas case-sensitive
+   - Admin /audit-log URL bar: ?severity=Critical vs critical -> '' default no filter
+   - 4 valores enum: info/warn/error/critical sao lowercase canonical
+   - User digita Caps -> filter ignorado silent (no error, mas filter desativado)
+   POST-FIX: + .toLowerCase() ANTES whitelist check (cacheKey + handler) */
 const auditLogCacheKey = (req) => {
   const q = req.query;
   const days = Math.min(Math.max(1, parseInt(q.days || '7', 10)), 90);
   const lim = Math.min(Math.max(1, parseInt(q.limit || '50', 10)), 200);
   const off = Math.max(0, parseInt(q.offset || '0', 10));
   const action = String(q.action || '').trim().slice(0, 80); // bounded slice anti-DoS
-  const sevRaw = String(q.severity || '').trim();
+  // FIX pass 721: + .toLowerCase() severity case-insensitive (paridade handler)
+  const sevRaw = String(q.severity || '').trim().toLowerCase();
   const sev = AUDIT_VALID_SEV.has(sevRaw) ? sevRaw : '';
   const tidRaw = String(q.target_id || '').trim();
   const tid = AUDIT_UUID_RE.test(tidRaw) ? tidRaw.toLowerCase() : '';
