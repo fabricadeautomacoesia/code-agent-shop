@@ -826,9 +826,30 @@ router.post('/:id/dispute',
 // + COUNT(*) OVER() window total + has_more
 // + cache.cacheMiddleware 30s vary by filtros
 // + stats query separada (counts agregados 90d) - mantida + cache hit cobre ambas
+// FIX-WORKER-18 pass 576 (cache key normalization paridade cadeia W7+W10+W18):
+//   PRE-FIX BUGS (3 issues cache pollution + inconsistency):
+//   1. Raw q.status sem validation. Handler valida VALID_STATUSES whitelist
+//      (linha 840). Cenarios:
+//      - ?status=OPENED (capital) -> cache key 's=OPENED', handler whitelist
+//        case-sensitive miss -> SEM filter aplicado -> response unfiltered
+//      - ?status=opened (lower) -> cache key 's=opened', handler filtra
+//      - 2 entries diferentes pollution + worst: status=OPENED retorna ALL
+//        disputes (unfiltered) sob cache key suggesting filtered
+//   2. Raw q.limit. Handler clamps Math.max/Math.min (linha 842) [1, 200].
+//      ?limit=99999 -> cache key 'lim=99999', handler clamp 200.
+//      ?limit=200 -> cache key 'lim=200' SAME response cache pollution.
+//   3. Raw q.offset. Handler Math.max(0, ...).
+//      ?offset=-5 -> cache key 'off=-5', handler -> 0
+//   POST-FIX: normalize cache key SAME way handler normalizes.
+//   Pattern V8 cache hygiene invariante (passes 520/530/533/551/558/566/572).
+const VALID_DISPUTE_STATUSES = ['opened', 'under_review', 'resolved_buyer', 'resolved_seller', 'cancelled'];
 const disputesCacheKey = (req) => {
   const q = req.query;
-  return `order:admin:disputes:s=${q.status||''}:lim=${q.limit||50}:off=${q.offset||0}`;
+  const statusRaw = (q.status || '').toString().trim();
+  const statusNorm = VALID_DISPUTE_STATUSES.includes(statusRaw) ? statusRaw : '';
+  const lim = Math.max(1, Math.min(200, parseInt(q.limit, 10) || 50));
+  const off = Math.max(0, parseInt(q.offset, 10) || 0);
+  return `order:admin:disputes:s=${statusNorm}:lim=${lim}:off=${off}`;
 };
 
 router.get('/admin/disputes',
