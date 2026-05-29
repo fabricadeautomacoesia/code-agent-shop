@@ -40642,3 +40642,41 @@ CADEIA cache hygiene MISMATCH bugs detected + fixed cumulative:
 = 8 cache hygiene MISMATCH bugs detected ATIVA AUDITORIA
 
 458 passes acumulados (268->728) sem deploy VPS
+
+============================================================================
+SESSAO 729-731 (W4+W7 cache hygiene MISMATCH 3 sites review-svc - 11 bugs cumulative)
+============================================================================
+
+Pass 729 (W4 /admin/reports status cache hygiene MISMATCH):
+- cacheKey .toLowerCase() apenas (no .trim()) + handler raw String
+- POST-FIX: + .trim() em ambos (cache + handler)
+
+Pass 730 (W7 /qna/seller/pending admin seller_id handler raw):
+- cacheKey linha 837 normalize .trim().toLowerCase() MAS handler raw
+- POST-FIX: + .trim().toLowerCase() paridade
+
+Pass 731 (W7 /seller/received admin seller_id handler raw):
+- cacheKey linha 1267 normalize .trim().toLowerCase() MAS handler raw
+- POST-FIX: + .trim().toLowerCase() paridade + simplify sellerFilter
+
+CADEIA cache hygiene MISMATCH bugs detected + fixed cumulative:
+- pass 618: admin/reports cache shape errado (silent disabled)
+- pass 722: aiops /alerts severity case mismatch
+- pass 723: /payouts/pending handler .trim() gap
+- pass 724: /sellers/all handler .trim() gap (2 fields)
+- pass 725: vault /keys provider whitelist gap + .trim()
+- pass 726: wishlist kind handler raw
+- pass 727: qa-runs verdict handler raw
+- pass 728: /products/me admin seller_id handler raw
+- pass 729: /admin/reports status raw (review-svc)
+- pass 730: /qna/seller/pending seller_id raw (review-svc)
+- pass 731: /seller/received seller_id raw (review-svc)
+= 11 cache hygiene MISMATCH bugs detected ATIVA AUDITORIA cross-svc
+
+Pattern V8 cache hygiene REFORCADO:
+- 36 sites pre-emptive cache key normalize (passes 520-720)
+- 11 sites MISMATCH bugs descobertos por audit pos-fix (passes 618-731)
+- helper @cas/shared/cache.js pass 709 log.warn typeof check
+- Lesson: cacheKey + handler DEVE ter EXACTLY same normalize sequence
+
+461 passes acumulados (268->731) sem deploy VPS
