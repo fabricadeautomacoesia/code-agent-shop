@@ -339,9 +339,28 @@ app.get('/health', (_req, res) => res.json({
 //     * /mark-all-read
 //     * INSERT notification (cross-svc - cobre via cache.del cross)
 //   - Pattern V8 hot path consolidation (pass 361 qna seller, 386 products me)
+// FIX-WORKER-13 pass 583 (cache key normalization paridade cadeia W18 hygiene):
+//   PRE-FIX BUGS (3 issues cache pollution + inconsistency vs handler):
+//   1. Raw q.limit. Handler clamps Math.max/Math.min [1, 100] (linha 350).
+//      ?limit=99999 -> cache key 'lim=99999', handler clamp 100
+//      ?limit=100 -> cache key 'lim=100' SAME response (pollution 2 entries)
+//   2. Raw q.offset. Handler Math.max(0, ...) (linha 351).
+//      ?offset=-5 -> cache key 'off=-5', handler -> 0
+//   3. Raw q.unread_only. Handler .toString().toLowerCase() === 'true' (linha 352).
+//      ?unread_only=TRUE vs ?unread_only=true = 2 entries cache pollution.
+//
+//   Cenario amplifica: NotificationBell polling 30s + multi-tab user =
+//   N polls hit cache pollution sites diferentes, miss rate amplificado.
+//
+//   POST-FIX: normalize cache key SAME way handler normalizes.
+//   Pattern V8 W7+W10+W13+W18 cache hygiene invariante (passes 520/530/533/
+//   551/558/566/572/576/579/582 - 10 sites cross-svc consolidados).
 const notifListCacheKey = (req) => {
   const q = req.query;
-  return `notifs:list:${req.user?.sub || 'anon'}:lim=${q.limit||30}:off=${q.offset||0}:u=${q.unread_only||''}`;
+  const lim = Math.max(1, Math.min(100, parseInt(q.limit, 10) || 30));
+  const off = Math.max(0, parseInt(q.offset, 10) || 0);
+  const unread = String(q.unread_only || '').toLowerCase() === 'true' ? 'true' : '';
+  return `notifs:list:${req.user?.sub || 'anon'}:lim=${lim}:off=${off}:u=${unread}`;
 };
 app.get('/', jwt.requireAuth(),
   cache.cacheMiddleware(notifListCacheKey, 20),
