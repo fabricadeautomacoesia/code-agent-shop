@@ -151,8 +151,17 @@ export function WishlistButton({
     return (
       <>
         {/* FIX-WORKER-3 pass 159 (a11y): type='button' defensive + focus-visible
-            FIX pass 456: + aria-live span p/ SR announce error contextual */}
+            FIX pass 456: + aria-live span p/ SR announce error contextual
+            FIX-WORKER-3 pass 575 (a11y - aria-busy paridade cadeia 549/552/553/568/573):
+              PRE-FIX: aria-label/aria-pressed dinamicos mas SEM aria-busy={loading}.
+              - SR modern (NVDA latest) usam aria-busy p/ silenciar live regions
+                enquanto processing toggle wishlist (~200-400ms POST/DELETE).
+              - Sem aria-busy = SR pode anunciar label continuamente.
+              - Inconsistente com cadeia W3 PDP CTAs cadeia consolidada (pass 573
+                price-alert-button + pass 553 qna-form + pass 121 add-to-cart).
+              POST-FIX: + aria-busy={loading} em AMBAS variants (card + pdp). */}
         <button type="button" onClick={toggle} disabled={loading}
+          aria-busy={loading}
           aria-label={buttonAriaLabel}
           aria-pressed={favorited}
           title={buttonTitle}
@@ -178,8 +187,10 @@ export function WishlistButton({
       {/* FIX-WORKER-3 pass 6: PDP variant agora com aria-label + aria-pressed (era apenas title).
          title nao e anunciado por screen readers consistentemente.
          FIX-WORKER-3 pass 159: type='button' defensive (V8 Regra 23)
-         FIX pass 456: + dynamic aria-label/title com errorMsg + SR live region */}
+         FIX pass 456: + dynamic aria-label/title com errorMsg + SR live region
+         FIX-WORKER-3 pass 575 (a11y - aria-busy paridade card variant + cadeia CTA) */}
       <button type="button" onClick={toggle} disabled={loading}
+        aria-busy={loading}
         aria-label={buttonAriaLabel}
         aria-pressed={favorited}
         className={`p-2 rounded-lg border transition-all focus-visible:outline-2 focus-visible:outline-magenta ${
