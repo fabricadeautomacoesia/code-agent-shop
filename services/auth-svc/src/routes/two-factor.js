@@ -8,7 +8,7 @@ const { z } = require('zod');
 const bcrypt = require('bcrypt');
 const crypto = require('node:crypto');
 const { query, tx } = require('@cas/db-client');
-const { jwt, validate, asyncHandler, errorHandler, crypto: cryp, cache, mask } = require('@cas/shared');
+const { jwt, validate, asyncHandler, errorHandler, crypto: cryp, cache, mask, notifCache } = require('@cas/shared');
 
 // FIX-WORKER-7 pass 54: REFRESH_COOKIE constante p/ clearCookie em /disable.
 // Mesmo valor de auth.js linha 65 - duplicado por design (modulo standalone).
@@ -232,7 +232,17 @@ router.post('/activate',
       );
     });
     // FIX-WORKER-18 pass 211: invalida cache auth:me (twofa_enabled mudou)
-    await cache.del(`auth:me:${req.user.sub}`).catch(() => {});
+    // FIX-WORKER-13 pass 467: + notifCache.invalidate apos INSERT notification cross-svc
+    //   PRE-FIX: cross-svc INSERT notifications sem invalidate notification-svc cache
+    //   - User em outra tab com bell aberto NAO via 2fa_activated alert
+    //   - Cache 20s TTL persiste lista stale - CRITICAL security alert delayed
+    //   - notification-svc /prefs (pass 459) ja invalidava SEU proprio path
+    //   - Cross-svc INSERT lagged ate pass 467 helper consolidacao
+    //   POST-FIX: notifCache.invalidate(userId) - shared helper DRY
+    await Promise.all([
+      cache.del(`auth:me:${req.user.sub}`).catch(() => {}),
+      notifCache.invalidate(req.user.sub),
+    ]);
     res.json({ enabled: true, recovery_codes: recovery, warn: 'Guarde estes codigos. Nao serao mostrados novamente.' });
   })
 );

@@ -35213,3 +35213,80 @@ Pattern V8 W9: TODA top-level routes em app/ deve ter metadata explicit:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 + 098 ALTA PRIORIDADE
+
+## PASS 467 W13 NOTIFICATION: notif-cache shared helper + 2fa.activate consume
+commit pendente
+GAP cross-svc INSERT notifications sem invalidate notification-svc cache
+PRE-FIX:
+- 30+ INSERT INTO notifications cross-svc:
+  - auth-svc 6 sites (2fa, refresh_reuse, password, login_alert)
+  - payment-svc 7 sites (PAYMENT_RECEIVED, payouts, etc)
+  - order-svc 2 sites (dispute, free order)
+  - qa-svc 1 site (callback)
+  - review-svc 1 site (qna_new)
+  - product-svc 1 site (version)
+  - seller-svc loyalty 1 site (tier_up)
+- notification-svc cache invalidation aplicado em SEUS endpoints:
+  - /prefs (pass 459), /:id/read (pass 404), /read-all (pass 422)
+- MAS cross-svc INSERT: ZERO ou parcial invalidation
+- Resultado: user em tab com bell aberto NAO ve nova notif ate 20s TTL
+- CRITICAL security alerts delayed:
+  - 2fa_activated (anti-takeover)
+  - security_refresh_reuse
+  - password_reset
+  - asaas_refund_failed
+
+SCOPE WHY CRITICAL:
+- Security alerts (priority 3) sao TIME-CRITICAL
+- User precisa ver imediato: 2FA was activated? Foi eu OU atacante?
+- 20s delay = janela aberta atacante completar takeover
+- Compounded: pass 282/315 anti-takeover signals delivery delayed
+
+POST-FIX 2 partes:
+1. @cas/shared/notif-cache.js helper module:
+   - invalidate(userId): Promise.all([del list, del unread-count])
+   - invalidateBulk(userIds): bulk notification batches admin
+   - Fire-and-forget catch (Redis down nao bloqueia caller)
+   - Exported via shared/src/index.js como 'notifCache'
+2. Aplicado em auth-svc/two-factor.js linha 226 (2fa.activate INSERT)
+   - require destructure { notifCache }
+   - notifCache.invalidate(req.user.sub) post-tx
+   - Promise.all com auth:me invalidation existing
+
+CADEIA CONSUME pass 459 LGPD:
+  pass 436 LEFT JOIN user_notification_prefs
+  pass 437 idx LOWER(template_code) functional
+  pass 459 cache invalidation PATCH /prefs (intra-svc)
+  pass 467 notif-cache shared helper + 2fa.activate consume <- ESTE
+                (cross-svc applies start)
+
+PROXIMOS PASSES W13 consolidacao (29+ sites pendentes):
+  - auth-svc: refresh_reuse_breach, /recovery, /disable, etc
+  - payment-svc: PAYMENT_RECEIVED, payout_paid, refund_failed
+  - order-svc: dispute, free_order
+  - qa-svc: callback notif seller
+  - review-svc: qna_new + answered
+  - product-svc: version_publish
+  - seller-svc: tier_up bonus
+
+Pattern V8 W13 cross-svc cache invalidation DRY:
+- TODO INSERT INTO notifications cross-svc DEVE chamar notifCache.invalidate(userId)
+- Helper shared garante consistencia (sem duplicate code 30+ sites)
+- Fire-and-forget pattern (caller nao bloqueia em Redis fail)
+- Promise.all paralelo (latencia mininal)
+
+W13 cache invalidation series consolidacao:
+  pass 175 notifs:unread-count cache 20s
+  pass 322 notifs:list cache 20s
+  pass 404 /:id/read invalidation
+  pass 422 /read-all invalidation
+  pass 459 /prefs PATCH invalidation
+  pass 467 notif-cache shared helper cross-svc <- ESTE (start consolidation)
+
+200 passes acumulados (268->467) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096+097+098 ALTA PRIORIDADE
+- Apply notifCache em 29+ sites cross-svc remanescentes

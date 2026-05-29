@@ -14,6 +14,8 @@ module.exports = {
   rateLimiter:  require('./rate-limiter'),
   llmFallback:  require('./llm-fallback'),
   cache:        require('./cache'),
+  // FIX-WORKER-13 pass 467: notif-cache helper cross-svc DRY (30+ INSERT sites)
+  notifCache:   require('./notif-cache'),
   paginate:     require('./paginate'),
   startup:      require('./startup'),
   // FIX-WORKER-7 pass 52: HTML escape DRY cross-svc (consolida 3 implementations
