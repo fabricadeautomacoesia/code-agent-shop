@@ -40321,3 +40321,32 @@ CADEIA cache key normalization 30+ sites cross-svc:
 - Cache pollution evitada (variantes case colapsam mesmo entry)
 
 440 passes acumulados (268->710) sem deploy VPS
+
+============================================================================
+SESSAO 711 (W12 qa-svc timeoutStuckRuns cron tiebreaker - 4 sites cron ASC+ASC)
+============================================================================
+
+Pass 711 (W12 qa-svc timeoutStuckRuns cron tiebreaker id ASC):
+- DESCOBERTA: WITH claimed UPDATE...RETURNING claim atomico SEM id tiebreaker
+- ORDER BY started_at ASC LIMIT 20 SEM id ASC tiebreaker
+- Cron 5min interval claim oldest stuck runs first
+- Mass-timeout burst: 50+ qa_runs stuck mesma started_at (n8n down period)
+- LIMIT 20 picks ARBITRARY 20 entre ties -> remaining 30 delay 5min next tick
+- Forensic non-deterministic em audit_log
+- POST-FIX: + id ASC tiebreaker paridade ASC+ASC cron variants consolidados
+
+CADEIA W14 ASC+ASC cron variants forensic determinism FINAL (4 sites):
+- qa-svc /qa/runs/stuck endpoint (pass historico) - admin polling
+- vault rotationAlertCron (pass 632) - cron diario
+- payment reconcile cron (pass 698) - cron 5min webhook reconcile
+- qa-svc timeoutStuckRuns cron (pass 711 este) - cron 5min QA timeout
+= 4 sites cron FIFO ASC+ASC consolidacao
+
+CADEIA Regra D direction parity FINAL bifurcacao consolidada:
+- DESC+DESC: 30+ admin listings + 8 SORT_OPTIONS sites + related/also-bought
+- ASC+ASC: 4 crons FIFO (qa stuck endpoint + vault rotation + payment reconcile
+  + qa timeoutStuckRuns)
+- Mixed direction intencional: outbox processor priority DESC + created_at ASC
+- alphabetic tiebreaker UX dropdown: audit_log_actions count DESC + action ASC
+
+441 passes acumulados (268->711) sem deploy VPS
