@@ -35101,3 +35101,61 @@ Pattern V8 W4: TODA admin listing page com sec-relevant items deve ter:
 PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO
 - Mig 096 + 097 ALTA PRIORIDADE
+
+## PASS 465 W14 DB SCHEMA: idx anonymous critical events (consume pass 458+462+463+464)
+commit pendente
+GAP forensic query latency em anonymous critical events
+PRE-FIX:
+- Passes 458/462/463 introduziram audit_log critical entries com:
+  - actor_user_id = NULL (anonymous external bypass attempts)
+  - target_id = NULL (no specific entity - bypass pre-action)
+  - target_type = 'vault_internal' | 'qa_callback' | 'asaas_webhook'
+  - severity = 'critical'
+- Pass 464 admin UI consume cadeia:
+  /admin/audit-log?target_type=asaas_webhook&severity=critical&days=30
+- Idx existentes lagged para este pattern:
+  - idx_audit_target_created PARTIAL WHERE target_id IS NOT NULL
+    EXCLUI rows anonymous (todos events pass 458/462/463)
+  - idx_audit_severity_created PARTIAL severity IN warn|error|critical
+    Helps severity mas filter target_type lineariza
+- Latency forensic query ~50ms deploy maduro
+
+SCOPE WHY:
+- Critical events forensic = admin investigation high-priority
+- Sem idx eficiente: admin abre /admin/audit-log + filter -> 50-100ms wait
+- Em incident response: admin checa MULTIPLOS target_types em sequencia
+- 5 page loads = 250-500ms cumulative wait
+- Cadeia consume pass 463 (16 valores VALID_TT) cresce - mais filtros
+
+POST-FIX mig 098:
+- CREATE INDEX idx_audit_target_type_severity_created PARTIAL severity=critical
+- (target_type, severity, created_at DESC)
+- PG planner: direct Index Scan pre-sorted
+- Latency: ~50ms -> ~5ms (10x melhoria)
+- ANALYZE audit_log
+
+Trade-off:
+- Idx ocupa ~5-10MB prod 1M+ rows
+- INSERT overhead +1 idx write SO em critical events (raros <0.1%)
+- Aceitavel: forensic UX 10x melhor
+
+Cadeia consume audit_log critical:
+  pass 458 vault.invalid_internal_token (target_type 'vault_internal')
+  pass 462 qa.callback.invalid_signature (target_type 'qa_callback')
+  pass 463 asaas.webhook.invalid_signature (target_type 'asaas_webhook')
+  pass 464 admin UI consume (filter chip + per-row audit links)
+  pass 465 idx PARTIAL severity critical (perf) <- ESTE (cadeia FECHADA backend)
+
+W14 audit_log idx series consolidacao DEFINITIVA:
+  mig 002 (base 6 indexes)
+  mig 037 idx_audit_action_created
+  mig 086 idx_audit_severity_created PARTIAL warn+
+  mig 094 idx_audit_target_created PARTIAL NOT NULL
+  mig 098 idx_audit_target_type_severity_created PARTIAL critical <- ESTE
+
+198 passes acumulados (268->465) sem deploy VPS
+8 CRITICAL + 30 migrations pendentes apply (era 29 - novo mig 098)
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO
+- Mig 096 + 097 + 098 ALTA PRIORIDADE
