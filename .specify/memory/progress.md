@@ -39165,3 +39165,32 @@ CADEIA W14 direction parity DESC+DESC migrations cumulative:
 - 22 indexes total apply pending VPS SSH
 
 365 passes acumulados (268->635) sem deploy VPS
+
+============================================================================
+SESSAO 636-637 (W2 disputes tiebreaker + W9 cart twitter card)
+============================================================================
+
+Pass 636 (W2 admin/disputes ORDER tiebreaker direction parity):
+- DESCOBERTA: ORDER BY ... d.created_at DESC, d.id (sem direction explicit)
+- PG default ASC para tiebreaker omitted -> MIXED direction DESC+ASC
+- External Sort forcado (idx (created_at DESC, id ASC) nao existe)
+- mig 109 idx_disputes_created (created_at DESC) so cobre parcial
+- Inconsistencia vs cadeia Regra D V8 cross-svc (30+ sites DESC+DESC)
+- POST-FIX: d.id DESC explicit (paridade cadeia 30+ sites cross-svc)
+- Admin /admin/disputes polling priority+date sort agora deterministic
+
+Pass 637 (W9 cart twitter card paridade cadeia 10 sites):
+- DESCOBERTA: cart/layout.tsx openGraph presente mas SEM twitter card
+- User compartilha link /cart em WhatsApp/Slack/X - preview cross-platform
+  respeita twitter card primariamente, openGraph fallback (asymmetric)
+- Paridade cadeia 9 sites previas (/login + 4 auth + 4 conta/*)
+- POST-FIX: twitter card summary (sem image - cart pages sem hero static)
+- 10 sites cumulative cadeia W9 metadata enrichment cross-platform consistency
+
+CADEIA W9 twitter card consolidation cross-page:
+- /login layout, /esqueci-senha, /redefinir-senha (pass 622), /register
+- /conta/* pages: downloads, seguranca, perfil, pontos, pedidos (passes 538/557/604)
+- /cart layout (pass 637 este)
+- 10 sites cumulative cross-platform preview consistency
+
+367 passes acumulados (268->637) sem deploy VPS
