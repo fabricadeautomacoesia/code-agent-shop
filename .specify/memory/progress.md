@@ -37281,3 +37281,50 @@ PROXIMA ITER:
 - VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
 - Mig 094-104 ALTA PRIORIDADE apply (11 PARTIAL/composite indexes)
 - pass 25 + 269 receber withRetry consolidation
+
+## Pass 507 - W17 VAULT/SECURITY: withRetry consolidation completa (2 gaps remaining)
+
+PRE-FIX BUG (paridade lagged final gap):
+Pass 506 fechou rotate + admin provision. Remaining 2 endpoints lagged:
+
+1. POST /keys/:id/revoke (admin) - linha 832
+   - tx() atomic (pass 25 BUG 4) mas SEM withRetry
+   - 2 admins concurrent revoke OR /rotate concurrent OR /use pool lock contention
+   - Mid-revoke crash sem retry -> stack 500 + audit_log duplicate em re-tenta
+   - Compliance: revoke = security event critical (SOC2 CC7.3)
+
+2. POST /keys/me (seller provision) - linha 1313
+   - tx() atomic (pass 269) mas SEM withRetry
+   - Seller burst provision (ansiosamente repete ratelimit window)
+   - Race com /rotate cross-seller (audit_log lock ordering)
+   - Race com rotationAlertCron mass-insert audit
+   - Compliance: provision = SOC2 documentation requirement
+
+POST-FIX (consolidacao W17 100%):
+- /revoke admin: withRetry('vault.admin_revoke.tx', async () => await tx(...))
+- /keys/me seller: withRetry('vault.seller_provision.tx', async () => await tx(...))
+- 3 attempts backoff exponencial (pattern V8 consolidated)
+
+Cadeia W17 VAULT atomicity FINAL (6/6 endpoints):
+- /use pool: pass 310 ✓ (FOR UPDATE SKIP LOCKED + UPDATE atomic)
+- admin /keys/:id/revoke: pass 25 (tx) + pass 507 ✓ (withRetry)
+- seller /keys/me provision: pass 269 (tx) + pass 507 ✓ (withRetry)
+- seller /keys/me/:id/revoke: pass 493 ✓ (tx + withRetry)
+- admin /keys provision: pass 506 ✓ (tx + withRetry)
+- /keys/:id/rotate: pass 506 ✓ (tx + withRetry)
+
+W17 VAULT atomicity = 100% paridade cross-svc com qa-svc, payment-svc,
+review-svc, seller-svc (todos services criticos com withRetry uniform).
+
+Compliance final:
+- SOC2 CC7.3: TODOS write events em vault keys (AES-256-GCM secrets)
+  agora com retry defense - mid-operation crash -> retry transparente
+- LGPD Art 37: registro de tratamento dados criptografados garantido
+  via atomic tx + retry (sem audit gap silencioso)
+
+239 passes acumulados (268->507) sem deploy VPS
+9 CRITICAL + 36 migrations pendentes apply
+
+PROXIMA ITER:
+- VPS SSH unblock URGENTISSIMO (CRITICAL CORS pass 497 + 9 acumulados)
+- Mig 094-104 ALTA PRIORIDADE apply (11 PARTIAL/composite indexes)

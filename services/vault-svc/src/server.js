@@ -837,8 +837,23 @@ app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
     }
 
     // FASE 1 (tx atomic): lock + idempotent UPDATE + audit_log
+    /* FIX-WORKER-17 pass 507 (withRetry deadlock defense - paridade pass 310/493/506):
+       PRE-FIX: tx() sem withRetry wrap. Cenarios deadlock 40P01:
+       - 2 admins concurrent revoke mesma key OR diferentes keys mesma seller
+       - /revoke race com /rotate concurrent (mesma vault_api_keys row + audit_log)
+       - /use pool fetch concurrent locking same key during revoke
+       Pass 506 completou cadeia rotate + admin provision, MAS admin /revoke
+       (callback) lagged. Pass 25 estabeleceu tx() atomic (audit_log dentro),
+       mas withRetry foi adicionado apenas /use (pass 310) e seller revoke (493).
+       Compliance (mesmo motivo /rotate + provision):
+       - SOC2 CC7.3 + LGPD Art 37: revoke = security event critical
+       - Mid-revoke crash sem retry = stack 500 generico vazado
+       - Admin re-tenta -> potencial state ja revogada (caso resolvido pelo
+         WHERE is_active=TRUE da linha 869) MAS audit_log pode duplicar
+       POST-FIX: withRetry wrap (3 attempts backoff). Pattern V8 consolidated
+       cross-svc: vault all 6 endpoints agora com withRetry uniform. */
     let outcome;
-    await tx(async (c) => {
+    await withRetry('vault.admin_revoke.tx', async () => await tx(async (c) => {
       // Lock pessimistico + verifica state ANTES de mutate
       const cur = await c.query(
         `SELECT id, is_active, revoked_at, revoked_reason, provider, key_alias, key_fingerprint
@@ -886,7 +901,7 @@ app.post('/keys/:id/revoke', provisionRateLimit, adminOnly,
          })]
       );
       outcome = { ok: true };
-    });
+    })); // close withRetry pass 507
 
     if (outcome?.error === 'not_found') {
       return next(errorHandler.notFound('key_not_found'));
@@ -1326,8 +1341,18 @@ app.post('/keys/me',
     //   - Pos-incident: "quem provisionou key X?" -> sem resposta no audit
     //   POST-FIX: tx() wrap all-or-nothing
     //   Pattern paridade pass 261 W17 (/usage endpoint).
+    /* FIX-WORKER-17 pass 507 (withRetry deadlock defense - completa cadeia):
+       PRE-FIX: tx() sem withRetry. Cenarios deadlock 40P01:
+       - Seller burst provision (ansiosamente repete provision em ratelimit window)
+       - Race com /rotate cross-seller (audit_log lock ordering)
+       - Race com cron rotationAlertCron (SELECT audit_log mass-insert)
+       Pass 506 completou rotate + admin provision + revoke. Pass 507 (este)
+       fecha cadeia W17: TODOS endpoints write vault agora com withRetry.
+       POST-FIX: withRetry wrap (3 attempts backoff).
+       Pattern V8 W17 atomicity: rotate + admin_provision + admin_revoke +
+       seller_provision + seller_revoke + use - 6/6 com withRetry consolidado. */
     let r;
-    await tx(async (c) => {
+    await withRetry('vault.seller_provision.tx', async () => await tx(async (c) => {
       r = await c.query(
         `INSERT INTO vault_api_keys
            (seller_id, provider, key_alias, encrypted_key, iv, auth_tag, key_fingerprint,
@@ -1349,7 +1374,7 @@ app.post('/keys/me',
            ua_prefix: mask.text((req.headers['user-agent'] || '').slice(0, 60)),
          })]
       );
-    });
+    })); // close withRetry pass 507
 
     log.info({ provisioned: r.rows[0].id, provider, fp, seller_id: sellerId, by: req.user.sub },
       '[vault.seller_provision]');
