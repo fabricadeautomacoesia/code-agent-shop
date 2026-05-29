@@ -987,7 +987,24 @@ router.get('/payouts-pending-wallet',
     );
 
     const total = r.rows[0]?._total ?? 0;
-    const payouts = r.rows.map((row) => { const { _total, ...rest } = row; return rest; });
+    /* FIX-WORKER-14 pass 454 (placeholder UX - consume pass 453):
+       PRE-FIX: rest.asaas_transfer_id raw incluia '__claimed_<pid>_<ts>' placeholders
+       - Admin UI mostrava '__claimed_42_171...' onde esperava 'tra_abc123' real
+       - Confusing UX: admin pensa "qual transfer e esse?"
+       - Forensic: admin pode investigar via __claimed_ se row stuck pos-crash
+       POST-FIX: mostrar placeholder marker como flag separada vs null transfer:
+       - asaas_transfer_id: null se placeholder (frontend mostra 'nao iniciado')
+       - + asaas_claim_pending: true se __claimed_% (admin sabe row in-flight) */
+    const payouts = r.rows.map((row) => {
+      const { _total, ...rest } = row;
+      const isClaimPlaceholder = typeof rest.asaas_transfer_id === 'string'
+        && rest.asaas_transfer_id.startsWith('__claimed_');
+      return {
+        ...rest,
+        asaas_transfer_id: isClaimPlaceholder ? null : rest.asaas_transfer_id,
+        asaas_claim_pending: isClaimPlaceholder,
+      };
+    });
 
     res.json({
       payouts,
