@@ -1014,6 +1014,22 @@ async function processOutbox() {
   //   POST-FIX: LOWER() em ambos lados da comparison. Defensive case-fold
   //   garante critical templates SEMPRE bypass mesmo com case drift.
   const CRITICAL_TEMPLATES = `'security_refresh_reuse', 'password_reset', '2fa_disabled', 'asaas_refund_failed'`;
+  /* FIX-WORKER-13 pass 646 (LGPD prefs JOIN case-mismatch BUG - completa pass 238):
+     PRE-FIX: LEFT JOIN user_notification_prefs unp ON unp.template_code = n.template_code
+     (case-sensitive). Pass 238 ja corrigiu CASE WHEN com LOWER() para CRITICAL_TEMPLATES
+     bypass, MAS deixou JOIN case-sensitive lagged.
+     CENARIO REAL LGPD violation:
+     - PATCH /prefs gravou row {template_code: 'Product_Qna_New', is_enabled: FALSE}
+       (typo cliente OU migration legacy com mixed case)
+     - notif INSERT com template_code='product_qna_new' (lowercase canonical)
+     - JOIN case-sensitive -> unp matched=NULL (rows nao matcham via diff case)
+     - CASE WHEN unp.is_enabled IS NULL -> default TRUE -> notif ENVIADA
+     - User opted-out via UI MAS recebe email - LGPD opt-out violation
+     - GET / pass 436 ja aplicou LOWER() em ambos lados desta JOIN (paridade)
+     POST-FIX: + LOWER(unp.template_code) = LOWER(n.template_code) defensive case-fold
+     - Paridade GET / handler linha 404 (pass 436 ja usa LOWER nesta JOIN)
+     - Pattern V8 W13 LGPD consistency cross-paths reading mesmo prefs table
+     - Cobre legacy data + future typo client-side defensively */
   const pending = await query(
     `SELECT n.id, n.user_id, n.channel, n.template_code, n.title, n.body, n.body_html,
             n.priority, n.payload, n.retry_count, u.email, u.full_name, u.locale,
@@ -1028,7 +1044,7 @@ async function processOutbox() {
        JOIN users u ON u.id = n.user_id AND u.deleted_at IS NULL
        LEFT JOIN user_notification_prefs unp ON
             unp.user_id = n.user_id
-        AND unp.template_code = n.template_code
+        AND LOWER(unp.template_code) = LOWER(n.template_code)
         AND unp.channel = n.channel
       WHERE n.id = ANY($1::uuid[])`,
     [ids]
