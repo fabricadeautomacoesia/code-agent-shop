@@ -40407,3 +40407,32 @@ CADEIA W4 admin atomicity + DLP + ua_prefix consolidacao:
 - /:id/kyc/approve + /:id/kyc/reject (passes 658-659)
 
 443 passes acumulados (268->713) sem deploy VPS
+
+============================================================================
+SESSAO 714 (W4 CRITICAL /payouts/:id/reject atomicity - paridade pass 713)
+============================================================================
+
+Pass 714 (W4 admin /payouts/:id/reject 3 bugs CRITICAL - paridade pass 713):
+- DESCOBERTA: same pattern pass 713 /approve - 3 compliance bugs em /reject
+- 3 BUGS COMPLIANCE consolidados:
+  1. UPDATE + INSERT audit_log NAO atomico (sem tx() wrap)
+  2. NO withRetry wrap
+  3. NO ua_prefix forensic
+- POST-FIX: tx() + withRetry + ua_prefix + DLP mask reason (preserved pass 296)
+
+CADEIA W4 admin payouts atomicity COMPLETA 3/3 endpoints:
+- /payouts/:id/approve (pass 713)
+- /payouts/:id/reject (pass 714 este)
+- /payouts-pending-wallet/:id/force-liquidate (pass 660)
+= 3 financial admin endpoints atomic + audit + forensic consolidacao
+
+CADEIA W4 seller-svc admin TOTAL atomicity COMPLETA 8/8 endpoints:
+- /:id/suspend + /:id/reactivate (passes 656-657)
+- /:id/kyc/approve + /:id/kyc/reject (passes 658-659)
+- /payouts-pending-wallet/:id/force-liquidate (pass 660)
+- /payouts/:id/approve (pass 713)
+- /payouts/:id/reject (pass 714 este)
++ /sellers/all + /pending-kyc + /payouts/pending listings (read-only)
+= 8 mutation endpoints seller-svc admin TODOS com tx() + withRetry + audit_log
+
+444 passes acumulados (268->714) sem deploy VPS
