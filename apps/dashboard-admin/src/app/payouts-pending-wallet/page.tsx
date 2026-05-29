@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { adminFetch, fmtBRL, fmtDate } from '@/lib/admin-api';
 import { useAdminAction } from '@/lib/use-admin-action';
@@ -48,7 +48,20 @@ export default function PayoutsPendingWalletPage() {
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
-  async function load() {
+  /* FIX-WORKER-4 pass 739 (useCallback stable closure - paridade pass 738 disputes):
+     PRE-FIX BUG: async function load() recriada cada render.
+     - setInterval(load, 30000) captura load closure stale com status state da render
+     - useEffect dep [status] re-roda em status change MAS:
+       * onVis handler tambem captura `i` e `load` por closure
+       * Visibility change durante re-render race window
+     - useAdminAction(load) com action.run -> reload usa load stale (pass 738 same class)
+     POST-FIX (paridade pass 738 disputes):
+     - useCallback wrap em load com [status] deps -> stable reference
+     - useEffect deps usa [load] em vez de [status] (exhaustive-deps)
+     - setInterval + onVis sempre referenciam load atual via useCallback ref
+     - useAdminAction recebe stable callback -> run estavel
+     Pattern V8 W4 React stability cadeia 2 sites (738 disputes + 739 este). */
+  const load = useCallback(async () => {
     try {
       const r = await adminFetch<{ payouts: Payout[]; total: number }>(
         `/sellers/admin/payouts-pending-wallet?status=${status}&limit=100`
@@ -58,7 +71,7 @@ export default function PayoutsPendingWalletPage() {
       setError('');
       setLastUpdate(new Date());
     } catch (e: any) { setError(e.message); }
-  }
+  }, [status]);
   useEffect(() => {
     load();
     let i: NodeJS.Timeout | null = setInterval(load, 30000);
@@ -68,7 +81,7 @@ export default function PayoutsPendingWalletPage() {
     };
     document.addEventListener('visibilitychange', onVis);
     return () => { if (i) clearInterval(i); document.removeEventListener('visibilitychange', onVis); };
-  }, [status]);
+  }, [load]);
 
   // FIX-WORKER-4 pass 277: force-liquidate button consume pass 276 endpoint
   // Admin clica em payout pending+wallet_configured -> trigger imediato cron

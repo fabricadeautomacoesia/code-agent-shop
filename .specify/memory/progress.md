@@ -40911,3 +40911,37 @@ POST-FIX:
 CADEIA cumulative cross-svc + UI bugs:
 - 16 cache hygiene + storage normalize (618, 719-737)
 - + 1 React stability fix (738)
+
+## PASS 739 (W4 ADMIN /admin/payouts-pending-wallet useCallback stable closure)
+
+apps/dashboard-admin/src/app/payouts-pending-wallet/page.tsx linhas 51-71
+
+PRE-FIX BUG (paridade pass 738 disputes - 2 sites W4 cadeia):
+- async function load() recriada cada render
+- setInterval(load, 30000) captura load closure stale com status state
+- useEffect dep [status] re-roda MAS:
+  * onVis handler captura `i` + `load` por closure
+  * Visibility change durante re-render = race window
+- useAdminAction(load) com action.run -> reload usa load stale
+
+POST-FIX (paridade pass 738 disputes):
+- useCallback wrap em load com [status] deps -> stable reference
+- useEffect deps usa [load] (paridade ESLint exhaustive-deps)
+- setInterval + onVis sempre referenciam load atual via useCallback ref
+- useAdminAction recebe stable callback -> action.run estavel
+- import { useCallback } adicionado
+
+Pattern V8 W4 React stability cadeia 2 sites:
+- pass 738 disputes (ordem + useCallback)
+- pass 739 payouts-pending-wallet (useCallback stable closure)
+
+W7 PRODUCT-SVC AUDIT (sem fix - 100% paridade):
+- public.js consolidated (pass 612 GET / + 733 reviews sort)
+- wishlist.js consolidated (pass 726 kind + 630 cache key)
+- seller-mgmt.js consolidated (pass 719 status+kind + 728 admin)
+- admin.js + price-alerts.js sem cacheMiddleware (mutation endpoints OK)
+Status: product-svc 6 routes 100% Blueprint V8 compliant.
+
+CADEIA cumulative cross-svc:
+- 16 cache hygiene + storage normalize bugs (618, 719-737)
+- 2 React stability fixes (738, 739)
