@@ -271,8 +271,15 @@ export function NotificationBell() {
                           {url && <span className="text-magenta">- {n.cta_label || 'Abrir'} <ExternalLink className="w-2.5 h-2.5 inline" /></span>}
                         </div>
                       </div>
-                      {n.is_read ? <CheckCheck className="w-3 h-3 text-white/30 flex-shrink-0" />
-                                 : <Check className="w-3 h-3 text-magenta flex-shrink-0" />}
+                      {/* FIX-WORKER-1 pass 653 (a11y - decorative icons aria-hidden):
+                          PRE-FIX: CheckCheck/Check icons SEM aria-hidden anunciados redundante
+                          por SR junto com title/body text + aria-label "lida/nao lida" externo.
+                          NVDA/JAWS lia "CheckCheck Notification title... lida"
+                          (icon name expandido pelo accessible-name parser sem hidden flag).
+                          Paridade cadeia 8+ icons aria-hidden cross-components (passes 159/186/541/575/645).
+                          POST-FIX: + aria-hidden=true (icons decorativos - estado ja em aria-label). */}
+                      {n.is_read ? <CheckCheck className="w-3 h-3 text-white/30 flex-shrink-0" aria-hidden="true" />
+                                 : <Check className="w-3 h-3 text-magenta flex-shrink-0" aria-hidden="true" />}
                     </div>
                   );
                   const cls = `block p-4 border-b border-white/5 cursor-pointer hover:bg-white/5 ${
