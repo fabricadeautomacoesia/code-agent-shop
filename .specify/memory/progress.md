@@ -40945,3 +40945,31 @@ Status: product-svc 6 routes 100% Blueprint V8 compliant.
 CADEIA cumulative cross-svc:
 - 16 cache hygiene + storage normalize bugs (618, 719-737)
 - 2 React stability fixes (738, 739)
+
+## PASS 740 (W5 SELLER /financeiro useCallback stable closure)
+
+apps/dashboard-seller/src/app/financeiro/page.tsx linhas 24-35
+
+PRE-FIX BUG (paridade pass 738/739 dashboard-admin):
+- async function load() recriada cada render
+- useSellerAction(load) recebe nova reference cada render
+- useCallback dentro de useSellerAction tem deps [busyKey, reload]
+  -> reload muda cada render -> `run` re-criada cada render
+- useEffect deps [] ignora load completamente
+- useSellerAction reload tambem stale per render race window
+
+POST-FIX:
+- useCallback wrap em load com [] deps (sem state externo dependente) -> stable ref
+- useSellerAction recebe stable callback -> action.run estavel
+- useEffect deps [load] - paridade ESLint exhaustive-deps
+- import { useCallback } adicionado
+
+W10 SEARCH-SVC AUDIT (sem fix - 100% paridade):
+- /facets endpoint cacheKey + handler ambos normalize .trim().toLowerCase() (passes ja consolidados)
+- /autocomplete cacheMiddleware paridade (pass 359)
+- /search + /trending + /categories + /top-sellers consolidated normalize
+Status: search-svc 100% Blueprint V8 cache hygiene compliant.
+
+CADEIA cumulative cross-svc:
+- 16 cache hygiene + storage normalize bugs (618, 719-737)
+- 3 React stability fixes cross-dashboard (738 disputes, 739 payouts-pending, 740 financeiro)

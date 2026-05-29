@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { sellerFetch, fmtBRL, fmtDate } from '@/lib/seller-api';
 import { useSellerAction } from '@/lib/use-seller-action';
@@ -21,7 +21,20 @@ export default function FinanceiroPage() {
   const [amount, setAmount] = useState<string>('');
   const [loadError, setLoadError] = useState('');
 
-  async function load() {
+  /* FIX-WORKER-5 pass 740 (useCallback stable closure - paridade pass 738/739 dashboard-admin):
+     PRE-FIX BUG: async function load() recriada cada render.
+     - useSellerAction(load) recebe nova reference cada render
+     - useCallback dentro de useSellerAction tem deps [busyKey, reload]
+       -> reload muda cada render -> `run` re-criada cada render
+     - useEffect deps [] ignora load completamente (eslint-disable-next-line implicit)
+       -> load INITIAL chamada apenas, ok aqui (mount-only intentional)
+     - Mas useSellerAction reload tambem stale per render race window
+     POST-FIX (paridade cadeia W4 dashboard-admin 738+739, agora W5 dashboard-seller 740):
+     - useCallback wrap em load com [] deps -> stable reference (sem state externo dependente)
+     - useSellerAction recebe stable callback -> action.run estavel
+     - useEffect deps [load] - paridade ESLint exhaustive-deps
+     - Pattern V8 W5 React stability cadeia 3 sites (738 disputes, 739 payouts-pending, 740 financeiro). */
+  const load = useCallback(async () => {
     try {
       const [k, p] = await Promise.all([
         sellerFetch<{ kpi: any }>('/sellers/me/kpi'),
@@ -31,8 +44,8 @@ export default function FinanceiroPage() {
       setPayouts(p.payouts || []);
       setLoadError('');
     } catch (e: any) { setLoadError(e.message); }
-  }
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   // FIX-WORKER-5 pass 6 (FINAL FINAL): /financeiro era ultima page com error/ok
   // ad-hoc states. Agora migrada para useSellerAction hook (passes 1-5 pattern).
