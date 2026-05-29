@@ -39124,3 +39124,44 @@ CADEIA Regra D direction parity consolidacao cross-svc:
 - Mixed direction OK quando intencional (priority DESC, created_at ASC FIFO outbox)
 
 362 passes acumulados (268->632) sem deploy VPS
+
+============================================================================
+SESSAO 633-635 (W7+W12 LATERAL tiebreaker + W4 BUG admin/payouts + W14 mig 123)
+============================================================================
+
+Pass 633 (W7+W12 LATERAL/inflight LIMIT 1 tiebreaker direction parity):
+- DESCOBERTA: 2 LIMIT 1 queries sem id DESC tiebreaker
+  1. product-svc admin.js LATERAL last_run (linha 145): ORDER started_at DESC LIMIT 1
+  2. qa-svc inflight check (linha 236): ORDER started_at DESC LIMIT 1
+- LIMIT 1 picks ARBITRARY row entre ties (PG heap order non-deterministic)
+- Cenarios:
+  - Cron retry burst 5min interval -> 2 qa_runs same started_at second-precision
+  - Mass re-validation campaign mesma sessao
+  - last_run_verdict column /admin/products oscila aleatoria entre requests
+  - inflight.existing_run_id forensic non-deterministic em audit trail
+- POST-FIX: + id DESC tiebreaker (most recent INSERT preserva chronologic)
+- mig 119 idx_qa_runs_product_started_id ja cobre direction parity
+
+Pass 634 (W4 admin/payouts BUG inconsistencia codigo vs comentario):
+- DESCOBERTA: orderDirection 'all' retorna ASC mas comentario declara DESC
+- BUG REAL: Admin /admin/payouts default 'all' view mostra payouts ANTIGOS primeiro
+- Inconsistente vs /admin/orders, /admin/sellers, /admin/reports (DESC default)
+- Pattern V8: terminal states DESC, active states ASC (FIFO triage)
+- 'all' MIXES estados -> recentes mais relevantes (UX dashboard convencao)
+- POST-FIX: 'all' removido da condicao ASC -> retorna DESC (alinha comentario)
+- active filter explicit (pending/approved) preserva ASC FIFO behavior
+
+Pass 635 (W14 mig 123 idx_sla_history_seller_created_id):
+- mig 003:169 PRE-FIX: (seller_id, created_at DESC) SEM id DESC tiebreaker
+- seller-svc /sellers/me/sla-history ORDER h.created_at DESC, h.id DESC = External Sort
+- Cron SLA mass upload campaign -> 2+ events mesma created_at
+- dashboard-seller /financeiro SLA tab polling 30s = hot path
+- POST-FIX: (seller_id, created_at DESC, id DESC) direction parity Regra D V8
+- Latency: ~3-5ms External Sort eliminado
+
+CADEIA W14 direction parity DESC+DESC migrations cumulative:
+- mig 102-122 (21 indexes consolidacao previa)
+- mig 123 idx_sla_history_seller_created_id (pass 635 este)
+- 22 indexes total apply pending VPS SSH
+
+365 passes acumulados (268->635) sem deploy VPS
