@@ -69,10 +69,26 @@ export function CartDrawer() {
   }
 
   // FIX-WORKER-15: paridade com /cart - mudar quantidade direto no drawer
+  /* FIX-WORKER-2 pass 647 (qty buttons busy guard - anti-double-click race):
+     PRE-FIX BUG: +/- buttons sem busy guard durante Api.cartSetQty fetch (~200-500ms)
+     - User clica + rapido 3x -> 3 requests paralelas (race)
+     - optimistic state aplica IMEDIATAMENTE qty+1 cada click
+     - 3 requests chegam backend em ordem arbitraria, ultimo wins
+     - Visual mostra qty=4 mas backend pode commit qty=2 (race winner)
+     - load() pos-fetch tenta sync mas user ja viu wrong state mid-flight
+     - Pattern industry: optimistic UI exige lock single-flight per item id
+     POST-FIX: settingQtyId state guard analogo a removingId
+     - Bloqueia cliques + e - durante in-flight setQty
+     - aria-busy true durante in-flight (SR feedback)
+     - cursor-wait visual + opacity-50 disabled
+     - load() finaliza guard via finally clear */
+  const [settingQtyId, setSettingQtyId] = useState<string | null>(null);
   async function setQty(id: string, qty: number) {
     if (!token) return;
     if (qty < 1) return removeItem(id);
     if (qty > 99) return;
+    if (settingQtyId === id) return; // anti-double-click guard
+    setSettingQtyId(id);
     setErr('');
     // optimistic local + reload
     setCart((c: any) => c ? ({
@@ -81,11 +97,13 @@ export function CartDrawer() {
     }) : c);
     try {
       await Api.cartSetQty(token, id, qty);
-      load();
+      await load();
     } catch (e: any) {
       // FIX pass 501 (silent swallow -> explicit error + rollback via load)
       setErr(e?.data?.message || e?.message || 'Erro ao atualizar quantidade');
-      load(); // rollback optimistic via authoritative state
+      await load(); // rollback optimistic via authoritative state
+    } finally {
+      setSettingQtyId(null);
     }
   }
 
@@ -170,17 +188,20 @@ export function CartDrawer() {
                     <div className="flex items-center justify-between mt-2 gap-2">
                       <div className="inline-flex items-center rounded border border-white/10 bg-white/5">
                         {/* FIX-WORKER-15 pass 157 (a11y): aria-label dinamico com produto + qty atual */}
+                        {/* FIX-WORKER-2 pass 647: + settingQtyId guard + aria-busy paridade removingId pattern */}
                         <button type="button" onClick={(e) => { e.preventDefault(); setQty(it.id, it.quantity - 1); }}
                           aria-label={`Diminuir quantidade de ${it.product?.title || 'produto'} (atual: ${it.quantity})`}
-                          className="p-1 hover:bg-white/10 rounded-l disabled:opacity-30 focus-visible:outline-2 focus-visible:outline-magenta"
-                          disabled={it.quantity <= 1}>
+                          aria-busy={settingQtyId === it.id}
+                          className="p-1 hover:bg-white/10 rounded-l disabled:opacity-30 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-magenta"
+                          disabled={it.quantity <= 1 || settingQtyId === it.id}>
                           <Minus className="w-3 h-3" aria-hidden="true" />
                         </button>
                         <span aria-live="polite" className="px-2 text-xs font-mono font-semibold min-w-[24px] text-center">{it.quantity}</span>
                         <button type="button" onClick={(e) => { e.preventDefault(); setQty(it.id, it.quantity + 1); }}
                           aria-label={`Aumentar quantidade de ${it.product?.title || 'produto'} (atual: ${it.quantity})`}
-                          className="p-1 hover:bg-white/10 rounded-r disabled:opacity-30 focus-visible:outline-2 focus-visible:outline-magenta"
-                          disabled={it.quantity >= 99}>
+                          aria-busy={settingQtyId === it.id}
+                          className="p-1 hover:bg-white/10 rounded-r disabled:opacity-30 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-magenta"
+                          disabled={it.quantity >= 99 || settingQtyId === it.id}>
                           <Plus className="w-3 h-3" aria-hidden="true" />
                         </button>
                       </div>
